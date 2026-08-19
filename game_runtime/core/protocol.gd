@@ -2,6 +2,9 @@ extends RefCounted
 
 const VERSION := 1
 const MAX_SAFE_JSON_INTEGER := 9007199254740991
+const MAX_MESSAGE_BYTES := 64 * 1024
+const MAX_JSON_DEPTH := 32
+const MAX_NUMBER_TOKEN_BYTES := 128
 
 const TYPE_PLATFORM_CONNECT := "platform.connect"
 const TYPE_PLATFORM_CONNECTED := "platform.connected"
@@ -46,7 +49,14 @@ const _KNOWN_TYPES := {
 
 
 static func decode(text: String) -> Dictionary:
-	var strict_scan := _StrictJSONScanner.new(text, _ALLOWED_FIELDS).scan()
+	if text.length() > MAX_MESSAGE_BYTES or text.to_utf8_buffer().size() > MAX_MESSAGE_BYTES:
+		return _failure("message_too_large", "Message exceeds the size limit")
+	var strict_scan := _StrictJSONScanner.new(
+		text,
+		_ALLOWED_FIELDS,
+		MAX_JSON_DEPTH,
+		MAX_NUMBER_TOKEN_BYTES
+	).scan()
 	if not strict_scan.get("ok", false):
 		return strict_scan
 	var parser := JSON.new()
@@ -128,7 +138,7 @@ static func encode_action(
 ) -> Dictionary:
 	if not payload is Dictionary:
 		return _failure("invalid_payload", "payload must be a JSON object")
-	if not _is_json_safe(payload, []):
+	if not _is_json_safe(payload, [], 2):
 		return _failure("invalid_payload", "payload contains a value that cannot be represented safely in JSON")
 	var envelope := {
 		"protocolVersion": VERSION,
@@ -142,14 +152,16 @@ static func encode_action(
 	var validation := _validate_envelope(envelope)
 	if not validation.get("ok", false):
 		return validation
-	var text := JSON.stringify(envelope)
+	var text := JSON.stringify(envelope, "", true, true)
+	if text.length() > MAX_MESSAGE_BYTES or text.to_utf8_buffer().size() > MAX_MESSAGE_BYTES:
+		return _failure("message_too_large", "Message exceeds the size limit")
 	var verification := decode(text)
 	if not verification.get("ok", false):
 		return _failure("encoding_failed", "Encoded action did not satisfy the protocol contract")
 	return {"ok": true, "text": text}
 
 
-static func _is_json_safe(value: Variant, ancestors: Array) -> bool:
+static func _is_json_safe(value: Variant, ancestors: Array, depth: int) -> bool:
 	match typeof(value):
 		TYPE_NIL, TYPE_BOOL, TYPE_STRING:
 			return true
@@ -162,6 +174,8 @@ static func _is_json_safe(value: Variant, ancestors: Array) -> bool:
 				return value >= -MAX_SAFE_JSON_INTEGER and value <= MAX_SAFE_JSON_INTEGER
 			return true
 		TYPE_ARRAY, TYPE_DICTIONARY:
+			if depth > MAX_JSON_DEPTH:
+				return false
 			for ancestor in ancestors:
 				if is_same(ancestor, value):
 					return false
@@ -169,11 +183,11 @@ static func _is_json_safe(value: Variant, ancestors: Array) -> bool:
 			nested_ancestors.append(value)
 			if value is Array:
 				for item in value:
-					if not _is_json_safe(item, nested_ancestors):
+					if not _is_json_safe(item, nested_ancestors, depth + 1):
 						return false
 			else:
 				for key in value:
-					if not key is String or not _is_json_safe(value[key], nested_ancestors):
+					if not key is String or not _is_json_safe(value[key], nested_ancestors, depth + 1):
 						return false
 			return true
 		_:
@@ -226,20 +240,31 @@ static func _failure(code: String, message: String) -> Dictionary:
 class _StrictJSONScanner:
 	var _text: String
 	var _allowed_top_level_keys: Dictionary
+	var _max_depth: int
+	var _max_number_token_bytes: int
 	var _position := 0
+	var _depth := 0
 	var _top_level_keys := {}
 	var _error := ""
+	var _error_code := "invalid_json"
 
 
-	func _init(text: String, allowed_top_level_keys: Dictionary) -> void:
+	func _init(
+		text: String,
+		allowed_top_level_keys: Dictionary,
+		max_depth: int,
+		max_number_token_bytes: int
+	) -> void:
 		_text = text
 		_allowed_top_level_keys = allowed_top_level_keys
+		_max_depth = max_depth
+		_max_number_token_bytes = max_number_token_bytes
 
 
 	func scan() -> Dictionary:
 		_skip_whitespace()
 		if not _parse_object(true):
-			return {"ok": false, "code": "invalid_json", "message": _error}
+			return {"ok": false, "code": _error_code, "message": _error}
 		_skip_whitespace()
 		if _position != _text.length():
 			return {"ok": false, "code": "invalid_json", "message": "Message contains trailing data"}
@@ -271,8 +296,12 @@ class _StrictJSONScanner:
 	func _parse_object(top_level: bool) -> bool:
 		if not _consume("{"):
 			return _fail("Expected JSON object")
+		_depth += 1
+		if _depth > _max_depth:
+			return _fail("JSON exceeds the nesting limit", "json_too_deep")
 		_skip_whitespace()
 		if _consume("}"):
+			_depth -= 1
 			return true
 		while true:
 			if _at_end() or _character() != '"':
@@ -283,11 +312,11 @@ class _StrictJSONScanner:
 			var key: String = key_result["value"]
 			if top_level:
 				if key_result.get("raw", "") != key:
-					return _fail("Envelope keys must use canonical unescaped spelling")
+					return _fail("Message envelope is invalid", "invalid_envelope")
 				if not _allowed_top_level_keys.has(key):
-					return _fail("Envelope contains an unknown or non-canonical field")
+					return _fail("Message envelope is invalid", "invalid_envelope")
 				if _top_level_keys.has(key):
-					return _fail("Envelope contains a duplicate field")
+					return _fail("Message envelope is invalid", "invalid_envelope")
 				_top_level_keys[key] = true
 			_skip_whitespace()
 			if not _consume(":"):
@@ -296,6 +325,7 @@ class _StrictJSONScanner:
 				return false
 			_skip_whitespace()
 			if _consume("}"):
+				_depth -= 1
 				return true
 			if not _consume(","):
 				return _fail("Expected comma or closing brace in JSON object")
@@ -308,14 +338,19 @@ class _StrictJSONScanner:
 	func _parse_array() -> bool:
 		if not _consume("["):
 			return _fail("Expected JSON array")
+		_depth += 1
+		if _depth > _max_depth:
+			return _fail("JSON exceeds the nesting limit", "json_too_deep")
 		_skip_whitespace()
 		if _consume("]"):
+			_depth -= 1
 			return true
 		while true:
 			if not _parse_value():
 				return false
 			_skip_whitespace()
 			if _consume("]"):
+				_depth -= 1
 				return true
 			if not _consume(","):
 				return _fail("Expected comma or closing bracket in JSON array")
@@ -392,8 +427,10 @@ class _StrictJSONScanner:
 				_position += 1
 
 		var token := _text.substr(start, _position - start)
+		if token.length() > _max_number_token_bytes:
+			return _fail("JSON number token exceeds the size limit", "number_token_too_long")
 		if not _number_is_cross_runtime_safe(token):
-			return _fail("JSON number is not safe in both runtimes")
+			return _fail("JSON number is not cross-runtime safe", "unsafe_number")
 		return true
 
 
@@ -403,7 +440,9 @@ class _StrictJSONScanner:
 			return false
 		var integer_result := _normalized_integer_digits(token)
 		if not integer_result.get("integer", false):
-			return not (parsed == 0.0 and integer_result.get("nonzero", false))
+			# Reject any mathematical fraction that binary64 silently rounds to an
+			# integer, including underflow to zero and values near 2^53.
+			return parsed != floor(parsed)
 		var digits: String = integer_result.get("digits", "0")
 		if digits.length() < 16:
 			return true
@@ -421,21 +460,23 @@ class _StrictJSONScanner:
 		if exponent_position >= 0:
 			var exponent_text := unsigned.substr(exponent_position + 1)
 			unsigned = unsigned.substr(0, exponent_position)
-			if exponent_text.trim_prefix("+").trim_prefix("-").length() > 6:
-				var mantissa_nonzero := unsigned.replace(".", "").replace("0", "") != ""
+			var exponent_negative := exponent_text.begins_with("-")
+			var exponent_digits := exponent_text.trim_prefix("+").trim_prefix("-")
+			exponent_digits = _trim_leading_zeroes(exponent_digits)
+			if exponent_digits.length() > 6:
+				var mantissa_nonzero := _contains_nonzero_digit(unsigned)
 				if not mantissa_nonzero:
 					return {"integer": true, "digits": "0", "nonzero": false}
-				return {"integer": not exponent_text.begins_with("-"), "digits": "99999999999999999", "nonzero": true}
-			exponent = exponent_text.to_int()
+				return {"integer": not exponent_negative, "digits": "99999999999999999", "nonzero": true}
+			if not exponent_digits.is_empty():
+				exponent = exponent_digits.to_int() * (-1 if exponent_negative else 1)
 
 		var decimal_position := unsigned.find(".")
 		var fraction_digits := 0
 		if decimal_position >= 0:
 			fraction_digits = unsigned.length() - decimal_position - 1
 			unsigned = unsigned.erase(decimal_position, 1)
-		var digits := unsigned.trim_prefix("0")
-		while digits.begins_with("0"):
-			digits = digits.trim_prefix("0")
+		var digits := _trim_leading_zeroes(unsigned)
 		if digits.is_empty():
 			return {"integer": true, "digits": "0", "nonzero": false}
 
@@ -452,9 +493,21 @@ class _StrictJSONScanner:
 			if digits[digits.length() - 1 - offset] != "0":
 				return {"integer": false, "nonzero": true}
 		digits = digits.left(digits.length() - zeroes_to_remove)
-		while digits.begins_with("0"):
-			digits = digits.trim_prefix("0")
 		return {"integer": true, "digits": "0" if digits.is_empty() else digits, "nonzero": true}
+
+
+	func _trim_leading_zeroes(text: String) -> String:
+		var first_nonzero := 0
+		while first_nonzero < text.length() and text[first_nonzero] == "0":
+			first_nonzero += 1
+		return text.substr(first_nonzero)
+
+
+	func _contains_nonzero_digit(text: String) -> bool:
+		for character in text:
+			if character >= "1" and character <= "9":
+				return true
+		return false
 
 
 	func _consume_literal(literal: String) -> bool:
@@ -484,9 +537,10 @@ class _StrictJSONScanner:
 		return _position >= _text.length()
 
 
-	func _fail(message: String) -> bool:
+	func _fail(message: String, code: String = "invalid_json") -> bool:
 		if _error.is_empty():
 			_error = message
+			_error_code = code
 		return false
 
 

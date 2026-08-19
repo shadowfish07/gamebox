@@ -54,6 +54,35 @@ must travel as decimal strings. Go checks every raw number token with
 the original number spelling before parsing, then normalizes safe whole values
 to runtime integers and leaves fractional values as floats.
 
+Version 1 also rejects a mathematically fractional token when conversion to
+binary64 would silently produce an integer. This covers underflow to zero,
+over-precise fractions such as `1.00000000000000001`, and half steps near the
+safe-integer boundary. Exponent signs and leading zeroes do not affect the
+mathematical value: `1e0000000` is 1 and `1e+0000001` is 10. Godot encodes
+successful actions with `JSON.stringify(..., full_precision=true)` before
+running the result through the strict decoder.
+
+Parsing is bounded before payload materialization or arbitrary-precision
+number work:
+
+| Limit | Version 1 value |
+| --- | --- |
+| Maximum UTF-8 message size | 65,536 bytes (64 KiB) |
+| Maximum JSON container depth | 32, including the envelope object |
+| Maximum individual number token | 128 ASCII bytes |
+
+The current 15 by 15 snapshot fixture is about 1.1 KiB, so the message limit
+leaves substantial room for the complete board and future payload fields.
+Messages over any limit fail before normal envelope decoding. Number scanning
+remains linear in the bounded token size; Godot removes exponent and mantissa
+leading zeroes with one forward pass.
+
+Protocol failures expose only a fixed, bounded `code` and `message`. Neither
+runtime includes an unknown field name, message type, number spelling, or
+payload content in the public error. Resource failures use
+`message_too_large`, `json_too_deep`, or `number_token_too_long`; unsafe numeric
+values use `unsafe_number`.
+
 `Protocol.encode_action(...)` in Godot returns `{"ok":true,"text":"..."}` on
 success. Invalid types, identifiers, revisions, cyclic containers, non-finite
 numbers, unsafe integers, non-string object keys, and non-JSON variants return

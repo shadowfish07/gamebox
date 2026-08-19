@@ -3,11 +3,13 @@ package protocol
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFixtures(t *testing.T) {
@@ -245,6 +247,7 @@ func TestFixturesEnforceSafeJSONIntegerRange(t *testing.T) {
 	valid := []string{
 		wrapPayload(`{"minimum":-9007199254740991,"maximum":9007199254740991,"fraction":1.25,"nested":[0,{"fraction":-0.5}]}`),
 		wrapPayload(`{"decimalBoundary":9007199254740991.0,"exponentBoundary":90071992547409910e-1}`),
+		wrapPayload(`{"zeroExponent":1e0000000,"positiveExponent":1e+0000001}`),
 		wrapPayload(`{"largeIntegerAsString":"9007199254740992"}`),
 	}
 	for _, input := range valid {
@@ -259,12 +262,99 @@ func TestFixturesEnforceSafeJSONIntegerRange(t *testing.T) {
 		wrapPayload(`{"nested":[{"tooLarge":9007199254740992}]}`),
 		wrapPayload(`{"decimalTooLarge":9007199254740992.0}`),
 		wrapPayload(`{"exponentTooLarge":90071992547409920e-1}`),
+		wrapPayload(`{"roundedFraction":1.00000000000000001}`),
+		wrapPayload(`{"roundedLargeFraction":9007199254740990.5}`),
+		wrapPayload(`{"roundedUnsafeFraction":9007199254740991.5}`),
 		wrapPayload(`{"duplicate":9007199254740992,"duplicate":1}`),
 		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":9007199254740992,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{}}`,
 	}
 	for _, input := range invalid {
 		if _, err := Decode([]byte(input)); err == nil {
 			t.Fatalf("Decode accepted unsafe JSON integer: %s", input)
+		}
+	}
+}
+
+func TestProtocolResourceLimits(t *testing.T) {
+	wrapPayload := func(payload string) string {
+		return `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":` + payload + `}`
+	}
+
+	if MaxMessageBytes != 64*1024 || MaxJSONDepth != 32 || MaxNumberTokenBytes != 128 {
+		t.Fatalf("unexpected protocol resource limits: %d/%d/%d", MaxMessageBytes, MaxJSONDepth, MaxNumberTokenBytes)
+	}
+	validNumber := "1." + strings.Repeat("0", MaxNumberTokenBytes-2)
+	if len(validNumber) != MaxNumberTokenBytes {
+		t.Fatalf("valid number token length = %d", len(validNumber))
+	}
+	if _, err := Decode([]byte(wrapPayload(`{"number":` + validNumber + `}`))); err != nil {
+		t.Fatalf("Decode rejected number token at limit: %v", err)
+	}
+
+	validNested := "0"
+	for range MaxJSONDepth - 2 {
+		validNested = "[" + validNested + "]"
+	}
+	if _, err := Decode([]byte(wrapPayload(`{"nested":` + validNested + `}`))); err != nil {
+		t.Fatalf("Decode rejected JSON at depth limit: %v", err)
+	}
+
+	tooDeep := "[" + validNested + "]"
+	invalid := map[string]string{
+		"oversized message": wrapPayload(`{"text":"` + strings.Repeat("x", MaxMessageBytes) + `"}`),
+		"too deep array":    wrapPayload(`{"nested":` + tooDeep + `}`),
+		"long mantissa":     wrapPayload(`{"number":` + strings.Repeat("1", MaxNumberTokenBytes+1) + `}`),
+		"long exponent":     wrapPayload(`{"number":1e+` + strings.Repeat("0", MaxNumberTokenBytes-2) + `1}`),
+		"deep object":       wrapPayload(`{"nested":` + strings.Repeat(`{"x":`, MaxJSONDepth) + `0` + strings.Repeat(`}`, MaxJSONDepth) + `}`),
+	}
+	for name, input := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Decode([]byte(input)); err == nil {
+				t.Fatal("Decode succeeded, want resource-limit error")
+			}
+		})
+	}
+
+	started := time.Now()
+	for range 25 {
+		for _, input := range invalid {
+			_, _ = Decode([]byte(input))
+		}
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("bounded invalid inputs took %s", elapsed)
+	}
+}
+
+func TestProtocolErrorsNeverEchoUntrustedInput(t *testing.T) {
+	markers := []string{
+		"secret_field_marker",
+		"secret_type_marker",
+		"987654321098765432109876543210",
+		"secret_payload_marker",
+	}
+	inputs := []string{
+		`{"protocolVersion":1,"type":"platform.connect","payload":{},"secret_field_marker":true}`,
+		`{"protocolVersion":1,"type":"secret_type_marker","payload":{}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"n":987654321098765432109876543210}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"secret_payload_marker":}}`,
+	}
+	for _, input := range inputs {
+		_, err := Decode([]byte(input))
+		if err == nil {
+			t.Fatal("Decode succeeded, want protocol error")
+		}
+		var protocolError *ProtocolError
+		if !errors.As(err, &protocolError) {
+			t.Fatalf("error %T is not a ProtocolError", err)
+		}
+		if protocolError.Code == "" || len(protocolError.Error()) > 128 {
+			t.Fatalf("protocol error contract is missing or unbounded: %#v", protocolError)
+		}
+		for _, marker := range markers {
+			if strings.Contains(protocolError.Error(), marker) {
+				t.Fatalf("protocol error echoed untrusted marker %q", marker)
+			}
 		}
 	}
 }

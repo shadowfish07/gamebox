@@ -15,6 +15,8 @@ static func cases() -> Array:
 		{"name": "protocol allows semantically omitted match fields", "run": _allows_omitted_match_fields},
 		{"name": "protocol requires canonical unique envelope keys", "run": _requires_canonical_unique_keys},
 		{"name": "protocol enforces safe JSON integer range", "run": _enforces_safe_integer_range},
+		{"name": "protocol enforces bounded JSON resources", "run": _enforces_resource_limits},
+		{"name": "protocol errors never echo untrusted input", "run": _errors_do_not_echo_untrusted_input},
 		{"name": "protocol action encoding uses canonical camelCase fields", "run": _encodes_action_with_camel_case},
 		{"name": "protocol encodes both client action types", "run": _encodes_both_client_actions},
 		{"name": "protocol action encoding fails closed", "run": _rejects_invalid_action_encoding},
@@ -162,6 +164,7 @@ static func _enforces_safe_integer_range() -> bool:
 	var valid := [
 		prefix + '{"minimum":-9007199254740991,"maximum":9007199254740991,"fraction":1.25,"nested":[0,{"fraction":-0.5}]}}',
 		prefix + '{"decimalBoundary":9007199254740991.0,"exponentBoundary":90071992547409910e-1}}',
+		prefix + '{"zeroExponent":1e0000000,"positiveExponent":1e+0000001}}',
 		prefix + '{"largeIntegerAsString":"9007199254740992"}}',
 	]
 	for message in valid:
@@ -174,6 +177,9 @@ static func _enforces_safe_integer_range() -> bool:
 		prefix + '{"nested":[{"tooLarge":9007199254740992}]}}',
 		prefix + '{"decimalTooLarge":9007199254740992.0}}',
 		prefix + '{"exponentTooLarge":90071992547409920e-1}}',
+		prefix + '{"roundedFraction":1.00000000000000001}}',
+		prefix + '{"roundedLargeFraction":9007199254740990.5}}',
+		prefix + '{"roundedUnsafeFraction":9007199254740991.5}}',
 		prefix + '{"duplicate":9007199254740992,"duplicate":1}}',
 		'{"protocolVersion":1,"gameId":"gomoku","matchId":"%s","expectedRevision":9007199254740992,"type":"gomoku.move.requested","actionId":"%s","payload":{}}' % [MATCH_ID, ACTION_ID],
 	]
@@ -183,13 +189,78 @@ static func _enforces_safe_integer_range() -> bool:
 	return true
 
 
+static func _enforces_resource_limits() -> bool:
+	if not _check(Protocol.MAX_MESSAGE_BYTES == 64 * 1024, "unexpected message limit") \
+		or not _check(Protocol.MAX_JSON_DEPTH == 32, "unexpected depth limit") \
+		or not _check(Protocol.MAX_NUMBER_TOKEN_BYTES == 128, "unexpected number-token limit"):
+		return false
+	var prefix := '{"protocolVersion":1,"gameId":"gomoku","matchId":"%s","expectedRevision":3,"type":"gomoku.move.requested","actionId":"%s","payload":' % [MATCH_ID, ACTION_ID]
+	var valid_number := "1." + "0".repeat(Protocol.MAX_NUMBER_TOKEN_BYTES - 2)
+	if not _check(valid_number.length() == Protocol.MAX_NUMBER_TOKEN_BYTES, "invalid number boundary setup"):
+		return false
+	var number_at_limit_result := Protocol.decode(prefix + '{"number":' + valid_number + "}}")
+	if not _check(number_at_limit_result.get("ok", false), "rejected number token at limit: %s" % [number_at_limit_result]):
+		return false
+
+	var valid_nested := "0"
+	for _index in Protocol.MAX_JSON_DEPTH - 2:
+		valid_nested = "[" + valid_nested + "]"
+	if not _check(Protocol.decode(prefix + '{"nested":' + valid_nested + "}}").get("ok", false), "rejected JSON at depth limit"):
+		return false
+
+	var invalid := [
+		prefix + '{"text":"' + "x".repeat(Protocol.MAX_MESSAGE_BYTES) + '"}}',
+		prefix + '{"nested":[' + valid_nested + "]}}",
+		prefix + '{"number":' + "1".repeat(Protocol.MAX_NUMBER_TOKEN_BYTES + 1) + "}}",
+		prefix + '{"number":1e+' + "0".repeat(Protocol.MAX_NUMBER_TOKEN_BYTES - 2) + "1}}",
+		prefix + '{"nested":' + '{"x":'.repeat(Protocol.MAX_JSON_DEPTH) + "0" + "}".repeat(Protocol.MAX_JSON_DEPTH) + "}}",
+	]
+	for message in invalid:
+		if not _check(not Protocol.decode(message).get("ok", true), "accepted resource-limit violation"):
+			return false
+
+	var started := Time.get_ticks_msec()
+	for _iteration in 25:
+		for message in invalid:
+			Protocol.decode(message)
+	return _check(Time.get_ticks_msec() - started < 10000, "bounded invalid inputs exceeded ten seconds")
+
+
+static func _errors_do_not_echo_untrusted_input() -> bool:
+	var markers := [
+		"secret_field_marker",
+		"secret_type_marker",
+		"987654321098765432109876543210",
+		"secret_payload_marker",
+	]
+	var results := [
+		Protocol.decode('{"protocolVersion":1,"type":"platform.connect","payload":{},"secret_field_marker":true}'),
+		Protocol.decode('{"protocolVersion":1,"type":"secret_type_marker","payload":{}}'),
+		Protocol.decode('{"protocolVersion":1,"type":"platform.connect","payload":{"n":987654321098765432109876543210}}'),
+		Protocol.decode('{"protocolVersion":1,"type":"platform.connect","payload":{"secret_payload_marker":}}'),
+		Protocol.encode_action("secret_type_marker", MATCH_ID, 3, ACTION_ID, {}),
+		Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, {"secret_payload_marker": NAN}),
+	]
+	for result in results:
+		if not _check(result is Dictionary and not result.get("ok", true), "expected protocol failure"):
+			return false
+		var public_error := "%s %s" % [result.get("code", ""), result.get("message", "")]
+		if not _check(not result.get("code", "").is_empty() and public_error.length() <= 128, "error contract is missing or unbounded"):
+			return false
+		for marker in markers:
+			if not _check(not public_error.contains(marker), "protocol error echoed untrusted input"):
+				return false
+	return true
+
+
 static func _encodes_action_with_camel_case() -> bool:
+	var precise_fraction := 0.12345678901234568
 	var result: Dictionary = Protocol.encode_action(
 		"gomoku.move.requested",
 		MATCH_ID,
 		3,
 		ACTION_ID,
-		{"x": 7, "y": 7, "nullable": null}
+		{"x": 7, "y": 7, "nullable": null, "precise": precise_fraction}
 	)
 	if not _check(result.get("ok", false), "expected valid action to encode: %s" % [result]):
 		return false
@@ -209,6 +280,7 @@ static func _encodes_action_with_camel_case() -> bool:
 		and _check(envelope.get("expectedRevision") == 3, "expected camelCase expectedRevision") \
 		and _check(envelope.get("actionId") == ACTION_ID, "expected camelCase actionId") \
 		and _check(envelope["payload"].has("nullable") and envelope["payload"]["nullable"] == null, "expected payload null to survive") \
+		and _check(envelope["payload"].get("precise") == precise_fraction, "full-precision payload float changed") \
 		and _check(not encoded.contains("match_id") and not encoded.contains("action_id") and not encoded.contains("expected_revision"), "snake_case leaked into wire JSON") \
 		and _check(Protocol.decode(encoded).get("ok", false), "successful encoding must pass strict decode")
 

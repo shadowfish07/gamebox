@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"math/big"
@@ -13,6 +12,45 @@ import (
 
 const Version1 = 1
 const maxSafeJSONInteger int64 = 9_007_199_254_740_991
+
+const (
+	MaxMessageBytes     = 64 * 1024
+	MaxJSONDepth        = 32
+	MaxNumberTokenBytes = 128
+)
+
+const (
+	codeInvalidJSON        = "invalid_json"
+	codeInvalidEnvelope    = "invalid_envelope"
+	codeUnsupportedVersion = "unsupported_version"
+	codeUnsafeNumber       = "unsafe_number"
+	codeMessageTooLarge    = "message_too_large"
+	codeJSONTooDeep        = "json_too_deep"
+	codeNumberTokenTooLong = "number_token_too_long"
+)
+
+var protocolErrorMessages = map[string]string{
+	codeInvalidJSON:        "Message is not valid JSON",
+	codeInvalidEnvelope:    "Message envelope is invalid",
+	codeUnsupportedVersion: "Protocol version is not supported",
+	codeUnsafeNumber:       "JSON number is not cross-runtime safe",
+	codeMessageTooLarge:    "Message exceeds the size limit",
+	codeJSONTooDeep:        "JSON exceeds the nesting limit",
+	codeNumberTokenTooLong: "JSON number token exceeds the size limit",
+}
+
+type ProtocolError struct {
+	Code    string
+	Message string
+}
+
+func (failure *ProtocolError) Error() string {
+	return failure.Code + ": " + failure.Message
+}
+
+func protocolFailure(code string) error {
+	return &ProtocolError{Code: code, Message: protocolErrorMessages[code]}
+}
 
 var allowedEnvelopeFields = map[string]struct{}{
 	"protocolVersion":  {},
@@ -37,6 +75,9 @@ type Envelope struct {
 }
 
 func Decode(data []byte) (Envelope, error) {
+	if err := validateJSONBoundsAndNumbers(data); err != nil {
+		return Envelope{}, err
+	}
 	fields, err := inspectEnvelopeJSON(data)
 	if err != nil {
 		return Envelope{}, err
@@ -44,7 +85,7 @@ func Decode(data []byte) (Envelope, error) {
 
 	var envelope Envelope
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return Envelope{}, fmt.Errorf("decode envelope: %w", err)
+		return Envelope{}, protocolFailure(codeInvalidJSON)
 	}
 	if err := validateEnvelopePresence(envelope, fields); err != nil {
 		return Envelope{}, err
@@ -60,10 +101,10 @@ func inspectEnvelopeJSON(data []byte) (map[string]any, error) {
 	decoder.UseNumber()
 	opening, err := decoder.Token()
 	if err != nil {
-		return nil, fmt.Errorf("decode envelope: %w", err)
+		return nil, protocolFailure(codeInvalidJSON)
 	}
 	if delimiter, ok := opening.(json.Delim); !ok || delimiter != '{' {
-		return nil, errors.New("envelope must be a JSON object")
+		return nil, protocolFailure(codeInvalidEnvelope)
 	}
 
 	fields := make(map[string]any)
@@ -71,46 +112,42 @@ func inspectEnvelopeJSON(data []byte) (map[string]any, error) {
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
-			return nil, fmt.Errorf("decode envelope key: %w", err)
+			return nil, protocolFailure(codeInvalidJSON)
 		}
 		key, ok := token.(string)
 		if !ok {
-			return nil, errors.New("envelope key must be a string")
+			return nil, protocolFailure(codeInvalidEnvelope)
 		}
 		if _, ok := allowedEnvelopeFields[key]; !ok {
-			return nil, fmt.Errorf("unknown or non-canonical envelope field %q", key)
+			return nil, protocolFailure(codeInvalidEnvelope)
 		}
 		if _, duplicate := fields[key]; duplicate {
-			return nil, fmt.Errorf("duplicate envelope field %q", key)
+			return nil, protocolFailure(codeInvalidEnvelope)
 		}
 		var value any
 		if err := decoder.Decode(&value); err != nil {
-			return nil, fmt.Errorf("decode envelope field %q: %w", key, err)
+			return nil, protocolFailure(codeInvalidJSON)
 		}
 		fields[key] = value
 		keys = append(keys, key)
 	}
 	closing, err := decoder.Token()
 	if err != nil {
-		return nil, fmt.Errorf("decode envelope closing delimiter: %w", err)
+		return nil, protocolFailure(codeInvalidJSON)
 	}
 	if delimiter, ok := closing.(json.Delim); !ok || delimiter != '}' {
-		return nil, errors.New("envelope must end with a JSON object delimiter")
+		return nil, protocolFailure(codeInvalidEnvelope)
 	}
 	if err := requireEnd(decoder); err != nil {
 		return nil, err
 	}
-	if err := validateAllJSONNumberTokens(data); err != nil {
-		return nil, err
-	}
-
 	rawKeys := rawTopLevelKeys(data)
 	if len(rawKeys) != len(keys) {
-		return nil, errors.New("could not verify canonical envelope keys")
+		return nil, protocolFailure(codeInvalidEnvelope)
 	}
 	for index, key := range keys {
 		if rawKeys[index] != key {
-			return nil, fmt.Errorf("envelope field %q must use its canonical spelling", key)
+			return nil, protocolFailure(codeInvalidEnvelope)
 		}
 	}
 	return fields, nil
@@ -168,18 +205,42 @@ func rawTopLevelKeys(data []byte) []string {
 	return keys
 }
 
-func validateAllJSONNumberTokens(data []byte) error {
+func validateJSONBoundsAndNumbers(data []byte) error {
+	if len(data) > MaxMessageBytes {
+		return protocolFailure(codeMessageTooLarge)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
+	depth := 0
 	for {
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
+			if depth != 0 {
+				return protocolFailure(codeInvalidJSON)
+			}
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("scan JSON number tokens: %w", err)
+			return protocolFailure(codeInvalidJSON)
+		}
+		if delimiter, ok := token.(json.Delim); ok {
+			switch delimiter {
+			case '{', '[':
+				depth++
+				if depth > MaxJSONDepth {
+					return protocolFailure(codeJSONTooDeep)
+				}
+			case '}', ']':
+				depth--
+				if depth < 0 {
+					return protocolFailure(codeInvalidJSON)
+				}
+			}
 		}
 		if number, ok := token.(json.Number); ok {
+			if len(number.String()) > MaxNumberTokenBytes {
+				return protocolFailure(codeNumberTokenTooLong)
+			}
 			if err := validateJSONNumber(number); err != nil {
 				return err
 			}
@@ -190,16 +251,19 @@ func validateAllJSONNumberTokens(data []byte) error {
 func validateJSONNumber(number json.Number) error {
 	value, err := strconv.ParseFloat(number.String(), 64)
 	if err != nil || math.IsInf(value, 0) || math.IsNaN(value) {
-		return fmt.Errorf("number %q is not finite in both runtimes", number)
+		return protocolFailure(codeUnsafeNumber)
 	}
 	rational, ok := new(big.Rat).SetString(number.String())
 	if !ok {
-		return fmt.Errorf("number %q is not a canonical JSON number", number)
+		return protocolFailure(codeUnsafeNumber)
+	}
+	if !rational.IsInt() && math.Trunc(value) == value {
+		return protocolFailure(codeUnsafeNumber)
 	}
 	if rational.IsInt() {
 		absolute := new(big.Int).Abs(new(big.Int).Set(rational.Num()))
 		if absolute.Cmp(big.NewInt(maxSafeJSONInteger)) > 0 {
-			return fmt.Errorf("integer %q exceeds the safe JSON range", number)
+			return protocolFailure(codeUnsafeNumber)
 		}
 	}
 	return nil
@@ -208,19 +272,19 @@ func validateJSONNumber(number json.Number) error {
 func validateEnvelopePresence(envelope Envelope, fields map[string]any) error {
 	for _, required := range []string{"protocolVersion", "type", "payload"} {
 		if _, ok := fields[required]; !ok {
-			return fmt.Errorf("%s is required", required)
+			return protocolFailure(codeInvalidEnvelope)
 		}
 	}
 	for _, optional := range []string{"gameId", "matchId", "revision", "expectedRevision", "actionId"} {
 		if value, ok := fields[optional]; ok && value == nil {
-			return fmt.Errorf("%s must not be null", optional)
+			return protocolFailure(codeInvalidEnvelope)
 		}
 	}
 	for _, identifier := range []string{"gameId", "matchId", "actionId"} {
 		if value, ok := fields[identifier]; ok {
 			text, isString := value.(string)
 			if !isString || text == "" {
-				return fmt.Errorf("%s must be a non-empty string", identifier)
+				return protocolFailure(codeInvalidEnvelope)
 			}
 		}
 	}
@@ -228,10 +292,10 @@ func validateEnvelopePresence(envelope Envelope, fields map[string]any) error {
 	_, hasGame := fields["gameId"]
 	_, hasMatch := fields["matchId"]
 	if hasGame != hasMatch {
-		return errors.New("gameId and matchId must appear together")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if envelope.Type == TypePlatformConnect && hasGame {
-		return errors.New("platform.connect must omit gameId and matchId")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	return nil
 }
@@ -239,89 +303,86 @@ func validateEnvelopePresence(envelope Envelope, fields map[string]any) error {
 func requireEnd(decoder *json.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("decode envelope: trailing JSON value")
-		}
-		return fmt.Errorf("decode envelope trailing data: %w", err)
+		return protocolFailure(codeInvalidJSON)
 	}
 	return nil
 }
 
 func (envelope Envelope) Validate() error {
 	if envelope.ProtocolVersion != Version1 {
-		return fmt.Errorf("unsupported protocolVersion %d", envelope.ProtocolVersion)
+		return protocolFailure(codeUnsupportedVersion)
 	}
 	if envelope.Type == "" {
-		return errors.New("type is required")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if _, ok := knownTypes[envelope.Type]; !ok {
-		return fmt.Errorf("unknown type %q", envelope.Type)
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if envelope.Revision != nil && envelope.ExpectedRevision != nil {
-		return errors.New("revision and expectedRevision are mutually exclusive")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if envelope.Revision != nil && *envelope.Revision < 0 {
-		return errors.New("revision must not be negative")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if envelope.Revision != nil && *envelope.Revision > maxSafeJSONInteger {
-		return errors.New("revision exceeds the safe JSON integer range")
+		return protocolFailure(codeUnsafeNumber)
 	}
 	if envelope.ExpectedRevision != nil && *envelope.ExpectedRevision < 0 {
-		return errors.New("expectedRevision must not be negative")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if envelope.ExpectedRevision != nil && *envelope.ExpectedRevision > maxSafeJSONInteger {
-		return errors.New("expectedRevision exceeds the safe JSON integer range")
+		return protocolFailure(codeUnsafeNumber)
 	}
 	if len(envelope.Payload) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Payload), []byte("null")) {
-		return errors.New("payload is required and must not be null")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(envelope.Payload, &payload); err != nil || payload == nil {
-		return errors.New("payload must be a JSON object")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 
 	if envelope.Type == TypePlatformConnect {
 		if envelope.GameID != "" || envelope.MatchID != "" {
-			return errors.New("platform.connect must not contain gameId or matchId")
+			return protocolFailure(codeInvalidEnvelope)
 		}
 	} else if envelope.Type == TypePlatformError && envelope.GameID == "" && envelope.MatchID == "" {
 		// A handshake error can occur before a match is identified.
 	} else if envelope.GameID == "" || envelope.MatchID == "" {
-		return errors.New("match-bound message requires gameId and matchId")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 
 	if isClientAction(envelope.Type) {
 		if envelope.ActionID == "" {
-			return errors.New("client action requires actionId")
+			return protocolFailure(codeInvalidEnvelope)
 		}
 		if envelope.ExpectedRevision == nil {
-			return errors.New("client action requires expectedRevision")
+			return protocolFailure(codeInvalidEnvelope)
 		}
 		if envelope.Revision != nil {
-			return errors.New("client action must not contain revision")
+			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
 	}
 
 	if isRevisionlessControl(envelope.Type) {
 		if envelope.Revision != nil || envelope.ExpectedRevision != nil || envelope.ActionID != "" {
-			return errors.New("control message must not contain revision, expectedRevision, or actionId")
+			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
 	}
 
 	if envelope.Type == TypePlatformError && envelope.GameID == "" && envelope.MatchID == "" {
 		if envelope.Revision != nil || envelope.ExpectedRevision != nil || envelope.ActionID != "" {
-			return errors.New("unbound platform.error must not contain match action fields")
+			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
 	}
 
 	if envelope.Revision == nil {
-		return errors.New("bound server message requires revision")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	if envelope.ExpectedRevision != nil {
-		return errors.New("server message must not contain expectedRevision")
+		return protocolFailure(codeInvalidEnvelope)
 	}
 	return nil
 }
