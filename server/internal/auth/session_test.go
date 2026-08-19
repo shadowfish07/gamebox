@@ -96,7 +96,7 @@ func TestIssueSessionCreatesHS256AccessAndHashedRefreshToken(t *testing.T) {
 		t.Fatalf("read refresh row: %v", err)
 	}
 	if storedHash != hash || storedHash == session.RefreshToken || storedUser != "user-session" {
-		t.Fatalf("stored refresh identity = (%q, %q), want hash for user", storedHash, storedUser)
+		t.Fatalf("stored refresh identity: expectedHash=%t plaintextAbsent=%t expectedUser=%t", storedHash == hash, storedHash != session.RefreshToken, storedUser == "user-session")
 	}
 	if expiresAt != session.RefreshExpiresAt.Unix() || createdAt != issuedAt.Unix() {
 		t.Fatalf("stored refresh times = (%d, %d)", expiresAt, createdAt)
@@ -122,7 +122,7 @@ func TestParseAccessAllowsOnlyHS256GameboxAndEnforcesTimeBoundaries(t *testing.T
 
 	identity, err := service.ParseAccess(session.AccessToken)
 	if err != nil || identity.UserID != "access-user" {
-		t.Fatalf("ParseAccess = (%+v, %v)", identity, err)
+		t.Fatalf("ParseAccess valid path: authenticated=%t expectedUser=%t", err == nil, identity.UserID == "access-user")
 	}
 
 	tests := []struct {
@@ -188,19 +188,20 @@ func TestParseAccessAllowsOnlyHS256GameboxAndEnforcesTimeBoundaries(t *testing.T
 			raw := test.token()
 			identity, err := service.ParseAccess(raw)
 			if identity != (AccessIdentity{}) || !errors.Is(err, ErrUnauthorized) || err.Error() != ErrUnauthorized.Error() || strings.Contains(err.Error(), raw) {
-				t.Fatalf("ParseAccess = (%+v, %v), want zero identity and fixed unauthorized", identity, err)
+				t.Fatalf("ParseAccess rejection: zeroIdentity=%t unauthorized=%t fixedError=%t redacted=%t",
+					identity == (AccessIdentity{}), errors.Is(err, ErrUnauthorized), err != nil && err.Error() == ErrUnauthorized.Error(), err != nil && !strings.Contains(err.Error(), raw))
 			}
 		})
 	}
 
 	fakeClock.Advance(15 * time.Minute)
 	if identity, err := service.ParseAccess(session.AccessToken); identity != (AccessIdentity{}) || !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("ParseAccess at exact exp = (%+v, %v), want expired", identity, err)
+		t.Fatalf("ParseAccess exact expiration: zeroIdentity=%t unauthorized=%t", identity == (AccessIdentity{}), errors.Is(err, ErrUnauthorized))
 	}
 
 	earlierService := newSessionService(t, fixture, clock.NewFake(fixture.now.Add(-time.Second)))
 	if identity, err := earlierService.ParseAccess(session.AccessToken); identity != (AccessIdentity{}) || !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("ParseAccess after clock rollback = (%+v, %v), want unauthorized", identity, err)
+		t.Fatalf("ParseAccess clock rollback: zeroIdentity=%t unauthorized=%t", identity == (AccessIdentity{}), errors.Is(err, ErrUnauthorized))
 	}
 }
 
@@ -238,7 +239,7 @@ func TestRefreshRotatesAtomicallyAndReturnsEnabledUser(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 	if rotated.RefreshToken == original.RefreshToken || rotated.User != original.User {
-		t.Fatalf("rotated session = %+v, original user/token not preserved/rotated", rotated)
+		t.Fatalf("rotated session contract: tokenRotated=%t sameUser=%t", rotated.RefreshToken != original.RefreshToken, rotated.User == original.User)
 	}
 	oldHash, _ := HashRefreshToken(testPepper, original.RefreshToken)
 	newHash, _ := HashRefreshToken(testPepper, rotated.RefreshToken)
@@ -306,7 +307,7 @@ func TestRefreshConcurrentUseAllowsExactlyOneRotation(t *testing.T) {
 		case errors.Is(result.err, ErrUnauthorized):
 			unauthorized++
 			if result.err.Error() != ErrUnauthorized.Error() || result.session != (Session{}) {
-				t.Fatalf("losing refresh = (%+v, %v), want zero session and fixed unauthorized", result.session, result.err)
+				t.Fatalf("losing refresh: zeroSession=%t fixedError=%t", result.session == (Session{}), result.err.Error() == ErrUnauthorized.Error())
 			}
 		default:
 			t.Fatalf("concurrent Refresh error = %v", result.err)
@@ -356,7 +357,8 @@ func TestRefreshRejectsDisabledExpiredRevokedUnknownRollbackAndOversizedTokens(t
 			before := refreshRowCount(t, fixture.db)
 			session, err := service.Refresh(context.Background(), test.raw)
 			if session != (Session{}) || !errors.Is(err, ErrUnauthorized) || err.Error() != ErrUnauthorized.Error() || (test.raw != "" && strings.Contains(err.Error(), test.raw)) {
-				t.Fatalf("Refresh = (%+v, %v), want zero session and fixed unauthorized", session, err)
+				t.Fatalf("Refresh rejection: zeroSession=%t unauthorized=%t fixedError=%t redacted=%t",
+					session == (Session{}), errors.Is(err, ErrUnauthorized), err != nil && err.Error() == ErrUnauthorized.Error(), err != nil && !strings.Contains(err.Error(), test.raw))
 			}
 			if after := refreshRowCount(t, fixture.db); after != before {
 				t.Fatalf("rejected refresh changed row count from %d to %d", before, after)
@@ -387,7 +389,8 @@ func TestRefreshRejectsDisabledExpiredRevokedUnknownRollbackAndOversizedTokens(t
 			}
 			before := refreshRowCount(t, fixture.db)
 			if session, err := candidateService.Refresh(context.Background(), candidate); session != (Session{}) || !errors.Is(err, ErrUnauthorized) || err.Error() != ErrUnauthorized.Error() {
-				t.Fatalf("Refresh = (%+v, %v), want unauthorized", session, err)
+				t.Fatalf("Refresh state rejection: zeroSession=%t unauthorized=%t fixedError=%t",
+					session == (Session{}), errors.Is(err, ErrUnauthorized), err != nil && err.Error() == ErrUnauthorized.Error())
 			}
 			if after := refreshRowCount(t, fixture.db); after != before {
 				t.Fatalf("rejected refresh changed row count from %d to %d", before, after)
@@ -401,10 +404,10 @@ func TestIssueAndRefreshErrorsAreFixedAndSecretFree(t *testing.T) {
 	insertSessionUser(t, fixture, "error-user", "Alice", false)
 	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
 	if session, err := service.Issue(context.Background(), "error-user"); session != (Session{}) || !errors.Is(err, ErrUnauthorized) || err.Error() != ErrUnauthorized.Error() {
-		t.Fatalf("Issue disabled = (%+v, %v)", session, err)
+		t.Fatalf("Issue disabled: zeroSession=%t unauthorized=%t fixedError=%t", session == (Session{}), errors.Is(err, ErrUnauthorized), err != nil && err.Error() == ErrUnauthorized.Error())
 	}
 	if session, err := service.Issue(context.Background(), "missing-secret-user-id"); session != (Session{}) || !errors.Is(err, ErrUnauthorized) || strings.Contains(err.Error(), "missing-secret-user-id") {
-		t.Fatalf("Issue missing = (%+v, %v)", session, err)
+		t.Fatalf("Issue missing: zeroSession=%t unauthorized=%t redacted=%t", session == (Session{}), errors.Is(err, ErrUnauthorized), err != nil && !strings.Contains(err.Error(), "missing-secret-user-id"))
 	}
 
 	if err := fixture.db.Close(); err != nil {
@@ -412,7 +415,8 @@ func TestIssueAndRefreshErrorsAreFixedAndSecretFree(t *testing.T) {
 	}
 	secret := strings.Repeat("A", 43)
 	if session, err := service.Refresh(context.Background(), secret); session != (Session{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() || strings.Contains(err.Error(), secret) || strings.Contains(strings.ToLower(err.Error()), "sql") {
-		t.Fatalf("Refresh database error = (%+v, %v), want fixed internal error", session, err)
+		t.Fatalf("Refresh database error: zeroSession=%t internal=%t fixedError=%t redacted=%t",
+			session == (Session{}), errors.Is(err, ErrInternal), err != nil && err.Error() == ErrInternal.Error(), err != nil && !strings.Contains(err.Error(), secret) && !strings.Contains(strings.ToLower(err.Error()), "sql"))
 	}
 }
 
@@ -436,7 +440,8 @@ func TestIssueRefreshCollisionFailsWithoutReturningPlaintext(t *testing.T) {
 	}
 	second, err := service.Issue(context.Background(), "collision-user")
 	if second != (Session{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() || strings.Contains(err.Error(), first.RefreshToken) {
-		t.Fatalf("colliding Issue = (%+v, %v), want zero session and fixed internal error", second, err)
+		t.Fatalf("colliding Issue: zeroSession=%t internal=%t fixedError=%t redacted=%t",
+			second == (Session{}), errors.Is(err, ErrInternal), err != nil && err.Error() == ErrInternal.Error(), err != nil && !strings.Contains(err.Error(), first.RefreshToken))
 	}
 	if rows := refreshRowCount(t, fixture.db); rows != 1 {
 		t.Fatalf("collision stored %d refresh rows, want 1", rows)
@@ -478,7 +483,8 @@ func TestRefreshGenerationAndCollisionFailuresRollbackOldRevocation(t *testing.T
 
 			failed, err := service.Refresh(context.Background(), original.RefreshToken)
 			if failed != (Session{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() || strings.Contains(err.Error(), original.RefreshToken) {
-				t.Fatalf("failed Refresh = (%+v, %v), want zero session and fixed internal error", failed, err)
+				t.Fatalf("failed Refresh: zeroSession=%t internal=%t fixedError=%t redacted=%t",
+					failed == (Session{}), errors.Is(err, ErrInternal), err != nil && err.Error() == ErrInternal.Error(), err != nil && !strings.Contains(err.Error(), original.RefreshToken))
 			}
 			if rows := refreshRowCount(t, fixture.db); rows != 1 {
 				t.Fatalf("failed Refresh stored %d rows, want original only", rows)
@@ -510,7 +516,8 @@ func TestSessionCommitFailuresReturnNothingAndRollbackAllTokenWrites(t *testing.
 
 	issued, err := service.Issue(context.Background(), "commit-user")
 	if issued != (Session{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() || strings.Contains(strings.ToLower(err.Error()), "sql") {
-		t.Fatalf("Issue commit failure = (%+v, %v), want zero session and fixed internal error", issued, err)
+		t.Fatalf("Issue commit failure: zeroSession=%t internal=%t fixedError=%t redacted=%t",
+			issued == (Session{}), errors.Is(err, ErrInternal), err != nil && err.Error() == ErrInternal.Error(), err != nil && !strings.Contains(strings.ToLower(err.Error()), "sql"))
 	}
 	if rows := refreshRowCount(t, fixture.db); rows != 0 {
 		t.Fatalf("failed Issue commit left %d refresh rows", rows)
@@ -526,7 +533,8 @@ func TestSessionCommitFailuresReturnNothingAndRollbackAllTokenWrites(t *testing.
 	}
 	rotated, err := service.Refresh(context.Background(), original.RefreshToken)
 	if rotated != (Session{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() || strings.Contains(strings.ToLower(err.Error()), "sql") {
-		t.Fatalf("Refresh commit failure = (%+v, %v), want zero session and fixed internal error", rotated, err)
+		t.Fatalf("Refresh commit failure: zeroSession=%t internal=%t fixedError=%t redacted=%t",
+			rotated == (Session{}), errors.Is(err, ErrInternal), err != nil && err.Error() == ErrInternal.Error(), err != nil && !strings.Contains(strings.ToLower(err.Error()), "sql"))
 	}
 	if rows := refreshRowCount(t, fixture.db); rows != 1 {
 		t.Fatalf("failed Refresh commit left %d rows, want original only", rows)
@@ -551,7 +559,8 @@ func TestAccessInputLengthLimitReturnsFixedError(t *testing.T) {
 	raw := strings.Repeat("private-jwt", maximumAccessTokenTextBytes)
 	identity, err := service.ParseAccess(raw)
 	if identity != (AccessIdentity{}) || !errors.Is(err, ErrUnauthorized) || err.Error() != ErrUnauthorized.Error() || strings.Contains(err.Error(), raw) {
-		t.Fatalf("oversized ParseAccess = (%+v, %v), want fixed unauthorized", identity, err)
+		t.Fatalf("oversized ParseAccess: zeroIdentity=%t unauthorized=%t fixedError=%t redacted=%t",
+			identity == (AccessIdentity{}), errors.Is(err, ErrUnauthorized), err != nil && err.Error() == ErrUnauthorized.Error(), err != nil && !strings.Contains(err.Error(), raw))
 	}
 }
 
@@ -572,7 +581,7 @@ func TestSessionConfigurationRejectsWeakOrMissingDependencies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			service, err := NewService(test.db, test.clock, test.config)
 			if service != nil || !errors.Is(err, ErrInvalidConfiguration) || err.Error() != ErrInvalidConfiguration.Error() {
-				t.Fatalf("NewService = (%v, %v), want fixed invalid configuration", service, err)
+				t.Fatalf("NewService rejection: nilService=%t invalidConfiguration=%t fixedError=%t", service == nil, errors.Is(err, ErrInvalidConfiguration), err != nil && err.Error() == ErrInvalidConfiguration.Error())
 			}
 		})
 	}
@@ -601,7 +610,7 @@ func TestRefreshHonorsContextCancellationWithoutChangingToken(t *testing.T) {
 	started := time.Now()
 	rotated, err := service.Refresh(ctx, session.RefreshToken)
 	if rotated != (Session{}) || !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 750*time.Millisecond {
-		t.Fatalf("blocked Refresh = (%+v, %v) after %v", rotated, err, time.Since(started))
+		t.Fatalf("blocked Refresh: zeroSession=%t deadline=%t timely=%t", rotated == (Session{}), errors.Is(err, context.DeadlineExceeded), time.Since(started) <= 750*time.Millisecond)
 	}
 	if _, err := locker.ExecContext(context.Background(), `ROLLBACK`); err != nil {
 		t.Fatalf("release write lock: %v", err)

@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 )
 
@@ -24,6 +25,17 @@ type Config struct {
 	DBPath      string
 	JWTSecret   string
 	TokenPepper string
+}
+
+// String exposes only non-secret routing fields. It intentionally redacts both
+// authentication values for logging and diagnostic formatting.
+func (config Config) String() string {
+	return fmt.Sprintf("Config{Addr:%q DBPath:%q JWTSecret:<redacted> TokenPepper:<redacted>}", config.Addr, config.DBPath)
+}
+
+// GoString keeps %#v redacted as well.
+func (config Config) GoString() string {
+	return config.String()
 }
 
 // Load reads the supported GAMEBOX_* environment variables.

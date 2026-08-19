@@ -47,11 +47,33 @@ type Service struct {
 	commit    func(*writeTransaction) error
 }
 
+// String prevents internal authentication dependencies from being exposed by
+// ordinary diagnostic formatting.
+func (Service) String() string {
+	return "Service{credentials:<redacted>}"
+}
+
+// GoString keeps %#v redacted as well.
+func (service Service) GoString() string {
+	return service.String()
+}
+
 // ServiceConfig carries authentication secrets explicitly. JWTSecret is copied
 // during construction so callers cannot mutate the service's signing key.
 type ServiceConfig struct {
 	JWTSecret   []byte
 	TokenPepper string
+}
+
+// String prevents accidental disclosure when configuration is formatted by
+// loggers, diagnostics, or tests.
+func (ServiceConfig) String() string {
+	return "ServiceConfig{JWTSecret:<redacted> TokenPepper:<redacted>}"
+}
+
+// GoString keeps %#v redacted as well.
+func (config ServiceConfig) GoString() string {
+	return config.String()
 }
 
 func NewService(db *sql.DB, serviceClock clock.Clock, config ServiceConfig) (*Service, error) {

@@ -2,9 +2,24 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestConfigFormattingRedactsSecretsForAllFmtVerbs(t *testing.T) {
+	jwtMarker := "config-jwt-private-marker"
+	pepperMarker := "config-pepper-private-marker"
+	config := Config{Addr: "127.0.0.1:8080", DBPath: "gamebox.db", JWTSecret: jwtMarker, TokenPepper: pepperMarker}
+	for _, value := range []any{config, &config} {
+		for _, format := range []string{"%v", "%+v", "%#v"} {
+			formatted := fmt.Sprintf(format, value)
+			if strings.Contains(formatted, jwtMarker) || strings.Contains(formatted, pepperMarker) {
+				t.Fatalf("secret-safe formatting failed: valueType=%T format=%s", value, format)
+			}
+		}
+	}
+}
 
 func TestLoadFromEnvironmentRequiresLongSecretsAndAppliesDefaults(t *testing.T) {
 	t.Parallel()
@@ -56,7 +71,9 @@ func TestLoadFromEnvironmentRequiresLongSecretsAndAppliesDefaults(t *testing.T) 
 				t.Fatalf("loadFromLookup returned error: %v", err)
 			}
 			if got != test.want {
-				t.Fatalf("config = %+v, want %+v", got, test.want)
+				t.Fatalf("config mismatch: addr=%t dbPath=%t jwtSecret=%t tokenPepper=%t",
+					got.Addr == test.want.Addr, got.DBPath == test.want.DBPath,
+					got.JWTSecret == test.want.JWTSecret, got.TokenPepper == test.want.TokenPepper)
 			}
 		})
 	}
@@ -86,11 +103,12 @@ func TestLoadFromEnvironmentRejectsMissingOrShortSecretsWithoutLeakingThem(t *te
 				return value, ok
 			})
 			if config != (Config{}) || !errors.Is(err, ErrInvalidConfiguration) || err.Error() != ErrInvalidConfiguration.Error() {
-				t.Fatalf("loadFromLookup = (%+v, %v), want zero config and fixed error", config, err)
+				t.Fatalf("loadFromLookup rejection: zeroConfig=%t invalidConfiguration=%t fixedError=%t",
+					config == (Config{}), errors.Is(err, ErrInvalidConfiguration), err != nil && err.Error() == ErrInvalidConfiguration.Error())
 			}
 			for _, value := range test.env {
 				if value != "" && strings.Contains(err.Error(), value) {
-					t.Fatalf("configuration error leaked secret %q", value)
+					t.Fatal("configuration error included an environment value")
 				}
 			}
 		})
@@ -110,6 +128,6 @@ func TestLoadReadsProcessEnvironmentAndTestRestoresIt(t *testing.T) {
 		t.Fatalf("Load returned error: %v", err)
 	}
 	if got.Addr != "127.0.0.1:8181" || got.DBPath != "/tmp/gamebox-config-test.sqlite" {
-		t.Fatalf("Load ignored process environment: %+v", got)
+		t.Fatalf("Load optional environment values: addr=%t dbPath=%t", got.Addr == "127.0.0.1:8181", got.DBPath == "/tmp/gamebox-config-test.sqlite")
 	}
 }

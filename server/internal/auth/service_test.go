@@ -622,7 +622,7 @@ func TestRegisterServiceRejectsInvalidDependenciesAndPepper(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			service, err := NewService(test.db, test.clock, test.config)
 			if service != nil || !errors.Is(err, ErrInvalidConfiguration) || err.Error() != ErrInvalidConfiguration.Error() {
-				t.Fatalf("NewService = (%v, %v), want nil and fixed ErrInvalidConfiguration", service, err)
+				t.Fatalf("NewService rejection: nilService=%t invalidConfiguration=%t fixedError=%t", service == nil, errors.Is(err, ErrInvalidConfiguration), err != nil && err.Error() == ErrInvalidConfiguration.Error())
 			}
 		})
 	}
@@ -635,17 +635,17 @@ func TestRegisterTokenPrimitivesUseSafeUnambiguousRepresentations(t *testing.T) 
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		t.Fatalf("RandomToken produced non-URL-safe encoding %q: %v", token, err)
+		t.Fatal("RandomToken produced a non-URL-safe encoding")
 	}
 	if len(decoded) != 32 {
 		t.Fatalf("RandomToken(32) decoded bytes = %d, want exactly 32 entropy bytes", len(decoded))
 	}
 	if strings.ContainsAny(token, "+/=") {
-		t.Fatalf("RandomToken returned padded or non-URL-safe text %q", token)
+		t.Fatal("RandomToken returned padded or non-URL-safe text")
 	}
 	second, err := RandomToken(32)
 	if err != nil || second == token {
-		t.Fatalf("second RandomToken = %q, %v; want an independent token", second, err)
+		t.Fatalf("second RandomToken: generated=%t independent=%t", err == nil, second != token)
 	}
 
 	hash, err := HashToken("pepper", "plaintext")

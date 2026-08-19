@@ -1,10 +1,15 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -30,6 +35,18 @@ type Session struct {
 	AccessExpiresAt  time.Time
 	RefreshToken     string
 	RefreshExpiresAt time.Time
+}
+
+// String deliberately excludes both bearer credentials so ordinary logging
+// and assertion formatting cannot disclose them.
+func (session Session) String() string {
+	return fmt.Sprintf("Session{UserID:%q Nickname:%q AccessExpiresAt:%s RefreshExpiresAt:%s AccessToken:<redacted> RefreshToken:<redacted>}",
+		session.User.ID, session.User.Nickname, session.AccessExpiresAt.UTC().Format(time.RFC3339), session.RefreshExpiresAt.UTC().Format(time.RFC3339))
+}
+
+// GoString keeps %#v as safe as %v and %+v.
+func (session Session) GoString() string {
+	return session.String()
 }
 
 // AccessIdentity is the authenticated identity carried by a valid access JWT.
@@ -212,6 +229,9 @@ func (service *Service) ParseAccess(rawAccessToken string) (AccessIdentity, erro
 	if len(rawAccessToken) == 0 || len(rawAccessToken) > maximumAccessTokenTextBytes {
 		return AccessIdentity{}, ErrUnauthorized
 	}
+	if !jwtJSONObjectsHaveUniqueKeys(rawAccessToken) {
+		return AccessIdentity{}, ErrUnauthorized
+	}
 	claims := &jwt.RegisteredClaims{}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
@@ -235,4 +255,83 @@ func (service *Service) ParseAccess(rawAccessToken string) (AccessIdentity, erro
 		return AccessIdentity{}, ErrUnauthorized
 	}
 	return AccessIdentity{UserID: claims.Subject}, nil
+}
+
+const maximumJWTJSONDepth = 32
+
+func jwtJSONObjectsHaveUniqueKeys(raw string) bool {
+	segments := strings.Split(raw, ".")
+	if len(segments) != 3 {
+		return false
+	}
+	strictBase64 := base64.RawURLEncoding.Strict()
+	for _, segment := range segments[:2] {
+		document, err := strictBase64.DecodeString(segment)
+		if err != nil || !uniqueJSONObject(document) {
+			return false
+		}
+	}
+	return true
+}
+
+func uniqueJSONObject(document []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') || !consumeUniqueJSONObject(decoder, 1) {
+		return false
+	}
+	_, err = decoder.Token()
+	return errors.Is(err, io.EOF)
+}
+
+func consumeUniqueJSONObject(decoder *json.Decoder, depth int) bool {
+	if depth > maximumJWTJSONDepth {
+		return false
+	}
+	keys := make(map[string]struct{})
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return false
+		}
+		if _, duplicate := keys[key]; duplicate {
+			return false
+		}
+		keys[key] = struct{}{}
+		if !consumeUniqueJSONValue(decoder, depth) {
+			return false
+		}
+	}
+	closing, err := decoder.Token()
+	return err == nil && closing == json.Delim('}')
+}
+
+func consumeUniqueJSONValue(decoder *json.Decoder, depth int) bool {
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	delimiter, compound := token.(json.Delim)
+	if !compound {
+		return true
+	}
+	switch delimiter {
+	case '{':
+		return consumeUniqueJSONObject(decoder, depth+1)
+	case '[':
+		if depth >= maximumJWTJSONDepth {
+			return false
+		}
+		for decoder.More() {
+			if !consumeUniqueJSONValue(decoder, depth+1) {
+				return false
+			}
+		}
+		closing, closeErr := decoder.Token()
+		return closeErr == nil && closing == json.Delim(']')
+	default:
+		return false
+	}
 }
