@@ -5,10 +5,13 @@ readonly PACKAGE="me.zqydev.gamebox"
 readonly MAIN_ACTIVITY="$PACKAGE/.MainActivity"
 readonly GAME_PROCESS="$PACKAGE:game"
 readonly SELECTOR="host-smoke.launch"
-readonly DEVICE_UI_DUMP="/data/local/tmp/gamebox-host-smoke-window.xml"
+readonly TEST_PACKAGE="$PACKAGE.test"
+readonly TEST_RUNNER="$TEST_PACKAGE/me.zqydev.gamebox.HostSmokeTestRunner"
+readonly TEST_CLASS="me.zqydev.gamebox.HostSmokeClickTest#clickHostSmokeLaunchByAccessibilityDescription"
 readonly READY_MARKER="GAMEBOX_GODOT_READY"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly APK_DIR="$ROOT_DIR/app/build/app/outputs/flutter-apk"
+readonly TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 
 SERIAL="${GAMEBOX_ANDROID_SERIAL:-}"
 if [[ -z "$SERIAL" ]]; then
@@ -32,7 +35,7 @@ if [[ "$device_state" != "device" ]]; then
 fi
 
 cleanup() {
-  "${ADB[@]}" shell rm -f "$DEVICE_UI_DUMP" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -45,9 +48,6 @@ dump_failure_context() {
   echo "--- recent relevant logcat ---" >&2
   "${ADB[@]}" logcat -d -t 250 2>/dev/null \
     | grep -E "$PACKAGE|Godot|godot|FATAL EXCEPTION|ANR in|am_anr|$READY_MARKER" >&2 || true
-  echo "--- accessibility window ---" >&2
-  "${ADB[@]}" shell uiautomator dump "$DEVICE_UI_DUMP" >/dev/null 2>&1 || true
-  "${ADB[@]}" exec-out cat "$DEVICE_UI_DUMP" 2>/dev/null >&2 || true
 }
 
 fail() {
@@ -83,7 +83,7 @@ readonly APK="$APK_DIR/$apk_name"
 
 (
   cd "$ROOT_DIR/app"
-  flutter build apk \
+  ORG_GRADLE_PROJECT_gameboxAndroidAbi="$device_abi" flutter build apk \
     --debug \
     --split-per-abi \
     --target-platform="$flutter_target" \
@@ -91,7 +91,61 @@ readonly APK="$APK_DIR/$apk_name"
 )
 [[ -f "$APK" ]] || fail "debug APK was not produced at $APK"
 
-"${ADB[@]}" install -r "$APK" >/dev/null || fail "APK installation failed on $SERIAL"
+(
+  cd "$ROOT_DIR/app/android"
+  ORG_GRADLE_PROJECT_gameboxAndroidAbi="$device_abi" \
+    ./gradlew :app:assembleDebugAndroidTest
+)
+[[ -f "$TEST_APK" ]] || fail "instrumentation APK was not produced at $TEST_APK"
+
+packaged_abis="$(
+  unzip -Z1 "$APK" \
+    | sed -n 's#^lib/\([^/]*\)/.*#\1#p' \
+    | sort -u \
+    | paste -sd ' ' -
+)"
+if [[ "$packaged_abis" != "$device_abi" ]]; then
+  fail "APK JNI ABI set is '${packaged_abis:-empty}', expected only '$device_abi'"
+fi
+unzip -Z1 "$APK" | grep -Fx "lib/$device_abi/libgodot_android.so" >/dev/null \
+  || fail "single-ABI APK is missing lib/$device_abi/libgodot_android.so"
+
+apk_bytes="$(wc -c <"$APK" | tr -d ' ')"
+test_apk_bytes="$(wc -c <"$TEST_APK" | tr -d ' ')"
+initial_free_bytes="$("${ADB[@]}" shell df -k /data | awk 'NR == 2 { printf "%.0f\n", $4 * 1024 }')"
+echo "device $SERIAL ABI=$device_abi initial_free_bytes=$initial_free_bytes main_apk_bytes=$apk_bytes test_apk_bytes=$test_apk_bytes"
+
+# Reinstalling only the two Gamebox-owned packages frees their previous code paths
+# before Android's package installer evaluates its low-storage reserve.
+if "${ADB[@]}" shell pm path "$TEST_PACKAGE" >/dev/null 2>&1; then
+  "${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null \
+    || fail "could not remove the previous $TEST_PACKAGE helper package"
+fi
+if "${ADB[@]}" shell pm path "$PACKAGE" >/dev/null 2>&1; then
+  "${ADB[@]}" uninstall "$PACKAGE" >/dev/null \
+    || fail "could not remove the previous $PACKAGE package"
+fi
+
+low_bytes="$("${ADB[@]}" shell dumpsys devicestoragemonitor 2>/dev/null \
+  | sed -n 's/.*lowBytes=\([0-9][0-9]*\).*/\1/p' \
+  | head -n 1)"
+low_bytes="${low_bytes:-0}"
+required_bytes=$((apk_bytes * 2 + test_apk_bytes + low_bytes + 16 * 1024 * 1024))
+free_bytes="$("${ADB[@]}" shell df -k /data | awk 'NR == 2 { printf "%.0f\n", $4 * 1024 }')"
+space_deadline=$((SECONDS + 30))
+while ((free_bytes < required_bytes && SECONDS < space_deadline)); do
+  sleep 1
+  free_bytes="$("${ADB[@]}" shell df -k /data | awk 'NR == 2 { printf "%.0f\n", $4 * 1024 }')"
+done
+echo "preinstall_free_bytes=$free_bytes conservative_required_bytes=$required_bytes device_low_bytes=$low_bytes"
+if ((free_bytes < required_bytes)); then
+  fail "insufficient safe install space: free=$free_bytes required=$required_bytes; free space without removing unrelated apps or use a device with more storage"
+fi
+
+"${ADB[@]}" install --streaming -r "$APK" >/dev/null \
+  || fail "streaming main APK installation failed on $SERIAL (free=$free_bytes bytes, apk=$apk_bytes bytes)"
+"${ADB[@]}" install --streaming -r -t "$TEST_APK" >/dev/null \
+  || fail "streaming instrumentation APK installation failed on $SERIAL"
 "${ADB[@]}" shell pm clear "$PACKAGE" >/dev/null || fail "could not clear only $PACKAGE app data"
 "${ADB[@]}" logcat -c || fail "could not clear logcat on $SERIAL"
 "${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
@@ -111,34 +165,17 @@ main_is_resumed() {
     | grep -F "$PACKAGE/.MainActivity" >/dev/null
 }
 
-button_node() {
-  "${ADB[@]}" shell uiautomator dump "$DEVICE_UI_DUMP" >/dev/null 2>&1 || return 1
-  "${ADB[@]}" exec-out cat "$DEVICE_UI_DUMP" 2>/dev/null \
-    | awk -v selector="$SELECTOR" 'BEGIN { RS=">" } index($0, "content-desc=\"" selector "\"") { print $0 ">"; exit }'
-}
-
-wait_for_button() {
-  local deadline=$((SECONDS + 20))
-  local node
-  while ((SECONDS < deadline)); do
-    node="$(button_node || true)"
-    if [[ -n "$node" ]]; then
-      printf '%s\n' "$node"
-      return 0
-    fi
-    sleep 0.2
-  done
-  return 1
-}
-
-tap_button() {
-  local node="$1"
-  local bounds
-  bounds="$(printf '%s\n' "$node" | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p')"
-  [[ -n "$bounds" ]] || return 1
-  local left top right bottom
-  read -r left top right bottom <<<"$bounds"
-  "${ADB[@]}" shell input tap "$(((left + right) / 2))" "$(((top + bottom) / 2))" >/dev/null
+click_button_with_uiautomator() {
+  local output
+  output="$("${ADB[@]}" shell am instrument -w -r \
+    -e class "$TEST_CLASS" \
+    "$TEST_RUNNER" 2>&1)" || true
+  if ! grep -F 'OK (1 test)' <<<"$output" >/dev/null \
+    || grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' <<<"$output" >/dev/null; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  [[ -z "$("${ADB[@]}" shell pidof "$TEST_PACKAGE" 2>/dev/null | tr -d '\r')" ]]
 }
 
 wait_for_ready_marker() {
@@ -177,7 +214,16 @@ wait_for_main_resume() {
 assert_no_crash_or_anr() {
   local bad_logs
   bad_logs="$("${ADB[@]}" logcat -d 2>/dev/null \
-    | grep -E "FATAL EXCEPTION|ANR in $PACKAGE|am_anr.*$PACKAGE" || true)"
+    | awk -v app="$PACKAGE" -v helper="$TEST_PACKAGE" '
+        /FATAL EXCEPTION/ { fatal = $0; next }
+        fatal != "" && /Process:/ {
+          if (index($0, app) || index($0, helper)) print fatal "\n" $0
+          fatal = ""
+          next
+        }
+        /ANR in / && (index($0, app) || index($0, helper)) { print }
+        /am_anr/ && (index($0, app) || index($0, helper)) { print }
+      ' || true)"
   [[ -z "$bad_logs" ]] || fail "FATAL EXCEPTION or ANR detected"
 }
 
@@ -185,14 +231,13 @@ initial_pid="$(main_pid)"
 [[ -n "$initial_pid" ]] || fail "Flutter main process did not start"
 
 for cycle in 1 2; do
-  node="$(wait_for_button || true)"
-  [[ -n "$node" ]] || fail "cycle $cycle could not find Android accessibility selector '$SELECTOR'"
   before_pid="$(main_pid)"
   [[ "$before_pid" == "$initial_pid" ]] \
     || fail "cycle $cycle main process PID changed before launch"
 
   "${ADB[@]}" logcat -c || fail "cycle $cycle could not reset logcat evidence"
-  tap_button "$node" || fail "cycle $cycle could not activate '$SELECTOR'"
+  click_button_with_uiautomator \
+    || fail "cycle $cycle instrumentation could not click By.desc('$SELECTOR')"
   wait_for_ready_marker || fail "cycle $cycle did not observe $READY_MARKER"
   wait_for_game_exit || fail "cycle $cycle $GAME_PROCESS did not exit"
   wait_for_main_resume || fail "cycle $cycle did not resume $MAIN_ACTIVITY"
