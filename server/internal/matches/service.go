@@ -47,6 +47,7 @@ const (
 	maximumActionPayloadBytes = 1024
 	maximumMatchEvents        = 226
 	cancelledPayloadJSON      = `{}`
+	fullyOfflineAbandonAfter  = 24 * time.Hour
 )
 
 // Service atomically owns match creation and lifecycle transitions. The
@@ -551,6 +552,257 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 		match.FinishedAt = &now
 	}
 	return committedEvent, cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: nextGame}), nil
+}
+
+// SetPlayerOnline clears an active match's fully-offline timer. Inactive
+// matches are deliberately left untouched so a late transport close/open
+// cannot rewrite terminal lifecycle data.
+func (service *Service) SetPlayerOnline(ctx context.Context, matchID, userID string) error {
+	return service.setPlayerPresence(ctx, matchID, userID, true)
+}
+
+// SetPlayerOffline starts the fully-offline timer once. Presence calls this
+// only after its in-memory connection set confirms neither player is online.
+func (service *Service) SetPlayerOffline(ctx context.Context, matchID, userID string) error {
+	return service.setPlayerPresence(ctx, matchID, userID, false)
+}
+
+func (service *Service) setPlayerPresence(ctx context.Context, matchID, userID string, online bool) (err error) {
+	if !service.configured() {
+		return ErrInvalidConfiguration
+	}
+	if ctx == nil || !canonicalUUID(matchID) || !canonicalUUID(userID) {
+		return ErrInvalidRequest
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+
+	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, matchID)
+	if loadErr != nil {
+		return loadErr
+	}
+	if userID != players[0].UserID && userID != players[1].UserID {
+		return ErrInvalidRequest
+	}
+	if match.Status != StatusActive {
+		if commitErr := transaction.Commit(); commitErr != nil {
+			return matchDatabaseError(ctx, commitErr)
+		}
+		return nil
+	}
+
+	var result sql.Result
+	var updateErr error
+	if online {
+		result, updateErr = transaction.ExecContext(ctx, `
+UPDATE matches
+SET both_offline_since=NULL
+WHERE id=? AND status=?`, matchID, StatusActive)
+	} else {
+		nowMillis := service.clock.Now().UTC().UnixMilli()
+		result, updateErr = transaction.ExecContext(ctx, `
+UPDATE matches
+SET both_offline_since=COALESCE(both_offline_since,?)
+WHERE id=? AND status=?`, nowMillis, matchID, StatusActive)
+	}
+	if updateErr != nil {
+		return matchDatabaseError(ctx, updateErr)
+	}
+	if affectedExactlyOne(result) != nil {
+		return ErrInternal
+	}
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return matchDatabaseError(ctx, commitErr)
+	}
+	return nil
+}
+
+// AbandonExpired commits one platform abandonment event per active match that
+// has remained fully offline for at least 24 hours. Returned events are always
+// already committed and are therefore safe to publish.
+func (service *Service) AbandonExpired(ctx context.Context) ([]Event, error) {
+	if !service.configured() {
+		return nil, ErrInvalidConfiguration
+	}
+	if ctx == nil {
+		return nil, ErrInvalidRequest
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	cutoffMillis := nowMillis - fullyOfflineAbandonAfter.Milliseconds()
+	rows, queryErr := service.db.QueryContext(ctx, `
+SELECT id
+FROM matches
+WHERE status=? AND both_offline_since IS NOT NULL AND both_offline_since<=?
+ORDER BY id`, StatusActive, cutoffMillis)
+	if queryErr != nil {
+		return nil, matchDatabaseError(ctx, queryErr)
+	}
+	matchIDs := make([]string, 0, 16)
+	for rows.Next() {
+		var matchID string
+		if scanErr := rows.Scan(&matchID); scanErr != nil {
+			_ = rows.Close()
+			return nil, matchDatabaseError(ctx, scanErr)
+		}
+		if !canonicalUUID(matchID) {
+			_ = rows.Close()
+			return nil, ErrInternal
+		}
+		matchIDs = append(matchIDs, matchID)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return nil, matchDatabaseError(ctx, rowsErr)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, matchDatabaseError(ctx, closeErr)
+	}
+
+	committed := make([]Event, 0, len(matchIDs))
+	for _, matchID := range matchIDs {
+		event, changed, abandonErr := service.abandonIfExpired(ctx, matchID, cutoffMillis, nowMillis)
+		if abandonErr != nil {
+			return committed, abandonErr
+		}
+		if changed {
+			committed = append(committed, event)
+		}
+	}
+	return committed, nil
+}
+
+func (service *Service) abandonIfExpired(ctx context.Context, matchID string, cutoffMillis, nowMillis int64) (_ Event, changed bool, err error) {
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return Event{}, false, beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+			changed = false
+		}
+		_ = transaction.release()
+	}()
+
+	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, matchID)
+	if loadErr != nil {
+		if errors.Is(loadErr, ErrMatchNotFound) {
+			if commitErr := transaction.Commit(); commitErr != nil {
+				return Event{}, false, matchDatabaseError(ctx, commitErr)
+			}
+			return Event{}, false, nil
+		}
+		return Event{}, false, loadErr
+	}
+	var bothOfflineSince sql.NullInt64
+	if queryErr := transaction.QueryRowContext(ctx, `SELECT both_offline_since FROM matches WHERE id=?`, matchID).Scan(&bothOfflineSince); queryErr != nil {
+		return Event{}, false, matchDatabaseError(ctx, queryErr)
+	}
+	if match.Status != StatusActive || !bothOfflineSince.Valid || bothOfflineSince.Int64 > cutoffMillis {
+		if commitErr := transaction.Commit(); commitErr != nil {
+			return Event{}, false, matchDatabaseError(ctx, commitErr)
+		}
+		return Event{}, false, nil
+	}
+	if _, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players); snapshotErr != nil {
+		return Event{}, false, snapshotErr
+	}
+	if match.Revision == int64(^uint64(0)>>1) {
+		return Event{}, false, ErrInternal
+	}
+	nextRevision := match.Revision + 1
+	rules, ok := service.games.Lookup(match.GameID)
+	if !ok || rules.PlayerLimit() != 2 {
+		return Event{}, false, ErrInternal
+	}
+
+	result, insertErr := transaction.ExecContext(ctx, `
+INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
+VALUES (?,?,?,NULL,NULL,?,?)`, match.ID, nextRevision, protocol.TypePlatformMatchAbandoned, cancelledPayloadJSON, nowMillis)
+	if insertErr != nil {
+		return Event{}, false, matchDatabaseError(ctx, insertErr)
+	}
+	if affectedExactlyOne(result) != nil {
+		return Event{}, false, ErrInternal
+	}
+	result, updateErr := transaction.ExecContext(ctx, `
+UPDATE matches
+SET status=?,revision=?,updated_at=?,finished_at=?,winner_user_id=NULL,result=NULL,both_offline_since=NULL
+WHERE id=? AND status=? AND revision=? AND both_offline_since IS NOT NULL AND both_offline_since<=?`,
+		StatusAbandoned, nextRevision, nowMillis, nowMillis, match.ID, StatusActive, match.Revision, cutoffMillis)
+	if updateErr != nil {
+		return Event{}, false, matchDatabaseError(ctx, updateErr)
+	}
+	if affectedExactlyOne(result) != nil {
+		return Event{}, false, ErrInternal
+	}
+	result, deleteErr := transaction.ExecContext(ctx, `
+DELETE FROM active_game_slots
+WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, players[0].UserID, players[1].UserID)
+	if deleteErr != nil {
+		return Event{}, false, matchDatabaseError(ctx, deleteErr)
+	}
+	deleted, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return Event{}, false, matchDatabaseError(ctx, rowsErr)
+	}
+	wantDeleted := int64(0)
+	if singleActiveMatch(rules) {
+		wantDeleted = 2
+	}
+	if deleted != wantDeleted {
+		return Event{}, false, ErrInternal
+	}
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return Event{}, false, matchDatabaseError(ctx, commitErr)
+	}
+	return Event{
+		MatchID: match.ID, Revision: nextRevision, Type: protocol.TypePlatformMatchAbandoned,
+		Payload: append(json.RawMessage(nil), cancelledPayloadJSON...), CreatedAt: time.UnixMilli(nowMillis).UTC(),
+	}, true, nil
+}
+
+// MarkActiveMatchesOfflineOnBoot starts a timer only for active matches that
+// did not already have one. Existing downtime is preserved across restarts.
+func (service *Service) MarkActiveMatchesOfflineOnBoot(ctx context.Context) (err error) {
+	if !service.configured() {
+		return ErrInvalidConfiguration
+	}
+	if ctx == nil {
+		return ErrInvalidRequest
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	if _, updateErr := transaction.ExecContext(ctx, `
+UPDATE matches
+SET both_offline_since=?
+WHERE status=? AND both_offline_since IS NULL`, nowMillis, StatusActive); updateErr != nil {
+		return matchDatabaseError(ctx, updateErr)
+	}
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return matchDatabaseError(ctx, commitErr)
+	}
+	return nil
 }
 
 type actionSemantics struct {

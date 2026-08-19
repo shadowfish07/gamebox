@@ -851,6 +851,18 @@ func TestServiceRejectsNilConfigurationAndMethodsRemainDefensive(t *testing.T) {
 	if _, _, err := nilService.ApplyAction(context.Background(), ActionRequest{}); !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("nil ApplyAction error=%v", err)
 	}
+	if err := nilService.SetPlayerOnline(context.Background(), "44444444-4444-4444-8444-444444444444", initiatorID); !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("nil SetPlayerOnline error=%v", err)
+	}
+	if err := nilService.SetPlayerOffline(context.Background(), "44444444-4444-4444-8444-444444444444", initiatorID); !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("nil SetPlayerOffline error=%v", err)
+	}
+	if events, err := nilService.AbandonExpired(context.Background()); !errors.Is(err, ErrInvalidConfiguration) || len(events) != 0 {
+		t.Fatalf("nil AbandonExpired=(%+v,%v)", events, err)
+	}
+	if err := nilService.MarkActiveMatchesOfflineOnBoot(context.Background()); !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("nil MarkActiveMatchesOfflineOnBoot error=%v", err)
+	}
 }
 
 func readPlayers(t *testing.T, db *sql.DB, matchID string) []Player {
@@ -1798,6 +1810,358 @@ func TestMatchLifecyclePersistsAndReturnsUTCUnixMilliseconds(t *testing.T) {
 			t.Fatalf("cancel reloaded times updated=%v finished=%v err=%v", reloaded.Match.UpdatedAt, reloaded.Match.FinishedAt, err)
 		}
 	})
+}
+
+func TestPresenceServiceStartsOfflineClockOnlyWhenBothPlayersAreOffline(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presence, err := NewPresence(service, fixture.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	firstConnection := "10000000-0000-4000-8000-000000000001"
+	secondConnection := "10000000-0000-4000-8000-000000000002"
+	if err := presence.Connect(ctx, created.ID, initiatorID, firstConnection); err != nil {
+		t.Fatal(err)
+	}
+	if err := presence.Connect(ctx, created.ID, opponentID, secondConnection); err != nil {
+		t.Fatal(err)
+	}
+	if err := presence.Disconnect(ctx, created.ID, initiatorID, firstConnection); err != nil {
+		t.Fatal(err)
+	}
+	assertBothOfflineSince(t, fixture.db, created.ID, nil)
+	if err := presence.Disconnect(ctx, created.ID, opponentID, secondConnection); err != nil {
+		t.Fatal(err)
+	}
+	wantOffline := fixture.clock.Now().UTC().UnixMilli()
+	assertBothOfflineSince(t, fixture.db, created.ID, &wantOffline)
+
+	fixture.clock.Advance(time.Hour)
+	if err := service.SetPlayerOffline(ctx, created.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	assertBothOfflineSince(t, fixture.db, created.ID, &wantOffline)
+	if err := presence.Connect(ctx, created.ID, initiatorID, firstConnection); err != nil {
+		t.Fatal(err)
+	}
+	assertBothOfflineSince(t, fixture.db, created.ID, nil)
+}
+
+func TestPresenceServiceRechecksMembershipAndActiveLifecycle(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []func(context.Context, string, string) error{service.SetPlayerOnline, service.SetPlayerOffline} {
+		if err := method(context.Background(), created.ID, thirdID); !errors.Is(err, ErrInvalidRequest) || err.Error() != ErrInvalidRequest.Error() {
+			t.Fatalf("non-player error=%v", err)
+		}
+		if err := method(context.Background(), "ffffffff-ffff-4fff-8fff-ffffffffffff", initiatorID); !errors.Is(err, ErrMatchNotFound) || err.Error() != ErrMatchNotFound.Error() {
+			t.Fatalf("unknown match error=%v", err)
+		}
+	}
+	if _, err := service.Cancel(context.Background(), created.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	finishedOffline := fixture.clock.Now().Add(-time.Hour).UnixMilli()
+	if _, err := fixture.db.Exec(`UPDATE matches SET both_offline_since=? WHERE id=?`, finishedOffline, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerOnline(context.Background(), created.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerOffline(context.Background(), created.ID, opponentID); err != nil {
+		t.Fatal(err)
+	}
+	assertBothOfflineSince(t, fixture.db, created.ID, &finishedOffline)
+}
+
+func TestAbandonExpiredUsesExactTwentyFourHourBoundaryAndReturnsCommittedEvent(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerOffline(context.Background(), created.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.clock.Advance(24*time.Hour - time.Second)
+	if events, err := service.AbandonExpired(context.Background()); err != nil || len(events) != 0 {
+		t.Fatalf("before boundary=(%+v,%v)", events, err)
+	}
+	assertTableCount(t, fixture.db, "active_game_slots", 2)
+	fixture.clock.Advance(time.Second)
+	events, err := service.AbandonExpired(context.Background())
+	if err != nil || len(events) != 1 {
+		t.Fatalf("at boundary=(%+v,%v)", events, err)
+	}
+	event := events[0]
+	wantTime := time.UnixMilli(fixture.clock.Now().UTC().UnixMilli()).UTC()
+	if event.MatchID != created.ID || event.Revision != 1 || event.Type != protocol.TypePlatformMatchAbandoned || event.ActionID != nil || event.ActorUserID != nil || string(event.Payload) != `{}` || !event.CreatedAt.Equal(wantTime) {
+		t.Fatalf("event=%+v want committed abandonment at %v", event, wantTime)
+	}
+	assertTableCount(t, fixture.db, "active_game_slots", 0)
+	snapshot, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Match.Status != StatusAbandoned || snapshot.Match.Revision != 1 || snapshot.Match.Result != nil || snapshot.Match.WinnerUserID != nil || snapshot.Match.FinishedAt == nil || !snapshot.Match.FinishedAt.Equal(wantTime) || !snapshot.Match.UpdatedAt.Equal(wantTime) || snapshot.Game.Revision != 0 {
+		t.Fatalf("abandoned snapshot=%+v", snapshot)
+	}
+	assertBothOfflineSince(t, fixture.db, created.ID, nil)
+	if again, err := service.AbandonExpired(context.Background()); err != nil || len(again) != 0 {
+		t.Fatalf("repeat abandonment=(%+v,%v)", again, err)
+	}
+}
+
+func TestAbandonExpiredPreservesGameHistoryAndAdvancesMatchRevision(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 980, 0, 7, 7)); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerOffline(context.Background(), created.ID, opponentID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.clock.Advance(24 * time.Hour)
+	events, err := service.AbandonExpired(context.Background())
+	if err != nil || len(events) != 1 || events[0].Revision != 2 {
+		t.Fatalf("AbandonExpired=(%+v,%v)", events, err)
+	}
+	snapshot, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil || snapshot.Match.Revision != 2 || snapshot.Game.Revision != 1 || snapshot.Match.Status != StatusAbandoned {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+}
+
+func TestAbandonExpiredLeavesTerminalAndNotYetExpiredMatchesUntouched(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0, 0}))
+	terminal, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Cancel(context.Background(), terminal.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.db.Exec(`UPDATE matches SET both_offline_since=? WHERE id=?`, fixture.now.Add(-48*time.Hour).UnixMilli(), terminal.ID); err != nil {
+		t.Fatal(err)
+	}
+	active, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerOffline(context.Background(), active.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.clock.Advance(24*time.Hour - time.Millisecond)
+	if events, err := service.AbandonExpired(context.Background()); err != nil || len(events) != 0 {
+		t.Fatalf("AbandonExpired=(%+v,%v)", events, err)
+	}
+	var terminalStatus string
+	var terminalRevision int64
+	if err := fixture.db.QueryRow(`SELECT status,revision FROM matches WHERE id=?`, terminal.ID).Scan(&terminalStatus, &terminalRevision); err != nil || terminalStatus != StatusCancelled || terminalRevision != 1 {
+		t.Fatalf("terminal=%s/%d err=%v", terminalStatus, terminalRevision, err)
+	}
+	assertTableCount(t, fixture.db, "active_game_slots", 2)
+}
+
+func TestMarkActiveMatchesOfflineOnBootFillsOnlyNullAndPreservesExistingClock(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0, 0}))
+	first, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Cancel(context.Background(), first.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := fixture.clock.Now().Add(-6 * time.Hour).UTC().UnixMilli()
+	if _, err := fixture.db.Exec(`UPDATE matches SET both_offline_since=? WHERE id=?`, existing, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.clock.Advance(time.Hour)
+	if err := service.MarkActiveMatchesOfflineOnBoot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertBothOfflineSince(t, fixture.db, first.ID, nil)
+	assertBothOfflineSince(t, fixture.db, second.ID, &existing)
+	thirdFixture := newFixture(t)
+	thirdService := thirdFixture.service(t, bytes.NewReader([]byte{0}))
+	third, err := thirdService.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdFixture.clock.Advance(1234*time.Millisecond + 567*time.Microsecond)
+	if err := thirdService.MarkActiveMatchesOfflineOnBoot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := thirdFixture.clock.Now().UTC().UnixMilli()
+	assertBothOfflineSince(t, thirdFixture.db, third.ID, &want)
+}
+
+func TestAbandonExpiredConcurrentScansCommitExactlyOneEvent(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.db.Exec(`UPDATE matches SET both_offline_since=? WHERE id=?`, fixture.now.Add(-24*time.Hour).UnixMilli(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan struct {
+		events []Event
+		err    error
+	}, 2)
+	for index := 0; index < 2; index++ {
+		go func() {
+			<-start
+			events, err := service.AbandonExpired(context.Background())
+			results <- struct {
+				events []Event
+				err    error
+			}{events, err}
+		}()
+	}
+	close(start)
+	returned := 0
+	for index := 0; index < 2; index++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent abandon: %v", result.err)
+		}
+		returned += len(result.events)
+	}
+	if returned != 1 {
+		t.Fatalf("returned events=%d want 1", returned)
+	}
+	assertTableCount(t, fixture.db, "match_events", 1)
+	assertTableCount(t, fixture.db, "active_game_slots", 0)
+}
+
+func TestAbandonExpiredCorruptionAndCommitFailureRollbackWithoutPublishableEvent(t *testing.T) {
+	t.Run("corrupt slots", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`UPDATE matches SET both_offline_since=? WHERE id=?`, fixture.now.Add(-24*time.Hour).UnixMilli(), created.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`DELETE FROM active_game_slots WHERE user_id=?`, opponentID); err != nil {
+			t.Fatal(err)
+		}
+		events, err := service.AbandonExpired(context.Background())
+		if !errors.Is(err, ErrInternal) || len(events) != 0 || err.Error() != ErrInternal.Error() {
+			t.Fatalf("AbandonExpired=(%+v,%v)", events, err)
+		}
+		assertTableCount(t, fixture.db, "match_events", 0)
+		var status string
+		var revision int64
+		if err := fixture.db.QueryRow(`SELECT status,revision FROM matches WHERE id=?`, created.ID).Scan(&status, &revision); err != nil || status != StatusActive || revision != 0 {
+			t.Fatalf("match=%s/%d err=%v", status, revision, err)
+		}
+	})
+
+	t.Run("deferred commit failure", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`UPDATE matches SET both_offline_since=? WHERE id=?`, fixture.now.Add(-24*time.Hour).UnixMilli(), created.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`
+CREATE TRIGGER fail_abandon_at_commit AFTER INSERT ON match_events
+BEGIN
+  INSERT INTO launch_tickets(token_hash,match_id,user_id,game_id,expires_at,created_at)
+  VALUES ('abandon-commit-failure','ffffffff-ffff-4fff-8fff-ffffffffffff','11111111-1111-4111-8111-111111111111','gomoku',1,1);
+END`); err != nil {
+			t.Fatal(err)
+		}
+		fixture.db.SetMaxOpenConns(1)
+		connection, err := fixture.db.Conn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := connection.ExecContext(context.Background(), `PRAGMA defer_foreign_keys=ON`); err != nil {
+			connection.Close()
+			t.Fatal(err)
+		}
+		if err := connection.Close(); err != nil {
+			t.Fatal(err)
+		}
+		events, err := service.AbandonExpired(context.Background())
+		if !errors.Is(err, ErrInternal) || len(events) != 0 || err.Error() != ErrInternal.Error() {
+			t.Fatalf("AbandonExpired=(%+v,%v)", events, err)
+		}
+		assertTableCount(t, fixture.db, "match_events", 0)
+		assertTableCount(t, fixture.db, "active_game_slots", 2)
+	})
+}
+
+func TestPresenceLifecycleMethodsHonorCancelledContextWithoutWrites(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := service.SetPlayerOnline(ctx, created.ID, initiatorID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SetPlayerOnline=%v", err)
+	}
+	if err := service.SetPlayerOffline(ctx, created.ID, initiatorID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SetPlayerOffline=%v", err)
+	}
+	if events, err := service.AbandonExpired(ctx); !errors.Is(err, context.Canceled) || len(events) != 0 {
+		t.Fatalf("AbandonExpired=(%+v,%v)", events, err)
+	}
+	if err := service.MarkActiveMatchesOfflineOnBoot(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MarkActiveMatchesOfflineOnBoot=%v", err)
+	}
+	assertBothOfflineSince(t, fixture.db, created.ID, nil)
+}
+
+func assertBothOfflineSince(t *testing.T, db *sql.DB, matchID string, want *int64) {
+	t.Helper()
+	var got sql.NullInt64
+	if err := db.QueryRow(`SELECT both_offline_since FROM matches WHERE id=?`, matchID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if want == nil {
+		if got.Valid {
+			t.Fatalf("both_offline_since=%d want NULL", got.Int64)
+		}
+		return
+	}
+	if !got.Valid || got.Int64 != *want {
+		t.Fatalf("both_offline_since=%v want %d", got, *want)
+	}
 }
 
 type concurrentActionResult struct {
