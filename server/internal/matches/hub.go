@@ -26,11 +26,20 @@ const (
 )
 
 type Hub struct {
-	mu       sync.Mutex
-	matches  map[string]*hubMatch
-	service  *Service
-	presence *Presence
-	clock    clock.Clock
+	mu                  sync.Mutex
+	matches             map[string]*hubMatch
+	service             *Service
+	presence            *Presence
+	clock               clock.Clock
+	firstMessageTimeout time.Duration
+	heartbeatInterval   time.Duration
+	activityTimeout     time.Duration
+}
+
+type HubConfig struct {
+	FirstMessageTimeout time.Duration
+	HeartbeatInterval   time.Duration
+	ActivityTimeout     time.Duration
 }
 
 type hubMatch struct {
@@ -44,6 +53,15 @@ type queuedMessage struct {
 	data     []byte
 	revision int64
 }
+
+type enqueueStateResult uint8
+
+const (
+	enqueueStateQueued enqueueStateResult = iota
+	enqueueStateStale
+	enqueueStateFull
+	enqueueStateInvalid
+)
 
 type hubConnection struct {
 	hub        *Hub
@@ -60,6 +78,7 @@ type hubConnection struct {
 	ready      bool
 	pending    []queuedMessage
 	revision   atomic.Int64
+	outboundMu sync.Mutex
 	pingMu     sync.Mutex
 	latestPing string
 }
@@ -84,6 +103,12 @@ type pongPayload struct {
 	Nonce string `json:"nonce"`
 }
 
+type webSocketReadResult struct {
+	messageType websocket.MessageType
+	data        []byte
+	err         error
+}
+
 type snapshotRequestPayload struct {
 	CurrentRevision int64 `json:"currentRevision"`
 }
@@ -106,10 +131,29 @@ type gomokuSnapshotPayload struct {
 }
 
 func NewHub(service *Service, presence *Presence, serviceClock clock.Clock) (*Hub, error) {
+	return NewHubWithConfig(service, presence, serviceClock, HubConfig{})
+}
+
+func NewHubWithConfig(service *Service, presence *Presence, serviceClock clock.Clock, config HubConfig) (*Hub, error) {
 	if service == nil || presence == nil || !service.configured() || nilDependency(service.ticketRandom) || len([]byte(service.tokenPepper)) < minimumTokenPepperBytes || !presence.configured() || nilDependency(serviceClock) {
 		return nil, ErrInvalidConfiguration
 	}
-	return &Hub{matches: make(map[string]*hubMatch), service: service, presence: presence, clock: serviceClock}, nil
+	if config.FirstMessageTimeout < 0 || config.HeartbeatInterval < 0 || config.ActivityTimeout < 0 {
+		return nil, ErrInvalidConfiguration
+	}
+	if config.FirstMessageTimeout == 0 {
+		config.FirstMessageTimeout = webSocketFirstMessageTimeout
+	}
+	if config.HeartbeatInterval == 0 {
+		config.HeartbeatInterval = webSocketHeartbeatInterval
+	}
+	if config.ActivityTimeout == 0 {
+		config.ActivityTimeout = presenceConnectionTimeout
+	}
+	return &Hub{
+		matches: make(map[string]*hubMatch), service: service, presence: presence, clock: serviceClock,
+		firstMessageTimeout: config.FirstMessageTimeout, heartbeatInterval: config.HeartbeatInterval, activityTimeout: config.ActivityTimeout,
+	}, nil
 }
 
 // ServeHTTP owns a single upgraded connection for its complete lifetime.
@@ -127,24 +171,42 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	transport.SetReadLimit(protocol.MaxMessageBytes)
-	firstContext, cancelFirst := context.WithTimeout(context.Background(), webSocketFirstMessageTimeout)
-	messageType, data, readErr := transport.Read(firstContext)
-	cancelFirst()
+	firstRead := make(chan webSocketReadResult, 1)
+	go func() {
+		messageType, data, err := transport.Read(context.Background())
+		firstRead <- webSocketReadResult{messageType: messageType, data: data, err: err}
+	}()
+	firstTimer := time.NewTimer(hub.firstMessageTimeout)
+	var readResult webSocketReadResult
+	select {
+	case readResult = <-firstRead:
+		if !firstTimer.Stop() {
+			select {
+			case <-firstTimer.C:
+			default:
+			}
+		}
+	case <-firstTimer.C:
+		writeHandshakeError(transport, "invalid_request")
+		_ = transport.Close(websocket.StatusPolicyViolation, "invalid_request")
+		return
+	}
+	messageType, data, readErr := readResult.messageType, readResult.data, readResult.err
 	if readErr != nil || messageType != websocket.MessageText {
-		writeHandshakeError(transport, "invalid_connect")
-		_ = transport.Close(websocket.StatusPolicyViolation, "invalid connect")
+		writeHandshakeError(transport, "invalid_request")
+		_ = transport.Close(websocket.StatusPolicyViolation, "invalid_request")
 		return
 	}
 	envelope, decodeErr := protocol.DecodeClient(data)
 	if decodeErr != nil || envelope.Type != protocol.TypePlatformConnect {
-		writeHandshakeError(transport, "invalid_connect")
-		_ = transport.Close(websocket.StatusPolicyViolation, "invalid connect")
+		writeHandshakeError(transport, "invalid_request")
+		_ = transport.Close(websocket.StatusPolicyViolation, "invalid_request")
 		return
 	}
 	var payload connectPayload
 	if json.Unmarshal(envelope.Payload, &payload) != nil {
-		writeHandshakeError(transport, "invalid_connect")
-		_ = transport.Close(websocket.StatusPolicyViolation, "invalid connect")
+		writeHandshakeError(transport, "invalid_request")
+		_ = transport.Close(websocket.StatusPolicyViolation, "invalid_request")
 		return
 	}
 	operationContext, cancelOperation := context.WithTimeout(context.Background(), webSocketOperationTimeout)
@@ -153,8 +215,17 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	})
 	cancelOperation()
 	if credentialErr != nil {
-		writeHandshakeError(transport, "credential_invalid")
-		_ = transport.Close(websocket.StatusPolicyViolation, "credential invalid")
+		code := "internal_error"
+		switch {
+		case errors.Is(credentialErr, ErrTicketInvalid):
+			code = "ticket_invalid"
+		case errors.Is(credentialErr, ErrResumeExpired):
+			code = "resume_expired"
+		case errors.Is(credentialErr, ErrInvalidRequest):
+			code = "invalid_request"
+		}
+		writeHandshakeError(transport, code)
+		_ = transport.Close(websocket.StatusPolicyViolation, code)
 		return
 	}
 	connectionID, idErr := uuid.NewRandom()
@@ -192,21 +263,20 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	snapshot, snapshotErr := hub.service.Snapshot(operationContext, connection.matchID)
 	cancelOperation()
 	if snapshotErr != nil {
-		connection.enqueueError("internal_error", "", connection.revision.Load())
+		connection.enqueueError("internal_error", "")
 		return
 	}
 	connected, marshalErr := boundEnvelope(connection.gameID, connection.matchID, snapshot.Match.Revision, protocol.TypePlatformConnected, "", connectedPayload{
 		UserID: credential.UserID, ConnectionID: connection.id, ResumeToken: credential.ResumeToken,
 		ResumeExpiresAt: credential.ResumeExpiresAt.UnixMilli(),
 	})
-	if marshalErr != nil || !connection.enqueue(connected) {
+	if marshalErr != nil {
 		return
 	}
 	snapshotMessage, marshalErr := snapshotEnvelope(snapshot)
-	if marshalErr != nil || !connection.enqueue(snapshotMessage) {
+	if marshalErr != nil || !connection.enqueueInitial(connected, snapshotMessage, snapshot.Match.Revision) {
 		return
 	}
-	connection.revision.Store(snapshot.Match.Revision)
 	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
 		ready, stale := hub.markReady(connection, snapshot.Match.Revision, snapshotMessage)
 		if ready {
@@ -223,10 +293,9 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		snapshotMessage, marshalErr = snapshotEnvelope(snapshot)
-		if marshalErr != nil || !connection.enqueue(snapshotMessage) {
+		if marshalErr != nil || connection.enqueueState(snapshotMessage, snapshot.Match.Revision) != enqueueStateQueued {
 			return
 		}
-		connection.revision.Store(snapshot.Match.Revision)
 	}
 }
 
@@ -285,12 +354,12 @@ func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, sna
 			if existing == connection || !existing.ready || existing.revision.Load() >= snapshotRevision {
 				continue
 			}
-			if !existing.enqueue(snapshotMessage) {
+			result := existing.enqueueState(snapshotMessage, snapshotRevision)
+			if result == enqueueStateFull || result == enqueueStateInvalid {
 				existing.ready = false
 				slow = append(slow, existing)
 				continue
 			}
-			existing.revision.Store(snapshotRevision)
 		}
 		match.publishedRevision = snapshotRevision
 	}
@@ -305,11 +374,11 @@ func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, sna
 		if pending.revision <= snapshotRevision {
 			continue
 		}
-		if !connection.enqueue(pending.data) {
+		result := connection.enqueueState(pending.data, pending.revision)
+		if result == enqueueStateFull || result == enqueueStateInvalid {
 			queued = false
 			break
 		}
-		connection.revision.Store(pending.revision)
 	}
 	connection.pending = nil
 	connection.ready = queued
@@ -367,11 +436,11 @@ func (hub *Hub) flushPublishedLocked(match *hubMatch) []*hubConnection {
 		match.publishedRevision = nextRevision
 		for connection := range match.connections {
 			if connection.ready {
-				if !connection.enqueue(data) {
+				result := connection.enqueueState(data, nextRevision)
+				if result == enqueueStateFull || result == enqueueStateInvalid {
 					slow = append(slow, connection)
 					continue
 				}
-				connection.revision.Store(nextRevision)
 				continue
 			}
 			if len(connection.pending) >= webSocketPendingLimit {
@@ -392,9 +461,71 @@ func (connection *hubConnection) enqueue(data []byte) bool {
 	}
 }
 
+func (connection *hubConnection) enqueueState(data []byte, revision int64) enqueueStateResult {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	return connection.enqueueStateLocked(data, revision)
+}
+
+func (connection *hubConnection) enqueueStateLocked(data []byte, revision int64) enqueueStateResult {
+	if revision < 0 || len(data) == 0 {
+		return enqueueStateInvalid
+	}
+	current := connection.revision.Load()
+	if revision < current {
+		return enqueueStateStale
+	}
+	if !connection.enqueue(data) {
+		return enqueueStateFull
+	}
+	if revision > current {
+		connection.revision.Store(revision)
+	}
+	return enqueueStateQueued
+}
+
+func (connection *hubConnection) enqueueInitial(connected, snapshot []byte, revision int64) bool {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	if revision < 0 || len(connected) == 0 || len(snapshot) == 0 || cap(connection.send)-len(connection.send) < 2 {
+		return false
+	}
+	connection.send <- append([]byte(nil), connected...)
+	connection.send <- append([]byte(nil), snapshot...)
+	connection.revision.Store(revision)
+	return true
+}
+
+func (connection *hubConnection) enqueueErrorAndSnapshot(code, actionID string, snapshot Snapshot) enqueueStateResult {
+	snapshotMessage, err := snapshotEnvelope(snapshot)
+	if err != nil {
+		return enqueueStateInvalid
+	}
+	errorMessage, err := boundEnvelope(connection.gameID, connection.matchID, snapshot.Match.Revision, protocol.TypePlatformError, actionID,
+		errorPayload{Code: code, Message: fixedErrorMessage(code), Details: map[string]any{}})
+	if err != nil {
+		return enqueueStateInvalid
+	}
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	current := connection.revision.Load()
+	if snapshot.Match.Revision < current {
+		return enqueueStateStale
+	}
+	if cap(connection.send)-len(connection.send) < 2 {
+		return enqueueStateFull
+	}
+	connection.send <- append([]byte(nil), errorMessage...)
+	connection.send <- append([]byte(nil), snapshotMessage...)
+	if snapshot.Match.Revision > current {
+		connection.revision.Store(snapshot.Match.Revision)
+	}
+	return enqueueStateQueued
+}
+
 func (connection *hubConnection) writeLoop() {
 	defer close(connection.done)
-	ticker := time.NewTicker(webSocketHeartbeatInterval)
+	ticker := time.NewTicker(connection.hub.heartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -436,7 +567,7 @@ func (connection *hubConnection) writeLoop() {
 func (connection *hubConnection) readLoop() {
 	lastActivity := time.Now()
 	for {
-		remaining := presenceConnectionTimeout - time.Since(lastActivity)
+		remaining := connection.hub.activityTimeout - time.Since(lastActivity)
 		if remaining <= 0 {
 			return
 		}
@@ -447,18 +578,18 @@ func (connection *hubConnection) readLoop() {
 			return
 		}
 		if messageType != websocket.MessageText {
-			connection.enqueueError("invalid_request", "", connection.revision.Load())
+			connection.enqueueError("invalid_request", "")
 			continue
 		}
 		envelope, decodeErr := protocol.DecodeClient(data)
 		if decodeErr != nil || envelope.Type == protocol.TypePlatformConnect || envelope.MatchID != connection.matchID || envelope.GameID != connection.gameID {
-			connection.enqueueError("invalid_request", "", connection.revision.Load())
+			connection.enqueueError("invalid_request", "")
 			continue
 		}
 		if envelope.Type == protocol.TypePlatformPong {
 			var payload pongPayload
 			if json.Unmarshal(envelope.Payload, &payload) != nil || !connection.validPong(payload.Nonce) {
-				connection.enqueueError("invalid_request", "", connection.revision.Load())
+				connection.enqueueError("invalid_request", "")
 				continue
 			}
 			if !connection.hub.presence.Touch(connection.matchID, connection.userID, connection.id) {
@@ -475,14 +606,14 @@ func (connection *hubConnection) readLoop() {
 		case protocol.TypePlatformSnapshotRequested:
 			var payload snapshotRequestPayload
 			if json.Unmarshal(envelope.Payload, &payload) != nil {
-				connection.enqueueError("invalid_request", "", connection.revision.Load())
+				connection.enqueueError("invalid_request", "")
 				continue
 			}
 			connection.sendLatestSnapshot()
 		case protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested:
 			connection.applyAction(envelope)
 		default:
-			connection.enqueueError("invalid_request", envelope.ActionID, connection.revision.Load())
+			connection.enqueueError("invalid_request", envelope.ActionID)
 		}
 	}
 }
@@ -509,44 +640,72 @@ func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
 		return
 	}
 	if errors.Is(err, ErrStaleRevision) {
-		operationContext, cancel = context.WithTimeout(connection.ctx, webSocketOperationTimeout)
-		snapshot, snapshotErr := connection.hub.service.Snapshot(operationContext, connection.matchID)
-		cancel()
-		if snapshotErr != nil {
-			connection.enqueueError("internal_error", envelope.ActionID, connection.revision.Load())
-			return
-		}
-		connection.enqueueError("stale_revision", envelope.ActionID, snapshot.Match.Revision)
-		connection.enqueueSnapshot(snapshot)
+		connection.sendStaleResponse(envelope.ActionID)
 		return
 	}
-	connection.enqueueError(safeActionErrorCode(err), envelope.ActionID, connection.revision.Load())
+	connection.enqueueError(safeActionErrorCode(err), envelope.ActionID)
 }
 
 func (connection *hubConnection) sendLatestSnapshot() {
-	operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
-	snapshot, err := connection.hub.service.Snapshot(operationContext, connection.matchID)
-	cancel()
-	if err != nil {
-		connection.enqueueError("internal_error", "", connection.revision.Load())
-		return
+	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
+		operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
+		snapshot, err := connection.hub.service.Snapshot(operationContext, connection.matchID)
+		cancel()
+		if err != nil {
+			connection.enqueueError("internal_error", "")
+			return
+		}
+		switch connection.enqueueSnapshot(snapshot) {
+		case enqueueStateQueued:
+			return
+		case enqueueStateStale:
+			continue
+		default:
+			connection.close()
+			return
+		}
 	}
-	connection.enqueueSnapshot(snapshot)
+	connection.close()
 }
 
-func (connection *hubConnection) enqueueSnapshot(snapshot Snapshot) {
+func (connection *hubConnection) sendStaleResponse(actionID string) {
+	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
+		operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
+		snapshot, err := connection.hub.service.Snapshot(operationContext, connection.matchID)
+		cancel()
+		if err != nil {
+			connection.enqueueError("internal_error", actionID)
+			return
+		}
+		switch connection.enqueueErrorAndSnapshot("stale_revision", actionID, snapshot) {
+		case enqueueStateQueued:
+			return
+		case enqueueStateStale:
+			continue
+		default:
+			connection.close()
+			return
+		}
+	}
+	connection.close()
+}
+
+func (connection *hubConnection) enqueueSnapshot(snapshot Snapshot) enqueueStateResult {
 	message, err := snapshotEnvelope(snapshot)
-	if err != nil || !connection.enqueue(message) {
-		connection.close()
-		return
+	if err != nil {
+		return enqueueStateInvalid
 	}
-	connection.revision.Store(snapshot.Match.Revision)
+	return connection.enqueueState(message, snapshot.Match.Revision)
 }
 
-func (connection *hubConnection) enqueueError(code, actionID string, revision int64) {
+func (connection *hubConnection) enqueueError(code, actionID string) {
+	connection.outboundMu.Lock()
+	revision := connection.revision.Load()
 	message, err := boundEnvelope(connection.gameID, connection.matchID, revision, protocol.TypePlatformError, actionID,
 		errorPayload{Code: code, Message: fixedErrorMessage(code), Details: map[string]any{}})
-	if err != nil || !connection.enqueue(message) {
+	queued := err == nil && connection.enqueue(message)
+	connection.outboundMu.Unlock()
+	if !queued {
 		connection.close()
 	}
 }
@@ -642,10 +801,10 @@ func safeActionErrorCode(err error) string {
 
 func fixedErrorMessage(code string) string {
 	switch code {
-	case "invalid_connect":
-		return "The first message is invalid"
-	case "credential_invalid":
-		return "The connection credential is invalid"
+	case "ticket_invalid":
+		return "The launch ticket is invalid"
+	case "resume_expired":
+		return "The resume session has expired"
 	case "stale_revision":
 		return "The match state is out of date"
 	case "action_conflict":

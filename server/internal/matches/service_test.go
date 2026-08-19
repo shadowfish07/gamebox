@@ -2421,7 +2421,7 @@ func TestResumeCredentialLaunchTicketIsAtomicSingleUseAndSlides(t *testing.T) {
 	if connected.UserID != initiatorID || connected.MatchID != created.ID || connected.GameID != gomoku.GameID || connected.ResumeToken == "" || connected.ResumeExpiresAt != wantInitialExpiry {
 		t.Fatalf("credential=%+v", connected)
 	}
-	if second, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token}); !errors.Is(err, ErrInvalidCredential) || second.ResumeToken != "" {
+	if second, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token}); !errors.Is(err, ErrTicketInvalid) || second.ResumeToken != "" {
 		t.Fatalf("ticket reuse=(%+v,%v)", second, err)
 	}
 	var consumed sql.NullInt64
@@ -2470,14 +2470,24 @@ func TestResumeCredentialRejectsInvalidExpiredAndTerminalTokensWithoutMutation(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	invalid := []CredentialRequest{{}, {LaunchTicket: ticket.Token, ResumeToken: credential.ResumeToken}, {ResumeToken: "not-base64"}}
-	for _, request := range invalid {
-		if _, err := service.ConnectCredential(context.Background(), request); !errors.Is(err, ErrInvalidCredential) && !errors.Is(err, ErrInvalidRequest) {
-			t.Fatalf("request=%+v err=%v", request, err)
+	invalid := []struct {
+		request CredentialRequest
+		want    error
+	}{
+		{request: CredentialRequest{}, want: ErrInvalidRequest},
+		{request: CredentialRequest{LaunchTicket: ticket.Token, ResumeToken: credential.ResumeToken}, want: ErrInvalidRequest},
+		{request: CredentialRequest{ResumeToken: "not-base64"}, want: ErrResumeExpired},
+		{request: CredentialRequest{ResumeToken: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))}, want: ErrResumeExpired},
+		{request: CredentialRequest{LaunchTicket: "not-base64"}, want: ErrTicketInvalid},
+		{request: CredentialRequest{LaunchTicket: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))}, want: ErrTicketInvalid},
+	}
+	for _, test := range invalid {
+		if _, err := service.ConnectCredential(context.Background(), test.request); !errors.Is(err, test.want) {
+			t.Fatalf("request=%+v err=%v want=%v", test.request, err, test.want)
 		}
 	}
 	fixture.clock.Advance(30 * time.Minute)
-	if _, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: credential.ResumeToken}); !errors.Is(err, ErrInvalidCredential) {
+	if _, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: credential.ResumeToken}); !errors.Is(err, ErrResumeExpired) {
 		t.Fatalf("expired resume err=%v", err)
 	}
 	if _, err := fixture.db.Exec(`UPDATE resume_tokens SET expires_at=? WHERE match_id=?`, fixture.clock.Now().Add(time.Hour).UnixMilli(), created.ID); err != nil {
@@ -2489,7 +2499,7 @@ func TestResumeCredentialRejectsInvalidExpiredAndTerminalTokensWithoutMutation(t
 	if _, _, err := service.ApplyAction(context.Background(), resignRequest(created.ID, opponentID, 991, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: credential.ResumeToken}); !errors.Is(err, ErrInvalidCredential) {
+	if _, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: credential.ResumeToken}); !errors.Is(err, ErrResumeExpired) {
 		t.Fatalf("terminal resume err=%v", err)
 	}
 	var revoked sql.NullInt64
@@ -2658,12 +2668,106 @@ END;`); err != nil {
 	})
 }
 
+func TestLaunchCredentialBindsTicketUserMatchAndGameWithoutConsumption(t *testing.T) {
+	const fourthID = "44444444-4444-4444-8444-444444444444"
+	tests := []struct {
+		name   string
+		tamper func(*testing.T, fixture, LaunchTicket, string)
+	}{
+		{name: "user", tamper: func(t *testing.T, fixture fixture, ticket LaunchTicket, _ string) {
+			if _, err := fixture.db.Exec(`UPDATE launch_tickets SET user_id=? WHERE token_hash=(SELECT token_hash FROM launch_tickets LIMIT 1)`, thirdID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "match", tamper: func(t *testing.T, fixture fixture, ticket LaunchTicket, otherMatchID string) {
+			if _, err := fixture.db.Exec(`UPDATE launch_tickets SET match_id=? WHERE token_hash=(SELECT token_hash FROM launch_tickets LIMIT 1)`, otherMatchID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "game", tamper: func(t *testing.T, fixture fixture, ticket LaunchTicket, _ string) {
+			if _, err := fixture.db.Exec(`UPDATE launch_tickets SET game_id='other-game' WHERE token_hash=(SELECT token_hash FROM launch_tickets LIMIT 1)`); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			fixture.addUser(t, fourthID, "Fourth", true)
+			service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+				ColorRandom: bytes.NewReader([]byte{0, 0}), LaunchTicketRandom: bytes.NewReader(distinctBlocks(31, 32)),
+				TokenPepper: "ticket-binding-test-pepper-at-least-thirty-two-bytes",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := service.Create(context.Background(), gomoku.GameID, thirdID, fourthID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ticket, err := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.tamper(t, fixture, ticket, other.ID)
+			credential, connectErr := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token})
+			if !errors.Is(connectErr, ErrTicketInvalid) || credential.ResumeToken != "" {
+				t.Fatalf("tampered ticket=(%+v,%v)", credential, connectErr)
+			}
+			var consumed sql.NullInt64
+			if err := fixture.db.QueryRow(`SELECT consumed_at FROM launch_tickets`).Scan(&consumed); err != nil || consumed.Valid {
+				t.Fatalf("tampered ticket consumed=%v err=%v", consumed, err)
+			}
+			var resumes int
+			if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM resume_tokens`).Scan(&resumes); err != nil || resumes != 0 {
+				t.Fatalf("resume rows=%d err=%v", resumes, err)
+			}
+		})
+	}
+}
+
 func distinctBlocks(values ...byte) []byte {
 	result := make([]byte, 0, len(values)*32)
 	for _, value := range values {
 		result = append(result, bytes.Repeat([]byte{value}, 32)...)
 	}
 	return result
+}
+
+func TestHubUsesFrozenConnectionDeadlinesAndCredentialMessages(t *testing.T) {
+	fixture := newFixture(t)
+	service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+		ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(distinctBlocks(41, 42)),
+		TokenPepper: "hub-defaults-test-pepper-at-least-thirty-two-bytes",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	presence, err := NewPresence(service, fixture.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub, err := NewHub(service, presence, fixture.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hub.firstMessageTimeout != 5*time.Second || hub.heartbeatInterval != 15*time.Second || hub.activityTimeout != 45*time.Second {
+		t.Fatalf("hub deadlines=(%s,%s,%s)", hub.firstMessageTimeout, hub.heartbeatInterval, hub.activityTimeout)
+	}
+	wantMessages := map[string]string{
+		"invalid_request": "The request is invalid",
+		"ticket_invalid":  "The launch ticket is invalid",
+		"resume_expired":  "The resume session has expired",
+	}
+	for code, want := range wantMessages {
+		if got := fixedErrorMessage(code); got != want {
+			t.Fatalf("fixedErrorMessage(%q)=%q want %q", code, got, want)
+		}
+	}
 }
 
 func TestHubPublishesConcurrentRevisionsInOrderAndDeduplicates(t *testing.T) {
@@ -2776,6 +2880,74 @@ func TestHubOlderConcurrentSnapshotMustBeRetriedBeforeReady(t *testing.T) {
 	ready, stale := hub.markReady(joining, 0, []byte(`{"revision":0}`))
 	if ready || !stale || joining.ready {
 		t.Fatalf("older snapshot ready=%t stale=%t connectionReady=%t", ready, stale, joining.ready)
+	}
+}
+
+func TestHubRuntimeSnapshotNeverRegressesPublishedConnectionWatermark(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snapshotAtOne, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 9991, 0, 7, 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := &hubConnection{send: make(chan []byte, 2)}
+	connection.revision.Store(2) // event revision 2 won the scheduling race
+	connection.enqueueSnapshot(snapshotAtOne)
+	if connection.revision.Load() != 2 {
+		t.Fatalf("runtime snapshot rolled watermark back to %d", connection.revision.Load())
+	}
+	if len(connection.send) != 0 {
+		t.Fatal("runtime snapshot older than the published event was queued")
+	}
+}
+
+func TestHubStaleResponseQueuesErrorThenNonRegressingSnapshotAfterNewerEvent(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snapshotAtOne, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 9992, 0, 7, 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventAtTwo, snapshotAtTwo, err := service.ApplyAction(context.Background(), moveRequest(created.ID, opponentID, 9993, 1, 8, 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventMessage, err := eventEnvelope(gomoku.GameID, eventAtTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := &hubConnection{
+		send: make(chan []byte, 3), gameID: gomoku.GameID, matchID: created.ID,
+	}
+	if result := connection.enqueueState(eventMessage, 2); result != enqueueStateQueued {
+		t.Fatalf("event enqueue=%d", result)
+	}
+	if result := connection.enqueueErrorAndSnapshot("stale_revision", actionID(9994), snapshotAtOne); result != enqueueStateStale {
+		t.Fatalf("older stale pair enqueue=%d", result)
+	}
+	if result := connection.enqueueErrorAndSnapshot("stale_revision", actionID(9994), snapshotAtTwo); result != enqueueStateQueued {
+		t.Fatalf("latest stale pair enqueue=%d", result)
+	}
+	if connection.revision.Load() != 2 || len(connection.send) != 3 {
+		t.Fatalf("watermark=%d queued=%d", connection.revision.Load(), len(connection.send))
+	}
+	wantTypes := []string{protocol.TypeGomokuMoveAccepted, protocol.TypePlatformError, protocol.TypePlatformSnapshot}
+	for index, wantType := range wantTypes {
+		var envelope protocol.Envelope
+		if err := json.Unmarshal(<-connection.send, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Type != wantType || envelope.Revision == nil || *envelope.Revision != 2 {
+			t.Fatalf("message[%d]=%+v", index, envelope)
+		}
 	}
 }
 

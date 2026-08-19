@@ -75,6 +75,7 @@ type apiFixture struct {
 	logs      *lockedBuffer
 	publisher *recordingPublisher
 	hub       *matches.Hub
+	presence  *matches.Presence
 	now       time.Time
 }
 
@@ -96,6 +97,10 @@ func (buffer *lockedBuffer) String() string {
 }
 
 func newAPIFixture(t *testing.T) apiFixture {
+	return newAPIFixtureWithHubConfig(t, matches.HubConfig{})
+}
+
+func newAPIFixtureWithHubConfig(t *testing.T, hubConfig matches.HubConfig) apiFixture {
 	t.Helper()
 	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "gamebox.sqlite"))
 	if err != nil {
@@ -128,7 +133,7 @@ func newAPIFixture(t *testing.T) apiFixture {
 	if err != nil {
 		t.Fatalf("new presence: %v", err)
 	}
-	hub, err := matches.NewHub(matchService, presence, testClock)
+	hub, err := matches.NewHubWithConfig(matchService, presence, testClock, hubConfig)
 	if err != nil {
 		t.Fatalf("new hub: %v", err)
 	}
@@ -145,7 +150,7 @@ func newAPIFixture(t *testing.T) apiFixture {
 	if err != nil {
 		t.Fatalf("new router: %v", err)
 	}
-	return apiFixture{db: db, clock: testClock, auth: authService, matches: matchService, handler: handler, logs: logs, publisher: publisher, hub: hub, now: now}
+	return apiFixture{db: db, clock: testClock, auth: authService, matches: matchService, handler: handler, logs: logs, publisher: publisher, hub: hub, presence: presence, now: now}
 }
 
 func distinctCredentialEntropy(count int) []byte {
@@ -511,11 +516,21 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 	if err := json.Unmarshal(aliceConnected.Payload, &connectedPayload); err != nil || connectedPayload.ResumeToken == "" || connectedPayload.UserID != alice.Session.User.ID || !canonicalRequestID(connectedPayload.ConnectionID) || connectedPayload.ResumeExpiresAt != fixture.clock.Now().UTC().Add(30*time.Minute).UnixMilli() {
 		t.Fatalf("connected payload=%s err=%v", aliceConnected.Payload, err)
 	}
-	_ = aliceWS.Close(websocket.StatusNormalClosure, "")
+	oldAliceWS := aliceWS
 	aliceWS, _, resumedSnapshot := connect("resumeToken", connectedPayload.ResumeToken, 1)
 	defer aliceWS.CloseNow()
 	if resumedSnapshot.Revision == nil || *resumedSnapshot.Revision != 1 {
 		t.Fatalf("resumed snapshot=%+v", resumedSnapshot)
+	}
+	oldReadContext, cancelOldRead := context.WithTimeout(context.Background(), time.Second)
+	_, _, oldReadErr := oldAliceWS.Read(oldReadContext)
+	cancelOldRead()
+	if oldReadErr == nil {
+		t.Fatal("successful resume left the older connection open")
+	}
+	var offlineSince sql.NullInt64
+	if err := fixture.db.QueryRow(`SELECT both_offline_since FROM matches WHERE id=?`, matchBody.Match.ID).Scan(&offlineSince); err != nil || offlineSince.Valid || !fixture.presence.IsOnline(matchBody.Match.ID, alice.Session.User.ID) {
+		t.Fatalf("old close clobbered new presence: offline=%v online=%t err=%v", offlineSince, fixture.presence.IsOnline(matchBody.Match.ID, alice.Session.User.ID), err)
 	}
 	resignID := "aaaaaaaa-aaaa-4aaa-8aaa-000000000003"
 	resign := fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"expectedRevision":1,"type":"gomoku.resign.requested","actionId":%s,"payload":{}}`, quote(matchBody.Match.ID), quote(resignID))
@@ -533,11 +548,12 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 	}
 	writeWS(t, revoked, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":%s}}`, quote(connectedPayload.ResumeToken)))
 	revokedError := readWSEnvelope(t, revoked)
-	_ = revoked.CloseNow()
-	cancel()
-	if revokedError.Type != protocol.TypePlatformError || !bytes.Contains(revokedError.Payload, []byte(`"code":"credential_invalid"`)) {
+	if revokedError.Type != protocol.TypePlatformError || !bytes.Contains(revokedError.Payload, []byte(`"code":"resume_expired"`)) || bytes.Contains(revokedError.Payload, []byte(connectedPayload.ResumeToken)) {
 		t.Fatalf("terminal resume=%+v", revokedError)
 	}
+	assertWebSocketClose(t, revoked, websocket.StatusPolicyViolation, "resume_expired")
+	_ = revoked.CloseNow()
+	cancel()
 	if strings.Contains(wsURL, aliceTicket) || strings.Contains(fixture.logs.String(), aliceTicket) || strings.Contains(fixture.logs.String(), connectedPayload.ResumeToken) {
 		t.Fatalf("credential leaked url=%q logs=%s", wsURL, fixture.logs.String())
 	}
@@ -574,9 +590,10 @@ func TestWebSocketRejectsInvalidHandshakeCredentialReuseAndCrossOrigin(t *testin
 		defer connection.CloseNow()
 		writeWS(t, connection, `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"00000000-0000-4000-8000-000000000001"}}`)
 		errorEnvelope := readWSEnvelope(t, connection)
-		if errorEnvelope.Type != protocol.TypePlatformError || errorEnvelope.MatchID != "" || errorEnvelope.Revision != nil || !bytes.Contains(errorEnvelope.Payload, []byte(`"code":"invalid_connect"`)) {
+		if errorEnvelope.Type != protocol.TypePlatformError || errorEnvelope.MatchID != "" || errorEnvelope.Revision != nil || !bytes.Contains(errorEnvelope.Payload, []byte(`"code":"invalid_request"`)) {
 			t.Fatalf("handshake error=%+v", errorEnvelope)
 		}
+		assertWebSocketClose(t, connection, websocket.StatusPolicyViolation, "invalid_request")
 	})
 
 	t.Run("ticket is consumed once", func(t *testing.T) {
@@ -602,9 +619,10 @@ func TestWebSocketRejectsInvalidHandshakeCredentialReuseAndCrossOrigin(t *testin
 		defer reused.CloseNow()
 		writeWS(t, reused, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
 		failure := readWSEnvelope(t, reused)
-		if failure.Type != protocol.TypePlatformError || !bytes.Contains(failure.Payload, []byte(`"code":"credential_invalid"`)) {
+		if failure.Type != protocol.TypePlatformError || !bytes.Contains(failure.Payload, []byte(`"code":"ticket_invalid"`)) || bytes.Contains(failure.Payload, []byte(ticketBody.LaunchTicket)) {
 			t.Fatalf("ticket reuse=%+v", failure)
 		}
+		assertWebSocketClose(t, reused, websocket.StatusPolicyViolation, "ticket_invalid")
 	})
 
 	t.Run("query authorization and cross origin are rejected", func(t *testing.T) {
@@ -694,6 +712,206 @@ func TestWebSocketReceivesCommittedHTTPCancellation(t *testing.T) {
 	}
 }
 
+func TestWebSocketFirstMessageDeadlineUsesFrozenInvalidRequestAndClose(t *testing.T) {
+	fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+		FirstMessageTimeout: 25 * time.Millisecond,
+		HeartbeatInterval:   time.Hour,
+		ActivityTimeout:     time.Second,
+	})
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	started := time.Now()
+	failure := readWSEnvelope(t, connection)
+	if failure.Type != protocol.TypePlatformError || !bytes.Contains(failure.Payload, []byte(`"code":"invalid_request"`)) || time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("first-message timeout=%+v elapsed=%s", failure, time.Since(started))
+	}
+	assertWebSocketClose(t, connection, websocket.StatusPolicyViolation, "invalid_request")
+}
+
+func TestWebSocketHeartbeatAndPresenceActivitySemantics(t *testing.T) {
+	t.Run("matching pong touches", func(t *testing.T) {
+		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: time.Second,
+		})
+		client := openFixtureWebSocket(t, fixture, "pong")
+		ping := readWSEnvelope(t, client.connection)
+		if ping.Type != protocol.TypePlatformPing {
+			t.Fatalf("heartbeat=%+v", ping)
+		}
+		var payload struct {
+			Nonce string `json:"nonce"`
+		}
+		if json.Unmarshal(ping.Payload, &payload) != nil || !canonicalRequestID(payload.Nonce) {
+			t.Fatalf("ping payload=%s", ping.Payload)
+		}
+		fixture.clock.Advance(44 * time.Second)
+		writeWS(t, client.connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"type":"platform.pong","payload":{"nonce":%s}}`, quote(ping.MatchID), quote(payload.Nonce)))
+		writeWS(t, client.connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"type":"platform.snapshot.requested","payload":{"currentRevision":0}}`, quote(client.matchID)))
+		for attempts := 0; ; attempts++ {
+			response := readWSEnvelope(t, client.connection)
+			if response.Type == protocol.TypePlatformSnapshot {
+				break
+			}
+			if attempts == 20 || response.Type != protocol.TypePlatformPing {
+				t.Fatalf("pong processing barrier=%+v", response)
+			}
+		}
+		fixture.clock.Advance(2 * time.Second)
+		if err := fixture.presence.Sweep(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if !fixture.presence.IsOnline(client.matchID, client.userID) {
+			t.Fatal("matching pong did not refresh Presence")
+		}
+	})
+
+	t.Run("mismatched pong does not touch", func(t *testing.T) {
+		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: time.Second,
+		})
+		client := openFixtureWebSocket(t, fixture, "wrong-pong")
+		ping := readWSEnvelope(t, client.connection)
+		if ping.Type != protocol.TypePlatformPing {
+			t.Fatalf("heartbeat=%+v", ping)
+		}
+		var payload struct {
+			Nonce string `json:"nonce"`
+		}
+		if json.Unmarshal(ping.Payload, &payload) != nil || !canonicalRequestID(payload.Nonce) {
+			t.Fatalf("ping payload=%s", ping.Payload)
+		}
+		wrongNonce := payload.Nonce[:len(payload.Nonce)-1] + "0"
+		if wrongNonce == payload.Nonce {
+			wrongNonce = payload.Nonce[:len(payload.Nonce)-1] + "1"
+		}
+		fixture.clock.Advance(44 * time.Second)
+		writeWS(t, client.connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"type":"platform.pong","payload":{"nonce":%s}}`, quote(client.matchID), quote(wrongNonce)))
+		for attempts := 0; ; attempts++ {
+			response := readWSEnvelope(t, client.connection)
+			if response.Type == protocol.TypePlatformError {
+				break
+			}
+			if attempts == 20 || response.Type != protocol.TypePlatformPing {
+				t.Fatalf("mismatched pong response=%+v", response)
+			}
+		}
+		fixture.clock.Advance(2 * time.Second)
+		if err := fixture.presence.Sweep(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.presence.IsOnline(client.matchID, client.userID) {
+			t.Fatal("mismatched pong refreshed Presence")
+		}
+	})
+
+	t.Run("other valid message touches", func(t *testing.T) {
+		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+			FirstMessageTimeout: time.Second, HeartbeatInterval: time.Hour, ActivityTimeout: time.Second,
+		})
+		client := openFixtureWebSocket(t, fixture, "snapshot-touch")
+		fixture.clock.Advance(44 * time.Second)
+		writeWS(t, client.connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"type":"platform.snapshot.requested","payload":{"currentRevision":0}}`, quote(client.matchID)))
+		if response := readWSEnvelope(t, client.connection); response.Type != protocol.TypePlatformSnapshot {
+			t.Fatalf("snapshot response=%+v", response)
+		}
+		fixture.clock.Advance(2 * time.Second)
+		if err := fixture.presence.Sweep(context.Background()); err != nil || !fixture.presence.IsOnline(client.matchID, client.userID) {
+			t.Fatalf("valid message presence online=%t err=%v", fixture.presence.IsOnline(client.matchID, client.userID), err)
+		}
+	})
+
+	t.Run("invalid traffic does not touch", func(t *testing.T) {
+		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+			FirstMessageTimeout: time.Second, HeartbeatInterval: time.Hour, ActivityTimeout: time.Second,
+		})
+		client := openFixtureWebSocket(t, fixture, "invalid-touch")
+		fixture.clock.Advance(44 * time.Second)
+		writeWS(t, client.connection, `{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"invalid"}}`)
+		if response := readWSEnvelope(t, client.connection); response.Type != protocol.TypePlatformError {
+			t.Fatalf("invalid response=%+v", response)
+		}
+		fixture.clock.Advance(2 * time.Second)
+		if err := fixture.presence.Sweep(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.presence.IsOnline(client.matchID, client.userID) {
+			t.Fatal("invalid traffic refreshed Presence")
+		}
+	})
+}
+
+func TestWebSocketActivityDeadlineClosesAndDeletesPresenceConnection(t *testing.T) {
+	fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+		FirstMessageTimeout: time.Second, HeartbeatInterval: time.Hour, ActivityTimeout: 30 * time.Millisecond,
+	})
+	client := openFixtureWebSocket(t, fixture, "activity-close")
+	readContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	_, _, readErr := client.connection.Read(readContext)
+	cancel()
+	if readErr == nil {
+		t.Fatal("inactive connection remained open")
+	}
+	deadline := time.Now().Add(time.Second)
+	for fixture.presence.IsOnline(client.matchID, client.userID) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if fixture.presence.IsOnline(client.matchID, client.userID) {
+		t.Fatal("inactive connection was not deleted from Presence")
+	}
+}
+
+type fixtureWebSocket struct {
+	connection *websocket.Conn
+	matchID    string
+	userID     string
+}
+
+func openFixtureWebSocket(t *testing.T, fixture apiFixture, suffix string) fixtureWebSocket {
+	t.Helper()
+	alice := fixture.register(t, "ws-timer-a-"+suffix, "Alice")
+	bob := fixture.register(t, "ws-timer-b-"+suffix, "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	ticketResponse := fixture.request(t, http.MethodPost, "/v1/matches/"+matchBody.Match.ID+"/launch-ticket", `{}`, alice.Session.AccessToken)
+	var ticketBody struct {
+		LaunchTicket string `json:"launchTicket"`
+	}
+	decodeResponse(t, ticketResponse, &ticketBody)
+	server := httptest.NewServer(fixture.handler)
+	t.Cleanup(server.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.CloseNow() })
+	writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
+	connected, snapshot := readWSEnvelope(t, connection), readWSEnvelope(t, connection)
+	if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot {
+		t.Fatalf("initial=(%+v,%+v)", connected, snapshot)
+	}
+	var payload struct {
+		UserID string `json:"userId"`
+	}
+	if json.Unmarshal(connected.Payload, &payload) != nil || payload.UserID != alice.Session.User.ID {
+		t.Fatalf("connected payload=%s", connected.Payload)
+	}
+	return fixtureWebSocket{connection: connection, matchID: matchBody.Match.ID, userID: payload.UserID}
+}
+
 func writeWS(t *testing.T, connection *websocket.Conn, message string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -716,6 +934,17 @@ func readWSEnvelope(t *testing.T, connection *websocket.Conn) protocol.Envelope 
 		t.Fatalf("decode websocket message %s: %v", data, err)
 	}
 	return envelope
+}
+
+func assertWebSocketClose(t *testing.T, connection *websocket.Conn, wantStatus websocket.StatusCode, wantReason string) {
+	t.Helper()
+	readContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, readErr := connection.Read(readContext)
+	var closeErr websocket.CloseError
+	if !errors.As(readErr, &closeErr) || closeErr.Code != wantStatus || closeErr.Reason != wantReason {
+		t.Fatalf("close=(%v,%q) err=%v want=(%v,%q)", closeErr.Code, closeErr.Reason, readErr, wantStatus, wantReason)
+	}
 }
 
 func TestRouterStrictJSONAuthenticationAndRoutingErrors(t *testing.T) {

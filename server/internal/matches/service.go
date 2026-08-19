@@ -43,7 +43,8 @@ var (
 	ErrMatchNotCancellable  = errors.New("match_not_cancellable")
 	ErrStaleRevision        = errors.New("stale_revision")
 	ErrActionConflict       = errors.New("action_conflict")
-	ErrInvalidCredential    = errors.New("credential_invalid")
+	ErrTicketInvalid        = errors.New("ticket_invalid")
+	ErrResumeExpired        = errors.New("resume_expired")
 	ErrInternal             = errors.New("internal_error")
 )
 
@@ -537,20 +538,22 @@ func (service *Service) ConnectCredential(ctx context.Context, request Credentia
 	launch := request.LaunchTicket != ""
 	resume := request.ResumeToken != ""
 	if launch == resume {
-		return ConnectionCredential{}, ErrInvalidCredential
+		return ConnectionCredential{}, ErrInvalidRequest
 	}
 	plaintext := request.LaunchTicket
 	domain := launchTicketHashDomain
+	credentialFailure := ErrTicketInvalid
 	if resume {
 		plaintext = request.ResumeToken
 		domain = resumeTokenHashDomain
+		credentialFailure = ErrResumeExpired
 	}
 	if !validOpaqueCredential(plaintext) {
-		return ConnectionCredential{}, ErrInvalidCredential
+		return ConnectionCredential{}, credentialFailure
 	}
 	tokenHash, hashErr := hashCredential(service.tokenPepper, plaintext, domain)
 	if hashErr != nil {
-		return ConnectionCredential{}, ErrInvalidCredential
+		return ConnectionCredential{}, credentialFailure
 	}
 	transaction, beginErr := service.beginWriteTransaction(ctx)
 	if beginErr != nil {
@@ -579,7 +582,7 @@ SELECT match_id,user_id,game_id,expires_at,consumed_at
 FROM launch_tickets
 WHERE token_hash=?`, tokenHash).Scan(&matchID, &userID, &storedGameID, &storedExpires, &consumed)
 		if errors.Is(queryErr, sql.ErrNoRows) || queryErr == nil && (consumed.Valid || storedExpires <= nowMillis) {
-			return ConnectionCredential{}, ErrInvalidCredential
+			return ConnectionCredential{}, ErrTicketInvalid
 		}
 		if queryErr != nil {
 			return ConnectionCredential{}, matchDatabaseError(ctx, queryErr)
@@ -592,24 +595,24 @@ SELECT match_id,user_id,expires_at,last_used_at,revoked_at
 FROM resume_tokens
 WHERE token_hash=?`, tokenHash).Scan(&matchID, &userID, &storedExpires, &lastUsed, &revoked)
 		if errors.Is(queryErr, sql.ErrNoRows) || queryErr == nil && (revoked.Valid || storedExpires <= nowMillis || lastUsed > storedExpires) {
-			return ConnectionCredential{}, ErrInvalidCredential
+			return ConnectionCredential{}, ErrResumeExpired
 		}
 		if queryErr != nil {
 			return ConnectionCredential{}, matchDatabaseError(ctx, queryErr)
 		}
 	}
 	if !canonicalUUID(matchID) || !canonicalUUID(userID) {
-		return ConnectionCredential{}, ErrInternal
+		return ConnectionCredential{}, credentialFailure
 	}
 	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, matchID)
 	if loadErr != nil {
 		if errors.Is(loadErr, ErrMatchNotFound) {
-			return ConnectionCredential{}, ErrInvalidCredential
+			return ConnectionCredential{}, credentialFailure
 		}
 		return ConnectionCredential{}, loadErr
 	}
 	if match.Status != StatusActive || !playerMember(players, userID) || launch && storedGameID != match.GameID {
-		return ConnectionCredential{}, ErrInvalidCredential
+		return ConnectionCredential{}, credentialFailure
 	}
 	if _, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players); snapshotErr != nil {
 		return ConnectionCredential{}, snapshotErr
@@ -625,7 +628,7 @@ WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?`, nowMillis, tokenHa
 			return ConnectionCredential{}, matchDatabaseError(ctx, updateErr)
 		}
 		if affectedExactlyOne(result) != nil {
-			return ConnectionCredential{}, ErrInvalidCredential
+			return ConnectionCredential{}, ErrTicketInvalid
 		}
 		inserted := false
 		for attempt := 0; attempt < launchTicketCollisionMax; attempt++ {
@@ -664,7 +667,7 @@ WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?`, nowMillis, expiresM
 			return ConnectionCredential{}, matchDatabaseError(ctx, updateErr)
 		}
 		if affectedExactlyOne(result) != nil {
-			return ConnectionCredential{}, ErrInvalidCredential
+			return ConnectionCredential{}, ErrResumeExpired
 		}
 	}
 	if commitErr := transaction.Commit(); commitErr != nil {
