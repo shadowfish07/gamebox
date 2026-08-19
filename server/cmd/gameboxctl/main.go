@@ -221,7 +221,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	database, err := store.Open(ctx, options.db)
+	database, err := store.OpenReadOnly(ctx, options.db)
 	if err != nil {
 		writeLine(stderr, matchFailed)
 		return exitFailure

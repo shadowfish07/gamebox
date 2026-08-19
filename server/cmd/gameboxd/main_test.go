@@ -3,14 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"me.zqydev/gamebox/server/internal/clock"
+	"me.zqydev/gamebox/server/internal/store"
 )
 
 func TestRunServesHealthAndShutsDownCleanly(t *testing.T) {
@@ -72,9 +79,201 @@ func TestComponentLogWriterAllowListsIdentifiersAndDropsFreeFormSecrets(t *testi
 	}
 }
 
+func TestRecoveryCompletesBeforeRuntimeBuilderStarts(t *testing.T) {
+	database := openDaemonTestDatabase(t)
+	now := time.Date(2026, time.August, 20, 8, 9, 10, 0, time.UTC)
+	if _, err := database.Exec(`INSERT INTO matches(id,game_id,status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
+		"11111111-1111-4111-8111-111111111111", "gomoku", "active", 0, now.UnixMilli(), now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	builderCalls := 0
+	started, err := recoverThenBuild(context.Background(), database, clock.NewFake(now), func() error {
+		builderCalls++
+		var offlineSince sql.NullInt64
+		if err := database.QueryRow(`SELECT both_offline_since FROM matches WHERE id='11111111-1111-4111-8111-111111111111'`).Scan(&offlineSince); err != nil {
+			return err
+		}
+		if !offlineSince.Valid || offlineSince.Int64 != now.UnixMilli() {
+			t.Fatalf("runtime builder observed recovery=%v, want %d", offlineSince, now.UnixMilli())
+		}
+		return nil
+	})
+	if err != nil || !started || builderCalls != 1 {
+		t.Fatalf("recoverThenBuild=(started=%t err=%v calls=%d)", started, err, builderCalls)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	builderCalls = 0
+	started, err = recoverThenBuild(canceled, database, clock.NewFake(now), func() error {
+		builderCalls++
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || started || builderCalls != 0 {
+		t.Fatalf("failed recovery=(started=%t err=%v calls=%d)", started, err, builderCalls)
+	}
+}
+
+func TestShutdownWaitsForHTTPBeforeStoppingWorkersThenClosesHubAndDatabase(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlerEntered := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		close(handlerEntered)
+		<-releaseHandler
+		writer.WriteHeader(http.StatusNoContent)
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
+	clientDone := make(chan error, 1)
+	go func() {
+		response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + listener.Addr().String())
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		clientDone <- requestErr
+	}()
+	select {
+	case <-handlerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("blocking handler did not start")
+	}
+
+	workerContext, cancelWorker := context.WithCancel(context.Background())
+	workerTick := make(chan chan struct{})
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for {
+			select {
+			case acknowledgment := <-workerTick:
+				close(acknowledgment)
+			case <-workerContext.Done():
+				return
+			}
+		}
+	}()
+
+	var orderMu sync.Mutex
+	var order []string
+	record := func(event string) {
+		orderMu.Lock()
+		defer orderMu.Unlock()
+		order = append(order, event)
+	}
+	stopped := make(chan struct{})
+	shutdownDone := make(chan struct {
+		stage string
+		err   error
+	}, 1)
+	go func() {
+		stage, shutdownErr := shutdownRuntime(time.Second, shutdownHooks{
+			shutdownHTTP: func(ctx context.Context) error { record("http"); return server.Shutdown(ctx) },
+			forceHTTP:    server.Close,
+			stopWorkers: func() {
+				record("workers_stop")
+				cancelWorker()
+				close(stopped)
+			},
+			waitWorkers: func(ctx context.Context) error {
+				record("workers_wait")
+				select {
+				case <-workerDone:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+			closeHub: func(context.Context) error { record("hub"); return nil },
+			closeDatabase: func() error {
+				record("database")
+				return nil
+			},
+		})
+		shutdownDone <- struct {
+			stage string
+			err   error
+		}{stage: stage, err: shutdownErr}
+	}()
+
+	acknowledged := make(chan struct{})
+	workerTick <- acknowledged
+	select {
+	case <-acknowledged:
+	case <-time.After(time.Second):
+		t.Fatal("worker stopped while HTTP shutdown was blocked")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("workers stopped before HTTP handler completed")
+	default:
+	}
+	close(releaseHandler)
+	result := <-shutdownDone
+	if result.err != nil || result.stage != "" {
+		t.Fatalf("shutdown=(%q,%v)", result.stage, result.err)
+	}
+	if got, want := order, []string{"http", "workers_stop", "workers_wait", "hub", "database"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("shutdown order=%v want=%v", got, want)
+	}
+	if err := <-clientDone; err != nil {
+		t.Fatalf("in-flight request: %v", err)
+	}
+	if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("Serve: %v", err)
+	}
+}
+
+func TestShutdownTimeoutForcesHTTPClosedBeforeStoppingWorkers(t *testing.T) {
+	var order []string
+	record := func(event string) { order = append(order, event) }
+	stage, err := shutdownRuntime(20*time.Millisecond, shutdownHooks{
+		shutdownHTTP: func(ctx context.Context) error {
+			record("http")
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		forceHTTP:   func() error { record("http_force"); return nil },
+		stopWorkers: func() { record("workers_stop") },
+		waitWorkers: func(context.Context) error {
+			record("workers_wait")
+			return nil
+		},
+		closeHub: func(context.Context) error { record("hub"); return nil },
+		closeDatabase: func() error {
+			record("database")
+			return nil
+		},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || stage != "http" {
+		t.Fatalf("shutdown=(%q,%v)", stage, err)
+	}
+	want := []string{"http", "http_force", "workers_stop", "workers_wait", "hub", "database"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("shutdown order=%v want=%v", order, want)
+	}
+}
+
 type lockedBuffer struct {
 	mu     sync.Mutex
 	buffer bytes.Buffer
+}
+
+func openDaemonTestDatabase(t *testing.T) *sql.DB {
+	t.Helper()
+	database, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "gamebox.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+	return database
 }
 
 func (buffer *lockedBuffer) Write(data []byte) (int, error) {

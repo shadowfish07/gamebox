@@ -28,7 +28,8 @@ Optional configuration:
 JSON-line operational logs to stderr. Request, WebSocket connection, and match
 identifiers are logged when applicable; invitation and session credentials are
 never logged. `SIGINT` and `SIGTERM` stop new HTTP work, allow a 10-second HTTP
-grace period, close WebSockets and background workers, and then close SQLite.
+grace period, then stop background workers, close WebSockets, and finally close
+SQLite.
 
 ## Create one-time invitation codes
 
@@ -64,9 +65,12 @@ it does not maintain a second board implementation.
 
 The JSON response contains the match ID, game ID, status, revision, result,
 winner, both players with seat/color, board size, and all 225 board cells. The
-query does not update users, presence, matches, events, or credentials; normal
-SQLite open/read sidecar behavior may still occur. An unknown match exits
-nonzero without echoing the supplied identifier.
+query opens an existing, fully migrated database in read-only mode and does not
+update schema, users, presence, matches, events, or credentials. A closed
+database gains no sidecar files; an active WAL database is read through its
+existing complete WAL/SHM pair. Missing, unmigrated, insecure, or incomplete
+databases fail without being created, migrated, or repaired. An unknown match
+exits nonzero without echoing the supplied identifier.
 
 For both management commands, exit code `0` means success/help, `1` means an
 operational failure, and `2` means invalid command syntax. Flags are strict and

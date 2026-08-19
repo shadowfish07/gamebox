@@ -36,22 +36,63 @@ var migrations = []migration{
 var ErrIncompatibleMigrationLedger = errors.New("migration ledger is incompatible; recreate the pre-release database")
 
 func migrate(ctx context.Context, db *sql.DB) error {
-	if err := validateMigrationRegistry(migrations); err != nil {
+	loaded, err := loadRegisteredMigrations()
+	if err != nil {
 		return err
 	}
+	return migrateLoaded(ctx, db, loaded)
+}
+
+func loadRegisteredMigrations() ([]loadedMigration, error) {
+	if err := validateMigrationRegistry(migrations); err != nil {
+		return nil, err
+	}
 	if err := validateEmbeddedMigrationRegistry(migrations, migrationFiles); err != nil {
-		return err
+		return nil, err
 	}
 
 	loaded := make([]loadedMigration, 0, len(migrations))
 	for _, item := range migrations {
 		contents, err := migrationFiles.ReadFile(item.path)
 		if err != nil {
-			return fmt.Errorf("read migration %d: %w", item.version, err)
+			return nil, fmt.Errorf("read migration %d: %w", item.version, err)
 		}
 		loaded = append(loaded, newLoadedMigration(item.version, string(contents)))
 	}
-	return migrateLoaded(ctx, db, loaded)
+	return loaded, nil
+}
+
+func validateCurrentMigrations(ctx context.Context, db *sql.DB) (err error) {
+	loaded, err := loadRegisteredMigrations()
+	if err != nil {
+		return err
+	}
+	transaction, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("begin read-only migration validation: %w", err)
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = fmt.Errorf("rollback read-only migration validation: %w", rollbackErr)
+		}
+	}()
+	if err := validateMigrationLedgerSchema(ctx, transaction); err != nil {
+		return err
+	}
+	applied, err := readAppliedMigrations(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	if err := validateAppliedMigrations(applied, loaded); err != nil {
+		return err
+	}
+	if len(applied) != len(loaded) {
+		return errors.New("database migrations are incomplete")
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit read-only migration validation: %w", err)
+	}
+	return nil
 }
 
 func validateMigrationRegistry(registry []migration) error {
@@ -155,6 +196,25 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	if err != nil {
 		return err
 	}
+	if err := validateAppliedMigrations(applied, loaded); err != nil {
+		return err
+	}
+
+	for _, item := range loaded[len(applied):] {
+		if _, err := tx.ExecContext(ctx, item.script); err != nil {
+			return fmt.Errorf("apply migration %d: %w", item.version, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, unixepoch())`, item.version, item.checksum); err != nil {
+			return fmt.Errorf("record migration %d: %w", item.version, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migrations: %w", err)
+	}
+	return nil
+}
+
+func validateAppliedMigrations(applied []appliedMigration, loaded []loadedMigration) error {
 	for index, actual := range applied {
 		if index >= len(loaded) {
 			return fmt.Errorf("database contains unknown migration version %d", actual.version)
@@ -169,18 +229,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		if actual.checksum != expected.checksum {
 			return fmt.Errorf("migration %d checksum mismatch", actual.version)
 		}
-	}
-
-	for _, item := range loaded[len(applied):] {
-		if _, err := tx.ExecContext(ctx, item.script); err != nil {
-			return fmt.Errorf("apply migration %d: %w", item.version, err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, unixepoch())`, item.version, item.checksum); err != nil {
-			return fmt.Errorf("record migration %d: %w", item.version, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit migrations: %w", err)
 	}
 	return nil
 }

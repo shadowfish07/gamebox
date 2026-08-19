@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -63,50 +64,27 @@ func run(ctx context.Context, output io.Writer) int {
 	}()
 
 	serviceClock := clock.Real{}
-	registry := games.NewRegistry()
-	authService, err := auth.NewService(database, serviceClock, auth.ServiceConfig{
-		JWTSecret: []byte(processConfig.JWTSecret), TokenPepper: processConfig.TokenPepper,
-	})
-	if err != nil {
-		logger.write("startup_failed", map[string]any{"stage": "auth"})
-		return daemonExitFailure
-	}
-	matchService, err := matches.NewServiceWithConfig(database, registry, serviceClock, matches.ServiceConfig{
-		ColorRandom: rand.Reader, LaunchTicketRandom: rand.Reader, TokenPepper: processConfig.TokenPepper,
-	})
-	if err != nil {
-		logger.write("startup_failed", map[string]any{"stage": "matches"})
-		return daemonExitFailure
-	}
-	if err := matchService.MarkActiveMatchesOfflineOnBoot(ctx); err != nil {
-		logger.write("startup_failed", map[string]any{"stage": "boot_recovery"})
-		return daemonExitFailure
-	}
-	presence, err := matches.NewPresence(matchService, serviceClock)
-	if err != nil {
-		logger.write("startup_failed", map[string]any{"stage": "presence"})
-		return daemonExitFailure
-	}
 	componentWriter := &componentLogWriter{logger: logger}
 	componentLogger := log.New(componentWriter, "", 0)
-	hub, err := matches.NewHubWithConfig(matchService, presence, serviceClock, matches.HubConfig{Logger: componentLogger})
-	if err != nil {
-		logger.write("startup_failed", map[string]any{"stage": "hub"})
-		return daemonExitFailure
-	}
-	handler, err := httpapi.NewRouter(httpapi.RouterConfig{
-		Auth: authService, Matches: matchService, Games: registry, Publisher: hub, Hub: hub,
-		Logger: componentLogger, RequestIDs: httpapi.NewProductionRequestID,
+	var runtime runtimeComponents
+	buildStage := "runtime"
+	buildStarted, err := recoverThenBuild(ctx, database, serviceClock, func() error {
+		var buildErr error
+		runtime, buildStage, buildErr = buildRuntime(database, processConfig, serviceClock, componentLogger)
+		return buildErr
 	})
 	if err != nil {
-		logger.write("startup_failed", map[string]any{"stage": "router"})
+		if !buildStarted {
+			buildStage = "boot_recovery"
+		}
+		logger.write("startup_failed", map[string]any{"stage": buildStage})
 		return daemonExitFailure
 	}
 
 	workerContext, cancelWorkers := context.WithCancel(context.Background())
 	workerErrors := make(chan error, 2)
 	workersDone := make(chan struct{})
-	go runWorkers(workerContext, presence, matchService, hub, workerErrors, workersDone)
+	go runWorkers(workerContext, runtime.presence, runtime.matches, runtime.hub, workerErrors, workersDone)
 
 	listener, err := net.Listen("tcp", processConfig.Addr)
 	if err != nil {
@@ -116,7 +94,7 @@ func run(ctx context.Context, output io.Writer) int {
 		return daemonExitFailure
 	}
 	httpServer := &http.Server{
-		Handler:           handler,
+		Handler:           runtime.handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       time.Minute,
 		MaxHeaderBytes:    16 * 1024,
@@ -142,30 +120,26 @@ func run(ctx context.Context, output io.Writer) int {
 		}
 	}
 
-	cancelWorkers()
-	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
-	if err := httpServer.Shutdown(shutdownContext); err != nil {
+	shutdownStage, shutdownErr := shutdownRuntime(shutdownTimeout, shutdownHooks{
+		shutdownHTTP: httpServer.Shutdown,
+		forceHTTP:    httpServer.Close,
+		stopWorkers:  cancelWorkers,
+		waitWorkers: func(waitContext context.Context) error {
+			select {
+			case <-workersDone:
+				return nil
+			case <-waitContext.Done():
+				return waitContext.Err()
+			}
+		},
+		closeHub:      runtime.hub.Close,
+		closeDatabase: database.Close,
+	})
+	databaseOpen = false
+	if shutdownErr != nil {
 		exitCode = daemonExitFailure
-		reason = "http_shutdown_error"
-		_ = httpServer.Close()
+		reason = shutdownStage + "_shutdown_error"
 	}
-	cancelShutdown()
-
-	hubContext, cancelHub := context.WithTimeout(context.Background(), shutdownTimeout)
-	if err := hub.Close(hubContext); err != nil {
-		exitCode = daemonExitFailure
-		reason = "hub_shutdown_error"
-	}
-	cancelHub()
-
-	workersContext, cancelWorkerWait := context.WithTimeout(context.Background(), shutdownTimeout)
-	select {
-	case <-workersDone:
-	case <-workersContext.Done():
-		exitCode = daemonExitFailure
-		reason = "worker_shutdown_error"
-	}
-	cancelWorkerWait()
 	for {
 		select {
 		case workerErr := <-workerErrors:
@@ -187,13 +161,104 @@ workersDrained:
 		}
 	default:
 	}
-	if err := database.Close(); err != nil {
-		exitCode = daemonExitFailure
-		reason = "store_shutdown_error"
-	}
-	databaseOpen = false
 	logger.write("server_stopped", map[string]any{"exitCode": exitCode, "reason": reason})
 	return exitCode
+}
+
+type runtimeComponents struct {
+	matches  *matches.Service
+	presence *matches.Presence
+	hub      *matches.Hub
+	handler  http.Handler
+}
+
+func recoverThenBuild(ctx context.Context, database *sql.DB, serviceClock clock.Clock, build func() error) (bool, error) {
+	if build == nil {
+		return false, errors.New("runtime builder is nil")
+	}
+	if err := matches.MarkActiveMatchesOfflineOnBoot(ctx, database, serviceClock); err != nil {
+		return false, err
+	}
+	return true, build()
+}
+
+func buildRuntime(database *sql.DB, processConfig config.Config, serviceClock clock.Clock, componentLogger *log.Logger) (runtimeComponents, string, error) {
+	registry := games.NewRegistry()
+	authService, err := auth.NewService(database, serviceClock, auth.ServiceConfig{
+		JWTSecret: []byte(processConfig.JWTSecret), TokenPepper: processConfig.TokenPepper,
+	})
+	if err != nil {
+		return runtimeComponents{}, "auth", err
+	}
+	matchService, err := matches.NewServiceWithConfig(database, registry, serviceClock, matches.ServiceConfig{
+		ColorRandom: rand.Reader, LaunchTicketRandom: rand.Reader, TokenPepper: processConfig.TokenPepper,
+	})
+	if err != nil {
+		return runtimeComponents{}, "matches", err
+	}
+	presence, err := matches.NewPresence(matchService, serviceClock)
+	if err != nil {
+		return runtimeComponents{}, "presence", err
+	}
+	hub, err := matches.NewHubWithConfig(matchService, presence, serviceClock, matches.HubConfig{Logger: componentLogger})
+	if err != nil {
+		return runtimeComponents{}, "hub", err
+	}
+	handler, err := httpapi.NewRouter(httpapi.RouterConfig{
+		Auth: authService, Matches: matchService, Games: registry, Publisher: hub, Hub: hub,
+		Logger: componentLogger, RequestIDs: httpapi.NewProductionRequestID,
+	})
+	if err != nil {
+		return runtimeComponents{}, "router", err
+	}
+	return runtimeComponents{matches: matchService, presence: presence, hub: hub, handler: handler}, "", nil
+}
+
+type shutdownHooks struct {
+	shutdownHTTP  func(context.Context) error
+	forceHTTP     func() error
+	stopWorkers   func()
+	waitWorkers   func(context.Context) error
+	closeHub      func(context.Context) error
+	closeDatabase func() error
+}
+
+func shutdownRuntime(timeout time.Duration, hooks shutdownHooks) (string, error) {
+	if timeout <= 0 || hooks.shutdownHTTP == nil || hooks.forceHTTP == nil || hooks.stopWorkers == nil ||
+		hooks.waitWorkers == nil || hooks.closeHub == nil || hooks.closeDatabase == nil {
+		return "configuration", errors.New("invalid shutdown configuration")
+	}
+	var firstStage string
+	var result error
+	record := func(stage string, err error) {
+		if err == nil {
+			return
+		}
+		if firstStage == "" {
+			firstStage = stage
+		}
+		result = errors.Join(result, err)
+	}
+
+	httpContext, cancelHTTP := context.WithTimeout(context.Background(), timeout)
+	httpErr := hooks.shutdownHTTP(httpContext)
+	cancelHTTP()
+	if httpErr != nil {
+		record("http", httpErr)
+		record("http", hooks.forceHTTP())
+	}
+
+	hooks.stopWorkers()
+	workerContext, cancelWorkers := context.WithTimeout(context.Background(), timeout)
+	record("worker", hooks.waitWorkers(workerContext))
+	cancelWorkers()
+
+	hubContext, cancelHub := context.WithTimeout(context.Background(), timeout)
+	record("hub", hooks.closeHub(hubContext))
+	cancelHub()
+
+	record("store", hooks.closeDatabase())
+	return firstStage, result
 }
 
 func runWorkers(ctx context.Context, presence *matches.Presence, service *matches.Service, hub *matches.Hub, failures chan<- error, done chan<- struct{}) {

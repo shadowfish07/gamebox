@@ -33,6 +33,65 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return open(ctx, path, openHooks{})
 }
 
+// OpenReadOnly opens an existing, fully migrated database without repairing
+// permissions, creating the database, changing journal mode, or applying
+// migrations. The returned pool and every SQLite connection are read-only.
+func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
+	if ctx == nil {
+		return nil, errors.New("store: read-only context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("store: open read-only database: %w", err)
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("store: read-only database path is empty")
+	}
+	if path == ":memory:" {
+		return nil, errors.New("store: read-only database must be a durable file")
+	}
+	guard, liveWAL, err := inspectSQLiteFilesReadOnly(path)
+	if err != nil {
+		return nil, fmt.Errorf("store: inspect read-only database files: %w", err)
+	}
+	dsn := "file:" + escapeURIPath(path) + "?mode=ro&_foreign_keys=on&_busy_timeout=5000&_query_only=1"
+	if !liveWAL {
+		// store.Open checkpoints and removes WAL sidecars on the last close. An
+		// immutable view of that closed file avoids SQLite creating a new empty
+		// WAL/SHM pair merely to perform an administrative read.
+		dsn += "&immutable=1"
+	}
+	baseConnector, err := sqlite.NewConnector(dsn)
+	if err != nil {
+		return nil, closeOpenResources(nil, guard, fmt.Errorf("store: configure read-only database: %w", err))
+	}
+	db := sql.OpenDB(cancelableConnector{Connector: baseConnector})
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := pingContext(ctx, db); err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: ping read-only database: %w", err))
+	}
+	if err := validateCurrentMigrations(ctx, db); err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: validate read-only database: %w", err))
+	}
+	if err := guard.Verify(); err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: verify read-only database identity: %w", err))
+	}
+	currentLiveWAL, err := inspectSQLiteSidecarsReadOnly(path)
+	if err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: inspect read-only database sidecars: %w", err))
+	}
+	if currentLiveWAL != liveWAL {
+		return nil, closeOpenResources(db, guard, errors.New("store: read-only database sidecar set changed"))
+	}
+	if err := guard.Verify(); err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: reverify read-only database identity: %w", err))
+	}
+	if err := guard.Close(); err != nil {
+		return nil, closeAfterError(db, fmt.Errorf("store: close read-only database file guard: %w", err))
+	}
+	return db, nil
+}
+
 type openHooks struct {
 	afterPreflight func()
 }
@@ -222,6 +281,109 @@ func secureSQLiteFiles(path string) (*databaseFileGuard, error) {
 		return nil, closeOpenResources(nil, guard, err)
 	}
 	return guard, nil
+}
+
+func inspectSQLiteFilesReadOnly(path string) (*databaseFileGuard, bool, error) {
+	parentPath := filepath.Dir(path)
+	parent, err := os.Open(parentPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("open database parent: %w", err)
+	}
+	parentInfo, err := verifyParentPath(parentPath, parent, nil)
+	if err != nil {
+		_ = parent.Close()
+		return nil, false, err
+	}
+	file, fileInfo, err := inspectExistingFileReadOnly(path)
+	if err != nil {
+		_ = parent.Close()
+		return nil, false, err
+	}
+	guard := &databaseFileGuard{
+		path: path, parentPath: parentPath, file: file, parent: parent,
+		fileInfo: fileInfo, parentInfo: parentInfo,
+	}
+	liveWAL, err := inspectSQLiteSidecarsReadOnly(path)
+	if err != nil {
+		return nil, false, closeOpenResources(nil, guard, err)
+	}
+	if err := guard.Verify(); err != nil {
+		return nil, false, closeOpenResources(nil, guard, err)
+	}
+	return guard, liveWAL, nil
+}
+
+func inspectSQLiteSidecarsReadOnly(path string) (bool, error) {
+	present := [2]bool{}
+	index := 0
+	for _, suffix := range []string{"-wal", "-shm"} {
+		file, _, err := inspectOptionalFileReadOnly(path + suffix)
+		if err != nil {
+			return false, fmt.Errorf("inspect %s sidecar: %w", strings.TrimPrefix(suffix, "-"), err)
+		}
+		if file != nil {
+			present[index] = true
+			if err := file.Close(); err != nil {
+				return false, fmt.Errorf("close %s sidecar: %w", strings.TrimPrefix(suffix, "-"), err)
+			}
+		}
+		index++
+	}
+	if present[0] != present[1] {
+		return false, errors.New("database has an incomplete WAL sidecar set")
+	}
+	return present[0], nil
+}
+
+func inspectExistingFileReadOnly(path string) (*os.File, os.FileInfo, error) {
+	file, info, err := inspectOptionalFileReadOnly(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if file == nil {
+		return nil, nil, errors.New("database file does not exist")
+	}
+	return file, info, nil
+}
+
+func inspectOptionalFileReadOnly(path string) (*os.File, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, errors.New("path is not a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open file for read-only verification: %w", err)
+	}
+	openedInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("inspect opened file: %w", err)
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
+		_ = file.Close()
+		return nil, nil, errors.New("file changed during read-only verification")
+	}
+	if err := requireCurrentOwner(openedInfo, "file"); err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if err := requireSingleLink(openedInfo, "file"); err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if openedInfo.Mode().Perm() != 0o600 || pathInfo.Mode().Perm() != 0o600 {
+		_ = file.Close()
+		return nil, nil, errors.New("read-only file mode is not 0600")
+	}
+	return file, openedInfo, nil
 }
 
 func secureDatabaseFile(path string) (*os.File, os.FileInfo, error) {

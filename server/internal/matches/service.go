@@ -1453,14 +1453,25 @@ WHERE match_id=?`, matchID); err != nil {
 
 // MarkActiveMatchesOfflineOnBoot starts a timer only for active matches that
 // did not already have one. Existing downtime is preserved across restarts.
-func (service *Service) MarkActiveMatchesOfflineOnBoot(ctx context.Context) (err error) {
+func (service *Service) MarkActiveMatchesOfflineOnBoot(ctx context.Context) error {
 	if !service.configured() {
+		return ErrInvalidConfiguration
+	}
+	return MarkActiveMatchesOfflineOnBoot(ctx, service.db, service.clock)
+}
+
+// MarkActiveMatchesOfflineOnBoot is the narrow process-bootstrap recovery
+// boundary. It deliberately needs only the migrated store and clock, allowing
+// recovery to finish before runtime auth, rules, Hub, and Router construction.
+func MarkActiveMatchesOfflineOnBoot(ctx context.Context, db *sql.DB, serviceClock clock.Clock) (err error) {
+	if db == nil || nilDependency(serviceClock) {
 		return ErrInvalidConfiguration
 	}
 	if ctx == nil {
 		return ErrInvalidRequest
 	}
-	transaction, beginErr := service.beginWriteTransaction(ctx)
+	bootstrap := &Service{db: db}
+	transaction, beginErr := bootstrap.beginWriteTransaction(ctx)
 	if beginErr != nil {
 		return beginErr
 	}
@@ -1470,7 +1481,7 @@ func (service *Service) MarkActiveMatchesOfflineOnBoot(ctx context.Context) (err
 		}
 		_ = transaction.release()
 	}()
-	nowMillis := service.clock.Now().UTC().UnixMilli()
+	nowMillis := serviceClock.Now().UTC().UnixMilli()
 	if _, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
 SET both_offline_since=?

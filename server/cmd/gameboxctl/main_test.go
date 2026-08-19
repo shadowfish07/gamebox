@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -301,6 +302,83 @@ func TestMatchShowUnknownAndInvalidIDsHaveStableNonzeroExit(t *testing.T) {
 	}
 }
 
+func TestMatchShowMissingDatabaseLeavesDirectoryUnchanged(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "missing.sqlite")
+	before := snapshotDirectory(t, directory)
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitFailure || stdout.Len() != 0 || stderr.String() != matchFailed+"\n" {
+		t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+	if after := snapshotDirectory(t, directory); !reflect.DeepEqual(after, before) {
+		t.Fatalf("missing match query changed directory: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestMatchShowPreservesDatabaseSchemaBytesMetadataAndDirectory(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "gamebox.sqlite")
+	seedMatch(t, databasePath)
+	beforeRows := readMutableRows(t, databasePath)
+	before := snapshotDirectory(t, directory)
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+	if after := snapshotDirectory(t, directory); !reflect.DeepEqual(after, before) {
+		t.Fatalf("match show changed filesystem state: before=%+v after=%+v", before, after)
+	}
+	if afterRows := readMutableRows(t, databasePath); !reflect.DeepEqual(afterRows, beforeRows) {
+		t.Fatalf("match show changed application rows: before=%+v after=%+v", beforeRows, afterRows)
+	}
+}
+
+func TestMatchShowRejectsUnmigratedAndInsecureDatabasesWithoutMutation(t *testing.T) {
+	t.Run("unmigrated", func(t *testing.T) {
+		directory := t.TempDir()
+		databasePath := filepath.Join(directory, "unmigrated.sqlite")
+		database, err := sql.Open("sqlite", "file:"+databasePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`CREATE TABLE placeholder (id INTEGER PRIMARY KEY)`); err != nil {
+			_ = database.Close()
+			t.Fatal(err)
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(databasePath, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertMatchShowFailsWithoutFilesystemMutation(t, directory, databasePath)
+	})
+
+	t.Run("insecure mode", func(t *testing.T) {
+		directory := t.TempDir()
+		databasePath := filepath.Join(directory, "insecure.sqlite")
+		seedMatch(t, databasePath)
+		if err := os.Chmod(databasePath, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		assertMatchShowFailsWithoutFilesystemMutation(t, directory, databasePath)
+	})
+
+	t.Run("database symlink", func(t *testing.T) {
+		directory := t.TempDir()
+		target := filepath.Join(directory, "target.sqlite")
+		seedMatch(t, target)
+		databasePath := filepath.Join(directory, "link.sqlite")
+		if err := os.Symlink(target, databasePath); err != nil {
+			t.Fatal(err)
+		}
+		assertMatchShowFailsWithoutFilesystemMutation(t, directory, databasePath)
+	})
+}
+
 func TestHelpAndUnknownCommandsUseDocumentedExitCodes(t *testing.T) {
 	tests := []struct {
 		args     []string
@@ -405,6 +483,64 @@ type mutableRows struct {
 	refresh int
 	tickets int
 	resumes int
+}
+
+type fileSnapshot struct {
+	Mode    os.FileMode
+	Size    int64
+	ModTime int64
+	Hash    [sha256.Size]byte
+	Link    string
+}
+
+func snapshotDirectory(t *testing.T, directory string) map[string]fileSnapshot {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(map[string]fileSnapshot, len(entries)+1)
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result["."] = fileSnapshot{Mode: directoryInfo.Mode(), Size: directoryInfo.Size(), ModTime: directoryInfo.ModTime().UnixNano()}
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := fileSnapshot{Mode: info.Mode(), Size: info.Size(), ModTime: info.ModTime().UnixNano()}
+		switch {
+		case info.Mode().IsRegular():
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot.Hash = sha256.Sum256(contents)
+		case info.Mode()&os.ModeSymlink != 0:
+			snapshot.Link, err = os.Readlink(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		result[entry.Name()] = snapshot
+	}
+	return result
+}
+
+func assertMatchShowFailsWithoutFilesystemMutation(t *testing.T, directory, databasePath string) {
+	t.Helper()
+	before := snapshotDirectory(t, directory)
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitFailure || stdout.Len() != 0 || stderr.String() != matchFailed+"\n" {
+		t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+	if after := snapshotDirectory(t, directory); !reflect.DeepEqual(after, before) {
+		t.Fatalf("failed match show changed filesystem: before=%+v after=%+v", before, after)
+	}
 }
 
 func readMutableRows(t *testing.T, path string) mutableRows {
