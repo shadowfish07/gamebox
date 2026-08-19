@@ -184,12 +184,27 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       ),
       SessionStatus.unauthenticated ||
       SessionStatus.submitting => RegistrationPage(controller: controller),
-      SessionStatus.authenticated => Scaffold(
-        key: const Key('home-shell'),
-        appBar: AppBar(title: const Text('Gamebox')),
-        body: Center(child: Text('你好，${controller.session!.user.nickname}')),
-      ),
+      SessionStatus.authenticated => _buildAuthenticatedHome(controller),
     };
+  }
+
+  Widget _buildAuthenticatedHome(SessionController controller) {
+    final session = controller.session;
+    if (session == null) {
+      return Scaffold(
+        body: Center(
+          child: Semantics(
+            label: 'credential-state-invalid',
+            child: const CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+    return Scaffold(
+      key: const Key('home-shell'),
+      appBar: AppBar(title: const Text('Gamebox')),
+      body: Center(child: Text('你好，${session.user.nickname}')),
+    );
   }
 
   Widget _buildHostSmoke() {

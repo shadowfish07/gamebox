@@ -32,8 +32,11 @@ final class SessionController extends ChangeNotifier {
   ApiError? _lastError;
   Future<bool>? _restoreInFlight;
   Future<bool>? _refreshInFlight;
+  Future<bool>? _credentialCleanupInFlight;
   Future<ApiError?>? _registrationInFlight;
   var _hasStoredRefreshToken = false;
+  var _credentialCleanupRequired = false;
+  var _credentialCleanupPending = false;
   var _generation = 0;
   var _disposed = false;
 
@@ -41,14 +44,24 @@ final class SessionController extends ChangeNotifier {
   Session? get session => _session;
   String? get accessToken => _session?.accessToken;
   ApiError? get lastError => _lastError;
+  bool get credentialCleanupPending => _credentialCleanupPending;
   bool get canRegister =>
       !_disposed &&
       _status == SessionStatus.unauthenticated &&
+      !_credentialCleanupRequired &&
+      !_credentialCleanupPending &&
       !_hasStoredRefreshToken;
   bool get canRetryRestore =>
       !_disposed &&
       _status == SessionStatus.unauthenticated &&
+      !_credentialCleanupRequired &&
+      !_credentialCleanupPending &&
       _hasStoredRefreshToken;
+  bool get canRetryCredentialCleanup =>
+      !_disposed &&
+      _status == SessionStatus.unauthenticated &&
+      _credentialCleanupRequired &&
+      !_credentialCleanupPending;
 
   Future<void> restore() async {
     if (_disposed || _status != SessionStatus.restoring) {
@@ -63,6 +76,17 @@ final class SessionController extends ChangeNotifier {
     }
     _transition(SessionStatus.restoring);
     return _beginRestore();
+  }
+
+  Future<bool> retryCredentialCleanup() {
+    final existing = _credentialCleanupInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    if (!canRetryCredentialCleanup) {
+      return Future<bool>.value(false);
+    }
+    return _clearStoredCredential(_generation);
   }
 
   Future<bool> _beginRestore() {
@@ -291,6 +315,13 @@ final class SessionController extends ChangeNotifier {
     if (_disposed) {
       return Future<bool>.value(false);
     }
+    final cleanup = _credentialCleanupInFlight;
+    if (cleanup != null) {
+      return cleanup;
+    }
+    if (canRetryCredentialCleanup) {
+      return retryCredentialCleanup();
+    }
     if (canRetryRestore) {
       return retryRestore();
     }
@@ -321,17 +352,44 @@ final class SessionController extends ChangeNotifier {
     }
     _session = next;
     _hasStoredRefreshToken = true;
+    _credentialCleanupRequired = false;
+    _credentialCleanupPending = false;
     _lastError = null;
     _status = SessionStatus.authenticated;
     _notify();
     return true;
   }
 
-  Future<void> _clearStoredCredential(int generation) async {
-    if (!_isCurrent(generation)) {
-      return;
+  Future<bool> _clearStoredCredential(int generation) {
+    final existing = _credentialCleanupInFlight;
+    if (existing != null) {
+      return existing;
     }
+    if (!_isCurrent(generation)) {
+      return Future<bool>.value(false);
+    }
+
+    // Publish the complete fail-closed state before secure storage is touched.
+    // No listener can observe authenticated state with a missing session.
     _session = null;
+    _hasStoredRefreshToken = true;
+    _credentialCleanupRequired = true;
+    _credentialCleanupPending = true;
+    _lastError = null;
+    _status = SessionStatus.unauthenticated;
+    _notify();
+
+    late final Future<bool> operation;
+    operation = _performCredentialCleanup(generation).whenComplete(() {
+      if (identical(_credentialCleanupInFlight, operation)) {
+        _credentialCleanupInFlight = null;
+      }
+    });
+    _credentialCleanupInFlight = operation;
+    return operation;
+  }
+
+  Future<bool> _performCredentialCleanup(int generation) async {
     var deleted = false;
     try {
       await _tokenStore.deleteRefreshToken();
@@ -339,16 +397,21 @@ final class SessionController extends ChangeNotifier {
     } catch (_) {
       // Memory still fails closed. A later explicit retry can inspect storage.
     }
-    if (_isCurrent(generation)) {
-      _hasStoredRefreshToken = !deleted;
-      _lastError = deleted
-          ? null
-          : const ApiError(
-              code: 'storage_unavailable',
-              message: '无法更新登录信息，请稍后重试',
-            );
-      _transition(SessionStatus.unauthenticated);
+    if (!_isCurrent(generation)) {
+      return false;
     }
+    _status = SessionStatus.unauthenticated;
+    _credentialCleanupPending = false;
+    _credentialCleanupRequired = !deleted;
+    _hasStoredRefreshToken = !deleted;
+    _lastError = deleted
+        ? null
+        : const ApiError(
+            code: 'storage_unavailable',
+            message: '无法更新登录信息，请稍后重试',
+          );
+    _notify();
+    return deleted;
   }
 
   void _preserveForRetry(int generation, ApiError error) {
@@ -409,7 +472,9 @@ final class SessionController extends ChangeNotifier {
     _session = null;
     _restoreInFlight = null;
     _refreshInFlight = null;
+    _credentialCleanupInFlight = null;
     _registrationInFlight = null;
+    _credentialCleanupPending = false;
     super.dispose();
   }
 }

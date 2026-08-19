@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
@@ -235,9 +236,194 @@ void main() {
     await controller.restore();
 
     expect(controller.canRegister, isFalse);
-    expect(controller.canRetryRestore, isTrue);
+    expect(controller.canRetryRestore, isFalse);
+    expect(controller.canRetryCredentialCleanup, isTrue);
     expect(store.value, 'corrupt');
   });
+
+  test(
+    'hanging credential deletion leaves authentication before its first await',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-one',
+          refreshToken: 'refresh-one',
+          now: now,
+        );
+      final deletion = Completer<void>();
+      final store = _MemoryTokenStore(value: 'refresh-zero')
+        ..onDelete = () => deletion.future;
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      final observed = <({SessionStatus status, bool hasSession})>[];
+      controller.addListener(() {
+        observed.add((
+          status: controller.status,
+          hasSession: controller.session != null,
+        ));
+      });
+      await controller.restore();
+      api.onRefresh = (_) => Future<Session>.error(
+        const ApiError(code: 'unauthorized', message: '身份验证失败'),
+      );
+
+      final refresh = controller.refresh('access-one');
+      await store.deleteStarted.future;
+
+      expect(controller.status, SessionStatus.unauthenticated);
+      expect(controller.session, isNull);
+      expect(controller.accessToken, isNull);
+      expect(controller.credentialCleanupPending, isTrue);
+      expect(controller.canRegister, isFalse);
+      expect(controller.canRetryRestore, isFalse);
+      expect(controller.canRetryCredentialCleanup, isFalse);
+      expect(
+        observed,
+        everyElement(
+          predicate<({SessionStatus status, bool hasSession})>(
+            (state) =>
+                state.status != SessionStatus.authenticated || state.hasSession,
+          ),
+        ),
+      );
+
+      deletion.complete();
+      expect(await refresh, isFalse);
+      expect(controller.credentialCleanupPending, isFalse);
+      expect(controller.canRegister, isTrue);
+      expect(controller.canRetryCredentialCleanup, isFalse);
+      expect(store.value, isNull);
+    },
+  );
+
+  test(
+    'failed credential deletion stays locked and concurrent retry is single-flight',
+    () async {
+      const secret = 'private-platform-diagnostic';
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-one',
+          refreshToken: 'refresh-one',
+          now: now,
+        );
+      final store = _MemoryTokenStore(value: 'refresh-zero');
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      store.deleteError = PlatformException(
+        code: 'unavailable',
+        message: secret,
+      );
+      api.onRefresh = (_) => Future<Session>.error(
+        const ApiError(code: 'unauthorized', message: '身份验证失败'),
+      );
+
+      expect(await controller.refresh('access-one'), isFalse);
+
+      expect(controller.status, SessionStatus.unauthenticated);
+      expect(controller.session, isNull);
+      expect(controller.canRegister, isFalse);
+      expect(controller.canRetryRestore, isFalse);
+      expect(controller.canRetryCredentialCleanup, isTrue);
+      expect(controller.lastError.toString(), isNot(contains(secret)));
+      expect(store.value, 'refresh-one');
+
+      final deletion = Completer<void>();
+      store.deleteError = null;
+      store.onDelete = () => deletion.future;
+      store.deleteStarted = Completer<void>();
+      final first = controller.retryCredentialCleanup();
+      final second = controller.retryCredentialCleanup();
+
+      expect(identical(first, second), isTrue);
+      await store.deleteStarted.future;
+      expect(controller.credentialCleanupPending, isTrue);
+      expect(controller.canRegister, isFalse);
+      expect(store.deleteCalls, 2);
+
+      deletion.complete();
+      expect(await first, isTrue);
+      expect(await second, isTrue);
+      expect(controller.canRegister, isTrue);
+      expect(controller.canRetryCredentialCleanup, isFalse);
+      expect(store.value, isNull);
+    },
+  );
+
+  test(
+    'concurrent unauthorized refreshes start one credential cleanup',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-one',
+          refreshToken: 'refresh-one',
+          now: now,
+        );
+      final deletion = Completer<void>();
+      final store = _MemoryTokenStore(value: 'refresh-zero')
+        ..onDelete = () => deletion.future;
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      api.onRefresh = (_) => Future<Session>.error(
+        const ApiError(code: 'unauthorized', message: '身份验证失败'),
+      );
+
+      final first = controller.refresh('access-one');
+      final second = controller.refresh('access-one');
+      expect(identical(first, second), isTrue);
+      await store.deleteStarted.future;
+
+      expect(store.deleteCalls, 1);
+      deletion.complete();
+      expect(await first, isFalse);
+      expect(await second, isFalse);
+    },
+  );
+
+  test(
+    'dispose during credential cleanup causes no late notification',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-one',
+          refreshToken: 'refresh-one',
+          now: now,
+        );
+      final deletion = Completer<void>();
+      final store = _MemoryTokenStore(value: 'refresh-zero')
+        ..onDelete = () => deletion.future;
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      api.onRefresh = (_) => Future<Session>.error(
+        const ApiError(code: 'unauthorized', message: '身份验证失败'),
+      );
+      var notifications = 0;
+      controller.addListener(() => notifications += 1);
+
+      final refresh = controller.refresh('access-one');
+      await store.deleteStarted.future;
+      expect(notifications, 1);
+      controller.dispose();
+      deletion.complete();
+      await refresh;
+
+      expect(notifications, 1);
+    },
+  );
 
   test(
     'registration storage failure never publishes its access token',
@@ -607,12 +793,18 @@ final class _MemoryTokenStore implements TokenStore {
   Object? readError;
   Object? writeError;
   Object? deleteError;
+  Future<void> Function()? onDelete;
+  Completer<void> deleteStarted = Completer<void>();
   int deleteCalls = 0;
   final writes = <String>[];
 
   @override
   Future<void> deleteRefreshToken() async {
     deleteCalls += 1;
+    if (!deleteStarted.isCompleted) {
+      deleteStarted.complete();
+    }
+    await onDelete?.call();
     if (deleteError != null) {
       throw deleteError!;
     }

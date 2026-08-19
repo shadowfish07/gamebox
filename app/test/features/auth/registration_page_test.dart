@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
 import 'package:gamebox/core/api/api_error.dart';
@@ -218,6 +219,105 @@ void main() {
       expect(find.byKey(const Key('home-shell')), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'credential cleanup immediately hides Home and registration until complete',
+    (tester) async {
+      final api = _FakeAuthApi()..onRefresh = (_) async => _session(now);
+      final deletion = Completer<void>();
+      final store = _MemoryTokenStore('refresh-old')
+        ..onDelete = () => deletion.future;
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: _NoopGameLauncher(),
+          sessionController: controller,
+        ),
+      );
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      api.onRefresh = (_) => Future<Session>.error(
+        const ApiError(code: 'unauthorized', message: '身份验证失败'),
+      );
+
+      final refresh = controller.refresh('access-token');
+      await store.deleteStarted.future;
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('home-shell')), findsNothing);
+      expect(
+        find.byKey(const Key('credential-cleanup-pending')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('invite-code')), findsNothing);
+      expect(find.byKey(const Key('register')), findsNothing);
+      expect(find.byKey(const Key('retry-session')), findsNothing);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+
+      deletion.complete();
+      await refresh;
+      await tester.pump();
+
+      expect(find.byKey(const Key('credential-cleanup-pending')), findsNothing);
+      expect(find.byKey(const Key('invite-code')), findsOneWidget);
+      expect(find.byKey(const Key('register')), findsOneWidget);
+    },
+  );
+
+  testWidgets('failed credential cleanup exposes only its safe retry', (
+    tester,
+  ) async {
+    final api = _FakeAuthApi()..onRefresh = (_) async => _session(now);
+    final store = _MemoryTokenStore('refresh-old');
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: store,
+      now: () => now,
+    );
+    await controller.restore();
+    store.deleteError = PlatformException(
+      code: 'unavailable',
+      message: 'private-platform-detail',
+    );
+    api.onRefresh = (_) => Future<Session>.error(
+      const ApiError(code: 'unauthorized', message: '身份验证失败'),
+    );
+    await controller.refresh('access-token');
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: _NoopGameLauncher(),
+        sessionController: controller,
+      ),
+    );
+
+    expect(find.byKey(const Key('retry-credential-cleanup')), findsOneWidget);
+    expect(find.byKey(const Key('home-shell')), findsNothing);
+    expect(find.byKey(const Key('register')), findsNothing);
+    expect(find.textContaining('private-platform-detail'), findsNothing);
+
+    final deletion = Completer<void>();
+    store.deleteError = null;
+    store.onDelete = () => deletion.future;
+    store.deleteStarted = Completer<void>();
+    await tester.tap(find.byKey(const Key('retry-credential-cleanup')));
+    await store.deleteStarted.future;
+    await tester.pump();
+
+    expect(find.byKey(const Key('credential-cleanup-pending')), findsOneWidget);
+    expect(find.byKey(const Key('register')), findsNothing);
+
+    deletion.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('invite-code')), findsOneWidget);
+    expect(find.byKey(const Key('register')), findsOneWidget);
+  });
 }
 
 Future<void> _enter(WidgetTester tester, Key semanticsKey, String value) async {
@@ -279,9 +379,21 @@ final class _MemoryTokenStore implements TokenStore {
   _MemoryTokenStore([this.value]);
 
   String? value;
+  Object? deleteError;
+  Future<void> Function()? onDelete;
+  Completer<void> deleteStarted = Completer<void>();
 
   @override
-  Future<void> deleteRefreshToken() async => value = null;
+  Future<void> deleteRefreshToken() async {
+    if (!deleteStarted.isCompleted) {
+      deleteStarted.complete();
+    }
+    await onDelete?.call();
+    if (deleteError != null) {
+      throw deleteError!;
+    }
+    value = null;
+  }
 
   @override
   Future<String?> readRefreshToken() async => value;

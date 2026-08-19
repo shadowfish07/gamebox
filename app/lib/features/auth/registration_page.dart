@@ -91,6 +91,10 @@ final class _RegistrationPageState extends State<RegistrationPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.controller.credentialCleanupPending ||
+        widget.controller.canRetryCredentialCleanup) {
+      return _buildCredentialCleanup(context);
+    }
     if (widget.controller.canRetryRestore) {
       return _buildRetry(context);
     }
@@ -213,6 +217,49 @@ final class _RegistrationPageState extends State<RegistrationPage> {
                     child: const Text('重试登录'),
                   ),
                 ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCredentialCleanup(BuildContext context) {
+    final pending = widget.controller.credentialCleanupPending;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Gamebox')),
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  pending ? '正在安全清理登录信息' : '无法安全清理登录信息，请重试',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 24),
+                if (pending)
+                  Semantics(
+                    key: const Key('credential-cleanup-pending'),
+                    label: 'credential-cleanup-pending',
+                    child: const CircularProgressIndicator(),
+                  )
+                else
+                  Semantics(
+                    key: const Key('retry-credential-cleanup'),
+                    label: 'retry-credential-cleanup',
+                    button: true,
+                    onTap: widget.controller.retryCredentialCleanup,
+                    excludeSemantics: true,
+                    child: FilledButton(
+                      onPressed: widget.controller.retryCredentialCleanup,
+                      child: const Text('重试安全清理'),
+                    ),
+                  ),
               ],
             ),
           ),
