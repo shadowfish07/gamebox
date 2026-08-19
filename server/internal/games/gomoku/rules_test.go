@@ -173,6 +173,44 @@ func TestWinningDirectionsExactFiveOverlineEdgesAndBidirectionalJoin(t *testing.
 	}
 }
 
+func TestWhiteFiveProducesAValidTerminalSnapshot(t *testing.T) {
+	rules := NewRules()
+	snapshot, err := rules.Rebuild(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := []struct {
+		actor string
+		point Point
+	}{
+		{blackActor, Point{0, 14}}, {whiteActor, Point{3, 7}},
+		{blackActor, Point{2, 14}}, {whiteActor, Point{4, 7}},
+		{blackActor, Point{4, 14}}, {whiteActor, Point{5, 7}},
+		{blackActor, Point{6, 14}}, {whiteActor, Point{6, 7}},
+		{blackActor, Point{8, 14}}, {whiteActor, Point{7, 7}},
+	}
+	events := make([]games.Event, 0, len(steps))
+	for _, step := range steps {
+		event, next, applyErr := rules.Apply(snapshot, step.actor, moveAction(step.point.X, step.point.Y))
+		if applyErr != nil {
+			t.Fatalf("Apply(%v): %v", step.point, applyErr)
+		}
+		events = append(events, event)
+		snapshot = next
+	}
+	view := decodeSnapshotView(t, snapshot)
+	if view.Status != "finished" || !pointerEquals(view.Result, "five") || !pointerEquals(view.WinnerUserID, whiteActor) || view.NextColor != "black" {
+		t.Fatalf("white terminal state = %#v", view)
+	}
+	if _, _, err := rules.Apply(snapshot, blackActor, moveAction(14, 14)); !errors.Is(err, games.ErrInvalidAction) {
+		t.Fatalf("valid terminal snapshot was rejected as corrupt: %v", err)
+	}
+	rebuilt, err := rules.Rebuild(events)
+	if err != nil || !bytes.Equal(rebuilt.State, snapshot.State) {
+		t.Fatalf("rebuild white win: err=%v\n%s\n%s", err, rebuilt.State, snapshot.State)
+	}
+}
+
 func TestRenjuForbiddenShapeIsStillLegal(t *testing.T) {
 	// Center creates open threes horizontally and vertically. Gomoku in this
 	// product has no double-three, double-four, or overline forbidden branch.
@@ -214,14 +252,27 @@ func TestFullBoardWithoutFiveIsDraw(t *testing.T) {
 
 	rules := NewRules()
 	snapshot, _ := rules.Rebuild(nil)
+	events := make([]games.Event, 0, 225)
 	for turn := 0; turn < 112; turn++ {
-		_, snapshot = mustApply(t, rules, snapshot, blackActor, blackPoints[turn])
-		_, snapshot = mustApply(t, rules, snapshot, whiteActor, whitePoints[turn])
+		event, next := mustApply(t, rules, snapshot, blackActor, blackPoints[turn])
+		events = append(events, event)
+		snapshot = next
+		event, next = mustApply(t, rules, snapshot, whiteActor, whitePoints[turn])
+		events = append(events, event)
+		snapshot = next
 	}
 	event, snapshot := mustApply(t, rules, snapshot, blackActor, blackPoints[112])
+	events = append(events, event)
 	view := decodeSnapshotView(t, snapshot)
 	if snapshot.Revision != 225 || event.Revision != 225 || occupiedCount(view.Board) != 225 || view.Status != "finished" || !pointerEquals(view.Result, "draw") || view.WinnerUserID != nil {
 		t.Fatalf("draw state = revision %d event %d view %#v", snapshot.Revision, event.Revision, view)
+	}
+	if _, _, err := rules.Apply(snapshot, whiteActor, moveAction(0, 0)); !errors.Is(err, games.ErrInvalidAction) {
+		t.Fatalf("generated draw snapshot failed validation: %v", err)
+	}
+	rebuilt, err := rules.Rebuild(events)
+	if err != nil || !bytes.Equal(rebuilt.State, snapshot.State) {
+		t.Fatalf("rebuild draw: err=%v", err)
 	}
 }
 
@@ -377,6 +428,124 @@ func TestSnapshotParsingRejectsCorruptionAndOutputDoesNotAlias(t *testing.T) {
 	if err != nil || !bytes.Equal(fresh.State, inputCopy) {
 		t.Fatal("caller mutation contaminated rules instance")
 	}
+}
+
+func TestSnapshotValidationRejectsForgedTerminalSemantics(t *testing.T) {
+	resultFiveValue := "five"
+	resultDrawValue := "draw"
+
+	activeWithFive := snapshotWith(t, []Stone{
+		{2, 5, Black}, {3, 5, Black}, {4, 5, Black}, {5, 5, Black}, {6, 5, Black},
+	}, Black, blackActor, whiteActor)
+
+	finishedWithoutFive := rewriteSnapshot(t,
+		snapshotWith(t, []Stone{{2, 5, Black}, {3, 5, Black}}, Black, blackActor, whiteActor),
+		func(view *snapshotView) {
+			view.Status = "finished"
+			view.Result = &resultFiveValue
+			view.WinnerUserID = view.WhiteUserID
+		},
+	)
+
+	winnerHasNoLine := rewriteSnapshot(t,
+		snapshotWith(t, []Stone{
+			{2, 6, White}, {3, 6, White}, {4, 6, White}, {5, 6, White}, {6, 6, White},
+		}, White, blackActor, whiteActor),
+		func(view *snapshotView) {
+			view.Status = "finished"
+			view.Result = &resultFiveValue
+			view.WinnerUserID = view.BlackUserID
+		},
+	)
+
+	bothHaveLines := rewriteSnapshot(t,
+		snapshotWith(t, []Stone{
+			{2, 5, Black}, {3, 5, Black}, {4, 5, Black}, {5, 5, Black}, {6, 5, Black},
+			{2, 6, White}, {3, 6, White}, {4, 6, White}, {5, 6, White}, {6, 6, White},
+		}, Black, blackActor, whiteActor),
+		func(view *snapshotView) {
+			view.Status = "finished"
+			view.Result = &resultFiveValue
+			view.WinnerUserID = view.WhiteUserID
+		},
+	)
+
+	fullDrawWithFive := fullDrawSnapshotWithBlackLine(t)
+	fullDrawWithFive = rewriteSnapshot(t, fullDrawWithFive, func(view *snapshotView) {
+		view.Status = "finished"
+		view.Result = &resultDrawValue
+		view.WinnerUserID = nil
+	})
+
+	tests := []struct {
+		name     string
+		snapshot games.Snapshot
+	}{
+		{name: "active already has five", snapshot: activeWithFive},
+		{name: "finished five has no line", snapshot: finishedWithoutFive},
+		{name: "declared winner has no line but opponent does", snapshot: winnerHasNoLine},
+		{name: "both colors have lines", snapshot: bothHaveLines},
+		{name: "full draw contains a line", snapshot: fullDrawWithFive},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			before := append([]byte(nil), test.snapshot.State...)
+			event, next, err := NewRules().Apply(test.snapshot, blackActor, moveAction(14, 14))
+			if !errors.Is(err, games.ErrInvalidSnapshot) {
+				t.Fatalf("Apply error = %v, want invalid snapshot", err)
+			}
+			if err.Error() != games.ErrInvalidSnapshot.Error() {
+				t.Fatalf("error exposed forged state: %q", err)
+			}
+			if !reflect.DeepEqual(event, games.Event{}) || !reflect.DeepEqual(next, games.Snapshot{}) || !bytes.Equal(before, test.snapshot.State) {
+				t.Fatal("rejected forged snapshot produced or mutated state")
+			}
+		})
+	}
+}
+
+func TestSnapshotActorPresenceMatchesStonePresence(t *testing.T) {
+	rules := NewRules()
+	initial, err := rules.Rebuild(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, afterBlack, err := rules.Apply(initial, blackActor, moveAction(7, 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		snapshot games.Snapshot
+	}{
+		{name: "empty snapshot prebinds black", snapshot: rewriteSnapshot(t, initial, func(view *snapshotView) { view.BlackUserID = stringPointer(blackActor) })},
+		{name: "empty snapshot prebinds white", snapshot: rewriteSnapshot(t, initial, func(view *snapshotView) { view.WhiteUserID = stringPointer(whiteActor) })},
+		{name: "black stone missing black actor", snapshot: rewriteSnapshot(t, afterBlack, func(view *snapshotView) { view.BlackUserID = nil })},
+		{name: "no white stones but white actor present", snapshot: rewriteSnapshot(t, afterBlack, func(view *snapshotView) { view.WhiteUserID = stringPointer(whiteActor) })},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := rules.Apply(test.snapshot, blackActor, moveAction(8, 8))
+			if !errors.Is(err, games.ErrInvalidSnapshot) || err.Error() != games.ErrInvalidSnapshot.Error() {
+				t.Fatalf("Apply error = %v, want safe invalid snapshot", err)
+			}
+		})
+	}
+
+	// The stricter presence invariant must preserve lazy black/white binding.
+	event, first, err := rules.Apply(initial, blackActor, moveAction(1, 1))
+	if err != nil || event.ActorID != blackActor {
+		t.Fatalf("lazy black binding: event=%#v err=%v", event, err)
+	}
+	_, second, err := rules.Apply(first, whiteActor, moveAction(2, 1))
+	if err != nil {
+		t.Fatalf("lazy white binding: %v", err)
+	}
+	view := decodeSnapshotView(t, second)
+	assertStringPointer(t, view.BlackUserID, blackActor, "blackUserId")
+	assertStringPointer(t, view.WhiteUserID, whiteActor, "whiteUserId")
+	assertStringPointer(t, actorForNextColor(view), blackActor, "next actor")
 }
 
 func TestRulesInstancesHaveNoSharedMutableState(t *testing.T) {
@@ -564,4 +733,56 @@ func replaceSnapshotBoard(t *testing.T, state json.RawMessage, cells []int) json
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func rewriteSnapshot(t *testing.T, snapshot games.Snapshot, mutate func(*snapshotView)) games.Snapshot {
+	t.Helper()
+	view := decodeSnapshotView(t, snapshot)
+	mutate(&view)
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return games.Snapshot{Revision: snapshot.Revision, State: encoded}
+}
+
+func fullDrawSnapshotWithBlackLine(t *testing.T) games.Snapshot {
+	t.Helper()
+	board := make([]int, 225)
+	for y := 0; y < 15; y++ {
+		for x := 0; x < 15; x++ {
+			color := int(White)
+			if ((x + 2*y) % 4) < 2 {
+				color = int(Black)
+			}
+			board[y*15+x] = color
+		}
+	}
+	// Turn two white cells in row zero black to create five, then swap two
+	// remote black cells to white so the required 113/112 counts remain.
+	board[0*15+2] = int(Black)
+	board[0*15+3] = int(Black)
+	board[2*15+0] = int(White)
+	board[2*15+1] = int(White)
+	view := snapshotView{
+		Status: "active", Board: board, BoardSize: 15,
+		BlackUserID: stringPointer(blackActor), WhiteUserID: stringPointer(whiteActor),
+		NextColor: "white",
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return games.Snapshot{Revision: 225, State: encoded}
+}
+
+func actorForNextColor(view snapshotView) *string {
+	if view.NextColor == "black" {
+		return view.BlackUserID
+	}
+	return view.WhiteUserID
+}
+
+func stringPointer(value string) *string {
+	return &value
 }

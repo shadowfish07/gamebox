@@ -319,7 +319,7 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 	if state.BlackUserID != nil && state.WhiteUserID != nil && *state.BlackUserID == *state.WhiteUserID {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
-	if blackCount > 0 && state.BlackUserID == nil || whiteCount > 0 && state.WhiteUserID == nil {
+	if (blackCount > 0) != (state.BlackUserID != nil) || (whiteCount > 0) != (state.WhiteUserID != nil) {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
 	expectedColor := Black
@@ -329,9 +329,12 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 	if state.NextColor != expectedColor.String() {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
+	stateBoard := board{cells: state.Board, count: moveCount}
+	blackHasFive := stateBoard.hasFive(Black)
+	whiteHasFive := stateBoard.hasFive(White)
 	switch state.Status {
 	case statusActive:
-		if state.Result != nil || state.WinnerUserID != nil || moveCount == boardCells {
+		if state.Result != nil || state.WinnerUserID != nil || moveCount == boardCells || blackHasFive || whiteHasFive {
 			return snapshotState{}, gameapi.ErrInvalidSnapshot
 		}
 	case statusFinished:
@@ -343,11 +346,16 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 			if state.WinnerUserID == nil || (*state.WinnerUserID != valueOrEmpty(state.BlackUserID) && *state.WinnerUserID != valueOrEmpty(state.WhiteUserID)) {
 				return snapshotState{}, gameapi.ErrInvalidSnapshot
 			}
-			if *state.WinnerUserID == valueOrEmpty(state.BlackUserID) && blackCount != whiteCount+1 || *state.WinnerUserID == valueOrEmpty(state.WhiteUserID) && blackCount != whiteCount {
+			blackWon := *state.WinnerUserID == valueOrEmpty(state.BlackUserID)
+			if blackWon {
+				if blackCount != whiteCount+1 || !blackHasFive || whiteHasFive {
+					return snapshotState{}, gameapi.ErrInvalidSnapshot
+				}
+			} else if blackCount != whiteCount || !whiteHasFive || blackHasFive {
 				return snapshotState{}, gameapi.ErrInvalidSnapshot
 			}
 		case resultDraw:
-			if moveCount != boardCells || state.WinnerUserID != nil {
+			if moveCount != boardCells || state.WinnerUserID != nil || blackHasFive || whiteHasFive {
 				return snapshotState{}, gameapi.ErrInvalidSnapshot
 			}
 		default:

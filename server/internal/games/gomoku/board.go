@@ -80,3 +80,18 @@ func (b board) run(origin, direction Point, color Color) int {
 	}
 	return length
 }
+
+// hasFive is used only when validating an opaque input snapshot at the trust
+// boundary. A newly placed stone is evaluated by wins(lastPoint, color), so
+// the move path never rescans the board to decide its result.
+func (b board) hasFive(color Color) bool {
+	for index, cell := range b.cells {
+		if Color(cell) != color {
+			continue
+		}
+		if b.wins(Point{X: index % BoardSize, Y: index / BoardSize}, color) {
+			return true
+		}
+	}
+	return false
+}
