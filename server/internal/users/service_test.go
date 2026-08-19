@@ -91,3 +91,68 @@ func TestNicknameAllowsVisibleUnicodeBasesSpacesAndAttachedCombiningMarks(t *tes
 		})
 	}
 }
+
+func TestNicknameAllowsContextualEmojiZWJAndTextZWNJ(t *testing.T) {
+	tests := []struct {
+		name     string
+		nickname string
+	}{
+		{name: "woman technologist", nickname: "\U0001F469\u200d\U0001F4BB"},
+		{name: "family", nickname: "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466"},
+		{name: "skin tone modifier", nickname: "\U0001F469\U0001F3FD\u200d\U0001F4BB"},
+		{name: "variation selector", nickname: "\u2764\ufe0f\u200d\U0001F525"},
+		{name: "Persian non-joiner", nickname: "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"},
+		{name: "text marks around non-joiner", nickname: "\u0646\u064e\u200c\u0650\u0645"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			display, normalized, err := NormalizeNickname(test.nickname)
+			if err != nil {
+				t.Fatalf("NormalizeNickname(%q) returned error: %v", test.nickname, err)
+			}
+			if display != test.nickname || normalized != strings.ToLower(test.nickname) {
+				t.Fatalf("NormalizeNickname(%q) = (%q, %q), want preserved display and lower-case form", test.nickname, display, normalized)
+			}
+		})
+	}
+}
+
+func TestNicknameRejectsUnsafeSeparatorsFormatsAndJoinerContexts(t *testing.T) {
+	tests := []struct {
+		name     string
+		nickname string
+	}{
+		{name: "line separator", nickname: "A\u2028B"},
+		{name: "paragraph separator", nickname: "A\u2029B"},
+		{name: "trimmed trailing newline control", nickname: "AB\n"},
+		{name: "trimmed leading line separator", nickname: "\u2028AB"},
+		{name: "trimmed trailing paragraph separator", nickname: "AB\u2029"},
+		{name: "leading joiner", nickname: "\u200dAB"},
+		{name: "trailing joiner", nickname: "AB\u200d"},
+		{name: "leading non-joiner", nickname: "\u200c\u0627\u0628"},
+		{name: "trailing non-joiner", nickname: "\u0627\u0628\u200c"},
+		{name: "consecutive joiners", nickname: "\U0001F642\u200d\u200d\U0001F4BB"},
+		{name: "letters around ZWJ", nickname: "a\u200db"},
+		{name: "space before joiner", nickname: "\U0001F642 \u200d\U0001F4BB"},
+		{name: "space after joiner", nickname: "\U0001F642\u200d \U0001F4BB"},
+		{name: "symbols around ZWNJ", nickname: "\U0001F642\u200c\U0001F4BB"},
+		{name: "space before ZWNJ", nickname: "\u0645 \u200c\u06cc"},
+		{name: "zero width space", nickname: "A\u200bB"},
+		{name: "soft hyphen", nickname: "A\u00adB"},
+		{name: "word joiner", nickname: "A\u2060B"},
+		{name: "byte order mark", nickname: "A\ufeffB"},
+		{name: "left to right mark", nickname: "A\u200eB"},
+		{name: "bidi override", nickname: "A\u202eB"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			display, normalized, err := NormalizeNickname(test.nickname)
+			if !errors.Is(err, ErrInvalidNickname) {
+				t.Fatalf("NormalizeNickname(%q) error = %v, want ErrInvalidNickname", test.nickname, err)
+			}
+			if display != "" || normalized != "" {
+				t.Fatalf("invalid nickname returned (%q, %q), want no derived values", display, normalized)
+			}
+		})
+	}
+}
