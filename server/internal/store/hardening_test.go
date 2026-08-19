@@ -200,7 +200,7 @@ func TestOpenRejectsParentReplacementAfterPreflight(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsUntrustedWritableParentAndAcceptsStickyParent(t *testing.T) {
+func TestOpenRequiresPrivateDirectParent(t *testing.T) {
 	root := t.TempDir()
 	untrusted := filepath.Join(root, "untrusted")
 	if err := os.Mkdir(untrusted, 0o777); err != nil {
@@ -209,11 +209,11 @@ func TestOpenRejectsUntrustedWritableParentAndAcceptsStickyParent(t *testing.T) 
 	if err := os.Chmod(untrusted, 0o777); err != nil {
 		t.Fatalf("chmod untrusted parent: %v", err)
 	}
-	if db, err := Open(context.Background(), filepath.Join(untrusted, "gamebox.sqlite")); err == nil || db != nil {
+	if db, err := Open(context.Background(), filepath.Join(untrusted, "gamebox.sqlite")); !errors.Is(err, ErrInsecureDatabaseParent) || db != nil {
 		if db != nil {
 			_ = db.Close()
 		}
-		t.Fatal("Open accepted a group/world-writable non-sticky parent")
+		t.Fatalf("Open writable-parent error = %v, want ErrInsecureDatabaseParent", err)
 	}
 	assertFileMode(t, untrusted, 0o777)
 
@@ -224,12 +224,44 @@ func TestOpenRejectsUntrustedWritableParentAndAcceptsStickyParent(t *testing.T) 
 	if err := os.Chmod(sticky, os.ModeSticky|0o777); err != nil {
 		t.Fatalf("chmod sticky parent: %v", err)
 	}
-	db, err := Open(context.Background(), filepath.Join(sticky, "gamebox.sqlite"))
+	if db, err := Open(context.Background(), filepath.Join(sticky, "gamebox.sqlite")); !errors.Is(err, ErrInsecureDatabaseParent) || db != nil {
+		if db != nil {
+			_ = db.Close()
+		}
+		t.Fatalf("Open sticky-parent error = %v, want ErrInsecureDatabaseParent", err)
+	}
+
+	private := filepath.Join(sticky, "private")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatalf("create private child: %v", err)
+	}
+	if err := os.Chmod(private, 0o700); err != nil {
+		t.Fatalf("chmod private child: %v", err)
+	}
+	path := filepath.Join(private, "gamebox.sqlite")
+	db, err := Open(context.Background(), path)
 	if err != nil {
-		t.Fatalf("Open in sticky parent: %v", err)
+		t.Fatalf("Open in private child of sticky ancestor: %v", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("begin private-child sidecar transaction: %v", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('private-user','Private User','private-user',1,1)`); err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+		t.Fatalf("write private-child sidecar transaction: %v", err)
+	}
+	for _, securedPath := range []string{path, path + "-wal", path + "-shm"} {
+		assertFileMode(t, securedPath, 0o600)
+	}
+	if err := tx.Rollback(); err != nil {
+		_ = db.Close()
+		t.Fatalf("rollback private-child transaction: %v", err)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("close sticky-parent database: %v", err)
+		t.Fatalf("close private-child database: %v", err)
 	}
 }
 

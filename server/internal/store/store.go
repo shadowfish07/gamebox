@@ -23,6 +23,10 @@ const (
 	connectionRetryLimit = 5 * time.Second
 )
 
+// ErrInsecureDatabaseParent requires callers to place SQLite files in a
+// direct parent that other users cannot write.
+var ErrInsecureDatabaseParent = errors.New("database parent is group/world-writable; use a private directory")
+
 // Open opens a durable SQLite database, verifies the connection, and applies
 // all pending schema migrations before returning it to the caller.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
@@ -368,8 +372,11 @@ func verifyParentPath(path string, held *os.File, original os.FileInfo) (os.File
 	if err != nil || !pathInfo.IsDir() || !os.SameFile(heldInfo, pathInfo) {
 		return nil, errors.New("database parent identity changed")
 	}
-	if heldInfo.Mode().Perm()&0o022 != 0 && heldInfo.Mode()&os.ModeSticky == 0 {
-		return nil, errors.New("database parent is group/world-writable without sticky bit")
+	// SQLite creates its WAL and SHM beside the main file, so the immediate
+	// parent is the security boundary. Writable ancestors (for example /tmp)
+	// remain valid when this direct parent is a private directory.
+	if heldInfo.Mode().Perm()&0o022 != 0 {
+		return nil, ErrInsecureDatabaseParent
 	}
 	if original != nil && !os.SameFile(original, heldInfo) {
 		return nil, errors.New("database parent identity changed")
