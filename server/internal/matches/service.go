@@ -127,11 +127,11 @@ func (service *Service) Create(ctx context.Context, gameID, initiatorID, opponen
 	if idErr != nil {
 		return Match{}, ErrInternal
 	}
-	nowUnix := service.clock.Now().UTC().Unix()
+	nowMillis := service.clock.Now().UTC().UnixMilli()
 	matchIDText := matchID.String()
 	result, insertErr := transaction.ExecContext(ctx, `
 INSERT INTO matches(id,game_id,status,revision,created_at,updated_at)
-VALUES (?,?,?,0,?,?)`, matchIDText, gameID, StatusActive, nowUnix, nowUnix)
+VALUES (?,?,?,0,?,?)`, matchIDText, gameID, StatusActive, nowMillis, nowMillis)
 	if insertErr != nil {
 		return Match{}, matchDatabaseError(ctx, insertErr)
 	}
@@ -177,7 +177,7 @@ VALUES (?,?,?)`, gameID, player.UserID, matchIDText)
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return Match{}, matchDatabaseError(ctx, commitErr)
 	}
-	timestamp := time.Unix(nowUnix, 0).UTC()
+	timestamp := time.UnixMilli(nowMillis).UTC()
 	return Match{
 		ID:        matchIDText,
 		GameID:    gameID,
@@ -254,10 +254,10 @@ SELECT EXISTS(
 	if nextRevision <= 0 {
 		return Event{}, ErrInternal
 	}
-	nowUnix := service.clock.Now().UTC().Unix()
+	nowMillis := service.clock.Now().UTC().UnixMilli()
 	result, insertErr := transaction.ExecContext(ctx, `
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
-VALUES (?,?,?,NULL,?,?,?)`, matchID, nextRevision, protocol.TypePlatformMatchCancelled, actorUserID, cancelledPayloadJSON, nowUnix)
+VALUES (?,?,?,NULL,?,?,?)`, matchID, nextRevision, protocol.TypePlatformMatchCancelled, actorUserID, cancelledPayloadJSON, nowMillis)
 	if insertErr != nil {
 		return Event{}, matchDatabaseError(ctx, insertErr)
 	}
@@ -268,7 +268,7 @@ VALUES (?,?,?,NULL,?,?,?)`, matchID, nextRevision, protocol.TypePlatformMatchCan
 	result, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
 SET status=?, revision=?, updated_at=?, finished_at=?, winner_user_id=NULL, result=NULL
-WHERE id=? AND status=? AND revision=?`, StatusCancelled, nextRevision, nowUnix, nowUnix, matchID, StatusActive, revision)
+WHERE id=? AND status=? AND revision=?`, StatusCancelled, nextRevision, nowMillis, nowMillis, matchID, StatusActive, revision)
 	if updateErr != nil {
 		return Event{}, matchDatabaseError(ctx, updateErr)
 	}
@@ -297,7 +297,7 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, gameID, matchID, playerIDs
 		return Event{}, matchDatabaseError(ctx, commitErr)
 	}
 	actorCopy := actorUserID
-	timestamp := time.Unix(nowUnix, 0).UTC()
+	timestamp := time.UnixMilli(nowMillis).UTC()
 	return Event{
 		MatchID:     matchID,
 		Revision:    nextRevision,
@@ -410,8 +410,8 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		return Event{}, Snapshot{}, ErrInternal
 	}
 	nextRevision := match.Revision + 1
-	nowUnix := service.clock.Now().UTC().Unix()
-	now := time.Unix(nowUnix, 0).UTC()
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	now := time.UnixMilli(nowMillis).UTC()
 
 	var gameEvent games.Event
 	var nextGame games.Snapshot
@@ -484,7 +484,7 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	}
 	resultExec, insertErr := transaction.ExecContext(ctx, `
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
-VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionID, request.ActorUserID, string(gameEvent.Payload), nowUnix)
+VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionID, request.ActorUserID, string(gameEvent.Payload), nowMillis)
 	if insertErr != nil {
 		return Event{}, Snapshot{}, matchDatabaseError(ctx, insertErr)
 	}
@@ -496,7 +496,7 @@ VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionI
 		resultExec, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
 SET status=?,revision=?,updated_at=?,finished_at=?,result=?,winner_user_id=?,both_offline_since=NULL
-WHERE id=? AND status=? AND revision=?`, StatusFinished, nextRevision, nowUnix, nowUnix, valueOrNil(result), valueOrNil(winner), match.ID, StatusActive, match.Revision)
+WHERE id=? AND status=? AND revision=?`, StatusFinished, nextRevision, nowMillis, nowMillis, valueOrNil(result), valueOrNil(winner), match.ID, StatusActive, match.Revision)
 		if updateErr != nil {
 			return Event{}, Snapshot{}, matchDatabaseError(ctx, updateErr)
 		}
@@ -524,7 +524,7 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 		resultExec, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
 SET revision=?,updated_at=?
-WHERE id=? AND status=? AND revision=?`, nextRevision, nowUnix, match.ID, StatusActive, match.Revision)
+WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, StatusActive, match.Revision)
 		if updateErr != nil {
 			return Event{}, Snapshot{}, matchDatabaseError(ctx, updateErr)
 		}
@@ -693,8 +693,8 @@ WHERE id=?`, matchID).Scan(&match.GameID, &match.Status, &match.Revision, &resul
 		return Match{}, nil, matchDatabaseError(ctx, err)
 	}
 	match.ID = matchID
-	match.CreatedAt = time.Unix(createdAt, 0).UTC()
-	match.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	match.CreatedAt = time.UnixMilli(createdAt).UTC()
+	match.UpdatedAt = time.UnixMilli(updatedAt).UTC()
 	if result.Valid {
 		match.Result = stringPointer(result.String)
 	}
@@ -702,7 +702,7 @@ WHERE id=?`, matchID).Scan(&match.GameID, &match.Status, &match.Revision, &resul
 		match.WinnerUserID = stringPointer(winner.String)
 	}
 	if finishedAt.Valid {
-		value := time.Unix(finishedAt.Int64, 0).UTC()
+		value := time.UnixMilli(finishedAt.Int64).UTC()
 		match.FinishedAt = &value
 	}
 	if !canonicalUUID(match.ID) || match.GameID == "" || match.Revision < 0 || createdAt > updatedAt {
@@ -926,7 +926,7 @@ ORDER BY revision`, matchID)
 			event.ActorUserID = stringPointer(actorID.String)
 		}
 		event.Payload = append(json.RawMessage(nil), payload...)
-		event.CreatedAt = time.Unix(createdAt, 0).UTC()
+		event.CreatedAt = time.UnixMilli(createdAt).UTC()
 		events = append(events, event)
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
@@ -959,7 +959,7 @@ WHERE match_id=? AND actor_user_id=? AND action_id=?`, matchID, actorID, actionI
 		event.ActorUserID = stringPointer(storedActorID.String)
 	}
 	event.Payload = append(json.RawMessage(nil), payload...)
-	event.CreatedAt = time.Unix(createdAt, 0).UTC()
+	event.CreatedAt = time.UnixMilli(createdAt).UTC()
 	return event, true, nil
 }
 

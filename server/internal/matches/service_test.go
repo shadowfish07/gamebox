@@ -65,7 +65,7 @@ func (fixture fixture) addUser(t *testing.T, id, nickname string, enabled bool) 
 	}
 	_, err := fixture.db.Exec(`
 INSERT INTO users(id,nickname,normalized_nickname,enabled,created_at,updated_at)
-VALUES (?,?,?,?,?,?)`, id, nickname, strings.ToLower(nickname), enabledInteger, fixture.now.Add(-time.Hour).Unix(), fixture.now.Add(-time.Hour).Unix())
+VALUES (?,?,?,?,?,?)`, id, nickname, strings.ToLower(nickname), enabledInteger, fixture.now.Add(-time.Hour).UnixMilli(), fixture.now.Add(-time.Hour).UnixMilli())
 	if err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestCreatePersistsExactlyTwoStableSeatsAndRandomOppositeColors(t *testing.T
 			if created.GameID != gomoku.GameID || created.Status != StatusActive || created.Revision != 0 {
 				t.Fatalf("created match = %+v", created)
 			}
-			wantTimestamp := time.Unix(fixture.now.UTC().Unix(), 0).UTC()
+			wantTimestamp := time.UnixMilli(fixture.now.UTC().UnixMilli()).UTC()
 			if created.CreatedAt != wantTimestamp || created.UpdatedAt != wantTimestamp {
 				t.Fatalf("timestamps = %v/%v, want %v", created.CreatedAt, created.UpdatedAt, wantTimestamp)
 			}
@@ -441,7 +441,7 @@ func TestCancelEitherPlayerZeroMoveCommitsCanonicalEventAndReleasesSlots(t *test
 			if err != nil {
 				t.Fatalf("Cancel: %v", err)
 			}
-			wantTimestamp := time.Unix(fixture.clock.Now().UTC().Unix(), 0).UTC()
+			wantTimestamp := time.UnixMilli(fixture.clock.Now().UTC().UnixMilli()).UTC()
 			if event.MatchID != created.ID || event.Revision != 1 || event.Type != protocol.TypePlatformMatchCancelled || event.ActionID != nil || event.ActorUserID == nil || *event.ActorUserID != actorID || string(event.Payload) != `{}` || !event.CreatedAt.Equal(wantTimestamp) {
 				t.Fatalf("cancel event = %+v payload=%s", event, event.Payload)
 			}
@@ -452,7 +452,7 @@ func TestCancelEitherPlayerZeroMoveCommitsCanonicalEventAndReleasesSlots(t *test
 				Scan(&status, &revision, &updatedAt, &finishedAt, &winner, &result); err != nil {
 				t.Fatalf("read cancelled match: %v", err)
 			}
-			if status != StatusCancelled || revision != 1 || updatedAt != fixture.clock.Now().UTC().Unix() || finishedAt != fixture.clock.Now().UTC().Unix() || winner.Valid || result.Valid {
+			if status != StatusCancelled || revision != 1 || updatedAt != fixture.clock.Now().UTC().UnixMilli() || finishedAt != fixture.clock.Now().UTC().UnixMilli() || winner.Valid || result.Valid {
 				t.Fatalf("cancelled row=(%s,%d,%d,%d,%v,%v)", status, revision, updatedAt, finishedAt, winner, result)
 			}
 			var eventType, payload string
@@ -463,7 +463,7 @@ func TestCancelEitherPlayerZeroMoveCommitsCanonicalEventAndReleasesSlots(t *test
 				Scan(&eventType, &actionID, &storedActor, &payload, &createdAt); err != nil {
 				t.Fatalf("read cancellation event: %v", err)
 			}
-			if eventType != protocol.TypePlatformMatchCancelled || actionID.Valid || !storedActor.Valid || storedActor.String != actorID || payload != `{}` || createdAt != fixture.clock.Now().UTC().Unix() {
+			if eventType != protocol.TypePlatformMatchCancelled || actionID.Valid || !storedActor.Valid || storedActor.String != actorID || payload != `{}` || createdAt != fixture.clock.Now().UTC().UnixMilli() {
 				t.Fatalf("stored event=(%s,%v,%v,%s,%d)", eventType, actionID, storedActor, payload, createdAt)
 			}
 			assertTableCount(t, fixture.db, "active_game_slots", 0)
@@ -478,7 +478,7 @@ func TestCancelAdvancesExistingRevisionByExactlyOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := fixture.db.Exec(`INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES (?,1,'platform.audit','{}',?)`, created.ID, fixture.now.Unix()); err != nil {
+	if _, err := fixture.db.Exec(`INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES (?,1,'platform.audit','{}',?)`, created.ID, fixture.now.UnixMilli()); err != nil {
 		t.Fatalf("insert prior event: %v", err)
 	}
 	if _, err := fixture.db.Exec(`UPDATE matches SET revision=1 WHERE id=?`, created.ID); err != nil {
@@ -511,14 +511,14 @@ func TestCancelRejectsUnknownNonPlayerInactiveAndAnyAcceptedMove(t *testing.T) {
 		{name: "non player", setup: func(_ *testing.T, _ fixture, _ *Service, id string) string { return id }, actor: thirdID, want: ErrMatchNotCancellable},
 		{name: "unknown actor", setup: func(_ *testing.T, _ fixture, _ *Service, id string) string { return id }, actor: "44444444-4444-4444-8444-444444444444", want: ErrMatchNotCancellable},
 		{name: "inactive", setup: func(t *testing.T, f fixture, _ *Service, id string) string {
-			if _, err := f.db.Exec(`UPDATE matches SET status='finished',finished_at=? WHERE id=?`, f.now.Unix(), id); err != nil {
+			if _, err := f.db.Exec(`UPDATE matches SET status='finished',finished_at=? WHERE id=?`, f.now.UnixMilli(), id); err != nil {
 				t.Fatalf("finish match: %v", err)
 			}
 			return id
 		}, actor: initiatorID, want: ErrMatchNotCancellable},
 		{name: "accepted move", setup: func(t *testing.T, f fixture, _ *Service, id string) string {
 			payload, _ := json.Marshal(map[string]any{"x": 7, "y": 7})
-			if _, err := f.db.Exec(`INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES (?,1,?,?,?, ?,?)`, id, gomoku.MoveAccepted, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", initiatorID, string(payload), f.now.Unix()); err != nil {
+			if _, err := f.db.Exec(`INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES (?,1,?,?,?, ?,?)`, id, gomoku.MoveAccepted, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", initiatorID, string(payload), f.now.UnixMilli()); err != nil {
 				t.Fatalf("insert move: %v", err)
 			}
 			if _, err := f.db.Exec(`UPDATE matches SET revision=1 WHERE id=?`, id); err != nil {
@@ -1644,7 +1644,7 @@ func TestSnapshotRejectsDuplicateMoveAndLifecycleMetadataCorruption(t *testing.T
 			payload := fmt.Sprintf(`{"x":1,"y":1,"color":"white","userId":%q}`, opponentID)
 			if _, err := fixture.db.Exec(`
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
-VALUES (?,2,?,?,?,?,?)`, matchID, gomoku.MoveAccepted, actionID(902), opponentID, payload, fixture.now.Unix()); err != nil {
+VALUES (?,2,?,?,?,?,?)`, matchID, gomoku.MoveAccepted, actionID(902), opponentID, payload, fixture.now.UnixMilli()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := fixture.db.Exec(`UPDATE matches SET revision=2 WHERE id=?`, matchID); err != nil {
@@ -1675,6 +1675,129 @@ VALUES (?,2,?,?,?,?,?)`, matchID, gomoku.MoveAccepted, actionID(902), opponentID
 			}
 		})
 	}
+}
+
+func TestMatchLifecyclePersistsAndReturnsUTCUnixMilliseconds(t *testing.T) {
+	t.Run("create and active action", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantCreate := time.UnixMilli(fixture.now.UTC().UnixMilli()).UTC()
+		if !created.CreatedAt.Equal(wantCreate) || !created.UpdatedAt.Equal(wantCreate) {
+			t.Fatalf("create returned times=%v/%v want=%v", created.CreatedAt, created.UpdatedAt, wantCreate)
+		}
+		var createdAt, updatedAt int64
+		if err := fixture.db.QueryRow(`SELECT created_at,updated_at FROM matches WHERE id=?`, created.ID).Scan(&createdAt, &updatedAt); err != nil {
+			t.Fatal(err)
+		}
+		if createdAt != fixture.now.UTC().UnixMilli() || updatedAt != fixture.now.UTC().UnixMilli() {
+			t.Fatalf("create stored milliseconds=%d/%d want=%d", createdAt, updatedAt, fixture.now.UTC().UnixMilli())
+		}
+
+		fixture.clock.Advance(1234*time.Millisecond + 567*time.Microsecond)
+		request := moveRequest(created.ID, initiatorID, 950, 0, 5, 5)
+		event, snapshot, err := service.ApplyAction(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantAction := time.UnixMilli(fixture.clock.Now().UTC().UnixMilli()).UTC()
+		if !event.CreatedAt.Equal(wantAction) || !snapshot.Match.UpdatedAt.Equal(wantAction) {
+			t.Fatalf("active action returned times=%v/%v want=%v", event.CreatedAt, snapshot.Match.UpdatedAt, wantAction)
+		}
+		var eventCreatedAt int64
+		if err := fixture.db.QueryRow(`SELECT created_at FROM match_events WHERE match_id=? AND revision=1`, created.ID).Scan(&eventCreatedAt); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.db.QueryRow(`SELECT updated_at FROM matches WHERE id=?`, created.ID).Scan(&updatedAt); err != nil {
+			t.Fatal(err)
+		}
+		if eventCreatedAt != fixture.clock.Now().UTC().UnixMilli() || updatedAt != fixture.clock.Now().UTC().UnixMilli() {
+			t.Fatalf("active action stored milliseconds=%d/%d want=%d", eventCreatedAt, updatedAt, fixture.clock.Now().UTC().UnixMilli())
+		}
+		request.ExpectedRevision = 0
+		retry, reloaded, err := service.ApplyAction(context.Background(), request)
+		if err != nil || !retry.CreatedAt.Equal(wantAction) || !reloaded.Match.CreatedAt.Equal(wantCreate) || !reloaded.Match.UpdatedAt.Equal(wantAction) {
+			t.Fatalf("idempotent read times event=%v created=%v updated=%v err=%v", retry.CreatedAt, reloaded.Match.CreatedAt, reloaded.Match.UpdatedAt, err)
+		}
+	})
+
+	t.Run("terminal action", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index, point := range [][2]int{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}, {3, 0}, {3, 1}} {
+			actor := initiatorID
+			if index%2 == 1 {
+				actor = opponentID
+			}
+			if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, actor, 960+index, int64(index), point[0], point[1])); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fixture.clock.Advance(2345*time.Millisecond + 678*time.Microsecond)
+		event, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 969, 8, 4, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := time.UnixMilli(fixture.clock.Now().UTC().UnixMilli()).UTC()
+		if !event.CreatedAt.Equal(want) || !snapshot.Match.UpdatedAt.Equal(want) || snapshot.Match.FinishedAt == nil || !snapshot.Match.FinishedAt.Equal(want) {
+			t.Fatalf("terminal returned times event=%v updated=%v finished=%v want=%v", event.CreatedAt, snapshot.Match.UpdatedAt, snapshot.Match.FinishedAt, want)
+		}
+		var eventCreatedAt, updatedAt, finishedAt int64
+		if err := fixture.db.QueryRow(`SELECT created_at FROM match_events WHERE match_id=? AND revision=9`, created.ID).Scan(&eventCreatedAt); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.db.QueryRow(`SELECT updated_at,finished_at FROM matches WHERE id=?`, created.ID).Scan(&updatedAt, &finishedAt); err != nil {
+			t.Fatal(err)
+		}
+		wantMillis := fixture.clock.Now().UTC().UnixMilli()
+		if eventCreatedAt != wantMillis || updatedAt != wantMillis || finishedAt != wantMillis {
+			t.Fatalf("terminal stored milliseconds=%d/%d/%d want=%d", eventCreatedAt, updatedAt, finishedAt, wantMillis)
+		}
+		reloaded, err := service.Snapshot(context.Background(), created.ID)
+		if err != nil || !reloaded.Match.UpdatedAt.Equal(want) || reloaded.Match.FinishedAt == nil || !reloaded.Match.FinishedAt.Equal(want) {
+			t.Fatalf("terminal reloaded times updated=%v finished=%v err=%v", reloaded.Match.UpdatedAt, reloaded.Match.FinishedAt, err)
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture.clock.Advance(3456*time.Millisecond + 789*time.Microsecond)
+		event, err := service.Cancel(context.Background(), created.ID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := time.UnixMilli(fixture.clock.Now().UTC().UnixMilli()).UTC()
+		if !event.CreatedAt.Equal(want) {
+			t.Fatalf("cancel returned event time=%v want=%v", event.CreatedAt, want)
+		}
+		var eventCreatedAt, updatedAt, finishedAt int64
+		if err := fixture.db.QueryRow(`SELECT created_at FROM match_events WHERE match_id=? AND revision=1`, created.ID).Scan(&eventCreatedAt); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.db.QueryRow(`SELECT updated_at,finished_at FROM matches WHERE id=?`, created.ID).Scan(&updatedAt, &finishedAt); err != nil {
+			t.Fatal(err)
+		}
+		wantMillis := fixture.clock.Now().UTC().UnixMilli()
+		if eventCreatedAt != wantMillis || updatedAt != wantMillis || finishedAt != wantMillis {
+			t.Fatalf("cancel stored milliseconds=%d/%d/%d want=%d", eventCreatedAt, updatedAt, finishedAt, wantMillis)
+		}
+		reloaded, err := service.Snapshot(context.Background(), created.ID)
+		if err != nil || !reloaded.Match.UpdatedAt.Equal(want) || reloaded.Match.FinishedAt == nil || !reloaded.Match.FinishedAt.Equal(want) {
+			t.Fatalf("cancel reloaded times updated=%v finished=%v err=%v", reloaded.Match.UpdatedAt, reloaded.Match.FinishedAt, err)
+		}
+	})
 }
 
 type concurrentActionResult struct {
