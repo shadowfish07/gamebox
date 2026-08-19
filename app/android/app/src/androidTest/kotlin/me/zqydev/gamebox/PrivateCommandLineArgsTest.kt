@@ -14,32 +14,54 @@ import org.junit.runner.RunWith
 class PrivateCommandLineArgsTest {
     @Test
     fun consumesAndClonesSecretArgsBeforeGodotSeesIntent() {
-        val source = arrayOf("--", "--launch-ticket", "canary-secret")
+        val source = arrayOf(
+            "--",
+            "--game-id",
+            "gomoku",
+            "--match-id",
+            "11111111-1111-4111-8111-111111111111",
+            "--launch-ticket",
+            "canary-secret",
+            "--ws-url",
+            "ws://127.0.0.1/canary",
+        )
         val intent = Intent().putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, source)
         val environment = FakePrivateTicketEnvironment()
         val privateArgs = PrivateCommandLineArgs(environment)
 
         privateArgs.consumeFrom(intent)
-        source[2] = "mutated"
+        source[6] = "mutated"
 
         assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
         assertArrayEquals(
             arrayOf(
                 "project.godot",
                 "--",
+                "--game-id",
+                "gomoku",
+                "--match-id",
+                "11111111-1111-4111-8111-111111111111",
                 "--launch-ticket",
                 PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
+                "--ws-url",
+                "ws://127.0.0.1/canary",
             ),
             privateArgs.combineWith(listOf("project.godot")).toTypedArray(),
         )
         assertEquals("canary-secret", environment.value)
         val mutatedRead = privateArgs.combineWith(emptyList())
-        mutatedRead[2] = "changed"
+        mutatedRead[6] = "changed"
         assertArrayEquals(
             arrayOf(
                 "--",
+                "--game-id",
+                "gomoku",
+                "--match-id",
+                "11111111-1111-4111-8111-111111111111",
                 "--launch-ticket",
                 PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
+                "--ws-url",
+                "ws://127.0.0.1/canary",
             ),
             privateArgs.combineWith(emptyList()).toTypedArray(),
         )
@@ -61,6 +83,83 @@ class PrivateCommandLineArgsTest {
 
         assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
         assertFalse(privateArgs.combineWith(emptyList()).isNotEmpty())
+    }
+
+    @Test
+    fun fixedNormalShapeHandlesAValueThatEqualsTheTicketKey() {
+        val source = arrayOf(
+            "--",
+            "--game-id",
+            "--launch-ticket",
+            "--match-id",
+            "11111111-1111-4111-8111-111111111111",
+            "--launch-ticket",
+            "collision-canary-secret",
+            "--ws-url",
+            "ws://127.0.0.1:65535/canary",
+        )
+        val intent = Intent().putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, source)
+        val environment = FakePrivateTicketEnvironment()
+        val privateArgs = PrivateCommandLineArgs(environment)
+
+        privateArgs.consumeFrom(intent)
+
+        assertArrayEquals(
+            arrayOf(
+                "--",
+                "--game-id",
+                "--launch-ticket",
+                "--match-id",
+                "11111111-1111-4111-8111-111111111111",
+                "--launch-ticket",
+                PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
+                "--ws-url",
+                "ws://127.0.0.1:65535/canary",
+            ),
+            privateArgs.combineWith(emptyList()).toTypedArray(),
+        )
+        assertEquals("collision-canary-secret", environment.value)
+    }
+
+    @Test
+    fun malformedDuplicateAndReservedTicketInputsFailClosed() {
+        val malformedInputs = listOf(
+            arrayOf("--", "--launch-ticket", "malformed-secret"),
+            arrayOf(
+                "--",
+                "--game-id",
+                "gomoku",
+                "--launch-ticket",
+                "decoy-secret",
+                "--launch-ticket",
+                "real-secret",
+                "--ws-url",
+                "ws://127.0.0.1/canary",
+            ),
+            arrayOf(
+                "--",
+                "--game-id",
+                "gomoku",
+                "--match-id",
+                "11111111-1111-4111-8111-111111111111",
+                "--launch-ticket",
+                PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
+                "--ws-url",
+                "ws://127.0.0.1/canary",
+            ),
+        )
+
+        malformedInputs.forEach { source ->
+            val environment = FakePrivateTicketEnvironment()
+            val privateArgs = PrivateCommandLineArgs(environment)
+            val intent = Intent().putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, source)
+
+            privateArgs.consumeFrom(intent)
+
+            assertFalse(privateArgs.combineWith(emptyList()).isNotEmpty())
+            assertNull(environment.value)
+            assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
+        }
     }
 
     private class FakePrivateTicketEnvironment : PrivateTicketEnvironment {

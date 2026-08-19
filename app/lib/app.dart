@@ -61,7 +61,7 @@ class _GameboxAppState extends State<GameboxApp> {
     }
   }
 
-  Future<void> _launchInstrumentationCanary() async {
+  Future<void> _launchInstrumentationCanary({String gameId = 'gomoku'}) async {
     if (_isLaunchingHostSmoke || !_canLaunchInstrumentationCanary) {
       return;
     }
@@ -72,7 +72,7 @@ class _GameboxAppState extends State<GameboxApp> {
     try {
       await widget.gameLauncher.launch(
         GameLaunchRequest(
-          gameId: 'gomoku',
+          gameId: gameId,
           matchId: '11111111-1111-4111-8111-111111111111',
           launchTicket:
               'gamebox-canary-ticket-${widget.instrumentationCanaryNonce}',
@@ -134,6 +134,27 @@ class _GameboxAppState extends State<GameboxApp> {
                               ? null
                               : _launchInstrumentationCanary,
                           child: const Text('启动普通启动验证'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Semantics(
+                        key: const Key('host-smoke.collision-canary'),
+                        label: 'host-smoke.collision-canary',
+                        button: true,
+                        enabled: !_isLaunchingHostSmoke,
+                        onTap: _isLaunchingHostSmoke
+                            ? null
+                            : () => _launchInstrumentationCanary(
+                                gameId: '--launch-ticket',
+                              ),
+                        excludeSemantics: true,
+                        child: OutlinedButton(
+                          onPressed: _isLaunchingHostSmoke
+                              ? null
+                              : () => _launchInstrumentationCanary(
+                                  gameId: '--launch-ticket',
+                                ),
+                          child: const Text('启动参数碰撞验证'),
                         ),
                       ),
                     ],

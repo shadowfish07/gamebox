@@ -8,6 +8,8 @@ const HOST_SMOKE_EXITING_MARKER := "GAMEBOX_GODOT_EXITING"
 const NORMAL_READY_MARKER := "GAMEBOX_GODOT_NORMAL_READY"
 const PRIVATE_TICKET_ENVIRONMENT := "GAMEBOX_PRIVATE_LAUNCH_TICKET"
 const PRIVATE_TICKET_PLACEHOLDER := "__GAMEBOX_PRIVATE_LAUNCH_TICKET__"
+const NORMAL_ARGUMENT_COUNT := 8
+const NORMAL_TICKET_VALUE_INDEX := 5
 
 
 func _ready() -> void:
@@ -43,18 +45,30 @@ func _start_with_args(args: PackedStringArray) -> void:
 
 func _hydrate_private_launch_ticket(args: PackedStringArray) -> Dictionary:
 	var hydrated_args := args.duplicate()
-	var ticket_key_index := hydrated_args.find("--launch-ticket")
-	if ticket_key_index < 0 or ticket_key_index + 1 >= hydrated_args.size():
-		return {"ok": true, "args": hydrated_args}
-	var ticket_index := ticket_key_index + 1
-	if hydrated_args[ticket_index] != PRIVATE_TICKET_PLACEHOLDER:
+	if not _has_normal_launch_shape(hydrated_args):
+		OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
+		return {"ok": false}
+	if hydrated_args[NORMAL_TICKET_VALUE_INDEX] != PRIVATE_TICKET_PLACEHOLDER:
+		OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
 		return {"ok": true, "args": hydrated_args}
 	var private_ticket := OS.get_environment(PRIVATE_TICKET_ENVIRONMENT)
 	OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
-	if private_ticket.is_empty():
+	if private_ticket.is_empty() or private_ticket == PRIVATE_TICKET_PLACEHOLDER:
 		return {"ok": false}
-	hydrated_args[ticket_index] = private_ticket
+	hydrated_args[NORMAL_TICKET_VALUE_INDEX] = private_ticket
 	return {"ok": true, "args": hydrated_args}
+
+
+func _has_normal_launch_shape(args: PackedStringArray) -> bool:
+	return args.size() == NORMAL_ARGUMENT_COUNT \
+		and args[0] == "--game-id" \
+		and not args[1].is_empty() \
+		and args[2] == "--match-id" \
+		and not args[3].is_empty() \
+		and args[4] == "--launch-ticket" \
+		and not args[5].is_empty() \
+		and args[6] == "--ws-url" \
+		and not args[7].is_empty()
 
 
 func _has_host_smoke_key(args: PackedStringArray) -> bool:

@@ -1,6 +1,5 @@
 package me.zqydev.gamebox
 
-import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import io.flutter.embedding.android.FlutterActivity
@@ -11,7 +10,11 @@ import org.godotengine.godot.GodotActivity
 class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
-        launchGate.onHostResumed(gameProcessRunning = isGameProcessRunning())
+        launchGate.onHostResumed(
+            gameProcessRunning = GameProcessLease.isHeld(
+                GameProcessLease.lockFile(noBackupFilesDir),
+            ),
+        )
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -44,7 +47,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun launch(args: GameLaunchArgs, result: MethodChannel.Result) {
-        if (!launchGate.tryBeginLaunch()) {
+        val gameProcessRunning = GameProcessLease.isHeld(
+            GameProcessLease.lockFile(noBackupFilesDir),
+        )
+        if (!launchGate.tryBeginLaunch(gameProcessRunning)) {
             result.error(GAME_ALREADY_ACTIVE_CODE, GAME_ALREADY_ACTIVE_MESSAGE, null)
             return
         }
@@ -61,14 +67,6 @@ class MainActivity : FlutterActivity() {
         } catch (_: SecurityException) {
             launchGate.onLaunchFailed()
             result.error(LAUNCH_FAILED_CODE, LAUNCH_FAILED_MESSAGE, null)
-        }
-    }
-
-    private fun isGameProcessRunning(): Boolean {
-        val activityManager = getSystemService(ActivityManager::class.java)
-        val gameProcessName = "$packageName:game"
-        return activityManager.runningAppProcesses.orEmpty().any { process ->
-            process.processName == gameProcessName
         }
     }
 

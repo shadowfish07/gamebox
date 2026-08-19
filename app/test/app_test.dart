@@ -50,6 +50,16 @@ void main() {
       launcher.lastRequest?.launchTicket,
       'gamebox-canary-ticket-nonce_1234',
     );
+
+    await tester.tap(find.byKey(const Key('host-smoke.collision-canary')));
+    await tester.pump();
+
+    expect(launcher.launchCalls, 2);
+    expect(launcher.lastRequest?.gameId, '--launch-ticket');
+    expect(
+      launcher.lastRequest?.launchTicket,
+      'gamebox-canary-ticket-nonce_1234',
+    );
   });
 
   testWidgets('host-smoke button exposes a stable Android semantics label', (

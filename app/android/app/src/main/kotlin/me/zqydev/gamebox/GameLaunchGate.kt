@@ -1,29 +1,37 @@
 package me.zqydev.gamebox
 
 internal class GameLaunchGate {
-    private var launchActive = false
+    private var state = State.IDLE
 
     val isActive: Boolean
-        @Synchronized get() = launchActive
+        @Synchronized get() = state != State.IDLE
 
     @Synchronized
-    fun tryBeginLaunch(): Boolean {
-        if (launchActive) {
+    fun tryBeginLaunch(gameProcessRunning: Boolean): Boolean {
+        if (gameProcessRunning) {
+            state = State.ACTIVE
             return false
         }
-        launchActive = true
+        if (state == State.STARTING) {
+            return false
+        }
+        state = State.STARTING
         return true
     }
 
     @Synchronized
     fun onLaunchFailed() {
-        launchActive = false
+        state = State.IDLE
     }
 
     @Synchronized
     fun onHostResumed(gameProcessRunning: Boolean) {
-        if (!gameProcessRunning) {
-            launchActive = false
-        }
+        state = if (gameProcessRunning) State.ACTIVE else State.IDLE
+    }
+
+    private enum class State {
+        IDLE,
+        STARTING,
+        ACTIVE,
     }
 }

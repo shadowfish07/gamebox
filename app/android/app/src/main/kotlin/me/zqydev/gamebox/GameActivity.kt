@@ -6,9 +6,13 @@ import org.godotengine.godot.GodotActivity
 
 class GameActivity : GodotActivity() {
     private val privateCommandLineArgs = PrivateCommandLineArgs()
+    private var gameProcessLease: GameProcessLease? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         privateCommandLineArgs.consumeFrom(intent)
+        gameProcessLease = GameProcessLease.acquire(
+            GameProcessLease.lockFile(noBackupFilesDir),
+        )
         super.onCreate(savedInstanceState)
     }
 
@@ -31,7 +35,12 @@ class GameActivity : GodotActivity() {
 
     override fun onDestroy() {
         privateCommandLineArgs.clear()
-        super.onDestroy()
+        try {
+            super.onDestroy()
+        } finally {
+            gameProcessLease?.close()
+            gameProcessLease = null
+        }
     }
 
     private companion object {

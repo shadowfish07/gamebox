@@ -83,6 +83,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = false
+            // The runtime is GLES-only; do not ship Godot's unused Vulkan validation layer.
+            excludes += "lib/**/libVkLayer_khronos_validation.so"
             selectedGameboxAbi?.let { selectedAbi ->
                 excludes += supportedGameboxAbis
                     .filterNot { it == selectedAbi }

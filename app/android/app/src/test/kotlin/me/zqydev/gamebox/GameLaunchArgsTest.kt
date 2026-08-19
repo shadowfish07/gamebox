@@ -101,4 +101,18 @@ class GameLaunchArgsTest {
             args.commandLineParams,
         )
     }
+
+    @Test
+    fun `private transport placeholder is rejected as a native ticket`() {
+        val result = GameLaunchArgs.fromNative(
+            mapOf(
+                "gameId" to "gomoku",
+                "matchId" to "550e8400-e29b-41d4-a716-446655440000",
+                "launchTicket" to PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
+                "wsUrl" to "wss://gamebox.example.com",
+            ),
+        )
+
+        assertSame(GameLaunchArgs.ParseResult.Invalid, result)
+    }
 }

@@ -13,6 +13,9 @@ static func cases() -> Array:
 		{"name": "opaque smoke-looking ticket remains a normal launch", "run": _keeps_smoke_looking_ticket_in_normal_launch},
 		{"name": "host smoke exposes a controlled exit marker", "run": _has_controlled_exit_marker},
 		{"name": "private ticket is hydrated once before LaunchConfig", "run": _hydrates_private_ticket_once},
+		{"name": "private ticket hydration uses fixed key positions", "run": _hydrates_ticket_with_key_collision_value},
+		{"name": "malformed private ticket arguments fail closed", "run": _rejects_malformed_private_ticket_args},
+		{"name": "project requests portrait handheld orientation", "run": _requests_portrait_orientation},
 	]
 
 
@@ -82,6 +85,45 @@ static func _hydrates_private_ticket_once() -> bool:
 	return _check(result.get("ok", false), "expected private ticket hydration") \
 		and _check(hydrated_ticket == "private-canary-ticket", "expected unchanged private ticket") \
 		and _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "expected private environment to be cleared")
+
+
+static func _hydrates_ticket_with_key_collision_value() -> bool:
+	var host = MainScript.new()
+	var args := _valid_launch_args()
+	args[1] = "--launch-ticket"
+	args[5] = MainScript.PRIVATE_TICKET_PLACEHOLDER
+	OS.set_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT, "collision-canary-secret")
+	var result: Dictionary = host._hydrate_private_launch_ticket(args)
+	var hydrated_args: PackedStringArray = result.get("args", PackedStringArray())
+	host.free()
+	return _check(result.get("ok", false), "expected fixed-position hydration") \
+		and _check(hydrated_args[1] == "--launch-ticket", "expected collision value unchanged") \
+		and _check(hydrated_args[5] == "collision-canary-secret", "expected actual ticket hydrated") \
+		and _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "expected private environment cleared")
+
+
+static func _rejects_malformed_private_ticket_args() -> bool:
+	var malformed_inputs := [
+		PackedStringArray(["--launch-ticket", MainScript.PRIVATE_TICKET_PLACEHOLDER]),
+		PackedStringArray(["--game-id", "gomoku", "--launch-ticket", "decoy", "--launch-ticket", MainScript.PRIVATE_TICKET_PLACEHOLDER, "--ws-url", "ws://127.0.0.1"]),
+	]
+	for args in malformed_inputs:
+		var host = MainScript.new()
+		OS.set_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT, "must-not-hydrate")
+		var result: Dictionary = host._hydrate_private_launch_ticket(args)
+		host.free()
+		if not _check(not result.get("ok", true), "expected malformed private args to fail"):
+			return false
+		if not _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "expected malformed environment cleared"):
+			return false
+	return true
+
+
+static func _requests_portrait_orientation() -> bool:
+	return _check(
+		ProjectSettings.get_setting("display/window/handheld/orientation") == DisplayServer.SCREEN_PORTRAIT,
+		"expected portrait handheld orientation",
+	)
 
 
 static func _attached_main_scene() -> Control:

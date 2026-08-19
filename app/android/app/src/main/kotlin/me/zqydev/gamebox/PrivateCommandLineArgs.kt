@@ -66,23 +66,54 @@ internal class PrivateCommandLineArgs(
     }
 
     private fun privatizeLaunchTicket() {
-        val ticketKeyIndex = retained.indexOf(LAUNCH_TICKET_KEY)
-        if (ticketKeyIndex < 0 || ticketKeyIndex + 1 >= retained.size) {
+        if (retained.contentEquals(HOST_SMOKE_ARGUMENTS)) {
             return
         }
-        val ticketIndex = ticketKeyIndex + 1
+        if (!hasNormalLaunchShape()) {
+            eraseRetained()
+            return
+        }
+        val ticketIndex = NORMAL_TICKET_VALUE_INDEX
         val ticket = retained[ticketIndex]
+        if (ticket.isBlank() || ticket == PRIVATE_TICKET_PLACEHOLDER) {
+            eraseRetained()
+            return
+        }
         retained[ticketIndex] = if (environment.replace(ticket)) {
             PRIVATE_TICKET_PLACEHOLDER
         } else {
             ERASED_VALUE
         }
+        if (retained[ticketIndex] == ERASED_VALUE) {
+            eraseRetained()
+        }
+    }
+
+    private fun hasNormalLaunchShape(): Boolean =
+        retained.size == NORMAL_ARGUMENT_COUNT &&
+            retained[0] == "--" &&
+            retained[1] == "--game-id" &&
+            retained[2].isNotBlank() &&
+            retained[3] == "--match-id" &&
+            retained[4].isNotBlank() &&
+            retained[5] == LAUNCH_TICKET_KEY &&
+            retained[7] == "--ws-url" &&
+            retained[8].isNotBlank()
+
+    private fun eraseRetained() {
+        retained.fill(ERASED_VALUE)
+        retained = emptyArray()
+        environment.clear()
     }
 
     companion object {
         const val PRIVATE_TICKET_ENVIRONMENT = "GAMEBOX_PRIVATE_LAUNCH_TICKET"
         const val PRIVATE_TICKET_PLACEHOLDER = "__GAMEBOX_PRIVATE_LAUNCH_TICKET__"
         private const val LAUNCH_TICKET_KEY = "--launch-ticket"
+        private const val NORMAL_ARGUMENT_COUNT = 9
+        private const val NORMAL_TICKET_VALUE_INDEX = 6
+        private val HOST_SMOKE_ARGUMENTS =
+            arrayOf("--", "--host-smoke", "--auto-exit-ms", "800")
         const val ERASED_VALUE = ""
     }
 }

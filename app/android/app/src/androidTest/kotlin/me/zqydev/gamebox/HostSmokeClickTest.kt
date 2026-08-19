@@ -33,6 +33,18 @@ class HostSmokeClickTest {
     }
 
     @Test
+    fun clickCollisionLaunchCanaryByAccessibilityDescription() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val button = device.wait(
+            Until.findObject(By.pkg(APP_PACKAGE).desc(COLLISION_CANARY_DESCRIPTION)),
+            SELECTOR_TIMEOUT_MS,
+        )
+
+        assertNotNull("Missing accessibility selector: $COLLISION_CANARY_DESCRIPTION", button)
+        button.click()
+    }
+
+    @Test
     fun clickHostSmokeAndExpectActiveLaunchRejection() {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val button = findLaunchButton(device)
@@ -63,6 +75,7 @@ class HostSmokeClickTest {
         const val APP_PACKAGE = "me.zqydev.gamebox"
         const val HOST_SMOKE_DESCRIPTION = "host-smoke.launch"
         const val NORMAL_CANARY_DESCRIPTION = "host-smoke.normal-canary"
+        const val COLLISION_CANARY_DESCRIPTION = "host-smoke.collision-canary"
         const val HOST_SMOKE_ERROR_DESCRIPTION = "host-smoke.error"
         const val SELECTOR_TIMEOUT_MS = 20_000L
     }

@@ -26,6 +26,9 @@ class GameLaunchArgs private constructor(private val params: Array<String>) {
                 (arguments[key] as? String)?.takeUnless(String::isBlank)
                     ?: return ParseResult.Invalid
             }
+            if (values.getValue("launchTicket") == PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER) {
+                return ParseResult.Invalid
+            }
 
             return ParseResult.Success(
                 GameLaunchArgs(
