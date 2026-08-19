@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "gameId": "gomoku",
+  "matchId": "11111111-1111-4111-8111-111111111111",
+  "revision": 4,
+  "type": "gomoku.move.accepted",
+  "actionId": "33333333-3333-4333-8333-333333333333",
+  "payload": {
+    "x": 7,
+    "y": 7,
+    "color": "black",
+    "userId": "u1"
+  }
+}

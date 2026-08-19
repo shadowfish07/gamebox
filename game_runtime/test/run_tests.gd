@@ -4,6 +4,7 @@ const TEST_SUITES := [
 	preload("res://test/test_launch_config.gd"),
 	preload("res://test/test_registry.gd"),
 	preload("res://test/test_main.gd"),
+	preload("res://test/test_protocol.gd"),
 ]
 
 
