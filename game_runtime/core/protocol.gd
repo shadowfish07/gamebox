@@ -1,6 +1,7 @@
 extends RefCounted
 
 const VERSION := 1
+const MAX_SAFE_JSON_INTEGER := 9007199254740991
 
 const TYPE_PLATFORM_CONNECT := "platform.connect"
 const TYPE_PLATFORM_CONNECTED := "platform.connected"
@@ -45,6 +46,9 @@ const _KNOWN_TYPES := {
 
 
 static func decode(text: String) -> Dictionary:
+	var strict_scan := _StrictJSONScanner.new(text, _ALLOWED_FIELDS).scan()
+	if not strict_scan.get("ok", false):
+		return strict_scan
 	var parser := JSON.new()
 	if parser.parse(text) != OK:
 		return _failure("invalid_json", "Message is not valid JSON")
@@ -52,6 +56,10 @@ static func decode(text: String) -> Dictionary:
 		return _failure("invalid_envelope", "Message must be a JSON object")
 
 	var envelope: Dictionary = _normalize_json_numbers(parser.data)
+	return _validate_envelope(envelope)
+
+
+static func _validate_envelope(envelope: Dictionary) -> Dictionary:
 	for field in envelope:
 		if not _ALLOWED_FIELDS.has(field):
 			return _failure("invalid_envelope", "Message contains an unknown envelope field")
@@ -116,8 +124,12 @@ static func encode_action(
 	match_id: String,
 	revision: int,
 	action_id: String,
-	payload: Dictionary
-) -> String:
+	payload: Variant
+) -> Dictionary:
+	if not payload is Dictionary:
+		return _failure("invalid_payload", "payload must be a JSON object")
+	if not _is_json_safe(payload, []):
+		return _failure("invalid_payload", "payload contains a value that cannot be represented safely in JSON")
 	var envelope := {
 		"protocolVersion": VERSION,
 		"gameId": "gomoku",
@@ -127,7 +139,45 @@ static func encode_action(
 		"actionId": action_id,
 		"payload": payload,
 	}
-	return JSON.stringify(envelope)
+	var validation := _validate_envelope(envelope)
+	if not validation.get("ok", false):
+		return validation
+	var text := JSON.stringify(envelope)
+	var verification := decode(text)
+	if not verification.get("ok", false):
+		return _failure("encoding_failed", "Encoded action did not satisfy the protocol contract")
+	return {"ok": true, "text": text}
+
+
+static func _is_json_safe(value: Variant, ancestors: Array) -> bool:
+	match typeof(value):
+		TYPE_NIL, TYPE_BOOL, TYPE_STRING:
+			return true
+		TYPE_INT:
+			return value >= -MAX_SAFE_JSON_INTEGER and value <= MAX_SAFE_JSON_INTEGER
+		TYPE_FLOAT:
+			if not is_finite(value):
+				return false
+			if value == floor(value):
+				return value >= -MAX_SAFE_JSON_INTEGER and value <= MAX_SAFE_JSON_INTEGER
+			return true
+		TYPE_ARRAY, TYPE_DICTIONARY:
+			for ancestor in ancestors:
+				if is_same(ancestor, value):
+					return false
+			var nested_ancestors := ancestors.duplicate()
+			nested_ancestors.append(value)
+			if value is Array:
+				for item in value:
+					if not _is_json_safe(item, nested_ancestors):
+						return false
+			else:
+				for key in value:
+					if not key is String or not _is_json_safe(value[key], nested_ancestors):
+						return false
+			return true
+		_:
+			return false
 
 
 static func _validate_optional_string(envelope: Dictionary, field: String) -> bool:
@@ -171,3 +221,282 @@ static func _is_revisionless_control(message_type: String) -> bool:
 
 static func _failure(code: String, message: String) -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
+
+
+class _StrictJSONScanner:
+	var _text: String
+	var _allowed_top_level_keys: Dictionary
+	var _position := 0
+	var _top_level_keys := {}
+	var _error := ""
+
+
+	func _init(text: String, allowed_top_level_keys: Dictionary) -> void:
+		_text = text
+		_allowed_top_level_keys = allowed_top_level_keys
+
+
+	func scan() -> Dictionary:
+		_skip_whitespace()
+		if not _parse_object(true):
+			return {"ok": false, "code": "invalid_json", "message": _error}
+		_skip_whitespace()
+		if _position != _text.length():
+			return {"ok": false, "code": "invalid_json", "message": "Message contains trailing data"}
+		return {"ok": true}
+
+
+	func _parse_value() -> bool:
+		_skip_whitespace()
+		if _at_end():
+			return _fail("Expected a JSON value")
+		var character := _character()
+		if character == "{":
+			return _parse_object(false)
+		if character == "[":
+			return _parse_array()
+		if character == '"':
+			return _parse_string().get("ok", false)
+		if character == "t":
+			return _consume_literal("true")
+		if character == "f":
+			return _consume_literal("false")
+		if character == "n":
+			return _consume_literal("null")
+		if character == "-" or _is_digit(character):
+			return _parse_number()
+		return _fail("Unexpected character in JSON value")
+
+
+	func _parse_object(top_level: bool) -> bool:
+		if not _consume("{"):
+			return _fail("Expected JSON object")
+		_skip_whitespace()
+		if _consume("}"):
+			return true
+		while true:
+			if _at_end() or _character() != '"':
+				return _fail("Expected a JSON object key")
+			var key_result := _parse_string()
+			if not key_result.get("ok", false):
+				return false
+			var key: String = key_result["value"]
+			if top_level:
+				if key_result.get("raw", "") != key:
+					return _fail("Envelope keys must use canonical unescaped spelling")
+				if not _allowed_top_level_keys.has(key):
+					return _fail("Envelope contains an unknown or non-canonical field")
+				if _top_level_keys.has(key):
+					return _fail("Envelope contains a duplicate field")
+				_top_level_keys[key] = true
+			_skip_whitespace()
+			if not _consume(":"):
+				return _fail("Expected colon after JSON object key")
+			if not _parse_value():
+				return false
+			_skip_whitespace()
+			if _consume("}"):
+				return true
+			if not _consume(","):
+				return _fail("Expected comma or closing brace in JSON object")
+			_skip_whitespace()
+			if not _at_end() and _character() == "}":
+				return _fail("Trailing commas are not valid JSON")
+		return _fail("Unterminated JSON object")
+
+
+	func _parse_array() -> bool:
+		if not _consume("["):
+			return _fail("Expected JSON array")
+		_skip_whitespace()
+		if _consume("]"):
+			return true
+		while true:
+			if not _parse_value():
+				return false
+			_skip_whitespace()
+			if _consume("]"):
+				return true
+			if not _consume(","):
+				return _fail("Expected comma or closing bracket in JSON array")
+			_skip_whitespace()
+			if not _at_end() and _character() == "]":
+				return _fail("Trailing commas are not valid JSON")
+		return _fail("Unterminated JSON array")
+
+
+	func _parse_string() -> Dictionary:
+		if not _consume('"'):
+			_fail("Expected JSON string")
+			return {"ok": false}
+		var content_start := _position
+		while not _at_end():
+			var character := _character()
+			if character == '"':
+				var raw := _text.substr(content_start, _position - content_start)
+				_position += 1
+				var decoded = JSON.parse_string('"' + raw + '"')
+				if not decoded is String:
+					_fail("Invalid JSON string")
+					return {"ok": false}
+				return {"ok": true, "value": decoded, "raw": raw}
+			if character == "\\":
+				_position += 1
+				if _at_end():
+					_fail("Unterminated JSON escape")
+					return {"ok": false}
+				var escape := _character()
+				if escape == "u":
+					for _index in 4:
+						_position += 1
+						if _at_end() or not _is_hex_digit(_character()):
+							_fail("Invalid JSON unicode escape")
+							return {"ok": false}
+				elif not escape in ['"', "\\", "/", "b", "f", "n", "r", "t"]:
+					_fail("Invalid JSON escape")
+					return {"ok": false}
+			elif character.unicode_at(0) < 0x20:
+				_fail("Unescaped control character in JSON string")
+				return {"ok": false}
+			_position += 1
+		_fail("Unterminated JSON string")
+		return {"ok": false}
+
+
+	func _parse_number() -> bool:
+		var start := _position
+		_consume("-")
+		if _at_end():
+			return _fail("Incomplete JSON number")
+		if _consume("0"):
+			if not _at_end() and _is_digit(_character()):
+				return _fail("JSON numbers cannot have leading zeroes")
+		elif _is_nonzero_digit(_character()):
+			while not _at_end() and _is_digit(_character()):
+				_position += 1
+		else:
+			return _fail("Invalid JSON number")
+
+		if _consume("."):
+			if _at_end() or not _is_digit(_character()):
+				return _fail("JSON fraction requires digits")
+			while not _at_end() and _is_digit(_character()):
+				_position += 1
+		if not _at_end() and _character() in ["e", "E"]:
+			_position += 1
+			if not _at_end() and _character() in ["+", "-"]:
+				_position += 1
+			if _at_end() or not _is_digit(_character()):
+				return _fail("JSON exponent requires digits")
+			while not _at_end() and _is_digit(_character()):
+				_position += 1
+
+		var token := _text.substr(start, _position - start)
+		if not _number_is_cross_runtime_safe(token):
+			return _fail("JSON number is not safe in both runtimes")
+		return true
+
+
+	func _number_is_cross_runtime_safe(token: String) -> bool:
+		var parsed := token.to_float()
+		if not is_finite(parsed):
+			return false
+		var integer_result := _normalized_integer_digits(token)
+		if not integer_result.get("integer", false):
+			return not (parsed == 0.0 and integer_result.get("nonzero", false))
+		var digits: String = integer_result.get("digits", "0")
+		if digits.length() < 16:
+			return true
+		if digits.length() > 16:
+			return false
+		return digits <= "9007199254740991"
+
+
+	func _normalized_integer_digits(token: String) -> Dictionary:
+		var unsigned := token.trim_prefix("-")
+		var exponent := 0
+		var exponent_position := unsigned.find("e")
+		if exponent_position < 0:
+			exponent_position = unsigned.find("E")
+		if exponent_position >= 0:
+			var exponent_text := unsigned.substr(exponent_position + 1)
+			unsigned = unsigned.substr(0, exponent_position)
+			if exponent_text.trim_prefix("+").trim_prefix("-").length() > 6:
+				var mantissa_nonzero := unsigned.replace(".", "").replace("0", "") != ""
+				if not mantissa_nonzero:
+					return {"integer": true, "digits": "0", "nonzero": false}
+				return {"integer": not exponent_text.begins_with("-"), "digits": "99999999999999999", "nonzero": true}
+			exponent = exponent_text.to_int()
+
+		var decimal_position := unsigned.find(".")
+		var fraction_digits := 0
+		if decimal_position >= 0:
+			fraction_digits = unsigned.length() - decimal_position - 1
+			unsigned = unsigned.erase(decimal_position, 1)
+		var digits := unsigned.trim_prefix("0")
+		while digits.begins_with("0"):
+			digits = digits.trim_prefix("0")
+		if digits.is_empty():
+			return {"integer": true, "digits": "0", "nonzero": false}
+
+		var scale := exponent - fraction_digits
+		if scale >= 0:
+			if digits.length() + scale > 16:
+				return {"integer": true, "digits": "99999999999999999", "nonzero": true}
+			return {"integer": true, "digits": digits + "0".repeat(scale), "nonzero": true}
+
+		var zeroes_to_remove := -scale
+		if zeroes_to_remove > digits.length():
+			return {"integer": false, "nonzero": true}
+		for offset in zeroes_to_remove:
+			if digits[digits.length() - 1 - offset] != "0":
+				return {"integer": false, "nonzero": true}
+		digits = digits.left(digits.length() - zeroes_to_remove)
+		while digits.begins_with("0"):
+			digits = digits.trim_prefix("0")
+		return {"integer": true, "digits": "0" if digits.is_empty() else digits, "nonzero": true}
+
+
+	func _consume_literal(literal: String) -> bool:
+		if _text.substr(_position, literal.length()) != literal:
+			return _fail("Invalid JSON literal")
+		_position += literal.length()
+		return true
+
+
+	func _consume(character: String) -> bool:
+		if _at_end() or _character() != character:
+			return false
+		_position += 1
+		return true
+
+
+	func _skip_whitespace() -> void:
+		while not _at_end() and _character() in [" ", "\t", "\n", "\r"]:
+			_position += 1
+
+
+	func _character() -> String:
+		return _text[_position]
+
+
+	func _at_end() -> bool:
+		return _position >= _text.length()
+
+
+	func _fail(message: String) -> bool:
+		if _error.is_empty():
+			_error = message
+		return false
+
+
+	func _is_digit(character: String) -> bool:
+		return character >= "0" and character <= "9"
+
+
+	func _is_nonzero_digit(character: String) -> bool:
+		return character >= "1" and character <= "9"
+
+
+	func _is_hex_digit(character: String) -> bool:
+		return _is_digit(character) or (character >= "a" and character <= "f") or (character >= "A" and character <= "F")

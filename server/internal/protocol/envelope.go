@@ -6,9 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
+	"strconv"
 )
 
 const Version1 = 1
+const maxSafeJSONInteger int64 = 9_007_199_254_740_991
+
+var allowedEnvelopeFields = map[string]struct{}{
+	"protocolVersion":  {},
+	"gameId":           {},
+	"matchId":          {},
+	"revision":         {},
+	"expectedRevision": {},
+	"type":             {},
+	"actionId":         {},
+	"payload":          {},
+}
 
 type Envelope struct {
 	ProtocolVersion  int             `json:"protocolVersion"`
@@ -22,16 +37,16 @@ type Envelope struct {
 }
 
 func Decode(data []byte) (Envelope, error) {
-	var envelope Envelope
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return Envelope{}, fmt.Errorf("decode envelope: %w", err)
-	}
-	if err := requireEnd(decoder); err != nil {
+	fields, err := inspectEnvelopeJSON(data)
+	if err != nil {
 		return Envelope{}, err
 	}
-	if err := rejectExplicitNullEnvelopeFields(data); err != nil {
+
+	var envelope Envelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return Envelope{}, fmt.Errorf("decode envelope: %w", err)
+	}
+	if err := validateEnvelopePresence(envelope, fields); err != nil {
 		return Envelope{}, err
 	}
 	if err := envelope.Validate(); err != nil {
@@ -40,15 +55,183 @@ func Decode(data []byte) (Envelope, error) {
 	return envelope, nil
 }
 
-func rejectExplicitNullEnvelopeFields(data []byte) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("inspect envelope fields: %w", err)
+func inspectEnvelopeJSON(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope: %w", err)
 	}
-	for _, field := range []string{"gameId", "matchId", "revision", "expectedRevision", "actionId"} {
-		if raw, ok := fields[field]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return fmt.Errorf("%s must not be null", field)
+	if delimiter, ok := opening.(json.Delim); !ok || delimiter != '{' {
+		return nil, errors.New("envelope must be a JSON object")
+	}
+
+	fields := make(map[string]any)
+	keys := make([]string, 0, len(allowedEnvelopeFields))
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("decode envelope key: %w", err)
 		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, errors.New("envelope key must be a string")
+		}
+		if _, ok := allowedEnvelopeFields[key]; !ok {
+			return nil, fmt.Errorf("unknown or non-canonical envelope field %q", key)
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return nil, fmt.Errorf("duplicate envelope field %q", key)
+		}
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("decode envelope field %q: %w", key, err)
+		}
+		fields[key] = value
+		keys = append(keys, key)
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope closing delimiter: %w", err)
+	}
+	if delimiter, ok := closing.(json.Delim); !ok || delimiter != '}' {
+		return nil, errors.New("envelope must end with a JSON object delimiter")
+	}
+	if err := requireEnd(decoder); err != nil {
+		return nil, err
+	}
+	if err := validateAllJSONNumberTokens(data); err != nil {
+		return nil, err
+	}
+
+	rawKeys := rawTopLevelKeys(data)
+	if len(rawKeys) != len(keys) {
+		return nil, errors.New("could not verify canonical envelope keys")
+	}
+	for index, key := range keys {
+		if rawKeys[index] != key {
+			return nil, fmt.Errorf("envelope field %q must use its canonical spelling", key)
+		}
+	}
+	return fields, nil
+}
+
+func rawTopLevelKeys(data []byte) []string {
+	keys := make([]string, 0, len(allowedEnvelopeFields))
+	depth := 0
+	inString := false
+	escaped := false
+	expectingKey := false
+	keyStart := -1
+	for index, character := range data {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if character == '\\' {
+				escaped = true
+				continue
+			}
+			if character == '"' {
+				inString = false
+				if keyStart >= 0 {
+					keys = append(keys, string(data[keyStart+1:index]))
+					keyStart = -1
+				}
+			}
+			continue
+		}
+		switch character {
+		case '{', '[':
+			depth++
+			if depth == 1 && character == '{' {
+				expectingKey = true
+			}
+		case '}', ']':
+			depth--
+		case '"':
+			inString = true
+			if depth == 1 && expectingKey {
+				keyStart = index
+			}
+		case ':':
+			if depth == 1 {
+				expectingKey = false
+			}
+		case ',':
+			if depth == 1 {
+				expectingKey = true
+			}
+		}
+	}
+	return keys
+}
+
+func validateAllJSONNumberTokens(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("scan JSON number tokens: %w", err)
+		}
+		if number, ok := token.(json.Number); ok {
+			if err := validateJSONNumber(number); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func validateJSONNumber(number json.Number) error {
+	value, err := strconv.ParseFloat(number.String(), 64)
+	if err != nil || math.IsInf(value, 0) || math.IsNaN(value) {
+		return fmt.Errorf("number %q is not finite in both runtimes", number)
+	}
+	rational, ok := new(big.Rat).SetString(number.String())
+	if !ok {
+		return fmt.Errorf("number %q is not a canonical JSON number", number)
+	}
+	if rational.IsInt() {
+		absolute := new(big.Int).Abs(new(big.Int).Set(rational.Num()))
+		if absolute.Cmp(big.NewInt(maxSafeJSONInteger)) > 0 {
+			return fmt.Errorf("integer %q exceeds the safe JSON range", number)
+		}
+	}
+	return nil
+}
+
+func validateEnvelopePresence(envelope Envelope, fields map[string]any) error {
+	for _, required := range []string{"protocolVersion", "type", "payload"} {
+		if _, ok := fields[required]; !ok {
+			return fmt.Errorf("%s is required", required)
+		}
+	}
+	for _, optional := range []string{"gameId", "matchId", "revision", "expectedRevision", "actionId"} {
+		if value, ok := fields[optional]; ok && value == nil {
+			return fmt.Errorf("%s must not be null", optional)
+		}
+	}
+	for _, identifier := range []string{"gameId", "matchId", "actionId"} {
+		if value, ok := fields[identifier]; ok {
+			text, isString := value.(string)
+			if !isString || text == "" {
+				return fmt.Errorf("%s must be a non-empty string", identifier)
+			}
+		}
+	}
+
+	_, hasGame := fields["gameId"]
+	_, hasMatch := fields["matchId"]
+	if hasGame != hasMatch {
+		return errors.New("gameId and matchId must appear together")
+	}
+	if envelope.Type == TypePlatformConnect && hasGame {
+		return errors.New("platform.connect must omit gameId and matchId")
 	}
 	return nil
 }
@@ -80,8 +263,14 @@ func (envelope Envelope) Validate() error {
 	if envelope.Revision != nil && *envelope.Revision < 0 {
 		return errors.New("revision must not be negative")
 	}
+	if envelope.Revision != nil && *envelope.Revision > maxSafeJSONInteger {
+		return errors.New("revision exceeds the safe JSON integer range")
+	}
 	if envelope.ExpectedRevision != nil && *envelope.ExpectedRevision < 0 {
 		return errors.New("expectedRevision must not be negative")
+	}
+	if envelope.ExpectedRevision != nil && *envelope.ExpectedRevision > maxSafeJSONInteger {
+		return errors.New("expectedRevision exceeds the safe JSON integer range")
 	}
 	if len(envelope.Payload) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Payload), []byte("null")) {
 		return errors.New("payload is required and must not be null")

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -157,13 +156,141 @@ func TestFixturesPayloadFieldsRemainOpaque(t *testing.T) {
 	assertJSONSemanticallyEqual(t, input, encoded)
 }
 
+func TestFixturesAllowSemanticallyOmittedMatchFields(t *testing.T) {
+	valid := []string{
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"opaque"}}`,
+		`{"protocolVersion":1,"type":"platform.error","payload":{"code":"ticket_invalid","message":"invalid","details":{}}}`,
+	}
+	for _, input := range valid {
+		if _, err := Decode([]byte(input)); err != nil {
+			t.Fatalf("Decode rejected semantically omitted match fields: %v", err)
+		}
+	}
+}
+
+func TestFixturesRejectNonCanonicalEnvelopeJSON(t *testing.T) {
+	action := `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"y":7}}`
+	snapshot := `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","revision":3,"type":"platform.snapshot","payload":{}}`
+
+	caseVariants := map[string]string{
+		"protocolVersion":  "ProtocolVersion",
+		"gameId":           "GameId",
+		"matchId":          "MatchId",
+		"revision":         "Revision",
+		"expectedRevision": "ExpectedRevision",
+		"type":             "Type",
+		"actionId":         "ActionId",
+		"payload":          "Payload",
+	}
+	for canonical, variant := range caseVariants {
+		base := action
+		if canonical == "revision" {
+			base = snapshot
+		}
+		input := strings.Replace(base, `"`+canonical+`":`, `"`+variant+`":`, 1)
+		t.Run("exact case "+canonical, func(t *testing.T) {
+			if _, err := Decode([]byte(input)); err == nil {
+				t.Fatalf("Decode accepted non-canonical key %q", variant)
+			}
+		})
+	}
+
+	duplicates := map[string]string{
+		"protocolVersion":  strings.Replace(action, `"protocolVersion":1`, `"protocolVersion":2,"protocolVersion":1`, 1),
+		"gameId":           strings.Replace(action, `"gameId":"gomoku"`, `"gameId":null,"gameId":"gomoku"`, 1),
+		"matchId":          strings.Replace(action, `"matchId":"11111111-1111-4111-8111-111111111111"`, `"matchId":"","matchId":"11111111-1111-4111-8111-111111111111"`, 1),
+		"revision":         strings.Replace(snapshot, `"revision":3`, `"revision":-1,"revision":3`, 1),
+		"expectedRevision": strings.Replace(action, `"expectedRevision":3`, `"expectedRevision":-1,"expectedRevision":3`, 1),
+		"type":             strings.Replace(action, `"type":"gomoku.move.requested"`, `"type":"unknown.message","type":"gomoku.move.requested"`, 1),
+		"actionId":         strings.Replace(action, `"actionId":"33333333-3333-4333-8333-333333333333"`, `"actionId":"","actionId":"33333333-3333-4333-8333-333333333333"`, 1),
+		"payload":          strings.Replace(action, `"payload":{"x":7,"y":7}`, `"payload":null,"payload":{"x":7,"y":7}`, 1),
+	}
+	for field, input := range duplicates {
+		t.Run("duplicate "+field, func(t *testing.T) {
+			if _, err := Decode([]byte(input)); err == nil {
+				t.Fatalf("Decode accepted duplicate key %q", field)
+			}
+		})
+	}
+
+	invalid := map[string]string{
+		"trailing comma":           strings.TrimSuffix(action, "}") + ",}",
+		"escaped top-level key":    strings.Replace(action, `"gameId":`, `"game\u0049d":`, 1),
+		"empty game id on connect": `{"protocolVersion":1,"gameId":"","type":"platform.connect","payload":{}}`,
+		"empty ids on error":       `{"protocolVersion":1,"gameId":"","matchId":"","type":"platform.error","payload":{}}`,
+	}
+	for name, input := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Decode([]byte(input)); err == nil {
+				t.Fatal("Decode succeeded, want error")
+			}
+		})
+	}
+
+	validStringPayload := strings.Replace(
+		action,
+		`{"x":7,"y":7}`,
+		`{"text":"escaped quote: \" and key text: \"revision\":999, {}[]","nested":{"Type":"payload keys stay opaque"}}`,
+		1,
+	)
+	if _, err := Decode([]byte(validStringPayload)); err != nil {
+		t.Fatalf("key-like string content was misclassified: %v", err)
+	}
+}
+
+func TestFixturesEnforceSafeJSONIntegerRange(t *testing.T) {
+	wrapPayload := func(payload string) string {
+		return `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":` + payload + `}`
+	}
+	valid := []string{
+		wrapPayload(`{"minimum":-9007199254740991,"maximum":9007199254740991,"fraction":1.25,"nested":[0,{"fraction":-0.5}]}`),
+		wrapPayload(`{"decimalBoundary":9007199254740991.0,"exponentBoundary":90071992547409910e-1}`),
+		wrapPayload(`{"largeIntegerAsString":"9007199254740992"}`),
+	}
+	for _, input := range valid {
+		if _, err := Decode([]byte(input)); err != nil {
+			t.Fatalf("Decode rejected safe numeric payload: %v", err)
+		}
+	}
+
+	invalid := []string{
+		wrapPayload(`{"tooLarge":9007199254740992}`),
+		wrapPayload(`{"tooSmall":-9007199254740992}`),
+		wrapPayload(`{"nested":[{"tooLarge":9007199254740992}]}`),
+		wrapPayload(`{"decimalTooLarge":9007199254740992.0}`),
+		wrapPayload(`{"exponentTooLarge":90071992547409920e-1}`),
+		wrapPayload(`{"duplicate":9007199254740992,"duplicate":1}`),
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":9007199254740992,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{}}`,
+	}
+	for _, input := range invalid {
+		if _, err := Decode([]byte(input)); err == nil {
+			t.Fatalf("Decode accepted unsafe JSON integer: %s", input)
+		}
+	}
+}
+
 func fixtureDirectory(t *testing.T) string {
 	t.Helper()
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve fixture test source path")
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get test working directory: %v", err)
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", "protocol", "fixtures"))
+	for {
+		fixtureDir := filepath.Join(directory, "protocol", "fixtures")
+		if fileExists(filepath.Join(directory, "protocol", "README.md")) && fileExists(filepath.Join(directory, "server", "go.mod")) {
+			return fixtureDir
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatal("find repository root containing protocol/README.md and server/go.mod")
+		}
+		directory = parent
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func assertJSONSemanticallyEqual(t *testing.T, want, got []byte) {
