@@ -1,8 +1,9 @@
-extends Node2D
+extends Control
 
 const LaunchConfig = preload("res://core/launch_config.gd")
 const GameRegistry = preload("res://core/game_registry.gd")
 const SAFE_LAUNCH_ERROR := "Unable to launch game. Please return to Gamebox and try again."
+const HOST_SMOKE_MAX_DELAY_MS := 60000
 
 
 func _ready() -> void:
@@ -56,7 +57,7 @@ func _parse_host_smoke_args(args: PackedStringArray) -> Dictionary:
 			if has_auto_exit or index + 1 >= args.size():
 				return {"ok": false}
 			var value := args[index + 1]
-			if not value.is_valid_int() or value.to_int() <= 0:
+			if not _is_valid_host_smoke_delay(value):
 				return {"ok": false}
 			has_auto_exit = true
 			auto_exit_ms = value.to_int()
@@ -64,6 +65,17 @@ func _parse_host_smoke_args(args: PackedStringArray) -> Dictionary:
 		else:
 			return {"ok": false}
 	return {"ok": has_smoke, "auto_exit_ms": auto_exit_ms}
+
+
+func _is_valid_host_smoke_delay(value: String) -> bool:
+	if value.is_empty() or value.length() > 5:
+		return false
+	for index in value.length():
+		var code := value.unicode_at(index)
+		if code < 48 or code > 57:
+			return false
+	var delay_ms := value.to_int()
+	return delay_ms >= 1 and delay_ms <= HOST_SMOKE_MAX_DELAY_MS
 
 
 func _show_launch_error(code: String) -> void:

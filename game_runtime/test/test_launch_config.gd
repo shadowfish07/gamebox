@@ -17,6 +17,8 @@ static func cases() -> Array:
 		{"name": "launch config rejects empty launch tickets", "run": _rejects_empty_launch_tickets},
 		{"name": "launch config rejects invalid websocket urls", "run": _rejects_invalid_websocket_urls},
 		{"name": "launch config accepts ws websocket urls", "run": _accepts_ws_websocket_urls},
+		{"name": "launch config preserves opaque tickets beginning with dashes", "run": _preserves_dash_prefixed_ticket},
+		{"name": "launch config validates websocket hosts and ports", "run": _validates_websocket_hosts_and_ports},
 	]
 
 
@@ -102,6 +104,29 @@ static func _accepts_ws_websocket_urls() -> bool:
 	args[args.find("--ws-url") + 1] = "ws://localhost:8080/matches"
 	var result: Dictionary = LaunchConfig.parse(args)
 	return _check(result.get("ok", false), "expected ws URL to be accepted")
+
+
+static func _preserves_dash_prefixed_ticket() -> bool:
+	var opaque_ticket := "--opaque.base64url_value"
+	var args := _valid_args()
+	args[args.find("--launch-ticket") + 1] = opaque_ticket
+	var result: Dictionary = LaunchConfig.parse(args)
+	return _check(result.get("ok", false), "expected dash-prefixed opaque ticket to parse") \
+		and _check(result.get("config", {}).get("launch_ticket", "") == opaque_ticket, "expected unchanged opaque ticket")
+
+
+static func _validates_websocket_hosts_and_ports() -> bool:
+	for valid_url in ["ws://10.0.2.2:8080/v1/ws", "wss://games.example.com", "ws://[2001:db8::1]:8080/v1/ws"]:
+		var valid_args := _valid_args()
+		valid_args[valid_args.find("--ws-url") + 1] = valid_url
+		if not _check(LaunchConfig.parse(valid_args).get("ok", false), "expected valid ws URL %s" % valid_url):
+			return false
+	for invalid_url in ["ws://host:0", "ws://host:99999", "ws://host\t/path", "ws://host\n/path", "ws://[2001:db8::1", "ws://2001:db8::1"]:
+		var invalid_args := _valid_args()
+		invalid_args[invalid_args.find("--ws-url") + 1] = invalid_url
+		if not _fails_with(invalid_args, "invalid_ws_url"):
+			return false
+	return true
 
 
 
