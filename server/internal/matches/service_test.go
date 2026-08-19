@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -844,6 +845,12 @@ func TestServiceRejectsNilConfigurationAndMethodsRemainDefensive(t *testing.T) {
 	if _, err := nilService.Cancel(context.Background(), "44444444-4444-4444-8444-444444444444", initiatorID); !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("nil Cancel error=%v", err)
 	}
+	if _, err := nilService.Snapshot(context.Background(), "44444444-4444-4444-8444-444444444444"); !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("nil Snapshot error=%v", err)
+	}
+	if _, _, err := nilService.ApplyAction(context.Background(), ActionRequest{}); !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("nil ApplyAction error=%v", err)
+	}
 }
 
 func readPlayers(t *testing.T, db *sql.DB, matchID string) []Player {
@@ -869,7 +876,7 @@ func readPlayers(t *testing.T, db *sql.DB, matchID string) []Player {
 
 func assertTableCount(t *testing.T, db *sql.DB, table string, want int) {
 	t.Helper()
-	allowed := map[string]bool{"matches": true, "match_players": true, "active_game_slots": true, "match_events": true}
+	allowed := map[string]bool{"matches": true, "match_players": true, "active_game_slots": true, "match_events": true, "launch_tickets": true}
 	if !allowed[table] {
 		t.Fatalf("unsafe table %q", table)
 	}
@@ -907,4 +914,710 @@ func readActiveSlots(t *testing.T, db *sql.DB) []storedSlot {
 		t.Fatalf("iterate active slots: %v", err)
 	}
 	return slots
+}
+
+func TestApplyActionEnforcesAllocatedColorsTurnOccupancyAndRevision(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	assertRejected := func(name string, request ActionRequest, want error) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			event, snapshot, err := service.ApplyAction(context.Background(), request)
+			if !errors.Is(err, want) || event.MatchID != "" || snapshot.Match.ID != "" {
+				t.Fatalf("ApplyAction=(%+v,%+v,%v), want zero results and %v", event, snapshot, err, want)
+			}
+			if err.Error() != want.Error() {
+				t.Fatalf("action error leaked details: %q", err)
+			}
+		})
+	}
+	assertRejected("database white cannot open", moveRequest(created.ID, opponentID, 1, 0, 7, 7), gomoku.ErrNotYourTurn)
+
+	first, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 2, 0, 7, 7))
+	if err != nil {
+		t.Fatalf("first ApplyAction: %v", err)
+	}
+	if first.MatchID != created.ID || first.Revision != 1 || first.Type != gomoku.MoveAccepted || first.ActionID == nil || *first.ActionID != actionID(2) || first.ActorUserID == nil || *first.ActorUserID != initiatorID {
+		t.Fatalf("first event=%+v", first)
+	}
+	wantPayload := fmt.Sprintf(`{"x":7,"y":7,"color":"black","userId":%q}`, initiatorID)
+	if string(first.Payload) != wantPayload || snapshot.Match.Revision != 1 || snapshot.Game.Revision != 1 {
+		t.Fatalf("first payload/snapshot=%s %+v", first.Payload, snapshot)
+	}
+	var storedRevision, eventRevision int64
+	if err := fixture.db.QueryRow(`SELECT revision FROM matches WHERE id=?`, created.ID).Scan(&storedRevision); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.QueryRow(`SELECT revision FROM match_events WHERE match_id=?`, created.ID).Scan(&eventRevision); err != nil {
+		t.Fatal(err)
+	}
+	if storedRevision != 1 || eventRevision != 1 {
+		t.Fatalf("atomic revisions match=%d event=%d", storedRevision, eventRevision)
+	}
+
+	assertRejected("black cannot move twice", moveRequest(created.ID, initiatorID, 3, 1, 8, 7), gomoku.ErrNotYourTurn)
+	assertRejected("occupied cell", moveRequest(created.ID, opponentID, 4, 1, 7, 7), gomoku.ErrCellOccupied)
+	assertRejected("stale revision", moveRequest(created.ID, opponentID, 5, 0, 8, 7), ErrStaleRevision)
+	assertTableCount(t, fixture.db, "match_events", 1)
+}
+
+func TestApplyActionUsesRandomlyAllocatedBlackPlayerInsteadOfInitiatorSeat(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{1}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, opponentID, 6, 0, 5, 5))
+	if err != nil {
+		t.Fatalf("allocated black opener: %v", err)
+	}
+	if event.ActorUserID == nil || *event.ActorUserID != opponentID || !bytes.Contains(event.Payload, []byte(`"color":"black"`)) || snapshot.Players[0].Color != ColorWhite || snapshot.Players[1].Color != ColorBlack {
+		t.Fatalf("event/snapshot=%+v %+v", event, snapshot)
+	}
+}
+
+func TestApplyActionIdempotencyUsesCanonicalRequestSemanticsAndDefensiveCopies(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := moveRequest(created.ID, initiatorID, 10, 0, 3, 4)
+	first, firstSnapshot, err := service.ApplyAction(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedRevision = 0 // a committed action wins over stale validation
+	request.Payload = json.RawMessage("{ \"y\" : 4, \"x\" : 3 }")
+	retry, retrySnapshot, err := service.ApplyAction(context.Background(), request)
+	if err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if !reflect.DeepEqual(first, retry) || !reflect.DeepEqual(firstSnapshot, retrySnapshot) {
+		t.Fatalf("retry differs:\n%+v\n%+v\n%+v\n%+v", first, retry, firstSnapshot, retrySnapshot)
+	}
+	first.Payload[0] = '!'
+	firstSnapshot.Game.State[0] = '!'
+	retryAgain, snapshotAgain, err := service.ApplyAction(context.Background(), request)
+	if err != nil || retryAgain.Payload[0] != '{' || snapshotAgain.Game.State[0] != '{' {
+		t.Fatalf("stored result aliased caller bytes: event=%s snapshot=%s err=%v", retryAgain.Payload, snapshotAgain.Game.State, err)
+	}
+
+	conflicts := []ActionRequest{
+		moveRequest(created.ID, initiatorID, 10, 1, 4, 4),
+		{MatchID: created.ID, ActorUserID: initiatorID, ActionID: actionID(10), ExpectedRevision: 1, Type: protocol.TypeGomokuResignRequested, Payload: json.RawMessage(`{}`)},
+	}
+	for _, conflict := range conflicts {
+		event, snapshot, err := service.ApplyAction(context.Background(), conflict)
+		if !errors.Is(err, ErrActionConflict) || event.MatchID != "" || snapshot.Match.ID != "" || err.Error() != ErrActionConflict.Error() {
+			t.Fatalf("conflict=(%+v,%+v,%v)", event, snapshot, err)
+		}
+	}
+	assertTableCount(t, fixture.db, "match_events", 1)
+}
+
+func TestSnapshotRebuildsMovesAndFailsClosedOnCorruptHistory(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 20, 0, 2, 2)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if got.Match.ID != created.ID || got.Match.Revision != 1 || got.Game.Revision != 1 || len(got.Players) != 2 || got.Players[0].Color != ColorBlack || got.Players[1].Color != ColorWhite {
+		t.Fatalf("snapshot=%+v", got)
+	}
+	got.Game.State[0] = '!'
+	again, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil || again.Game.State[0] != '{' {
+		t.Fatalf("snapshot aliases storage: %s %v", again.Game.State, err)
+	}
+
+	corruptions := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{name: "revision gap", sql: `UPDATE match_events SET revision=2 WHERE match_id=?`, args: []any{created.ID}},
+		{name: "wrong actor", sql: `UPDATE match_events SET actor_user_id=? WHERE match_id=?`, args: []any{opponentID, created.ID}},
+		{name: "wrong color", sql: `UPDATE match_events SET payload_json=replace(payload_json,'"black"','"white"') WHERE match_id=?`, args: []any{created.ID}},
+		{name: "match revision", sql: `UPDATE matches SET revision=2 WHERE id=?`, args: []any{created.ID}},
+	}
+	for _, corruption := range corruptions {
+		t.Run(corruption.name, func(t *testing.T) {
+			local := newFixture(t)
+			localService := local.service(t, bytes.NewReader([]byte{0}))
+			match, err := localService.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := localService.ApplyAction(context.Background(), moveRequest(match.ID, initiatorID, 21, 0, 2, 2)); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]any(nil), corruption.args...)
+			for index, value := range args {
+				if value == created.ID {
+					args[index] = match.ID
+				}
+			}
+			if _, err := local.db.Exec(corruption.sql, args...); err != nil {
+				t.Fatalf("corrupt: %v", err)
+			}
+			got, err := localService.Snapshot(context.Background(), match.ID)
+			if !errors.Is(err, ErrInternal) || got.Match.ID != "" || err.Error() != ErrInternal.Error() {
+				t.Fatalf("Snapshot=(%+v,%v), want zero internal", got, err)
+			}
+		})
+	}
+}
+
+func TestApplyActionFiveAndResignationFinishAtomicallyAndReleaseSlots(t *testing.T) {
+	t.Run("five", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		moves := [][2]int{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}, {3, 0}, {3, 1}, {4, 0}}
+		var event Event
+		var snapshot Snapshot
+		for index, point := range moves {
+			actor := initiatorID
+			if index%2 == 1 {
+				actor = opponentID
+			}
+			event, snapshot, err = service.ApplyAction(context.Background(), moveRequest(created.ID, actor, 100+index, int64(index), point[0], point[1]))
+			if err != nil {
+				t.Fatalf("move %d: %v", index, err)
+			}
+		}
+		if event.Revision != 9 || snapshot.Match.Status != StatusFinished || !stringPointerEquals(snapshot.Match.Result, ResultFive) || !stringPointerEquals(snapshot.Match.WinnerUserID, initiatorID) || snapshot.Match.FinishedAt == nil {
+			t.Fatalf("five terminal=%+v event=%+v", snapshot.Match, event)
+		}
+		assertTableCount(t, fixture.db, "active_game_slots", 0)
+	})
+
+	t.Run("resignation only after first move", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resign := resignRequest(created.ID, opponentID, 200, 0)
+		if event, snapshot, err := service.ApplyAction(context.Background(), resign); !errors.Is(err, ErrInvalidRequest) || event.MatchID != "" || snapshot.Match.ID != "" {
+			t.Fatalf("zero move resignation=(%+v,%+v,%v)", event, snapshot, err)
+		}
+		if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 201, 0, 7, 7)); err != nil {
+			t.Fatal(err)
+		}
+		resign.ExpectedRevision = 1
+		resign.ActionID = actionID(202)
+		event, snapshot, err := service.ApplyAction(context.Background(), resign)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Type != protocol.TypeGomokuResigned || event.Revision != 2 || snapshot.Match.Status != StatusFinished || !stringPointerEquals(snapshot.Match.Result, ResultResignation) || !stringPointerEquals(snapshot.Match.WinnerUserID, initiatorID) {
+			t.Fatalf("resignation=%+v %+v", event, snapshot.Match)
+		}
+		want := fmt.Sprintf(`{"userId":%q,"winnerUserId":%q}`, opponentID, initiatorID)
+		if string(event.Payload) != want {
+			t.Fatalf("resignation payload=%s want=%s", event.Payload, want)
+		}
+		assertTableCount(t, fixture.db, "active_game_slots", 0)
+	})
+}
+
+func TestApplyActionEitherPlayerCanResignAndRetryCommittedResult(t *testing.T) {
+	for _, resigner := range []string{initiatorID, opponentID} {
+		t.Run(resigner, func(t *testing.T) {
+			fixture := newFixture(t)
+			service := fixture.service(t, bytes.NewReader([]byte{0}))
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 250, 0, 7, 7)); err != nil {
+				t.Fatal(err)
+			}
+			request := resignRequest(created.ID, resigner, 251, 1)
+			first, firstSnapshot, err := service.ApplyAction(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			winner := opponentID
+			if resigner == opponentID {
+				winner = initiatorID
+			}
+			if !stringPointerEquals(firstSnapshot.Match.WinnerUserID, winner) || !stringPointerEquals(firstSnapshot.Match.Result, ResultResignation) {
+				t.Fatalf("resignation winner=%+v", firstSnapshot.Match)
+			}
+			request.ExpectedRevision = 0
+			request.Payload = json.RawMessage(" { } ")
+			retry, retrySnapshot, err := service.ApplyAction(context.Background(), request)
+			if err != nil || !reflect.DeepEqual(first, retry) || !reflect.DeepEqual(firstSnapshot, retrySnapshot) {
+				t.Fatalf("resign retry=(%+v,%+v,%v), first=(%+v,%+v)", retry, retrySnapshot, err, first, firstSnapshot)
+			}
+			assertTableCount(t, fixture.db, "match_events", 2)
+		})
+	}
+}
+
+func TestApplyActionFullBoardDrawStress(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var black, white [][2]int
+	for y := 0; y < 15; y++ {
+		for x := 0; x < 15; x++ {
+			if (x+2*y)%4 < 2 {
+				black = append(black, [2]int{x, y})
+			} else {
+				white = append(white, [2]int{x, y})
+			}
+		}
+	}
+	for revision := 0; revision < 225; revision++ {
+		actor, point := initiatorID, black[revision/2]
+		if revision%2 == 1 {
+			actor, point = opponentID, white[revision/2]
+		}
+		_, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, actor, 1000+revision, int64(revision), point[0], point[1]))
+		if err != nil {
+			t.Fatalf("draw move %d: %v", revision+1, err)
+		}
+		if revision == 224 && (snapshot.Match.Status != StatusFinished || !stringPointerEquals(snapshot.Match.Result, ResultDraw) || snapshot.Match.WinnerUserID != nil) {
+			t.Fatalf("draw terminal=%+v", snapshot.Match)
+		}
+	}
+	assertTableCount(t, fixture.db, "match_events", 225)
+	assertTableCount(t, fixture.db, "active_game_slots", 0)
+}
+
+func TestApplyActionConcurrentSameAndDifferentActions(t *testing.T) {
+	t.Run("same action is one durable event and two successes", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := moveRequest(created.ID, initiatorID, 300, 0, 1, 1)
+		results := runConcurrentActions(service, request, request)
+		for _, result := range results {
+			if result.err != nil || result.event.Revision != 1 || result.snapshot.Match.Revision != 1 {
+				t.Fatalf("same action result=%+v", result)
+			}
+		}
+		assertTableCount(t, fixture.db, "match_events", 1)
+	})
+
+	t.Run("different actions have one winner and one stale", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		results := runConcurrentActions(service,
+			moveRequest(created.ID, initiatorID, 301, 0, 1, 1),
+			moveRequest(created.ID, initiatorID, 302, 0, 2, 2),
+		)
+		successes, stale := 0, 0
+		for _, result := range results {
+			if result.err == nil {
+				successes++
+			} else if errors.Is(result.err, ErrStaleRevision) && result.event.MatchID == "" && result.snapshot.Match.ID == "" {
+				stale++
+			} else {
+				t.Fatalf("different action result=%+v", result)
+			}
+		}
+		if successes != 1 || stale != 1 {
+			t.Fatalf("successes=%d stale=%d", successes, stale)
+		}
+		assertTableCount(t, fixture.db, "match_events", 1)
+	})
+}
+
+func TestApplyActionWriteFailuresRollbackWithoutBroadcastEvent(t *testing.T) {
+	tests := []struct {
+		name    string
+		trigger string
+	}{
+		{name: "event insert", trigger: `CREATE TRIGGER fail_action_event BEFORE INSERT ON match_events BEGIN SELECT RAISE(ABORT,'event'); END`},
+		{name: "match cas", trigger: `CREATE TRIGGER fail_action_match BEFORE UPDATE ON matches BEGIN SELECT RAISE(ABORT,'match'); END`},
+		{name: "terminal match cas", trigger: `CREATE TRIGGER fail_terminal_match BEFORE UPDATE ON matches WHEN NEW.status='finished' BEGIN SELECT RAISE(ABORT,'terminal'); END`},
+		{name: "terminal slot delete", trigger: `CREATE TRIGGER fail_action_slot BEFORE DELETE ON active_game_slots BEGIN SELECT RAISE(ABORT,'slot'); END`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			service := fixture.service(t, bytes.NewReader([]byte{0}))
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(test.name, "terminal") {
+				for index, point := range [][2]int{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}, {3, 0}, {3, 1}} {
+					actor := initiatorID
+					if index%2 == 1 {
+						actor = opponentID
+					}
+					if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, actor, 400+index, int64(index), point[0], point[1])); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := fixture.db.Exec(test.trigger); err != nil {
+				t.Fatal(err)
+			}
+			beforeEvents := tableCount(t, fixture.db, "match_events")
+			beforeRevision := int64(beforeEvents)
+			action := moveRequest(created.ID, initiatorID, 499, beforeRevision, 4, 0)
+			if beforeRevision%2 == 1 {
+				action.ActorUserID = opponentID
+			}
+			event, snapshot, err := service.ApplyAction(context.Background(), action)
+			if !errors.Is(err, ErrInternal) || event.MatchID != "" || snapshot.Match.ID != "" || err.Error() != ErrInternal.Error() {
+				t.Fatalf("ApplyAction=(%+v,%+v,%v), want no broadcast/internal", event, snapshot, err)
+			}
+			if got := tableCount(t, fixture.db, "match_events"); got != beforeEvents {
+				t.Fatalf("event count=%d want rollback to %d", got, beforeEvents)
+			}
+			var revision int64
+			if err := fixture.db.QueryRow(`SELECT revision FROM matches WHERE id=?`, created.ID).Scan(&revision); err != nil || revision != beforeRevision {
+				t.Fatalf("match revision=%d err=%v want=%d", revision, err, beforeRevision)
+			}
+		})
+	}
+}
+
+func TestApplyActionRejectsMalformedEnvelopeAndPayloadWithoutWrites(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := moveRequest(created.ID, initiatorID, 600, 0, 1, 2)
+	tests := []struct {
+		name   string
+		mutate func(*ActionRequest)
+	}{
+		{name: "negative revision", mutate: func(request *ActionRequest) { request.ExpectedRevision = -1 }},
+		{name: "uppercase action id", mutate: func(request *ActionRequest) { request.ActionID = strings.ToUpper(request.ActionID) }},
+		{name: "non canonical action id", mutate: func(request *ActionRequest) { request.ActionID = strings.ReplaceAll(request.ActionID, "-", "") }},
+		{name: "unknown type", mutate: func(request *ActionRequest) { request.Type = "gomoku.move.maybe" }},
+		{name: "missing coordinate", mutate: func(request *ActionRequest) { request.Payload = json.RawMessage(`{"x":1}`) }},
+		{name: "unknown field", mutate: func(request *ActionRequest) { request.Payload = json.RawMessage(`{"x":1,"y":2,"z":3}`) }},
+		{name: "duplicate field", mutate: func(request *ActionRequest) { request.Payload = json.RawMessage(`{"x":1,"x":1,"y":2}`) }},
+		{name: "fractional coordinate", mutate: func(request *ActionRequest) { request.Payload = json.RawMessage(`{"x":1.0,"y":2}`) }},
+		{name: "oversize payload", mutate: func(request *ActionRequest) {
+			request.Payload = json.RawMessage(`{"x":1,"y":2,"padding":"` + strings.Repeat("x", 1024) + `"}`)
+		}},
+		{name: "resign payload not empty", mutate: func(request *ActionRequest) {
+			request.Type = protocol.TypeGomokuResignRequested
+			request.Payload = json.RawMessage(`{"confirm":true}`)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := valid
+			request.Payload = append(json.RawMessage(nil), valid.Payload...)
+			test.mutate(&request)
+			event, snapshot, err := service.ApplyAction(context.Background(), request)
+			if !errors.Is(err, ErrInvalidRequest) || event.MatchID != "" || snapshot.Match.ID != "" || err.Error() != ErrInvalidRequest.Error() {
+				t.Fatalf("ApplyAction=(%+v,%+v,%v), want invalid request", event, snapshot, err)
+			}
+		})
+	}
+	assertTableCount(t, fixture.db, "match_events", 0)
+}
+
+func TestSnapshotComposesPlatformCancellationWithoutFeedingItToRules(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Cancel(context.Background(), created.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("Snapshot cancelled: %v", err)
+	}
+	if snapshot.Match.Status != StatusCancelled || snapshot.Match.Revision != 1 || snapshot.Match.FinishedAt == nil || snapshot.Match.Result != nil || snapshot.Match.WinnerUserID != nil || snapshot.Game.Revision != 0 {
+		t.Fatalf("cancelled snapshot=%+v", snapshot)
+	}
+	var state struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.Status != StatusActive {
+		t.Fatalf("cancelled game state=%s err=%v", snapshot.Game.State, err)
+	}
+}
+
+func TestApplyActionTerminalSlotCorruptionFailsBeforeEventInsert(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, point := range [][2]int{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}, {3, 0}, {3, 1}} {
+		actor := initiatorID
+		if index%2 == 1 {
+			actor = opponentID
+		}
+		if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, actor, 700+index, int64(index), point[0], point[1])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fixture.db.Exec(`DELETE FROM active_game_slots WHERE game_id=? AND user_id=?`, gomoku.GameID, opponentID); err != nil {
+		t.Fatal(err)
+	}
+	event, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 799, 8, 4, 0))
+	if !errors.Is(err, ErrInternal) || event.MatchID != "" || snapshot.Match.ID != "" {
+		t.Fatalf("terminal with corrupt slot=(%+v,%+v,%v)", event, snapshot, err)
+	}
+	assertTableCount(t, fixture.db, "match_events", 8)
+	var status string
+	var revision int64
+	if err := fixture.db.QueryRow(`SELECT status,revision FROM matches WHERE id=?`, created.ID).Scan(&status, &revision); err != nil || status != StatusActive || revision != 8 {
+		t.Fatalf("match=(%s,%d,%v)", status, revision, err)
+	}
+}
+
+func TestSnapshotAndNonTerminalActionFailClosedOnActiveSlotCorruption(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.db.Exec(`DELETE FROM active_game_slots WHERE game_id=? AND user_id=?`, gomoku.GameID, opponentID); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := service.Snapshot(context.Background(), created.ID); !errors.Is(err, ErrInternal) || snapshot.Match.ID != "" {
+		t.Fatalf("Snapshot=(%+v,%v), want zero/internal", snapshot, err)
+	}
+	event, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 798, 0, 4, 4))
+	if !errors.Is(err, ErrInternal) || event.MatchID != "" || snapshot.Match.ID != "" {
+		t.Fatalf("ApplyAction=(%+v,%+v,%v), want zero/internal", event, snapshot, err)
+	}
+	assertTableCount(t, fixture.db, "match_events", 0)
+}
+
+func TestApplyActionCommitFailureRollsBackAndReturnsNoBroadcastEvent(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.db.Exec(`
+CREATE TRIGGER fail_action_at_commit AFTER INSERT ON match_events
+BEGIN
+  INSERT INTO launch_tickets(token_hash,match_id,user_id,game_id,expires_at,created_at)
+  VALUES ('deferred-commit-failure','ffffffff-ffff-4fff-8fff-ffffffffffff','11111111-1111-4111-8111-111111111111','gomoku',1,1);
+END`); err != nil {
+		t.Fatal(err)
+	}
+	fixture.db.SetMaxOpenConns(1)
+	connection, err := fixture.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.ExecContext(context.Background(), `PRAGMA defer_foreign_keys=ON`); err != nil {
+		connection.Close()
+		t.Fatal(err)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	event, snapshot, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 800, 0, 1, 1))
+	if !errors.Is(err, ErrInternal) || event.MatchID != "" || snapshot.Match.ID != "" || err.Error() != ErrInternal.Error() {
+		t.Fatalf("commit failure=(%+v,%+v,%v), want zero/internal", event, snapshot, err)
+	}
+	assertTableCount(t, fixture.db, "match_events", 0)
+	assertTableCount(t, fixture.db, "active_game_slots", 2)
+	var revision int64
+	if err := fixture.db.QueryRow(`SELECT revision FROM matches WHERE id=?`, created.ID).Scan(&revision); err != nil || revision != 0 {
+		t.Fatalf("revision=%d err=%v", revision, err)
+	}
+	assertTableCount(t, fixture.db, "launch_tickets", 0)
+}
+
+func TestSnapshotRejectsRevisionOverflowAndCorruptActionIdentity(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, fixture, string)
+	}{
+		{name: "revision overflow", setup: func(t *testing.T, fixture fixture, matchID string) {
+			if _, err := fixture.db.Exec(`UPDATE matches SET revision=? WHERE id=?`, int64(^uint64(0)>>1), matchID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "non canonical stored action id", setup: func(t *testing.T, fixture fixture, matchID string) {
+			if _, err := fixture.db.Exec(`UPDATE match_events SET action_id=upper(action_id) WHERE match_id=?`, matchID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			service := fixture.service(t, bytes.NewReader([]byte{0}))
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.name != "revision overflow" {
+				if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 900, 0, 1, 1)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			test.setup(t, fixture, created.ID)
+			snapshot, err := service.Snapshot(context.Background(), created.ID)
+			if !errors.Is(err, ErrInternal) || snapshot.Match.ID != "" || err.Error() != ErrInternal.Error() {
+				t.Fatalf("Snapshot=(%+v,%v), want zero/internal", snapshot, err)
+			}
+		})
+	}
+}
+
+func TestSnapshotRejectsDuplicateMoveAndLifecycleMetadataCorruption(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, fixture, string)
+	}{
+		{name: "duplicate occupied move", setup: func(t *testing.T, fixture fixture, matchID string) {
+			payload := fmt.Sprintf(`{"x":1,"y":1,"color":"white","userId":%q}`, opponentID)
+			if _, err := fixture.db.Exec(`
+INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
+VALUES (?,2,?,?,?,?,?)`, matchID, gomoku.MoveAccepted, actionID(902), opponentID, payload, fixture.now.Unix()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.db.Exec(`UPDATE matches SET revision=2 WHERE id=?`, matchID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "terminal metadata disagrees with rules", setup: func(t *testing.T, fixture fixture, matchID string) {
+			if _, err := fixture.db.Exec(`UPDATE matches SET status='finished',result='draw',finished_at=updated_at WHERE id=?`, matchID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			service := fixture.service(t, bytes.NewReader([]byte{0}))
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 901, 0, 1, 1)); err != nil {
+				t.Fatal(err)
+			}
+			test.setup(t, fixture, created.ID)
+			snapshot, err := service.Snapshot(context.Background(), created.ID)
+			if !errors.Is(err, ErrInternal) || snapshot.Match.ID != "" || err.Error() != ErrInternal.Error() {
+				t.Fatalf("Snapshot=(%+v,%v), want zero/internal", snapshot, err)
+			}
+		})
+	}
+}
+
+type concurrentActionResult struct {
+	event    Event
+	snapshot Snapshot
+	err      error
+}
+
+func runConcurrentActions(service *Service, requests ...ActionRequest) []concurrentActionResult {
+	start := make(chan struct{})
+	results := make(chan concurrentActionResult, len(requests))
+	var workers sync.WaitGroup
+	for _, request := range requests {
+		request := request
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			event, snapshot, err := service.ApplyAction(context.Background(), request)
+			results <- concurrentActionResult{event: event, snapshot: snapshot, err: err}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	collected := make([]concurrentActionResult, 0, len(requests))
+	for result := range results {
+		collected = append(collected, result)
+	}
+	return collected
+}
+
+func moveRequest(matchID, actorID string, actionNumber int, expectedRevision int64, x, y int) ActionRequest {
+	return ActionRequest{
+		MatchID:          matchID,
+		ActorUserID:      actorID,
+		ActionID:         actionID(actionNumber),
+		ExpectedRevision: expectedRevision,
+		Type:             gomoku.MoveRequested,
+		Payload:          json.RawMessage(fmt.Sprintf(`{"x":%d,"y":%d}`, x, y)),
+	}
+}
+
+func resignRequest(matchID, actorID string, actionNumber int, expectedRevision int64) ActionRequest {
+	return ActionRequest{
+		MatchID:          matchID,
+		ActorUserID:      actorID,
+		ActionID:         actionID(actionNumber),
+		ExpectedRevision: expectedRevision,
+		Type:             protocol.TypeGomokuResignRequested,
+		Payload:          json.RawMessage(`{}`),
+	}
+}
+
+func actionID(number int) string {
+	return fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012x", number)
+}
+
+func stringPointerEquals(value *string, want string) bool {
+	return value != nil && *value == want
+}
+
+func tableCount(t *testing.T, db *sql.DB, table string) int {
+	t.Helper()
+	allowed := map[string]bool{"matches": true, "match_players": true, "active_game_slots": true, "match_events": true, "launch_tickets": true}
+	if !allowed[table] {
+		t.Fatalf("unsafe table %q", table)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
 }

@@ -4,11 +4,19 @@ package matches
 import (
 	"encoding/json"
 	"time"
+
+	"me.zqydev/gamebox/server/internal/games"
 )
 
 const (
 	StatusActive    = "active"
 	StatusCancelled = "cancelled"
+	StatusFinished  = "finished"
+	StatusAbandoned = "abandoned"
+
+	ResultFive        = "five"
+	ResultResignation = "resignation"
+	ResultDraw        = "draw"
 
 	ColorBlack Color = "black"
 	ColorWhite Color = "white"
@@ -20,12 +28,15 @@ type Color string
 
 // Match is the durable platform portion of a game match.
 type Match struct {
-	ID        string
-	GameID    string
-	Status    string
-	Revision  int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	GameID       string
+	Status       string
+	Revision     int64
+	Result       *string
+	WinnerUserID *string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	FinishedAt   *time.Time
 }
 
 // Player records stable platform seating and the randomly assigned color.
@@ -46,4 +57,25 @@ type Event struct {
 	ActorUserID *string
 	Payload     json.RawMessage
 	CreatedAt   time.Time
+}
+
+// ActionRequest is the authenticated platform action boundary. Payload is
+// interpreted strictly by the selected game's rules, while identity, action
+// idempotency, and expectedRevision are enforced by Service.
+type ActionRequest struct {
+	MatchID          string
+	ActorUserID      string
+	ActionID         string
+	ExpectedRevision int64
+	Type             string
+	Payload          json.RawMessage
+}
+
+// Snapshot is a consistent durable match view. Game is rebuilt from accepted
+// game events; terminal platform metadata such as resignation remains on
+// Match rather than being forged into a game-owned state document.
+type Snapshot struct {
+	Match   Match
+	Players []Player
+	Game    games.Snapshot
 }
