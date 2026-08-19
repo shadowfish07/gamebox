@@ -12,6 +12,8 @@ import (
 
 const maximumRandomTokenBytes = 1024
 
+const refreshTokenHashDomain = "gamebox/refresh-token-hash/v1"
+
 var (
 	ErrInvalidTokenLength = errors.New("invalid token length")
 	ErrInvalidTokenInput  = errors.New("invalid token input")
@@ -40,11 +42,21 @@ func randomToken(byteCount int, entropy io.Reader) (string, error) {
 // frame the pepper and plaintext as distinct fields so different input pairs
 // cannot become the same byte stream before hashing.
 func HashToken(pepper, plaintext string) (string, error) {
+	return hashTokenWithDomain("gamebox/token-hash/v1", pepper, plaintext)
+}
+
+// HashRefreshToken keeps refresh credentials in a distinct hashing domain
+// from invitations and future one-time credentials.
+func HashRefreshToken(pepper, plaintext string) (string, error) {
+	return hashTokenWithDomain(refreshTokenHashDomain, pepper, plaintext)
+}
+
+func hashTokenWithDomain(domain, pepper, plaintext string) (string, error) {
 	if pepper == "" || plaintext == "" {
 		return "", ErrInvalidTokenInput
 	}
 	hasher := sha256.New()
-	_, _ = hasher.Write([]byte("gamebox/token-hash/v1"))
+	_, _ = hasher.Write([]byte(domain))
 	writeHashField(hasher, []byte(pepper))
 	writeHashField(hasher, []byte(plaintext))
 	return hex.EncodeToString(hasher.Sum(nil)), nil

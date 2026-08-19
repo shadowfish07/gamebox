@@ -3,9 +3,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ var (
 	ErrInvalidRequest       = errors.New("invalid_request")
 	ErrInviteInvalid        = errors.New("invite_invalid")
 	ErrNicknameTaken        = errors.New("nickname_taken")
+	ErrUnauthorized         = errors.New("unauthorized")
 	ErrInternal             = errors.New("internal_error")
 )
 
@@ -36,16 +39,33 @@ const (
 // Service owns transactional account operations. Its database must come from
 // store.Open so every transaction begins with SQLite's immediate lock mode.
 type Service struct {
-	db     *sql.DB
-	clock  clock.Clock
-	pepper string
+	db        *sql.DB
+	clock     clock.Clock
+	pepper    string
+	jwtSecret []byte
+	entropy   io.Reader
+	commit    func(*writeTransaction) error
 }
 
-func NewService(db *sql.DB, serviceClock clock.Clock, tokenPepper string) (*Service, error) {
-	if db == nil || serviceClock == nil || tokenPepper == "" {
+// ServiceConfig carries authentication secrets explicitly. JWTSecret is copied
+// during construction so callers cannot mutate the service's signing key.
+type ServiceConfig struct {
+	JWTSecret   []byte
+	TokenPepper string
+}
+
+func NewService(db *sql.DB, serviceClock clock.Clock, config ServiceConfig) (*Service, error) {
+	if db == nil || serviceClock == nil || len(config.JWTSecret) < 32 || len([]byte(config.TokenPepper)) < 32 {
 		return nil, ErrInvalidConfiguration
 	}
-	return &Service{db: db, clock: serviceClock, pepper: tokenPepper}, nil
+	return &Service{
+		db:        db,
+		clock:     serviceClock,
+		pepper:    config.TokenPepper,
+		jwtSecret: append([]byte(nil), config.JWTSecret...),
+		entropy:   rand.Reader,
+		commit:    commitWriteTransaction,
+	}, nil
 }
 
 // Register atomically creates one user and consumes one invite. It never
@@ -63,7 +83,7 @@ func (service *Service) Register(ctx context.Context, inviteCode, rawNickname st
 		return users.User{}, ErrInvalidRequest
 	}
 
-	transaction, beginErr := service.beginRegistrationTransaction(ctx)
+	transaction, beginErr := service.beginWriteTransaction(ctx)
 	if beginErr != nil {
 		return users.User{}, beginErr
 	}
@@ -131,18 +151,22 @@ func isNormalizedNicknameConflict(err error) bool {
 		strings.Contains(sqliteErr.Error(), "UNIQUE constraint failed: users.normalized_nickname")
 }
 
-type registrationTransaction struct {
+type writeTransaction struct {
 	*sql.Tx
 	connection          *sql.Conn
 	originalBusyTimeout int
 	cancel              context.CancelFunc
 }
 
-// beginRegistrationTransaction keeps SQLite's immediate transaction semantics
+func commitWriteTransaction(transaction *writeTransaction) error {
+	return transaction.Commit()
+}
+
+// beginWriteTransaction keeps SQLite's immediate transaction semantics
 // while slicing its five-second busy wait into short attempts. This is needed
 // because SQLite's busy handler does not observe context cancellation until its
 // current wait completes.
-func (service *Service) beginRegistrationTransaction(ctx context.Context) (*registrationTransaction, error) {
+func (service *Service) beginWriteTransaction(ctx context.Context) (*writeTransaction, error) {
 	operationContext, cancel := context.WithTimeout(ctx, registrationBusyLimit)
 
 	for {
@@ -161,14 +185,14 @@ func (service *Service) beginRegistrationTransaction(ctx context.Context) (*regi
 		}
 		transaction, err := connection.BeginTx(operationContext, nil)
 		if err == nil {
-			return &registrationTransaction{
+			return &writeTransaction{
 				Tx:                  transaction,
 				connection:          connection,
 				originalBusyTimeout: originalBusyTimeout,
 				cancel:              cancel,
 			}, nil
 		}
-		failed := &registrationTransaction{connection: connection, originalBusyTimeout: originalBusyTimeout}
+		failed := &writeTransaction{connection: connection, originalBusyTimeout: originalBusyTimeout}
 		_ = failed.release()
 		if !isSQLiteBusy(err) {
 			cancel()
@@ -195,7 +219,7 @@ func configureRegistrationConnection(ctx context.Context, connection *sql.Conn) 
 	return originalBusyTimeout, nil
 }
 
-func (transaction *registrationTransaction) release() error {
+func (transaction *writeTransaction) release() error {
 	if transaction.cancel != nil {
 		transaction.cancel()
 	}
@@ -215,6 +239,12 @@ func (transaction *registrationTransaction) release() error {
 		}
 	}
 	return restoreErr
+}
+
+// beginRegistrationTransaction remains a narrow compatibility name for the
+// registration hardening tests; all account writes use the same safe helper.
+func (service *Service) beginRegistrationTransaction(ctx context.Context) (*writeTransaction, error) {
+	return service.beginWriteTransaction(ctx)
 }
 
 // discardConnection transfers disposal ownership to database/sql. Returning

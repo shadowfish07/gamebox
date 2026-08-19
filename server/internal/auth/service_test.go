@@ -21,7 +21,7 @@ import (
 	"me.zqydev/gamebox/server/internal/store"
 )
 
-const testPepper = "test-only-registration-pepper"
+const testPepper = "test-only-registration-pepper-1234"
 
 type authFixture struct {
 	db      *sql.DB
@@ -41,7 +41,7 @@ func newAuthFixture(t *testing.T) authFixture {
 		}
 	})
 	now := time.Date(2026, time.August, 19, 8, 9, 10, 987654321, time.FixedZone("test", 8*60*60))
-	service, err := NewService(db, clock.NewFake(now), testPepper)
+	service, err := NewService(db, clock.NewFake(now), ServiceConfig{JWTSecret: []byte(testJWTSecret), TokenPepper: testPepper})
 	if err != nil {
 		t.Fatalf("create auth service: %v", err)
 	}
@@ -573,7 +573,7 @@ func assertFaultedConnectionDiscarded(t *testing.T, db *sql.DB, state *busyTimeo
 func TestRegisterDiscardsConnectionWhenBusyTimeoutSetMayHaveApplied(t *testing.T) {
 	db, state := newBusyTimeoutFaultDatabase(busyTimeoutSetFault)
 	t.Cleanup(func() { _ = db.Close() })
-	service, err := NewService(db, clock.NewFake(time.Now()), testPepper)
+	service, err := NewService(db, clock.NewFake(time.Now()), ServiceConfig{JWTSecret: []byte(testJWTSecret), TokenPepper: testPepper})
 	if err != nil {
 		t.Fatalf("create auth service: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestRegisterDiscardsConnectionWhenBusyTimeoutSetMayHaveApplied(t *testing.T
 func TestRegisterDiscardsConnectionOnceWhenBusyTimeoutRestoreFails(t *testing.T) {
 	db, state := newBusyTimeoutFaultDatabase(busyTimeoutRestoreFault)
 	t.Cleanup(func() { _ = db.Close() })
-	service, err := NewService(db, clock.NewFake(time.Now()), testPepper)
+	service, err := NewService(db, clock.NewFake(time.Now()), ServiceConfig{JWTSecret: []byte(testJWTSecret), TokenPepper: testPepper})
 	if err != nil {
 		t.Fatalf("create auth service: %v", err)
 	}
@@ -612,15 +612,15 @@ func TestRegisterServiceRejectsInvalidDependenciesAndPepper(t *testing.T) {
 		name   string
 		db     *sql.DB
 		clock  clock.Clock
-		pepper string
+		config ServiceConfig
 	}{
-		{name: "nil database", db: nil, clock: clock.NewFake(fixture.now), pepper: testPepper},
-		{name: "nil clock", db: fixture.db, clock: nil, pepper: testPepper},
-		{name: "empty pepper", db: fixture.db, clock: clock.NewFake(fixture.now), pepper: ""},
+		{name: "nil database", db: nil, clock: clock.NewFake(fixture.now), config: ServiceConfig{JWTSecret: []byte(testJWTSecret), TokenPepper: testPepper}},
+		{name: "nil clock", db: fixture.db, clock: nil, config: ServiceConfig{JWTSecret: []byte(testJWTSecret), TokenPepper: testPepper}},
+		{name: "empty pepper", db: fixture.db, clock: clock.NewFake(fixture.now), config: ServiceConfig{JWTSecret: []byte(testJWTSecret)}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			service, err := NewService(test.db, test.clock, test.pepper)
+			service, err := NewService(test.db, test.clock, test.config)
 			if service != nil || !errors.Is(err, ErrInvalidConfiguration) || err.Error() != ErrInvalidConfiguration.Error() {
 				t.Fatalf("NewService = (%v, %v), want nil and fixed ErrInvalidConfiguration", service, err)
 			}
@@ -670,6 +670,13 @@ func TestRegisterTokenPrimitivesUseSafeUnambiguousRepresentations(t *testing.T) 
 	}
 	if left == right {
 		t.Fatal("HashToken framing is ambiguous between (ab,c) and (a,bc)")
+	}
+	refreshHash, err := HashRefreshToken("pepper", "plaintext")
+	if err != nil {
+		t.Fatalf("HashRefreshToken returned error: %v", err)
+	}
+	if refreshHash == hash {
+		t.Fatal("refresh credentials share the invitation hashing domain")
 	}
 
 	for _, test := range []struct {
