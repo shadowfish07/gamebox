@@ -424,6 +424,7 @@ func (service *Service) CreateLaunchTicket(ctx context.Context, matchID, userID 
 		return LaunchTicket{}, ErrInternal
 	}
 	var plaintext string
+	var insertedHash string
 	inserted := false
 	for attempt := 0; attempt < launchTicketCollisionMax; attempt++ {
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -451,10 +452,16 @@ VALUES (?,?,?,?,?,?)`, hash, match.ID, userID, match.GameID, expiresMillis, nowM
 			return LaunchTicket{}, ErrInternal
 		}
 		inserted = true
+		insertedHash = hash
 		break
 	}
 	if !inserted {
 		return LaunchTicket{}, ErrInternal
+	}
+	if _, deleteErr := transaction.ExecContext(ctx, `
+DELETE FROM launch_tickets
+WHERE match_id=? AND user_id=? AND game_id=? AND token_hash<>?`, match.ID, userID, match.GameID, insertedHash); deleteErr != nil {
+		return LaunchTicket{}, matchDatabaseError(ctx, deleteErr)
 	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return LaunchTicket{}, matchDatabaseError(ctx, commitErr)
@@ -614,6 +621,14 @@ WHERE token_hash=?`, tokenHash).Scan(&matchID, &userID, &storedExpires, &lastUse
 	if match.Status != StatusActive || !playerMember(players, userID) || launch && storedGameID != match.GameID {
 		return ConnectionCredential{}, credentialFailure
 	}
+	var userEnabled int
+	queryErr := transaction.QueryRowContext(ctx, `SELECT enabled FROM users WHERE id=?`, userID).Scan(&userEnabled)
+	if errors.Is(queryErr, sql.ErrNoRows) || queryErr == nil && userEnabled != 1 {
+		return ConnectionCredential{}, credentialFailure
+	}
+	if queryErr != nil {
+		return ConnectionCredential{}, matchDatabaseError(ctx, queryErr)
+	}
 	if _, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players); snapshotErr != nil {
 		return ConnectionCredential{}, snapshotErr
 	}
@@ -630,6 +645,7 @@ WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?`, nowMillis, tokenHa
 		if affectedExactlyOne(result) != nil {
 			return ConnectionCredential{}, ErrTicketInvalid
 		}
+		var insertedHash string
 		inserted := false
 		for attempt := 0; attempt < launchTicketCollisionMax; attempt++ {
 			resumePlaintext, err = service.randomLaunchTicket()
@@ -653,10 +669,16 @@ VALUES (?,?,?,?,?,?)`, resumeHash, matchID, userID, expiresMillis, nowMillis, no
 				return ConnectionCredential{}, ErrInternal
 			}
 			inserted = true
+			insertedHash = resumeHash
 			break
 		}
 		if !inserted {
 			return ConnectionCredential{}, ErrInternal
+		}
+		if _, deleteErr := transaction.ExecContext(ctx, `
+DELETE FROM resume_tokens
+WHERE match_id=? AND user_id=? AND token_hash<>?`, matchID, userID, insertedHash); deleteErr != nil {
+			return ConnectionCredential{}, matchDatabaseError(ctx, deleteErr)
 		}
 	} else {
 		result, updateErr := transaction.ExecContext(ctx, `
@@ -924,8 +946,8 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, gameID, matchID, playerIDs
 	if deleted != wantDeleted {
 		return Event{}, ErrInternal
 	}
-	if revokeErr := revokeMatchResumeTokens(ctx, transaction.Tx, matchID, nowMillis); revokeErr != nil {
-		return Event{}, revokeErr
+	if deleteErr := deleteMatchCredentials(ctx, transaction.Tx, matchID); deleteErr != nil {
+		return Event{}, deleteErr
 	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return Event{}, matchDatabaseError(ctx, commitErr)
@@ -1154,8 +1176,8 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 		if deleted != wantDeleted {
 			return Event{}, Snapshot{}, ErrInternal
 		}
-		if revokeErr := revokeMatchResumeTokens(ctx, transaction.Tx, match.ID, nowMillis); revokeErr != nil {
-			return Event{}, Snapshot{}, revokeErr
+		if deleteErr := deleteMatchCredentials(ctx, transaction.Tx, match.ID); deleteErr != nil {
+			return Event{}, Snapshot{}, deleteErr
 		}
 	} else {
 		resultExec, updateErr := transaction.ExecContext(ctx, `
@@ -1400,8 +1422,8 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 	if deleted != wantDeleted {
 		return Event{}, false, ErrInternal
 	}
-	if revokeErr := revokeMatchResumeTokens(ctx, transaction.Tx, match.ID, nowMillis); revokeErr != nil {
-		return Event{}, false, revokeErr
+	if deleteErr := deleteMatchCredentials(ctx, transaction.Tx, match.ID); deleteErr != nil {
+		return Event{}, false, deleteErr
 	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return Event{}, false, matchDatabaseError(ctx, commitErr)
@@ -1412,14 +1434,18 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 	}, true, nil
 }
 
-func revokeMatchResumeTokens(ctx context.Context, transaction *sql.Tx, matchID string, nowMillis int64) error {
+func deleteMatchCredentials(ctx context.Context, transaction *sql.Tx, matchID string) error {
 	if ctx == nil || transaction == nil || !canonicalUUID(matchID) {
 		return ErrInternal
 	}
 	if _, err := transaction.ExecContext(ctx, `
-UPDATE resume_tokens
-SET revoked_at=COALESCE(revoked_at,?)
-WHERE match_id=? AND revoked_at IS NULL`, nowMillis, matchID); err != nil {
+DELETE FROM launch_tickets
+WHERE match_id=?`, matchID); err != nil {
+		return matchDatabaseError(ctx, err)
+	}
+	if _, err := transaction.ExecContext(ctx, `
+DELETE FROM resume_tokens
+WHERE match_id=?`, matchID); err != nil {
 		return matchDatabaseError(ctx, err)
 	}
 	return nil

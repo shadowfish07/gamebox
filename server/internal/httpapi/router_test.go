@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -735,10 +737,72 @@ func TestWebSocketFirstMessageDeadlineUsesFrozenInvalidRequestAndClose(t *testin
 	assertWebSocketClose(t, connection, websocket.StatusPolicyViolation, "invalid_request")
 }
 
+func TestWebSocketBodyHeadersAreRejectedBeforeWaitingForBody(t *testing.T) {
+	fixture := newAPIFixture(t)
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	address := strings.TrimPrefix(server.URL, "http://")
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		header string
+		want   int
+	}{
+		{name: "websocket chunked", method: http.MethodGet, path: "/v1/ws", header: "Transfer-Encoding: chunked\r\n", want: http.StatusBadRequest},
+		{name: "websocket positive content length", method: http.MethodGet, path: "/v1/ws", header: "Content-Length: 1\r\n", want: http.StatusBadRequest},
+		{name: "websocket oversized content length", method: http.MethodGet, path: "/v1/ws", header: "Content-Length: 70000\r\n", want: http.StatusBadRequest},
+		{name: "websocket method fallback", method: http.MethodPost, path: "/v1/ws", header: "Transfer-Encoding: chunked\r\n", want: http.StatusBadRequest},
+		{name: "health method fallback", method: http.MethodPost, path: "/healthz", header: "Content-Length: 1\r\n", want: http.StatusBadRequest},
+		{name: "json route retains cap", method: http.MethodPost, path: "/v1/auth/register", header: "Content-Length: 70000\r\n", want: http.StatusRequestEntityTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			connection, err := net.DialTimeout("tcp", address, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer connection.Close()
+			if err := connection.SetDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			request := test.method + " " + test.path + " HTTP/1.1\r\nHost: " + address + "\r\n" +
+				"Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: AAECAwQFBgcICQoLDA0ODw==\r\n" + test.header + "\r\n"
+			if _, err := io.WriteString(connection, request); err != nil {
+				t.Fatal(err)
+			}
+			response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: test.method})
+			if err != nil {
+				t.Fatalf("server waited for body: %v", err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != test.want {
+				t.Fatalf("status=%d", response.StatusCode)
+			}
+		})
+	}
+	if users, matches := countRows(t, fixture.db, "users"), countRows(t, fixture.db, "matches"); users != 0 || matches != 0 {
+		t.Fatalf("slow-body rejection mutated state users=%d matches=%d", users, matches)
+	}
+}
+
+func TestBodylessRouteAllowsExplicitZeroContentLength(t *testing.T) {
+	fixture := newAPIFixture(t)
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.ContentLength = 0
+	request.Header.Set("Content-Length", "0")
+	response := httptest.NewRecorder()
+	fixture.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWebSocketHeartbeatAndPresenceActivitySemantics(t *testing.T) {
 	t.Run("matching pong touches", func(t *testing.T) {
 		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
-			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: time.Second,
+			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: 45 * time.Second,
 		})
 		client := openFixtureWebSocket(t, fixture, "pong")
 		ping := readWSEnvelope(t, client.connection)
@@ -772,9 +836,43 @@ func TestWebSocketHeartbeatAndPresenceActivitySemantics(t *testing.T) {
 		}
 	})
 
+	t.Run("delayed pong remains valid after a newer ping", func(t *testing.T) {
+		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
+			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: 45 * time.Second,
+		})
+		client := openFixtureWebSocket(t, fixture, "delayed-pong")
+		firstPing := readWSEnvelope(t, client.connection)
+		secondPing := readWSEnvelope(t, client.connection)
+		if firstPing.Type != protocol.TypePlatformPing || secondPing.Type != protocol.TypePlatformPing {
+			t.Fatalf("heartbeats=(%+v,%+v)", firstPing, secondPing)
+		}
+		var firstPayload struct {
+			Nonce string `json:"nonce"`
+		}
+		if json.Unmarshal(firstPing.Payload, &firstPayload) != nil || !canonicalRequestID(firstPayload.Nonce) {
+			t.Fatalf("first ping payload=%s", firstPing.Payload)
+		}
+		fixture.clock.Advance(44 * time.Second)
+		writeWS(t, client.connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"type":"platform.pong","payload":{"nonce":%s}}`, quote(client.matchID), quote(firstPayload.Nonce)))
+		writeWS(t, client.connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"type":"platform.snapshot.requested","payload":{"currentRevision":0}}`, quote(client.matchID)))
+		for attempts := 0; ; attempts++ {
+			response := readWSEnvelope(t, client.connection)
+			if response.Type == protocol.TypePlatformSnapshot {
+				break
+			}
+			if attempts == 20 || response.Type != protocol.TypePlatformPing {
+				t.Fatalf("delayed pong response=%+v", response)
+			}
+		}
+		fixture.clock.Advance(2 * time.Second)
+		if err := fixture.presence.Sweep(context.Background()); err != nil || !fixture.presence.IsOnline(client.matchID, client.userID) {
+			t.Fatalf("delayed pong presence online=%t err=%v", fixture.presence.IsOnline(client.matchID, client.userID), err)
+		}
+	})
+
 	t.Run("mismatched pong does not touch", func(t *testing.T) {
 		fixture := newAPIFixtureWithHubConfig(t, matches.HubConfig{
-			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: time.Second,
+			FirstMessageTimeout: time.Second, HeartbeatInterval: 20 * time.Millisecond, ActivityTimeout: 45 * time.Second,
 		})
 		client := openFixtureWebSocket(t, fixture, "wrong-pong")
 		ping := readWSEnvelope(t, client.connection)
@@ -974,7 +1072,7 @@ func TestRouterStrictJSONAuthenticationAndRoutingErrors(t *testing.T) {
 		{name: "unauthenticated", method: http.MethodGet, path: "/v1/me", wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
 		{name: "malformed bearer", method: http.MethodGet, path: "/v1/me", authority: "Basic secret-marker", wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
 		{name: "unknown path", method: http.MethodGet, path: "/v1/missing", wantStatus: http.StatusNotFound, wantCode: "invalid_request"},
-		{name: "method mismatch", method: http.MethodPost, path: "/healthz", body: `{}`, wantStatus: http.StatusMethodNotAllowed, wantCode: "invalid_request"},
+		{name: "method mismatch with body", method: http.MethodPost, path: "/healthz", body: `{}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
 	}
 
 	for _, test := range tests {
@@ -1273,8 +1371,11 @@ func TestLaunchTicketRequiresActiveParticipantAndRetriesHashCollision(t *testing
 	if secondTicket.LaunchTicket == firstTicket.LaunchTicket {
 		t.Fatal("launch ticket collision was returned instead of retried")
 	}
-	if count := tableCount(t, fixture.db, "launch_tickets"); count != 2 {
+	if count := tableCount(t, fixture.db, "launch_tickets"); count != 1 {
 		t.Fatalf("launch ticket rows=%d", count)
+	}
+	if _, err := matchService.ConnectCredential(context.Background(), matches.CredentialRequest{LaunchTicket: firstTicket.LaunchTicket}); !errors.Is(err, matches.ErrTicketInvalid) {
+		t.Fatalf("replaced launch ticket err=%v", err)
 	}
 
 	cancel := fixture.request(t, http.MethodDelete, "/v1/matches/"+matchBody.Match.ID, "", bob.Session.AccessToken)
@@ -1484,13 +1585,11 @@ func TestSafeMethodLoggingCoversRequestIDFailureAndPanicBranches(t *testing.T) {
 }
 
 func TestBodyLimitsAndBodylessRoutesFailBeforeMutation(t *testing.T) {
-	t.Run("content length applies to every route", func(t *testing.T) {
+	t.Run("bodyless content length is rejected before the global cap", func(t *testing.T) {
 		fixture := newAPIFixture(t)
 		body := strings.Repeat("x", 65*1024)
 		response := fixture.request(t, http.MethodGet, "/healthz", body, "")
-		if response.Code != http.StatusRequestEntityTooLarge || responseErrorCode(t, response) != "invalid_request" {
-			t.Fatalf("health overlimit=(%d,%s)", response.Code, response.Body.String())
-		}
+		assertInvalidRequest(t, response)
 	})
 
 	t.Run("bodyless get and delete", func(t *testing.T) {

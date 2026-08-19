@@ -250,20 +250,17 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 				}
 				logger.Printf("request_id=%s method=%s path=%s status=%d panic=%t", requestID, safeRequestMethod(request.Method), safeRequestPattern(request.Pattern), capture.status, panicked)
 			}()
+			if !requestAcceptsJSONBody(request) {
+				if requestDeclaresBody(request) {
+					writer.Header().Set("Connection", "close")
+					writeAPIError(capture, http.StatusBadRequest, "invalid_request")
+					return
+				}
+			}
 			if request.ContentLength > maximumHTTPJSONBodyBytes {
+				writer.Header().Set("Connection", "close")
 				writeAPIError(capture, http.StatusRequestEntityTooLarge, "invalid_request")
 				return
-			}
-			if bodylessHTTPMethod(request.Method) {
-				nonempty, bodyErr := requestBodyIsNonempty(request)
-				if bodyErr != nil {
-					writeAPIError(capture, http.StatusBadRequest, "invalid_request")
-					return
-				}
-				if nonempty {
-					writeAPIError(capture, http.StatusBadRequest, "invalid_request")
-					return
-				}
 			}
 			next.ServeHTTP(capture, request)
 		})
@@ -279,19 +276,25 @@ func safeRequestMethod(method string) string {
 	}
 }
 
-func bodylessHTTPMethod(method string) bool {
-	return method == http.MethodGet || method == http.MethodHead || method == http.MethodDelete
+func requestAcceptsJSONBody(request *http.Request) bool {
+	if request.Method != http.MethodPost {
+		return false
+	}
+	switch request.URL.Path {
+	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/gomoku/matches":
+		return true
+	}
+	const launchPrefix = "/v1/matches/"
+	const launchSuffix = "/launch-ticket"
+	if !strings.HasPrefix(request.URL.Path, launchPrefix) || !strings.HasSuffix(request.URL.Path, launchSuffix) {
+		return false
+	}
+	matchID := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, launchPrefix), launchSuffix)
+	return canonicalRequestID(matchID)
 }
 
-func requestBodyIsNonempty(request *http.Request) (bool, error) {
-	if request.Body == nil || request.ContentLength == 0 {
-		return false, nil
-	}
-	data, err := io.ReadAll(io.LimitReader(request.Body, 1))
-	if err != nil {
-		return false, err
-	}
-	return len(data) != 0, nil
+func requestDeclaresBody(request *http.Request) bool {
+	return len(request.TransferEncoding) != 0 || request.ContentLength != 0
 }
 
 func safeRequestPattern(pattern string) string {

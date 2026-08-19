@@ -23,6 +23,7 @@ const (
 	webSocketOperationTimeout    = 5 * time.Second
 	webSocketSendQueueSize       = 32
 	webSocketPendingLimit        = 32
+	webSocketMaximumPingNonces   = 4096
 )
 
 type Hub struct {
@@ -80,7 +81,7 @@ type hubConnection struct {
 	revision   atomic.Int64
 	outboundMu sync.Mutex
 	pingMu     sync.Mutex
-	latestPing string
+	pings      map[string]time.Time
 }
 
 type connectPayload struct {
@@ -374,7 +375,7 @@ func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, sna
 		if pending.revision <= snapshotRevision {
 			continue
 		}
-		result := connection.enqueueState(pending.data, pending.revision)
+		result := connection.enqueueEvent(pending.data, pending.revision)
 		if result == enqueueStateFull || result == enqueueStateInvalid {
 			queued = false
 			break
@@ -436,7 +437,7 @@ func (hub *Hub) flushPublishedLocked(match *hubMatch) []*hubConnection {
 		match.publishedRevision = nextRevision
 		for connection := range match.connections {
 			if connection.ready {
-				result := connection.enqueueState(data, nextRevision)
+				result := connection.enqueueEvent(data, nextRevision)
 				if result == enqueueStateFull || result == enqueueStateInvalid {
 					slow = append(slow, connection)
 					continue
@@ -464,6 +465,18 @@ func (connection *hubConnection) enqueue(data []byte) bool {
 func (connection *hubConnection) enqueueState(data []byte, revision int64) enqueueStateResult {
 	connection.outboundMu.Lock()
 	defer connection.outboundMu.Unlock()
+	return connection.enqueueStateLocked(data, revision)
+}
+
+func (connection *hubConnection) enqueueEvent(data []byte, revision int64) enqueueStateResult {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	if revision <= 0 || len(data) == 0 {
+		return enqueueStateInvalid
+	}
+	if revision <= connection.revision.Load() {
+		return enqueueStateStale
+	}
 	return connection.enqueueStateLocked(data, revision)
 }
 
@@ -545,9 +558,7 @@ func (connection *hubConnection) writeLoop() {
 				connection.close()
 				return
 			}
-			connection.pingMu.Lock()
-			connection.latestPing = nonce.String()
-			connection.pingMu.Unlock()
+			connection.recordPing(nonce.String())
 			message, err := boundEnvelope(connection.gameID, connection.matchID, connection.revision.Load(), protocol.TypePlatformPing, "", pingPayload{Nonce: nonce.String()})
 			if err != nil {
 				connection.close()
@@ -621,11 +632,60 @@ func (connection *hubConnection) readLoop() {
 func (connection *hubConnection) validPong(nonce string) bool {
 	connection.pingMu.Lock()
 	defer connection.pingMu.Unlock()
-	if nonce == "" || nonce != connection.latestPing {
+	if nonce == "" {
 		return false
 	}
-	connection.latestPing = ""
+	connection.prunePingsLocked(connection.hub.clock.Now().UTC())
+	if _, exists := connection.pings[nonce]; !exists {
+		return false
+	}
+	delete(connection.pings, nonce)
 	return true
+}
+
+func (connection *hubConnection) recordPing(nonce string) {
+	connection.pingMu.Lock()
+	defer connection.pingMu.Unlock()
+	now := connection.hub.clock.Now().UTC()
+	if connection.pings == nil {
+		connection.pings = make(map[string]time.Time)
+	}
+	connection.prunePingsLocked(now)
+	limit := outstandingPingLimit(connection.hub.activityTimeout, connection.hub.heartbeatInterval)
+	for len(connection.pings) >= limit {
+		var oldestNonce string
+		var oldestTime time.Time
+		for candidate, issuedAt := range connection.pings {
+			if oldestNonce == "" || issuedAt.Before(oldestTime) || issuedAt.Equal(oldestTime) && candidate < oldestNonce {
+				oldestNonce, oldestTime = candidate, issuedAt
+			}
+		}
+		delete(connection.pings, oldestNonce)
+	}
+	connection.pings[nonce] = now
+}
+
+func (connection *hubConnection) prunePingsLocked(now time.Time) {
+	for nonce, issuedAt := range connection.pings {
+		age := now.Sub(issuedAt)
+		if age < 0 || age > connection.hub.activityTimeout {
+			delete(connection.pings, nonce)
+		}
+	}
+}
+
+func outstandingPingLimit(activityTimeout, heartbeatInterval time.Duration) int {
+	if activityTimeout <= 0 || heartbeatInterval <= 0 {
+		return 1
+	}
+	intervals := activityTimeout / heartbeatInterval
+	if activityTimeout%heartbeatInterval != 0 {
+		intervals++
+	}
+	if intervals >= webSocketMaximumPingNonces-1 {
+		return webSocketMaximumPingNonces
+	}
+	return int(intervals) + 1
 }
 
 func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
