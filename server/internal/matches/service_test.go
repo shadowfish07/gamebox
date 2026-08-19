@@ -655,6 +655,80 @@ func TestCancelDoesNotDeleteSlotsBelongingToAUserOutsideTheMatch(t *testing.T) {
 	assertTableCount(t, fixture.db, "active_game_slots", 2)
 }
 
+func TestCancelRejectsEveryCorruptActiveSlotSetBeforeLifecycleWrites(t *testing.T) {
+	tests := []struct {
+		name    string
+		corrupt func(t *testing.T, fixture fixture, matchID string)
+	}{
+		{
+			name: "missing player slot",
+			corrupt: func(t *testing.T, fixture fixture, _ string) {
+				if _, err := fixture.db.Exec(`DELETE FROM active_game_slots WHERE game_id=? AND user_id=?`, gomoku.GameID, opponentID); err != nil {
+					t.Fatalf("remove player slot: %v", err)
+				}
+			},
+		},
+		{
+			name: "replacement third user",
+			corrupt: func(t *testing.T, fixture fixture, _ string) {
+				if _, err := fixture.db.Exec(`UPDATE active_game_slots SET user_id=? WHERE game_id=? AND user_id=?`, thirdID, gomoku.GameID, opponentID); err != nil {
+					t.Fatalf("replace slot user: %v", err)
+				}
+			},
+		},
+		{
+			name: "extra third user",
+			corrupt: func(t *testing.T, fixture fixture, matchID string) {
+				if _, err := fixture.db.Exec(`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, gomoku.GameID, thirdID, matchID); err != nil {
+					t.Fatalf("insert extra slot: %v", err)
+				}
+			},
+		},
+		{
+			name: "wrong game",
+			corrupt: func(t *testing.T, fixture fixture, _ string) {
+				if _, err := fixture.db.Exec(`UPDATE active_game_slots SET game_id='chess' WHERE game_id=? AND user_id=?`, gomoku.GameID, opponentID); err != nil {
+					t.Fatalf("replace slot game: %v", err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			service := fixture.service(t, bytes.NewReader([]byte{0}))
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			test.corrupt(t, fixture, created.ID)
+			before := readActiveSlots(t, fixture.db)
+
+			event, err := service.Cancel(context.Background(), created.ID, initiatorID)
+			if !errors.Is(err, ErrInternal) || event.MatchID != "" {
+				t.Fatalf("Cancel=(%+v,%v), want zero event and internal", event, err)
+			}
+			if err.Error() != ErrInternal.Error() {
+				t.Fatalf("slot corruption leaked: %q", err)
+			}
+			var status string
+			var revision int64
+			var finishedAt sql.NullInt64
+			if err := fixture.db.QueryRow(`SELECT status,revision,finished_at FROM matches WHERE id=?`, created.ID).Scan(&status, &revision, &finishedAt); err != nil {
+				t.Fatalf("read match: %v", err)
+			}
+			if status != StatusActive || revision != 0 || finishedAt.Valid {
+				t.Fatalf("lifecycle changed despite corrupt slots: (%s,%d,%v)", status, revision, finishedAt)
+			}
+			assertTableCount(t, fixture.db, "match_events", 0)
+			after := readActiveSlots(t, fixture.db)
+			if fmt.Sprint(after) != fmt.Sprint(before) {
+				t.Fatalf("corrupt slots changed: before=%v after=%v", before, after)
+			}
+		})
+	}
+}
+
 func TestCreateHonorsContextCancellationWhileDatabaseBusyAndRestoresConnection(t *testing.T) {
 	fixture := newFixture(t)
 	locker, err := fixture.db.Conn(context.Background())
@@ -806,4 +880,31 @@ func assertTableCount(t *testing.T, db *sql.DB, table string, want int) {
 	if got != want {
 		t.Fatalf("%s count=%d, want %d", table, got, want)
 	}
+}
+
+type storedSlot struct {
+	GameID  string
+	UserID  string
+	MatchID string
+}
+
+func readActiveSlots(t *testing.T, db *sql.DB) []storedSlot {
+	t.Helper()
+	rows, err := db.Query(`SELECT game_id,user_id,match_id FROM active_game_slots ORDER BY game_id,user_id,match_id`)
+	if err != nil {
+		t.Fatalf("query active slots: %v", err)
+	}
+	defer rows.Close()
+	var slots []storedSlot
+	for rows.Next() {
+		var slot storedSlot
+		if err := rows.Scan(&slot.GameID, &slot.UserID, &slot.MatchID); err != nil {
+			t.Fatalf("scan active slot: %v", err)
+		}
+		slots = append(slots, slot)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate active slots: %v", err)
+	}
+	return slots
 }

@@ -213,14 +213,12 @@ WHERE id=?`, matchID).Scan(&gameID, &status, &revision)
 	if queryErr != nil {
 		return Event{}, matchDatabaseError(ctx, queryErr)
 	}
-	var participant int
-	participantErr := transaction.QueryRowContext(ctx, `
-SELECT 1 FROM match_players WHERE match_id=? AND user_id=?`, matchID, actorUserID).Scan(&participant)
-	if errors.Is(participantErr, sql.ErrNoRows) {
-		return Event{}, ErrMatchNotCancellable
+	playerIDs, playersErr := readTwoMatchPlayers(ctx, transaction.Tx, matchID)
+	if playersErr != nil {
+		return Event{}, playersErr
 	}
-	if participantErr != nil {
-		return Event{}, matchDatabaseError(ctx, participantErr)
+	if actorUserID != playerIDs[0] && actorUserID != playerIDs[1] {
+		return Event{}, ErrMatchNotCancellable
 	}
 	if status != StatusActive {
 		return Event{}, ErrMatchNotCancellable
@@ -241,6 +239,9 @@ SELECT EXISTS(
 	rules, ok := service.games.Lookup(gameID)
 	if !ok || rules.PlayerLimit() != 2 {
 		return Event{}, ErrInternal
+	}
+	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction.Tx, gameID, matchID, playerIDs, singleActiveMatch(rules)); slotsErr != nil {
+		return Event{}, slotsErr
 	}
 	nextRevision := revision + 1
 	if nextRevision <= 0 {
@@ -270,8 +271,7 @@ WHERE id=? AND status=? AND revision=?`, StatusCancelled, nextRevision, nowUnix,
 
 	result, deleteErr := transaction.ExecContext(ctx, `
 DELETE FROM active_game_slots
-WHERE game_id=? AND match_id=?
-  AND user_id IN (SELECT user_id FROM match_players WHERE match_id=?)`, gameID, matchID, matchID)
+WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, gameID, matchID, playerIDs[0], playerIDs[1])
 	if deleteErr != nil {
 		return Event{}, matchDatabaseError(ctx, deleteErr)
 	}
@@ -328,6 +328,87 @@ func enabledUser(ctx context.Context, transaction *sql.Tx, userID string) (bool,
 		return false, err
 	}
 	return enabled == 1, nil
+}
+
+func readTwoMatchPlayers(ctx context.Context, transaction *sql.Tx, matchID string) ([2]string, error) {
+	rows, err := transaction.QueryContext(ctx, `
+SELECT user_id
+FROM match_players
+WHERE match_id=?
+ORDER BY seat`, matchID)
+	if err != nil {
+		return [2]string{}, matchDatabaseError(ctx, err)
+	}
+	defer rows.Close()
+	var players []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return [2]string{}, matchDatabaseError(ctx, err)
+		}
+		players = append(players, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return [2]string{}, matchDatabaseError(ctx, err)
+	}
+	if len(players) != 2 || players[0] == players[1] {
+		return [2]string{}, ErrInternal
+	}
+	return [2]string{players[0], players[1]}, nil
+}
+
+type activeSlot struct {
+	gameID  string
+	userID  string
+	matchID string
+}
+
+// validateCompleteActiveSlotSet runs before Cancel writes its event or terminal
+// state. Reading by match_id deliberately includes wrong-game and extra-user
+// rows so no corrupt slot can be silently left behind or deleted on behalf of
+// somebody outside the match.
+func validateCompleteActiveSlotSet(ctx context.Context, transaction *sql.Tx, gameID, matchID string, players [2]string, single bool) error {
+	rows, err := transaction.QueryContext(ctx, `
+SELECT game_id,user_id,match_id
+FROM active_game_slots
+WHERE match_id=?
+ORDER BY game_id,user_id`, matchID)
+	if err != nil {
+		return matchDatabaseError(ctx, err)
+	}
+	defer rows.Close()
+	var slots []activeSlot
+	for rows.Next() {
+		var slot activeSlot
+		if err := rows.Scan(&slot.gameID, &slot.userID, &slot.matchID); err != nil {
+			return matchDatabaseError(ctx, err)
+		}
+		slots = append(slots, slot)
+	}
+	if err := rows.Err(); err != nil {
+		return matchDatabaseError(ctx, err)
+	}
+	if !single {
+		if len(slots) != 0 {
+			return ErrInternal
+		}
+		return nil
+	}
+	if len(slots) != 2 {
+		return ErrInternal
+	}
+	expectedUsers := map[string]bool{players[0]: false, players[1]: false}
+	for _, slot := range slots {
+		seen, expected := expectedUsers[slot.userID]
+		if !expected || seen || slot.gameID != gameID || slot.matchID != matchID {
+			return ErrInternal
+		}
+		expectedUsers[slot.userID] = true
+	}
+	if !expectedUsers[players[0]] || !expectedUsers[players[1]] {
+		return ErrInternal
+	}
+	return nil
 }
 
 func (service *Service) randomColors() (Color, Color, error) {
