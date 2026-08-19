@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	sqlite "modernc.org/sqlite"
@@ -24,6 +26,14 @@ const (
 // Open opens a durable SQLite database, verifies the connection, and applies
 // all pending schema migrations before returning it to the caller.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
+	return open(ctx, path, openHooks{})
+}
+
+type openHooks struct {
+	afterPreflight func()
+}
+
+func open(ctx context.Context, path string, hooks openHooks) (*sql.DB, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("store: open database: %w", err)
 	}
@@ -33,28 +43,41 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if path == ":memory:" {
 		return nil, errors.New("store: in-memory databases do not support durable WAL mode")
 	}
-	if err := secureSQLiteFiles(path); err != nil {
+	guard, err := secureSQLiteFiles(path)
+	if err != nil {
 		return nil, fmt.Errorf("store: secure database files: %w", err)
+	}
+	if hooks.afterPreflight != nil {
+		hooks.afterPreflight()
 	}
 
 	dsn := "file:" + escapeURIPath(path) +
 		"?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000&_txlock=immediate"
 	baseConnector, err := sqlite.NewConnector(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("store: configure database: %w", err)
+		return nil, closeOpenResources(nil, guard, fmt.Errorf("store: configure database: %w", err))
 	}
 	db := sql.OpenDB(cancelableConnector{Connector: baseConnector})
 	db.SetMaxOpenConns(maxConnections)
 	db.SetMaxIdleConns(maxConnections)
 
 	if err := pingContext(ctx, db); err != nil {
-		return nil, closeAfterError(db, fmt.Errorf("store: ping database: %w", err))
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: ping database: %w", err))
 	}
 	if err := migrate(ctx, db); err != nil {
-		return nil, closeAfterError(db, fmt.Errorf("store: migrate database: %w", err))
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: migrate database: %w", err))
+	}
+	if err := guard.Verify(); err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: verify database identity: %w", err))
 	}
 	if err := secureSQLiteSidecars(path); err != nil {
-		return nil, closeAfterError(db, fmt.Errorf("store: secure database sidecars: %w", err))
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: secure database sidecars: %w", err))
+	}
+	if err := guard.Verify(); err != nil {
+		return nil, closeOpenResources(db, guard, fmt.Errorf("store: reverify database identity: %w", err))
+	}
+	if err := guard.Close(); err != nil {
+		return nil, closeAfterError(db, fmt.Errorf("store: close database file guard: %w", err))
 	}
 	return db, nil
 }
@@ -92,34 +115,56 @@ type connectionResult struct {
 	err  error
 }
 
-var activeConnectorWorkers atomic.Int64
+var (
+	physicalConnectPermits = make(chan struct{}, maxConnections)
+	activeConnectorWorkers atomic.Int64
+)
 
 func (c cancelableConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	result := make(chan connectionResult, 1)
+	select {
+	case physicalConnectPermits <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	result := make(chan connectionResult)
+	decision := make(chan bool)
+	canceled := make(chan struct{})
 	activeConnectorWorkers.Add(1)
 	go func() {
-		defer activeConnectorWorkers.Add(-1)
+		defer func() {
+			activeConnectorWorkers.Add(-1)
+			<-physicalConnectPermits
+		}()
 		conn, err := c.Connector.Connect(ctx)
-		result <- connectionResult{conn: conn, err: err}
+		if err != nil && conn != nil {
+			_ = conn.Close()
+			conn = nil
+		}
+		opened := connectionResult{conn: conn, err: err}
+		select {
+		case result <- opened:
+			if accepted := <-decision; !accepted && opened.conn != nil {
+				_ = opened.conn.Close()
+			}
+		case <-canceled:
+			if opened.conn != nil {
+				_ = opened.conn.Close()
+			}
+		}
 	}()
 
 	select {
 	case opened := <-result:
+		accepted := ctx.Err() == nil
+		decision <- accepted
+		if !accepted {
+			return nil, ctx.Err()
+		}
 		return opened.conn, opened.err
 	case <-ctx.Done():
-		activeConnectorWorkers.Add(1)
-		go func() {
-			defer activeConnectorWorkers.Add(-1)
-			closeLateConnection(result)
-		}()
+		close(canceled)
 		return nil, ctx.Err()
-	}
-}
-
-func closeLateConnection(result <-chan connectionResult) {
-	opened := <-result
-	if opened.conn != nil {
-		_ = opened.conn.Close()
 	}
 }
 
@@ -132,14 +177,50 @@ func escapeURIPath(path string) string {
 	return (&url.URL{Path: path}).EscapedPath()
 }
 
-func secureSQLiteFiles(path string) error {
-	if err := secureDatabaseFile(path); err != nil {
-		return err
-	}
-	return secureSQLiteSidecars(path)
+type databaseFileGuard struct {
+	path       string
+	parentPath string
+	file       *os.File
+	parent     *os.File
+	fileInfo   os.FileInfo
+	parentInfo os.FileInfo
 }
 
-func secureDatabaseFile(path string) error {
+func secureSQLiteFiles(path string) (*databaseFileGuard, error) {
+	parentPath := filepath.Dir(path)
+	parent, err := os.Open(parentPath)
+	if err != nil {
+		return nil, fmt.Errorf("open database parent: %w", err)
+	}
+	parentInfo, err := verifyParentPath(parentPath, parent, nil)
+	if err != nil {
+		_ = parent.Close()
+		return nil, err
+	}
+
+	file, fileInfo, err := secureDatabaseFile(path)
+	if err != nil {
+		_ = parent.Close()
+		return nil, err
+	}
+	guard := &databaseFileGuard{
+		path:       path,
+		parentPath: parentPath,
+		file:       file,
+		parent:     parent,
+		fileInfo:   fileInfo,
+		parentInfo: parentInfo,
+	}
+	if err := secureSQLiteSidecars(path); err != nil {
+		return nil, closeOpenResources(nil, guard, err)
+	}
+	if err := guard.Verify(); err != nil {
+		return nil, closeOpenResources(nil, guard, err)
+	}
+	return guard, nil
+}
+
+func secureDatabaseFile(path string) (*os.File, os.FileInfo, error) {
 	for {
 		info, err := os.Lstat(path)
 		switch {
@@ -149,20 +230,30 @@ func secureDatabaseFile(path string) error {
 				continue
 			}
 			if createErr != nil {
-				return fmt.Errorf("create database: %w", createErr)
+				return nil, nil, fmt.Errorf("create database: %w", createErr)
 			}
-			return secureOpenFile(path, file)
+			securedInfo, secureErr := secureOpenFile(path, file)
+			if secureErr != nil {
+				_ = file.Close()
+				return nil, nil, secureErr
+			}
+			return file, securedInfo, nil
 		case err != nil:
-			return fmt.Errorf("inspect database: %w", err)
+			return nil, nil, fmt.Errorf("inspect database: %w", err)
 		case !info.Mode().IsRegular():
-			return fmt.Errorf("database path is not a regular file")
+			return nil, nil, errors.New("database path is not a regular file")
 		}
 
 		file, err := os.Open(path)
 		if err != nil {
-			return fmt.Errorf("open database for permission check: %w", err)
+			return nil, nil, fmt.Errorf("open database for permission check: %w", err)
 		}
-		return secureOpenFile(path, file)
+		securedInfo, secureErr := secureOpenFile(path, file)
+		if secureErr != nil {
+			_ = file.Close()
+			return nil, nil, secureErr
+		}
+		return file, securedInfo, nil
 	}
 }
 
@@ -190,31 +281,162 @@ func secureExistingFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("open file for permission check: %w", err)
 	}
-	return secureOpenFile(path, file)
+	_, secureErr := secureOpenFile(path, file)
+	closeErr := file.Close()
+	if secureErr != nil {
+		return errors.Join(secureErr, closeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close secured file: %w", closeErr)
+	}
+	return nil
 }
 
-func secureOpenFile(path string, file *os.File) (err error) {
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close secured file: %w", closeErr))
-		}
-	}()
-
+func secureOpenFile(path string, file *os.File) (os.FileInfo, error) {
 	openedInfo, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("inspect opened file: %w", err)
+		return nil, fmt.Errorf("inspect opened file: %w", err)
 	}
 	pathInfo, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("reinspect file path: %w", err)
+		return nil, fmt.Errorf("reinspect file path: %w", err)
 	}
 	if !openedInfo.Mode().IsRegular() || !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
-		return errors.New("file changed during permission check")
+		return nil, errors.New("file changed during permission check")
+	}
+	if err := requireCurrentOwner(openedInfo, "file"); err != nil {
+		return nil, err
+	}
+	if err := requireSingleLink(openedInfo, "file"); err != nil {
+		return nil, err
 	}
 	if err := file.Chmod(0o600); err != nil {
-		return fmt.Errorf("set file mode 0600: %w", err)
+		return nil, fmt.Errorf("set file mode 0600: %w", err)
+	}
+	securedInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("reinspect secured file: %w", err)
+	}
+	if securedInfo.Mode().Perm() != 0o600 {
+		return nil, errors.New("secured file mode is not 0600")
+	}
+	return securedInfo, nil
+}
+
+func (g *databaseFileGuard) Verify() error {
+	currentParent, err := verifyParentPath(g.parentPath, g.parent, g.parentInfo)
+	if err != nil {
+		return err
+	}
+	currentParentOwner, currentParentOwnerOK := ownerID(currentParent)
+	originalParentOwner, originalParentOwnerOK := ownerID(g.parentInfo)
+	if currentParent.Mode() != g.parentInfo.Mode() || !currentParentOwnerOK || !originalParentOwnerOK || currentParentOwner != originalParentOwner {
+		return errors.New("database parent mode or owner changed")
+	}
+
+	openedInfo, err := g.file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect held database file: %w", err)
+	}
+	pathInfo, err := os.Lstat(g.path)
+	if err != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
+		return errors.New("database file identity changed")
+	}
+	if openedInfo.Mode().Perm() != 0o600 || pathInfo.Mode().Perm() != 0o600 {
+		return errors.New("database file mode changed")
+	}
+	if err := requireCurrentOwner(openedInfo, "database file"); err != nil {
+		return err
+	}
+	if err := requireSingleLink(openedInfo, "database file"); err != nil {
+		return err
+	}
+	currentOwner, currentOwnerOK := ownerID(openedInfo)
+	originalOwner, originalOwnerOK := ownerID(g.fileInfo)
+	if !currentOwnerOK || !originalOwnerOK || currentOwner != originalOwner {
+		return errors.New("database file owner changed")
 	}
 	return nil
+}
+
+func verifyParentPath(path string, held *os.File, original os.FileInfo) (os.FileInfo, error) {
+	heldInfo, err := held.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect held database parent: %w", err)
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil || !pathInfo.IsDir() || !os.SameFile(heldInfo, pathInfo) {
+		return nil, errors.New("database parent identity changed")
+	}
+	if heldInfo.Mode().Perm()&0o022 != 0 && heldInfo.Mode()&os.ModeSticky == 0 {
+		return nil, errors.New("database parent is group/world-writable without sticky bit")
+	}
+	if original != nil && !os.SameFile(original, heldInfo) {
+		return nil, errors.New("database parent identity changed")
+	}
+	return heldInfo, nil
+}
+
+func requireCurrentOwner(info os.FileInfo, label string) error {
+	uid, ok := ownerID(info)
+	if !ok {
+		return fmt.Errorf("cannot verify %s owner", label)
+	}
+	if uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("%s is not owned by the current user", label)
+	}
+	return nil
+}
+
+func ownerID(info os.FileInfo) (uint32, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return stat.Uid, true
+}
+
+func requireSingleLink(info os.FileInfo, label string) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("cannot verify %s link count", label)
+	}
+	if stat.Nlink != 1 {
+		return fmt.Errorf("%s has multiple hard links", label)
+	}
+	return nil
+}
+
+func (g *databaseFileGuard) Close() error {
+	var err error
+	if g.file != nil {
+		if closeErr := g.file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close held database file: %w", closeErr))
+		}
+		g.file = nil
+	}
+	if g.parent != nil {
+		if closeErr := g.parent.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close held database parent: %w", closeErr))
+		}
+		g.parent = nil
+	}
+	return err
+}
+
+func closeOpenResources(db *sql.DB, guard *databaseFileGuard, cause error) error {
+	err := cause
+	if db != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("store: close database after failure: %w", closeErr))
+		}
+	}
+	if guard != nil {
+		if closeErr := guard.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("store: close database file guard: %w", closeErr))
+		}
+	}
+	return err
 }
 
 func closeAfterError(db *sql.DB, cause error) error {
