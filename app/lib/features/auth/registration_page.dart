@@ -47,7 +47,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   Future<void> _submit() async {
-    if (widget.controller.status != SessionStatus.unauthenticated) {
+    if (!widget.controller.canRegister) {
       return;
     }
     final invite = _inviteController.text.trim();
@@ -91,8 +91,11 @@ final class _RegistrationPageState extends State<RegistrationPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.controller.canRetryRestore) {
+      return _buildRetry(context);
+    }
     final submitting = widget.controller.status == SessionStatus.submitting;
-    final canSubmit = widget.controller.status == SessionStatus.unauthenticated;
+    final canSubmit = widget.controller.canRegister;
     return Scaffold(
       appBar: AppBar(title: const Text('Gamebox')),
       body: SafeArea(
@@ -173,6 +176,41 @@ final class _RegistrationPageState extends State<RegistrationPage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Text('注册并登录'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRetry(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Gamebox')),
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '暂时无法恢复登录，请检查网络后重试',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 24),
+                Semantics(
+                  key: const Key('retry-session'),
+                  label: 'retry-session',
+                  button: true,
+                  onTap: widget.controller.retryRestore,
+                  excludeSemantics: true,
+                  child: FilledButton(
+                    onPressed: widget.controller.retryRestore,
+                    child: const Text('重试登录'),
                   ),
                 ),
               ],

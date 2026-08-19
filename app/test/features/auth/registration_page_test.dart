@@ -181,6 +181,43 @@ void main() {
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(find.text('你好，小鱼'), findsOneWidget);
   });
+
+  testWidgets(
+    'temporary auto-login failure offers retry instead of registration',
+    (tester) async {
+      final now = DateTime.utc(2026, 8, 20, 12);
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) => Future<Session>.error(
+          const ApiError(
+            code: 'network_error',
+            message: 'temporary safe failure',
+          ),
+        );
+      final store = _MemoryTokenStore('refresh-preserved');
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: _NoopGameLauncher(),
+          sessionController: controller,
+        ),
+      );
+
+      expect(find.byKey(const Key('invite-code')), findsNothing);
+      expect(find.byKey(const Key('register')), findsNothing);
+      expect(find.byKey(const Key('retry-session')), findsOneWidget);
+      api.onRefresh = (_) async => _session(now);
+
+      await tester.tap(find.byKey(const Key('retry-session')));
+      await tester.pump();
+
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+    },
+  );
 }
 
 Future<void> _enter(WidgetTester tester, Key semanticsKey, String value) async {
@@ -222,10 +259,12 @@ final class _RegistrationFixture {
 
 final class _FakeAuthApi implements AuthApi {
   Future<Session> Function(String inviteCode, String nickname)? onRegister;
+  Future<Session> Function(String refreshToken)? onRefresh;
   int registerCalls = 0;
 
   @override
   Future<Session> refresh(String refreshToken) =>
+      onRefresh?.call(refreshToken) ??
       Future<Session>.error(StateError('unexpected refresh'));
 
   @override
@@ -237,6 +276,8 @@ final class _FakeAuthApi implements AuthApi {
 }
 
 final class _MemoryTokenStore implements TokenStore {
+  _MemoryTokenStore([this.value]);
+
   String? value;
 
   @override

@@ -5,6 +5,7 @@
         android:required="true" />
 
     <application
+        android:allowBackup="false"
         android:label="gamebox"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

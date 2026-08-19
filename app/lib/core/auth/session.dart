@@ -1,3 +1,5 @@
+import '../api/strict_json.dart';
+
 /// A public, non-secret user identity carried by an authenticated session.
 final class SessionUser {
   const SessionUser({required this.id, required this.nickname});
@@ -28,8 +30,23 @@ final class Session {
   }
 
   factory Session.fromEnvelope(Map<String, Object?> envelope) {
+    if (!hasExactJsonKeys(envelope, const {'session'})) {
+      throw const FormatException('Invalid session response');
+    }
     final session = _object(envelope['session']);
+    if (!hasExactJsonKeys(session, const {
+      'user',
+      'accessToken',
+      'accessExpiresAt',
+      'refreshToken',
+      'refreshExpiresAt',
+    })) {
+      throw const FormatException('Invalid session response');
+    }
     final user = _object(session['user']);
+    if (!hasExactJsonKeys(user, const {'id', 'nickname'})) {
+      throw const FormatException('Invalid session response');
+    }
     final userId = _string(user['id']);
     final nickname = _string(user['nickname']);
     final accessToken = _string(session['accessToken']);

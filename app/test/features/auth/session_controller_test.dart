@@ -74,6 +74,169 @@ void main() {
     expect(controller.session, isNull);
     expect(store.value, isNull);
     expect(store.deleteCalls, 1);
+    expect(controller.canRegister, isTrue);
+    expect(controller.canRetryRestore, isFalse);
+  });
+
+  for (final code in const ['network_error', 'timeout', 'internal_error']) {
+    test(
+      '$code during restore preserves the account and later retry succeeds',
+      () async {
+        final api = _FakeAuthApi()
+          ..onRefresh = (_) => Future<Session>.error(
+            ApiError(code: code, message: 'safe temporary failure'),
+          );
+        final store = _MemoryTokenStore(value: 'refresh-preserved');
+        final controller = SessionController(
+          authApi: api,
+          tokenStore: store,
+          now: () => now,
+        );
+
+        await controller.restore();
+
+        expect(controller.status, SessionStatus.unauthenticated);
+        expect(controller.session, isNull);
+        expect(controller.lastError?.code, code);
+        expect(controller.canRetryRestore, isTrue);
+        expect(controller.canRegister, isFalse);
+        expect(store.value, 'refresh-preserved');
+        expect(store.deleteCalls, 0);
+
+        api.onRefresh = (_) async => _session(
+          accessToken: 'access-retried',
+          refreshToken: 'refresh-rotated',
+          now: now,
+        );
+        expect(await controller.retryRestore(), isTrue);
+        expect(controller.status, SessionStatus.authenticated);
+        expect(controller.accessToken, 'access-retried');
+        expect(store.value, 'refresh-rotated');
+      },
+    );
+  }
+
+  test(
+    'temporary runtime refresh failure preserves credential without auth memory',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-one',
+          refreshToken: 'refresh-one',
+          now: now,
+        );
+      final store = _MemoryTokenStore(value: 'refresh-zero');
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      api.onRefresh = (_) => Future<Session>.error(
+        const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试'),
+      );
+
+      expect(await controller.refresh('access-one'), isFalse);
+      expect(controller.status, SessionStatus.unauthenticated);
+      expect(controller.accessToken, isNull);
+      expect(controller.canRetryRestore, isTrue);
+      expect(store.value, 'refresh-one');
+      expect(store.deleteCalls, 0);
+
+      api.onRefresh = (_) async => _session(
+        accessToken: 'access-two',
+        refreshToken: 'refresh-two',
+        now: now,
+      );
+      expect(await controller.handleAppResumed(), isTrue);
+      expect(controller.accessToken, 'access-two');
+    },
+  );
+
+  test(
+    'registration cannot overwrite a preserved account after temporary failure',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) => Future<Session>.error(
+          const ApiError(code: 'timeout', message: '请求超时，请稍后重试'),
+        );
+      final store = _MemoryTokenStore(value: 'refresh-preserved');
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+
+      final error = await controller.register('new-invite', '新用户');
+
+      expect(error?.code, 'invalid_state');
+      expect(api.registerCalls, 0);
+      expect(store.value, 'refresh-preserved');
+    },
+  );
+
+  test(
+    'temporarily unavailable secure storage is retried without deletion',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-retried',
+          refreshToken: 'refresh-rotated',
+          now: now,
+        );
+      final store = _MemoryTokenStore(value: 'refresh-preserved')
+        ..readError = const TokenStoreException.unavailable();
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+
+      await controller.restore();
+
+      expect(controller.canRetryRestore, isTrue);
+      expect(controller.canRegister, isFalse);
+      expect(store.deleteCalls, 0);
+      store.readError = null;
+      expect(await controller.retryRestore(), isTrue);
+      expect(controller.status, SessionStatus.authenticated);
+    },
+  );
+
+  test('corrupt secure storage is cleared locally', () async {
+    final store = _MemoryTokenStore(value: 'corrupt')
+      ..readError = const TokenStoreException.corrupt();
+    final controller = SessionController(
+      authApi: _FakeAuthApi(),
+      tokenStore: store,
+      now: () => now,
+    );
+
+    await controller.restore();
+
+    expect(controller.status, SessionStatus.unauthenticated);
+    expect(controller.canRegister, isTrue);
+    expect(controller.canRetryRestore, isFalse);
+    expect(store.value, isNull);
+    expect(store.deleteCalls, 1);
+  });
+
+  test('failed corrupt-token deletion still blocks registration', () async {
+    final store = _MemoryTokenStore(value: 'corrupt')
+      ..readError = const TokenStoreException.corrupt()
+      ..deleteError = const TokenStoreException.unavailable();
+    final controller = SessionController(
+      authApi: _FakeAuthApi(),
+      tokenStore: store,
+      now: () => now,
+    );
+
+    await controller.restore();
+
+    expect(controller.canRegister, isFalse);
+    expect(controller.canRetryRestore, isTrue);
+    expect(store.value, 'corrupt');
   });
 
   test(
@@ -245,6 +408,26 @@ void main() {
     expect(await first, isTrue);
     expect(await second, isTrue);
     expect(store.value, 'refresh-two');
+  });
+
+  test('a delayed 401 for an old access token does not rotate again', () async {
+    final api = _FakeAuthApi()
+      ..onRefresh = (_) async => _session(
+        accessToken: 'access-current',
+        refreshToken: 'refresh-current',
+        now: now,
+      );
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: _MemoryTokenStore(value: 'refresh-old'),
+      now: () => now,
+    );
+    await controller.restore();
+    final callsAfterRestore = api.refreshCalls;
+
+    expect(await controller.refresh('access-stale'), isTrue);
+    expect(api.refreshCalls, callsAfterRestore);
+    expect(controller.accessToken, 'access-current');
   });
 
   test('refresh rotation storage failure clears all authentication', () async {

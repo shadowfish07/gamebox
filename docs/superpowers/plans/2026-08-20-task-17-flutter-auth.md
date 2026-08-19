@@ -28,8 +28,13 @@ changing the existing native Godot launcher bridge.
 - The access token exists only in controller memory.
 - The refresh token uses secure-storage key `gamebox.refresh_token.v1` and is
   overwritten before a rotated session becomes visible.
-- Refresh is a single-flight Future; a failed API call or failed secure-store
-  rotation clears in-memory and persisted authentication.
+- Refresh is a single-flight Future. A temporary transport/server failure
+  clears access credentials from memory but preserves the refresh credential
+  for an explicit/lifecycle retry; only the server's authoritative
+  `unauthorized` response or local credential corruption deletes it.
+- A failed secure-store rotation fails closed without publishing the new access
+  token. Registration remains unavailable whenever a possibly existing account
+  credential could not be read or deleted.
 - API errors retain only bounded `code` and `message`, never response bodies or
   credentials; session diagnostic strings redact credentials.
 - A 401 may replay one safe GET after refresh, but never replays a POST body.

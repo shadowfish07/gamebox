@@ -87,6 +87,75 @@ void main() {
   test('secure storage refresh key is stable', () {
     expect(SecureTokenStore.refreshTokenKey, 'gamebox.refresh_token.v1');
   });
+
+  test(
+    'session envelopes require exact canonical keys and safe values',
+    () async {
+      final base = _sessionEnvelope();
+      final cases = <String, String>{
+        'unknown root key': jsonEncode({...base, 'extra': true}),
+        'unknown session key': jsonEncode({
+          'session': {
+            ...base['session']! as Map<String, Object?>,
+            'extra': true,
+          },
+        }),
+        'wrong root case': jsonEncode({'Session': base['session']}),
+        'escaped root alias': jsonEncode(
+          base,
+        ).replaceFirst('"session"', r'"sess\u0069on"'),
+        'unknown user key': jsonEncode({
+          'session': {
+            ...base['session']! as Map<String, Object?>,
+            'user': {
+              ...(base['session']! as Map<String, Object?>)['user']!
+                  as Map<String, Object?>,
+              'extra': true,
+            },
+          },
+        }),
+        'null token': jsonEncode({
+          'session': {
+            ...base['session']! as Map<String, Object?>,
+            'accessToken': null,
+          },
+        }),
+        'unsafe timestamp': jsonEncode({
+          'session': {
+            ...base['session']! as Map<String, Object?>,
+            'accessExpiresAt': 9007199254740992,
+          },
+        }),
+      };
+
+      for (final entry in cases.entries) {
+        final api = HttpAuthApi(
+          ApiClient(
+            baseUri: Uri.parse('https://gamebox.test'),
+            httpClient: MockClient(
+              (_) async => http.Response(
+                entry.value,
+                200,
+                headers: const {
+                  'content-type': 'application/json; charset=utf-8',
+                },
+              ),
+            ),
+          ),
+        );
+        await expectLater(
+          api.refresh('refresh-old'),
+          throwsA(
+            isA<ApiError>().having(
+              (error) => error.code,
+              entry.key,
+              'invalid_response',
+            ),
+          ),
+        );
+      }
+    },
+  );
 }
 
 http.Response _sessionResponse({
@@ -95,30 +164,34 @@ http.Response _sessionResponse({
   int status = 200,
 }) {
   return http.Response(
-    jsonEncode({
-      'session': {
-        'user': {
-          'id': '11111111-1111-4111-8111-111111111111',
-          'nickname': '小鱼',
-        },
-        'accessToken': accessToken,
-        'accessExpiresAt': DateTime.utc(
-          2026,
-          8,
-          20,
-          12,
-          15,
-        ).millisecondsSinceEpoch,
-        'refreshToken': refreshToken,
-        'refreshExpiresAt': DateTime.utc(
-          2026,
-          9,
-          19,
-          12,
-        ).millisecondsSinceEpoch,
-      },
-    }),
+    jsonEncode(
+      _sessionEnvelope(accessToken: accessToken, refreshToken: refreshToken),
+    ),
     status,
     headers: const {'content-type': 'application/json; charset=utf-8'},
   );
+}
+
+Map<String, Object?> _sessionEnvelope({
+  String accessToken = 'access-token',
+  String refreshToken = 'refresh-token',
+}) {
+  return {
+    'session': <String, Object?>{
+      'user': <String, Object?>{
+        'id': '11111111-1111-4111-8111-111111111111',
+        'nickname': '小鱼',
+      },
+      'accessToken': accessToken,
+      'accessExpiresAt': DateTime.utc(
+        2026,
+        8,
+        20,
+        12,
+        15,
+      ).millisecondsSinceEpoch,
+      'refreshToken': refreshToken,
+      'refreshExpiresAt': DateTime.utc(2026, 9, 19, 12).millisecondsSinceEpoch,
+    },
+  };
 }
