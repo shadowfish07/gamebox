@@ -3,7 +3,10 @@ package matches
 import (
 	"context"
 	"errors"
+	"fmt"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,6 +76,69 @@ func (*matchBlockingPresenceStore) SetPlayerOffline(context.Context, string, str
 type gatedPresenceStore struct {
 	entered chan presenceCall
 	proceed chan struct{}
+}
+
+// cancellationAfterInitialCheckContext deterministically models cancellation
+// in the narrow window after a public method's first ctx.Err check and before
+// its just-acquired match operation may mutate state.
+type cancellationAfterInitialCheckContext struct {
+	checks atomic.Int32
+}
+
+func (*cancellationAfterInitialCheckContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (*cancellationAfterInitialCheckContext) Done() <-chan struct{}       { return nil }
+func (ctx *cancellationAfterInitialCheckContext) Err() error {
+	if ctx.checks.Add(1) >= 2 {
+		return context.Canceled
+	}
+	return nil
+}
+func (*cancellationAfterInitialCheckContext) Value(any) any { return nil }
+
+type concurrencyBoundPresenceStore struct {
+	active       atomic.Int32
+	maximum      atomic.Int32
+	offlineCalls atomic.Int32
+	entered      chan struct{}
+	release      chan struct{}
+}
+
+type orderedErrorPresenceStore struct {
+	firstMatchID string
+	releaseFirst chan struct{}
+	secondDone   chan struct{}
+}
+
+func (*orderedErrorPresenceStore) SetPlayerOnline(context.Context, string, string) error {
+	return nil
+}
+
+func (store *orderedErrorPresenceStore) SetPlayerOffline(_ context.Context, matchID, _ string) error {
+	if matchID == store.firstMatchID {
+		<-store.releaseFirst
+		return ErrInvalidRequest
+	}
+	close(store.secondDone)
+	return ErrMatchNotFound
+}
+
+func (*concurrencyBoundPresenceStore) SetPlayerOnline(context.Context, string, string) error {
+	return nil
+}
+
+func (store *concurrencyBoundPresenceStore) SetPlayerOffline(context.Context, string, string) error {
+	active := store.active.Add(1)
+	for {
+		maximum := store.maximum.Load()
+		if active <= maximum || store.maximum.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+	store.offlineCalls.Add(1)
+	store.entered <- struct{}{}
+	<-store.release
+	store.active.Add(-1)
+	return nil
 }
 
 func (store *gatedPresenceStore) SetPlayerOnline(_ context.Context, matchID, userID string) error {
@@ -521,6 +587,188 @@ func TestPresenceSameMatchOperationWaitHonorsContextAndCleansLock(t *testing.T) 
 	presence.operationMu.Unlock()
 	if operationCount != 0 {
 		t.Fatalf("operation locks after canceled waiter=%d want 0", operationCount)
+	}
+}
+
+func TestPresenceCancellationAfterOperationAcquireCannotMutateState(t *testing.T) {
+	t.Run("existing Connect does not refresh", func(t *testing.T) {
+		fakeClock := clock.NewFake(time.Now())
+		store := &fakePresenceStore{}
+		presence, err := NewPresence(store, fakeClock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := presence.Connect(context.Background(), presenceMatchID, presenceUserID, presenceOldConn); err != nil {
+			t.Fatal(err)
+		}
+		key := presenceConnectionKey{matchID: presenceMatchID, userID: presenceUserID, connectionID: presenceOldConn}
+		presence.mu.Lock()
+		before := presence.connections[key]
+		presence.mu.Unlock()
+		fakeClock.Advance(time.Second)
+		ctx := &cancellationAfterInitialCheckContext{}
+		if err := presence.Connect(ctx, presenceMatchID, presenceUserID, presenceOldConn); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Connect=%v want canceled", err)
+		}
+		presence.mu.Lock()
+		after := presence.connections[key]
+		presence.mu.Unlock()
+		if !after.Equal(before) {
+			t.Fatalf("lastSeen changed after cancellation: before=%v after=%v", before, after)
+		}
+		if calls := store.snapshotCalls(); len(calls) != 1 {
+			t.Fatalf("store calls=%+v", calls)
+		}
+	})
+
+	t.Run("non-last Disconnect does not delete", func(t *testing.T) {
+		fakeClock := clock.NewFake(time.Now())
+		store := &fakePresenceStore{}
+		presence, err := NewPresence(store, fakeClock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := presence.Connect(context.Background(), presenceMatchID, presenceUserID, presenceOldConn); err != nil {
+			t.Fatal(err)
+		}
+		if err := presence.Connect(context.Background(), presenceMatchID, presenceUserID, presenceNewConn); err != nil {
+			t.Fatal(err)
+		}
+		ctx := &cancellationAfterInitialCheckContext{}
+		if err := presence.Disconnect(ctx, presenceMatchID, presenceUserID, presenceOldConn); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Disconnect=%v want canceled", err)
+		}
+		if !presence.Touch(presenceMatchID, presenceUserID, presenceOldConn) {
+			t.Fatal("canceled Disconnect deleted the old connection")
+		}
+		if calls := store.snapshotCalls(); len(calls) != 1 {
+			t.Fatalf("store calls=%+v", calls)
+		}
+	})
+
+	t.Run("Sweep does not expire", func(t *testing.T) {
+		fakeClock := clock.NewFake(time.Now())
+		store := &fakePresenceStore{}
+		presence, err := NewPresence(store, fakeClock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := presence.Connect(context.Background(), presenceMatchID, presenceUserID, presenceOldConn); err != nil {
+			t.Fatal(err)
+		}
+		fakeClock.Advance(presenceConnectionTimeout + time.Millisecond)
+		ctx := &cancellationAfterInitialCheckContext{}
+		if err := presence.Sweep(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Sweep=%v want canceled", err)
+		}
+		if !presence.IsOnline(presenceMatchID, presenceUserID) {
+			t.Fatal("canceled Sweep expired the connection")
+		}
+		if calls := store.snapshotCalls(); len(calls) != 1 {
+			t.Fatalf("store calls=%+v", calls)
+		}
+	})
+}
+
+func TestPresenceSweepUsesFixedWorkerBoundAcrossManyMatches(t *testing.T) {
+	const (
+		matchCount      = 64
+		expectedWorkers = 8
+	)
+	if presenceSweepConcurrency != expectedWorkers {
+		t.Fatalf("presenceSweepConcurrency=%d want=%d", presenceSweepConcurrency, expectedWorkers)
+	}
+	fakeClock := clock.NewFake(time.Now())
+	store := &concurrencyBoundPresenceStore{
+		entered: make(chan struct{}, matchCount),
+		release: make(chan struct{}),
+	}
+	presence, err := NewPresence(store, fakeClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < matchCount; index++ {
+		matchID := fmt.Sprintf("80000000-0000-4000-8000-%012x", index+1)
+		connectionID := fmt.Sprintf("90000000-0000-4000-8000-%012x", index+1)
+		if err := presence.Connect(context.Background(), matchID, presenceUserID, connectionID); err != nil {
+			t.Fatalf("Connect %d: %v", index, err)
+		}
+	}
+	fakeClock.Advance(presenceConnectionTimeout + time.Millisecond)
+	baselineGoroutines := runtime.NumGoroutine()
+	sweepDone := make(chan error, 1)
+	go func() { sweepDone <- presence.Sweep(context.Background()) }()
+	for index := 0; index < expectedWorkers; index++ {
+		select {
+		case <-store.entered:
+		case <-time.After(time.Second):
+			close(store.release)
+			t.Fatalf("only %d workers entered persistence", index)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-store.entered:
+		close(store.release)
+		<-sweepDone
+		t.Fatalf("more than %d store calls ran concurrently", expectedWorkers)
+	default:
+	}
+	if delta := runtime.NumGoroutine() - baselineGoroutines; delta > expectedWorkers+4 {
+		close(store.release)
+		<-sweepDone
+		t.Fatalf("Sweep goroutine growth=%d want <=%d", delta, expectedWorkers+4)
+	}
+	close(store.release)
+	select {
+	case err := <-sweepDone:
+		if err != nil {
+			t.Fatalf("Sweep=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded Sweep did not finish")
+	}
+	if maximum := store.maximum.Load(); maximum > expectedWorkers {
+		t.Fatalf("maximum concurrent store calls=%d want <=%d", maximum, expectedWorkers)
+	}
+	if calls := store.offlineCalls.Load(); calls != matchCount {
+		t.Fatalf("offline calls=%d want=%d", calls, matchCount)
+	}
+}
+
+func TestPresenceSweepReturnsFirstErrorBySortedMatchNotCompletionOrder(t *testing.T) {
+	const (
+		firstMatchID  = "10000000-0000-4000-8000-000000000001"
+		secondMatchID = "20000000-0000-4000-8000-000000000002"
+	)
+	fakeClock := clock.NewFake(time.Now())
+	store := &orderedErrorPresenceStore{
+		firstMatchID: firstMatchID,
+		releaseFirst: make(chan struct{}),
+		secondDone:   make(chan struct{}),
+	}
+	presence, err := NewPresence(store, fakeClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := presence.Connect(context.Background(), firstMatchID, presenceUserID, presenceOldConn); err != nil {
+		t.Fatal(err)
+	}
+	if err := presence.Connect(context.Background(), secondMatchID, presenceUserID, presenceNewConn); err != nil {
+		t.Fatal(err)
+	}
+	fakeClock.Advance(presenceConnectionTimeout + time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- presence.Sweep(context.Background()) }()
+	select {
+	case <-store.secondDone:
+	case <-time.After(time.Second):
+		close(store.releaseFirst)
+		t.Fatal("second match did not complete first")
+	}
+	close(store.releaseFirst)
+	if err := <-done; !errors.Is(err, ErrInvalidRequest) || err.Error() != ErrInvalidRequest.Error() {
+		t.Fatalf("Sweep=%v want first sorted match error", err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"me.zqydev/gamebox/server/internal/clock"
@@ -13,6 +14,9 @@ import (
 const (
 	presenceSweepInterval     = 15 * time.Second
 	presenceConnectionTimeout = 45 * time.Second
+	// Keep expiry persistence within the SQLite store's eight-connection
+	// budget while retaining cross-match progress when one write is slow.
+	presenceSweepConcurrency = 8
 )
 
 // PresenceStore is the narrow durable boundary used when an in-memory player
@@ -191,23 +195,38 @@ func (presence *Presence) Sweep(ctx context.Context) error {
 		index int
 		err   error
 	}
-	results := make(chan sweepResult, len(matchIDs))
-	for index, matchID := range matchIDs {
-		go func(index int, matchID string) {
-			results <- sweepResult{index: index, err: presence.sweepMatch(ctx, matchID, keysByMatch[matchID], now)}
-		}(index, matchID)
+	workerCount := min(len(matchIDs), presenceSweepConcurrency)
+	if workerCount == 0 {
+		return nil
 	}
-	errorsByIndex := make([]error, len(matchIDs))
+	results := make(chan sweepResult, workerCount)
+	var nextJob atomic.Int64
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
+				index := int(nextJob.Add(1) - 1)
+				if index >= len(matchIDs) {
+					return
+				}
+				matchID := matchIDs[index]
+				results <- sweepResult{index: index, err: presence.sweepMatch(ctx, matchID, keysByMatch[matchID], now)}
+			}
+		}()
+	}
+	firstErrorIndex := len(matchIDs)
+	var firstError error
 	for range matchIDs {
 		result := <-results
-		errorsByIndex[result.index] = result.err
-	}
-	for _, err := range errorsByIndex {
-		if err != nil {
-			return err
+		if result.err != nil && result.index < firstErrorIndex {
+			firstErrorIndex = result.index
+			firstError = result.err
 		}
 	}
-	return nil
+	workers.Wait()
+	return firstError
 }
 
 func (presence *Presence) sweepMatch(ctx context.Context, matchID string, candidates []presenceConnectionKey, now time.Time) error {
@@ -318,6 +337,11 @@ func (presence *Presence) acquireMatchOperation(ctx context.Context, matchID str
 
 	select {
 	case operation.token <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-operation.token
+			presence.releaseMatchOperation(matchID, operation)
+			return nil, err
+		}
 		return func() {
 			<-operation.token
 			presence.releaseMatchOperation(matchID, operation)
