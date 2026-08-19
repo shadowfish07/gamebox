@@ -106,21 +106,201 @@ func TestOpenReadOnlySeesCommittedLiveWALWithoutCreatingSidecars(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := readOnlyDirectorySnapshot(t, directory)
-	if len(after) != len(before) {
-		t.Fatalf("read-only live WAL open changed directory entries: before=%+v after=%+v", before, after)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("read-only live WAL open changed source bytes or metadata: before=%+v after=%+v", before, after)
 	}
-	for name := range before {
-		if _, exists := after[name]; !exists {
-			t.Fatalf("read-only live WAL open removed %s", name)
+}
+
+func TestOpenReadOnlyLiveWALSnapshotCleansPrivateTemporaryCopy(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gamebox.sqlite")
+	writable, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writable.Close() })
+	hash := strings.Repeat("c", 64)
+	if _, err := writable.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, hash, 3); err != nil {
+		t.Fatal(err)
+	}
+	snapshotParent := t.TempDir()
+	readOnly, err := openReadOnly(context.Background(), path, readOnlyHooks{snapshotParent: snapshotParent})
+	if err != nil {
+		t.Fatalf("openReadOnly: %v", err)
+	}
+	entries, err := os.ReadDir(snapshotParent)
+	if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+		_ = readOnly.Close()
+		t.Fatalf("temporary snapshot entries=%v err=%v", entries, err)
+	}
+	if info, err := entries[0].Info(); err != nil || info.Mode().Perm() != 0o700 {
+		_ = readOnly.Close()
+		t.Fatalf("temporary snapshot directory mode=%v err=%v", info, err)
+	}
+	snapshotFiles, err := os.ReadDir(filepath.Join(snapshotParent, entries[0].Name()))
+	if err != nil || len(snapshotFiles) == 0 {
+		_ = readOnly.Close()
+		t.Fatalf("temporary snapshot files=%v err=%v", snapshotFiles, err)
+	}
+	for _, entry := range snapshotFiles {
+		info, infoErr := entry.Info()
+		if infoErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			_ = readOnly.Close()
+			t.Fatalf("temporary snapshot file %q mode=%v err=%v", entry.Name(), info, infoErr)
 		}
 	}
-	if after["."] != before["."] || after["gamebox.sqlite"] != before["gamebox.sqlite"] {
-		t.Fatalf("read-only live WAL open changed directory or main database: before=%+v after=%+v", before, after)
+	if err := readOnly.Close(); err != nil {
+		t.Fatal(err)
 	}
-	for _, sidecar := range []string{"gamebox.sqlite-wal", "gamebox.sqlite-shm"} {
-		if after[sidecar].Mode != before[sidecar].Mode || after[sidecar].Size != before[sidecar].Size {
-			t.Fatalf("read-only live WAL open changed %s shape: before=%+v after=%+v", sidecar, before[sidecar], after[sidecar])
+	entries, err = os.ReadDir(snapshotParent)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("temporary snapshot leaked after close: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestOpenReadOnlyRetriesWhenLiveWALChangesDuringCopy(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gamebox.sqlite")
+	writable, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writable.Close() })
+	hash := strings.Repeat("d", 64)
+	if _, err := writable.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, hash, 4); err != nil {
+		t.Fatal(err)
+	}
+	snapshotParent := t.TempDir()
+	changed := false
+	readOnly, err := openReadOnly(context.Background(), path, readOnlyHooks{
+		snapshotParent: snapshotParent,
+		afterSourceCopy: func() error {
+			if changed {
+				return nil
+			}
+			changed = true
+			_, err := writable.Exec(`UPDATE invite_codes SET created_at=5 WHERE code_hash=?`, hash)
+			return err
+		},
+	})
+	if err != nil {
+		t.Fatalf("openReadOnly retry: %v", err)
+	}
+	var createdAt int64
+	if err := readOnly.QueryRow(`SELECT created_at FROM invite_codes WHERE code_hash=?`, hash).Scan(&createdAt); err != nil || createdAt != 5 {
+		_ = readOnly.Close()
+		t.Fatalf("retried snapshot created_at=%d err=%v", createdAt, err)
+	}
+	if err := readOnly.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if entries, readErr := os.ReadDir(snapshotParent); readErr != nil || len(entries) != 0 {
+		t.Fatalf("retry leaked failed or successful snapshot: entries=%v err=%v", entries, readErr)
+	}
+}
+
+func TestOpenReadOnlyLiveWALBusyFailureAndCancellationCleanTemporaryCopies(t *testing.T) {
+	t.Run("bounded busy failure", func(t *testing.T) {
+		directory := t.TempDir()
+		path := filepath.Join(directory, "gamebox.sqlite")
+		writable, err := Open(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
 		}
+		defer writable.Close()
+		hash := strings.Repeat("e", 64)
+		if _, err := writable.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, hash, 5); err != nil {
+			t.Fatal(err)
+		}
+		snapshotParent := t.TempDir()
+		database, err := openReadOnly(context.Background(), path, readOnlyHooks{
+			snapshotParent: snapshotParent,
+			afterSourceCopy: func() error {
+				_, err := writable.Exec(`UPDATE invite_codes SET created_at=created_at+1 WHERE code_hash=?`, hash)
+				return err
+			},
+		})
+		if database != nil || !errors.Is(err, ErrReadOnlySnapshotBusy) {
+			if database != nil {
+				_ = database.Close()
+			}
+			t.Fatalf("busy openReadOnly=(%v,%v)", database, err)
+		}
+		if strings.Contains(err.Error(), directory) || strings.Contains(err.Error(), snapshotParent) {
+			t.Fatalf("busy error leaks path: %v", err)
+		}
+		if entries, readErr := os.ReadDir(snapshotParent); readErr != nil || len(entries) != 0 {
+			t.Fatalf("busy failure leaked snapshot: entries=%v err=%v", entries, readErr)
+		}
+	})
+
+	t.Run("cancellation after snapshot copy", func(t *testing.T) {
+		directory := t.TempDir()
+		path := filepath.Join(directory, "gamebox.sqlite")
+		writable, err := Open(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer writable.Close()
+		if _, err := writable.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, strings.Repeat("f", 64), 6); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		snapshotParent := t.TempDir()
+		database, err := openReadOnly(ctx, path, readOnlyHooks{
+			snapshotParent: snapshotParent,
+			afterSourceCopy: func() error {
+				cancel()
+				return nil
+			},
+		})
+		if database != nil || !errors.Is(err, context.Canceled) {
+			if database != nil {
+				_ = database.Close()
+			}
+			t.Fatalf("canceled openReadOnly=(%v,%v)", database, err)
+		}
+		if entries, readErr := os.ReadDir(snapshotParent); readErr != nil || len(entries) != 0 {
+			t.Fatalf("cancellation leaked snapshot: entries=%v err=%v", entries, readErr)
+		}
+	})
+}
+
+func TestOpenReadOnlyRejectsLiveWALReplacementAndCleansSnapshot(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gamebox.sqlite")
+	writable, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writable.Close()
+	if _, err := writable.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, strings.Repeat("1", 64), 7); err != nil {
+		t.Fatal(err)
+	}
+	snapshotParent := t.TempDir()
+	replaced := false
+	database, err := openReadOnly(context.Background(), path, readOnlyHooks{
+		snapshotParent: snapshotParent,
+		afterSourceCopy: func() error {
+			if replaced {
+				return nil
+			}
+			replaced = true
+			backup := path + "-wal-original"
+			if err := os.Rename(path+"-wal", backup); err != nil {
+				return err
+			}
+			return os.Symlink(backup, path+"-wal")
+		},
+	})
+	if database != nil || err == nil {
+		if database != nil {
+			_ = database.Close()
+		}
+		t.Fatalf("replaced WAL openReadOnly=(%v,%v)", database, err)
+	}
+	if entries, readErr := os.ReadDir(snapshotParent); readErr != nil || len(entries) != 0 {
+		t.Fatalf("replacement leaked snapshot: entries=%v err=%v", entries, readErr)
 	}
 }
 

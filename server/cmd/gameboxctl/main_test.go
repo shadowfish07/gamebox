@@ -336,6 +336,54 @@ func TestMatchShowPreservesDatabaseSchemaBytesMetadataAndDirectory(t *testing.T)
 	}
 }
 
+func TestMatchShowReadsLatestLiveWALWithoutMutatingSourceFiles(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "gamebox.sqlite")
+	seedMatch(t, databasePath)
+	writable := openDatabase(t, databasePath)
+	defer writable.Close()
+	now := time.Date(2026, time.August, 20, 1, 2, 4, 0, time.UTC).UnixMilli()
+	transaction, err := writable.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(`UPDATE matches SET revision=2,updated_at=? WHERE id=?`, now, testMatchID); err != nil {
+		_ = transaction.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(`INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES (?,?,?,?,?,?,?)`,
+		testMatchID, 2, gomoku.MoveAccepted, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", testWhiteID,
+		`{"x":1,"y":0,"color":"white","userId":"`+testWhiteID+`"}`, now); err != nil {
+		_ = transaction.Rollback()
+		t.Fatal(err)
+	}
+	if err := transaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDirectory(t, directory)
+	for _, name := range []string{"gamebox.sqlite", "gamebox.sqlite-wal", "gamebox.sqlite-shm"} {
+		if _, exists := before[name]; !exists {
+			t.Fatalf("live source missing %s: %+v", name, before)
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+	var response matchShowResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("decode live WAL response: %v", err)
+	}
+	if response.Revision != 2 || response.Board[0] != uint8(gomoku.Black) || response.Board[1] != uint8(gomoku.White) {
+		t.Fatalf("live WAL response revision/board=(%d,%d,%d)", response.Revision, response.Board[0], response.Board[1])
+	}
+	if after := snapshotDirectory(t, directory); !reflect.DeepEqual(after, before) {
+		t.Fatalf("match show changed live source bytes or metadata: before=%+v after=%+v", before, after)
+	}
+}
+
 func TestMatchShowRejectsUnmigratedAndInsecureDatabasesWithoutMutation(t *testing.T) {
 	t.Run("unmigrated", func(t *testing.T) {
 		directory := t.TempDir()

@@ -67,10 +67,12 @@ The JSON response contains the match ID, game ID, status, revision, result,
 winner, both players with seat/color, board size, and all 225 board cells. The
 query opens an existing, fully migrated database in read-only mode and does not
 update schema, users, presence, matches, events, or credentials. A closed
-database gains no sidecar files; an active WAL database is read through its
-existing complete WAL/SHM pair. Missing, unmigrated, insecure, or incomplete
-databases fail without being created, migrated, or repaired. An unknown match
-exits nonzero without echoing the supplied identifier.
+database gains no sidecar files. An active database is copied through verified
+read-only file handles into a private, short-lived snapshot; SQLite opens only
+that copy, so the source DB/WAL/SHM bytes and metadata stay untouched. The
+snapshot is removed when the command closes it. Missing, unmigrated, insecure,
+or incomplete databases fail without being created, migrated, or repaired. An
+unknown match exits nonzero without echoing the supplied identifier.
 
 For both management commands, exit code `0` means success/help, `1` means an
 operational failure, and `2` means invalid command syntax. Flags are strict and

@@ -2,14 +2,17 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -18,14 +21,21 @@ import (
 )
 
 const (
-	maxConnections       = 8
-	sqliteBusyCode       = 5
-	connectionRetryLimit = 5 * time.Second
+	maxConnections        = 8
+	sqliteBusyCode        = 5
+	connectionRetryLimit  = 5 * time.Second
+	readOnlySnapshotTries = 3
 )
 
 // ErrInsecureDatabaseParent requires callers to place SQLite files in a
 // direct parent that other users cannot write.
 var ErrInsecureDatabaseParent = errors.New("database parent is group/world-writable; use a private directory")
+
+// ErrReadOnlySnapshotBusy is returned when an active WAL changes during every
+// bounded attempt to capture a consistent administrative snapshot.
+var ErrReadOnlySnapshotBusy = errors.New("read-only database is busy")
+
+var errReadOnlySourceChanged = errors.New("read-only database changed during snapshot")
 
 // Open opens a durable SQLite database, verifies the connection, and applies
 // all pending schema migrations before returning it to the caller.
@@ -37,6 +47,15 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 // permissions, creating the database, changing journal mode, or applying
 // migrations. The returned pool and every SQLite connection are read-only.
 func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
+	return openReadOnly(ctx, path, readOnlyHooks{})
+}
+
+type readOnlyHooks struct {
+	snapshotParent  string
+	afterSourceCopy func() error
+}
+
+func openReadOnly(ctx context.Context, path string, hooks readOnlyHooks) (*sql.DB, error) {
 	if ctx == nil {
 		return nil, errors.New("store: read-only context is nil")
 	}
@@ -53,13 +72,17 @@ func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: inspect read-only database files: %w", err)
 	}
-	dsn := "file:" + escapeURIPath(path) + "?mode=ro&_foreign_keys=on&_busy_timeout=5000&_query_only=1"
-	if !liveWAL {
-		// store.Open checkpoints and removes WAL sidecars on the last close. An
-		// immutable view of that closed file avoids SQLite creating a new empty
-		// WAL/SHM pair merely to perform an administrative read.
-		dsn += "&immutable=1"
+	if liveWAL {
+		if err := guard.Close(); err != nil {
+			return nil, fmt.Errorf("store: close read-only database file guard: %w", err)
+		}
+		return openLiveWALSnapshot(ctx, path, hooks)
 	}
+	dsn := "file:" + escapeURIPath(path) + "?mode=ro&_foreign_keys=on&_busy_timeout=5000&_query_only=1"
+	// store.Open checkpoints and removes WAL sidecars on the last close. An
+	// immutable view of that closed file avoids SQLite creating a new empty
+	// WAL/SHM pair merely to perform an administrative read.
+	dsn += "&immutable=1"
 	baseConnector, err := sqlite.NewConnector(dsn)
 	if err != nil {
 		return nil, closeOpenResources(nil, guard, fmt.Errorf("store: configure read-only database: %w", err))
@@ -80,7 +103,7 @@ func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, closeOpenResources(db, guard, fmt.Errorf("store: inspect read-only database sidecars: %w", err))
 	}
-	if currentLiveWAL != liveWAL {
+	if currentLiveWAL {
 		return nil, closeOpenResources(db, guard, errors.New("store: read-only database sidecar set changed"))
 	}
 	if err := guard.Verify(); err != nil {
@@ -90,6 +113,351 @@ func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, closeAfterError(db, fmt.Errorf("store: close read-only database file guard: %w", err))
 	}
 	return db, nil
+}
+
+func openLiveWALSnapshot(ctx context.Context, sourcePath string, hooks readOnlyHooks) (*sql.DB, error) {
+	snapshotPath, cleanup, err := createLiveWALSnapshot(ctx, sourcePath, hooks)
+	if err != nil {
+		return nil, fmt.Errorf("store: capture read-only database snapshot: %w", err)
+	}
+	dsn := "file:" + escapeURIPath(snapshotPath) + "?mode=rw&_foreign_keys=on&_busy_timeout=5000&_query_only=1"
+	baseConnector, err := sqlite.NewConnector(dsn)
+	if err != nil {
+		return nil, errors.Join(errors.New("store: configure read-only database snapshot"), cleanup())
+	}
+	connector := &cleanupConnector{Connector: baseConnector, cleanup: cleanup}
+	db := sql.OpenDB(cancelableConnector{Connector: connector})
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := pingContext(ctx, db); err != nil {
+		return nil, closeOpenResources(db, nil, fmt.Errorf("store: ping read-only database snapshot: %w", err))
+	}
+	if err := validateCurrentMigrations(ctx, db); err != nil {
+		return nil, closeOpenResources(db, nil, fmt.Errorf("store: validate read-only database snapshot: %w", err))
+	}
+	return db, nil
+}
+
+type cleanupConnector struct {
+	driver.Connector
+	cleanup   func() error
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (connector *cleanupConnector) Close() error {
+	if connector == nil {
+		return nil
+	}
+	connector.closeOnce.Do(func() {
+		if closer, ok := connector.Connector.(io.Closer); ok {
+			connector.closeErr = errors.Join(connector.closeErr, closer.Close())
+		}
+		if connector.cleanup != nil {
+			connector.closeErr = errors.Join(connector.closeErr, connector.cleanup())
+		}
+	})
+	return connector.closeErr
+}
+
+type readOnlySnapshotSource struct {
+	path       string
+	guard      *databaseFileGuard
+	wal        *os.File
+	walInfo    os.FileInfo
+	shared     *os.File
+	sharedInfo os.FileInfo
+}
+
+type readOnlyFileFingerprint struct {
+	mode       os.FileMode
+	size       int64
+	modifiedAt int64
+	hash       [sha256.Size]byte
+}
+
+type readOnlySourceFingerprints struct {
+	database readOnlyFileFingerprint
+	wal      readOnlyFileFingerprint
+	shared   readOnlyFileFingerprint
+}
+
+func createLiveWALSnapshot(ctx context.Context, sourcePath string, hooks readOnlyHooks) (string, func() error, error) {
+	for attempt := 0; attempt < readOnlySnapshotTries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", nil, err
+		}
+		snapshotPath, cleanup, err := createLiveWALSnapshotAttempt(ctx, sourcePath, hooks)
+		if err == nil {
+			return snapshotPath, cleanup, nil
+		}
+		if cleanup != nil {
+			err = errors.Join(err, cleanup())
+		}
+		if !errors.Is(err, errReadOnlySourceChanged) {
+			return "", nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
+	return "", nil, ErrReadOnlySnapshotBusy
+}
+
+func createLiveWALSnapshotAttempt(ctx context.Context, sourcePath string, hooks readOnlyHooks) (_ string, _ func() error, err error) {
+	source, err := openReadOnlySnapshotSource(sourcePath)
+	if err != nil {
+		return "", nil, err
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if err := source.Verify(); err != nil {
+		return "", nil, err
+	}
+	before, err := source.Fingerprints(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	snapshotDirectory, err := os.MkdirTemp(hooks.snapshotParent, "gamebox-read-only-")
+	if err != nil {
+		return "", nil, errors.New("create private read-only snapshot directory")
+	}
+	cleanup := newReadOnlySnapshotCleanup(snapshotDirectory)
+	snapshotPath := filepath.Join(snapshotDirectory, "gamebox.sqlite")
+	if err := copyReadOnlySnapshotFile(ctx, source.guard.file, before.database, snapshotPath); err != nil {
+		return "", cleanup, err
+	}
+	if err := copyReadOnlySnapshotFile(ctx, source.wal, before.wal, snapshotPath+"-wal"); err != nil {
+		return "", cleanup, err
+	}
+	if hooks.afterSourceCopy != nil {
+		if err := hooks.afterSourceCopy(); err != nil {
+			return "", cleanup, errors.New("read-only snapshot copy hook failed")
+		}
+	}
+	after, err := source.Fingerprints(ctx)
+	if err != nil {
+		return "", cleanup, err
+	}
+	if before != after {
+		return "", cleanup, errReadOnlySourceChanged
+	}
+	if err := source.Verify(); err != nil {
+		return "", cleanup, err
+	}
+	return snapshotPath, cleanup, nil
+}
+
+func openReadOnlySnapshotSource(path string) (*readOnlySnapshotSource, error) {
+	guard, liveWAL, err := inspectSQLiteFilesReadOnly(path)
+	if err != nil {
+		return nil, err
+	}
+	if !liveWAL {
+		return nil, errors.Join(errReadOnlySourceChanged, guard.Close())
+	}
+	source := &readOnlySnapshotSource{path: path, guard: guard}
+	source.wal, source.walInfo, err = inspectExistingFileReadOnly(path + "-wal")
+	if err != nil {
+		return nil, errors.Join(err, source.Close())
+	}
+	source.shared, source.sharedInfo, err = inspectExistingFileReadOnly(path + "-shm")
+	if err != nil {
+		return nil, errors.Join(err, source.Close())
+	}
+	if err := source.Verify(); err != nil {
+		return nil, errors.Join(err, source.Close())
+	}
+	return source, nil
+}
+
+func (source *readOnlySnapshotSource) Fingerprints(ctx context.Context) (readOnlySourceFingerprints, error) {
+	if source == nil || source.guard == nil || source.guard.file == nil || source.wal == nil || source.shared == nil {
+		return readOnlySourceFingerprints{}, errors.New("invalid read-only snapshot source")
+	}
+	database, err := fingerprintReadOnlyFile(ctx, source.guard.file)
+	if err != nil {
+		return readOnlySourceFingerprints{}, err
+	}
+	wal, err := fingerprintReadOnlyFile(ctx, source.wal)
+	if err != nil {
+		return readOnlySourceFingerprints{}, err
+	}
+	shared, err := fingerprintReadOnlyFile(ctx, source.shared)
+	if err != nil {
+		return readOnlySourceFingerprints{}, err
+	}
+	return readOnlySourceFingerprints{database: database, wal: wal, shared: shared}, nil
+}
+
+func (source *readOnlySnapshotSource) Verify() error {
+	if source == nil || source.guard == nil {
+		return errors.New("invalid read-only snapshot source")
+	}
+	if err := source.guard.Verify(); err != nil {
+		return err
+	}
+	if err := verifyHeldReadOnlyFile(source.path+"-wal", source.wal, source.walInfo); err != nil {
+		return fmt.Errorf("verify WAL sidecar: %w", err)
+	}
+	if err := verifyHeldReadOnlyFile(source.path+"-shm", source.shared, source.sharedInfo); err != nil {
+		return fmt.Errorf("verify SHM sidecar: %w", err)
+	}
+	return nil
+}
+
+func (source *readOnlySnapshotSource) Close() error {
+	if source == nil {
+		return nil
+	}
+	var result error
+	if source.wal != nil {
+		result = errors.Join(result, source.wal.Close())
+		source.wal = nil
+	}
+	if source.shared != nil {
+		result = errors.Join(result, source.shared.Close())
+		source.shared = nil
+	}
+	if source.guard != nil {
+		result = errors.Join(result, source.guard.Close())
+		source.guard = nil
+	}
+	return result
+}
+
+func fingerprintReadOnlyFile(ctx context.Context, file *os.File) (readOnlyFileFingerprint, error) {
+	if err := ctx.Err(); err != nil {
+		return readOnlyFileFingerprint{}, err
+	}
+	before, err := file.Stat()
+	if err != nil {
+		return readOnlyFileFingerprint{}, errors.New("inspect read-only snapshot source")
+	}
+	hasher := sha256.New()
+	if err := readFileAtContext(ctx, file, before.Size(), hasher); err != nil {
+		return readOnlyFileFingerprint{}, err
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return readOnlyFileFingerprint{}, errors.New("reinspect read-only snapshot source")
+	}
+	if before.Mode() != after.Mode() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return readOnlyFileFingerprint{}, errReadOnlySourceChanged
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], hasher.Sum(nil))
+	return readOnlyFileFingerprint{
+		mode: before.Mode(), size: before.Size(), modifiedAt: before.ModTime().UnixNano(), hash: digest,
+	}, nil
+}
+
+func copyReadOnlySnapshotFile(ctx context.Context, source *os.File, fingerprint readOnlyFileFingerprint, destinationPath string) (err error) {
+	destination, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return errors.New("create private read-only snapshot file")
+	}
+	defer func() {
+		if closeErr := destination.Close(); closeErr != nil {
+			err = errors.Join(err, errors.New("close private read-only snapshot file"))
+		}
+	}()
+	hasher := sha256.New()
+	if err := readFileAtContext(ctx, source, fingerprint.size, io.MultiWriter(destination, hasher)); err != nil {
+		return err
+	}
+	if !equalDigest(hasher.Sum(nil), fingerprint.hash) {
+		return errReadOnlySourceChanged
+	}
+	if err := destination.Sync(); err != nil {
+		return errors.New("sync private read-only snapshot file")
+	}
+	return nil
+}
+
+func readFileAtContext(ctx context.Context, file *os.File, size int64, destination io.Writer) error {
+	if ctx == nil || file == nil || destination == nil || size < 0 {
+		return errors.New("invalid read-only snapshot copy")
+	}
+	buffer := make([]byte, 128*1024)
+	for offset := int64(0); offset < size; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remaining := size - offset
+		chunk := buffer
+		if remaining < int64(len(chunk)) {
+			chunk = chunk[:remaining]
+		}
+		count, readErr := file.ReadAt(chunk, offset)
+		if count > 0 {
+			if _, writeErr := destination.Write(chunk[:count]); writeErr != nil {
+				return errors.New("write private read-only snapshot")
+			}
+			offset += int64(count)
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return errReadOnlySourceChanged
+			}
+			return errors.New("read read-only snapshot source")
+		}
+		if count == 0 {
+			return errReadOnlySourceChanged
+		}
+	}
+	return nil
+}
+
+func equalDigest(actual []byte, expected [sha256.Size]byte) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], actual)
+	return digest == expected
+}
+
+func verifyHeldReadOnlyFile(path string, file *os.File, original os.FileInfo) error {
+	if file == nil || original == nil {
+		return errors.New("read-only file is not open")
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		return errors.New("inspect held read-only file")
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !current.Mode().IsRegular() || !os.SameFile(opened, current) || !os.SameFile(opened, original) {
+		return errors.New("read-only file identity changed")
+	}
+	if opened.Mode().Perm() != 0o600 || current.Mode().Perm() != 0o600 || original.Mode().Perm() != 0o600 {
+		return errors.New("read-only file mode changed")
+	}
+	if err := requireCurrentOwner(opened, "read-only file"); err != nil {
+		return err
+	}
+	return requireSingleLink(opened, "read-only file")
+}
+
+func newReadOnlySnapshotCleanup(directory string) func() error {
+	var once sync.Once
+	var result error
+	return func() error {
+		once.Do(func() {
+			if directory == "" {
+				result = errors.New("invalid private read-only snapshot directory")
+				return
+			}
+			if err := os.RemoveAll(directory); err != nil {
+				result = errors.New("remove private read-only snapshot directory")
+			}
+		})
+		return result
+	}
 }
 
 type openHooks struct {
@@ -171,6 +539,13 @@ func pingContext(ctx context.Context, db *sql.DB) error {
 
 type cancelableConnector struct {
 	driver.Connector
+}
+
+func (connector cancelableConnector) Close() error {
+	if closer, ok := connector.Connector.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 type connectionResult struct {
