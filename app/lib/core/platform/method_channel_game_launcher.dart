@@ -16,9 +16,16 @@ class MethodChannelGameLauncher implements GameLauncher {
   @override
   Future<void> launch(GameLaunchRequest request) async {
     try {
-      await _channel.invokeMethod<void>('launchGame', request.toArguments());
+      await _channel.invokeMethod<void>('launchGame', {
+        'gameId': request.gameId,
+        'matchId': request.matchId,
+        'launchTicket': request.launchTicket,
+        'wsUrl': request.wsUrl,
+      });
     } on PlatformException catch (error) {
-      throw GameLaunchPlatformException(error.code);
+      throw GameLaunchException(error.code);
+    } on MissingPluginException {
+      throw const GameLaunchException('missing_plugin');
     }
   }
 
@@ -27,16 +34,9 @@ class MethodChannelGameLauncher implements GameLauncher {
     try {
       await _channel.invokeMethod<void>('launchHostSmoke');
     } on PlatformException catch (error) {
-      throw GameLaunchPlatformException(error.code);
+      throw GameLaunchException(error.code);
+    } on MissingPluginException {
+      throw const GameLaunchException('missing_plugin');
     }
   }
-}
-
-class GameLaunchPlatformException implements Exception {
-  const GameLaunchPlatformException(this.code);
-
-  final String code;
-
-  @override
-  String toString() => 'GameLaunchPlatformException';
 }

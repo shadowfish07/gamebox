@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
+import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/core/platform/method_channel_game_launcher.dart';
 
 void main() {
@@ -122,7 +123,7 @@ void main() {
       await expectLater(
         MethodChannelGameLauncher().launch(request),
         throwsA(
-          isA<GameLaunchPlatformException>().having(
+          isA<GameLaunchException>().having(
             (error) => error.code,
             'code',
             'unavailable',
@@ -150,5 +151,22 @@ void main() {
     expect(calls, hasLength(1));
     expect(calls.single.method, 'launchHostSmoke');
     expect(calls.single.arguments, isNull);
+  });
+
+  test('maps a missing platform handler to a safe launch exception', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      throw MissingPluginException();
+    });
+
+    await expectLater(
+      MethodChannelGameLauncher().launchHostSmoke(),
+      throwsA(
+        isA<GameLaunchException>().having(
+          (error) => error.code,
+          'code',
+          'missing_plugin',
+        ),
+      ),
+    );
   });
 }

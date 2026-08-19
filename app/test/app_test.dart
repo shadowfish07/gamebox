@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
-import 'package:gamebox/core/platform/method_channel_game_launcher.dart';
 
 void main() {
   testWidgets(
@@ -52,7 +51,7 @@ void main() {
     tester,
   ) async {
     final launcher = _FakeGameLauncher()
-      ..smokeError = GameLaunchPlatformException('unavailable');
+      ..smokeError = const GameLaunchException('unavailable');
     await tester.pumpWidget(
       GameboxApp(gameLauncher: launcher, hostSmokeEnabled: true),
     );
@@ -65,6 +64,21 @@ void main() {
     await tester.tap(find.byKey(const Key('host-smoke.launch')));
     await tester.pump();
     expect(launcher.hostSmokeCalls, 2);
+  });
+
+  testWidgets('unexpected host-smoke errors are reported instead of retried', (
+    tester,
+  ) async {
+    final launcher = _FakeGameLauncher()..smokeError = StateError('unexpected');
+    await tester.pumpWidget(
+      GameboxApp(gameLauncher: launcher, hostSmokeEnabled: true),
+    );
+
+    await tester.tap(find.byKey(const Key('host-smoke.launch')));
+    await tester.pump();
+
+    expect(tester.takeException(), isA<StateError>());
+    expect(find.text('无法启动宿主烟测，请重试'), findsNothing);
   });
 }
 

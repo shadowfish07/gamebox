@@ -5,3 +5,12 @@ abstract interface class GameLauncher {
 
   Future<void> launchHostSmoke();
 }
+
+final class GameLaunchException implements Exception {
+  const GameLaunchException(this.code);
+
+  final String code;
+
+  @override
+  String toString() => 'GameLaunchException';
+}

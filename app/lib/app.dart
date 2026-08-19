@@ -31,10 +31,19 @@ class _GameboxAppState extends State<GameboxApp> {
     });
     try {
       await widget.gameLauncher.launchHostSmoke();
-    } catch (_) {
+    } on GameLaunchException {
       if (mounted) {
         setState(() => _hostSmokeError = true);
       }
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'Gamebox',
+          context: ErrorDescription('launching host smoke'),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isLaunchingHostSmoke = false);
