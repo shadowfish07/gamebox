@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -35,12 +36,18 @@ type Hub struct {
 	firstMessageTimeout time.Duration
 	heartbeatInterval   time.Duration
 	activityTimeout     time.Duration
+	logger              *log.Logger
+	closed              bool
+	activeHandlers      int
+	handlersDone        chan struct{}
+	shutdownDone        chan struct{}
 }
 
 type HubConfig struct {
 	FirstMessageTimeout time.Duration
 	HeartbeatInterval   time.Duration
 	ActivityTimeout     time.Duration
+	Logger              *log.Logger
 }
 
 type hubMatch struct {
@@ -154,6 +161,7 @@ func NewHubWithConfig(service *Service, presence *Presence, serviceClock clock.C
 	return &Hub{
 		matches: make(map[string]*hubMatch), service: service, presence: presence, clock: serviceClock,
 		firstMessageTimeout: config.FirstMessageTimeout, heartbeatInterval: config.HeartbeatInterval, activityTimeout: config.ActivityTimeout,
+		logger: config.Logger, handlersDone: make(chan struct{}),
 	}, nil
 }
 
@@ -161,10 +169,11 @@ func NewHubWithConfig(service *Service, presence *Presence, serviceClock clock.C
 // Native apps omit Origin; coder/websocket's default same-host policy rejects
 // browser cross-origin handshakes without weakening local development safety.
 func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if hub == nil || hub.service == nil || hub.presence == nil || request == nil {
+	if hub == nil || hub.service == nil || hub.presence == nil || request == nil || !hub.beginServe() {
 		http.Error(writer, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
+	defer hub.endServe()
 	transport, err := websocket.Accept(writer, request, &websocket.AcceptOptions{
 		CompressionMode: websocket.CompressionDisabled,
 	})
@@ -250,7 +259,10 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		_ = transport.Close(websocket.StatusInternalError, "internal error")
 		return
 	}
-	hub.register(connection)
+	if !hub.register(connection) {
+		connection.close()
+		return
+	}
 	go connection.writeLoop()
 	defer func() {
 		connection.close()
@@ -313,8 +325,12 @@ func writeHandshakeError(connection *websocket.Conn, code string) {
 	_ = connection.Write(ctx, websocket.MessageText, message)
 }
 
-func (hub *Hub) register(connection *hubConnection) {
+func (hub *Hub) register(connection *hubConnection) bool {
 	hub.mu.Lock()
+	if hub.closed {
+		hub.mu.Unlock()
+		return false
+	}
 	match := hub.matches[connection.matchID]
 	if match == nil {
 		match = &hubMatch{connections: make(map[*hubConnection]struct{}), pendingEvents: make(map[int64][]byte), gameID: connection.gameID}
@@ -328,10 +344,108 @@ func (hub *Hub) register(connection *hubConnection) {
 	}
 	match.connections[connection] = struct{}{}
 	hub.mu.Unlock()
+	hub.logf("event=websocket_connected connection_id=%s match_id=%s user_id=%s", connection.id, connection.matchID, connection.userID)
 	// A successful reconnect supersedes the user's older transport while
 	// Presence keeps the player online across their brief overlap.
 	for _, existing := range previous {
 		existing.close()
+	}
+	return true
+}
+
+// Close stops new WebSocket registrations and closes every transport that is
+// currently owned by the hub. It is idempotent and waits only until ctx ends.
+func (hub *Hub) Close(ctx context.Context) error {
+	if hub == nil {
+		return nil
+	}
+	if ctx == nil {
+		return ErrInvalidRequest
+	}
+	hub.mu.Lock()
+	if hub.matches == nil || hub.handlersDone == nil {
+		hub.mu.Unlock()
+		return ErrInvalidConfiguration
+	}
+	if hub.closed {
+		done := hub.shutdownDone
+		hub.mu.Unlock()
+		return waitForHubShutdown(ctx, done)
+	}
+	hub.closed = true
+	hub.shutdownDone = make(chan struct{})
+	if hub.activeHandlers == 0 {
+		close(hub.handlersDone)
+	}
+	connections := make([]*hubConnection, 0)
+	for _, match := range hub.matches {
+		for connection := range match.connections {
+			connections = append(connections, connection)
+		}
+	}
+	handlersDone := hub.handlersDone
+	shutdownDone := hub.shutdownDone
+	hub.mu.Unlock()
+	hub.logf("event=hub_closed")
+
+	go func() {
+		var wait sync.WaitGroup
+		wait.Add(len(connections))
+		for _, connection := range connections {
+			go func() {
+				defer wait.Done()
+				connection.close()
+			}()
+		}
+		wait.Wait()
+		<-handlersDone
+		close(shutdownDone)
+	}()
+	return waitForHubShutdown(ctx, shutdownDone)
+}
+
+func waitForHubShutdown(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (hub *Hub) beginServe() bool {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if hub.closed {
+		return false
+	}
+	hub.activeHandlers++
+	return true
+}
+
+func (hub *Hub) endServe() {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if hub.activeHandlers > 0 {
+		hub.activeHandlers--
+	}
+	if hub.closed && hub.activeHandlers == 0 {
+		select {
+		case <-hub.handlersDone:
+		default:
+			close(hub.handlersDone)
+		}
+	}
+}
+
+func (hub *Hub) logf(format string, arguments ...any) {
+	if hub != nil && hub.logger != nil {
+		hub.logger.Printf(format, arguments...)
 	}
 }
 
@@ -401,6 +515,10 @@ func (hub *Hub) Publish(matchID string, event Event) {
 	}
 	var slow []*hubConnection
 	hub.mu.Lock()
+	if hub.closed {
+		hub.mu.Unlock()
+		return
+	}
 	match := hub.matches[matchID]
 	if match == nil {
 		hub.mu.Unlock()
@@ -785,6 +903,7 @@ func (connection *hubConnection) close() {
 		ctx, cancel := context.WithTimeout(context.Background(), webSocketOperationTimeout)
 		defer cancel()
 		_ = connection.hub.presence.Disconnect(ctx, connection.matchID, connection.userID, connection.id)
+		connection.hub.logf("event=websocket_closed connection_id=%s match_id=%s user_id=%s", connection.id, connection.matchID, connection.userID)
 	})
 }
 
