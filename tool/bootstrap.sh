@@ -27,7 +27,11 @@ version_matches() {
 
 if command -v flutter >/dev/null 2>&1; then
 	flutter_version="$(flutter --version | awk '/^Flutter / { print $2; exit }')"
-	version_matches "Flutter" "3.35.1" "$flutter_version" "Install Flutter 3.35.1 and put flutter on PATH."
+	if [[ "$flutter_version" == "3.35.1" ]]; then
+		ok "Flutter $flutter_version"
+	else
+		missing "Flutter 3.35.1 required (found ${flutter_version:-not installed})" "Install Flutter 3.35.1 and put flutter on PATH."
+	fi
 else
 	missing "Flutter 3.35.1" "Install Flutter 3.35.1 and put flutter on PATH."
 fi
@@ -84,10 +88,15 @@ else
 	missing "emulator" "Install Android SDK emulator tools and add them to PATH."
 fi
 
-if [[ -s "$sdk_root/licenses/android-sdk-license" ]]; then
-	ok "Android SDK license record ($sdk_root/licenses/android-sdk-license)"
+if command -v flutter >/dev/null 2>&1; then
+	flutter_doctor="$(flutter doctor -v 2>&1 || true)"
+	if printf '%s\n' "$flutter_doctor" | grep -Fq "All Android licenses accepted."; then
+		ok "accepted Android SDK licenses"
+	else
+		missing "accepted Android SDK licenses" "Run: yes | flutter doctor --android-licenses"
+	fi
 else
-	missing "accepted Android SDK licenses" "Run: yes | flutter doctor --android-licenses"
+	missing "accepted Android SDK licenses" "Install Flutter, then run: yes | flutter doctor --android-licenses"
 fi
 
 if (( failures )); then
