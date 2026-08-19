@@ -19,7 +19,6 @@ void main() {
   test('accepts the Godot launch-config UUID parity table', () {
     for (final matchId in [
       validMatchId,
-      '11111111-1111-4111-8111-111111111111'.toUpperCase(),
       '550e8400-e29b-41d4-a716-446655440000',
     ]) {
       expect(() => requestFor(matchId: matchId), returnsNormally);
@@ -30,6 +29,7 @@ void main() {
     for (final matchId in [
       '',
       'm1',
+      '550e8400-e29b-41d4-a716-446655440000'.toUpperCase(),
       '00000000-0000-0000-0000-000000000000',
       '11111111-1111-6111-8111-111111111111',
       '11111111-1111-4111-7111-111111111111',

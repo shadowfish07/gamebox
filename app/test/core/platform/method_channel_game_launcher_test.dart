@@ -78,6 +78,15 @@ void main() {
     expect(
       () => GameLaunchRequest(
         gameId: 'match-three',
+        matchId: '550E8400-E29B-41D4-A716-446655440000',
+        launchTicket: 'ticket',
+        wsUrl: 'wss://gamebox.example.com',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => GameLaunchRequest(
+        gameId: 'match-three',
         matchId: '550e8400-e29b-41d4-a716-446655440000',
         launchTicket: 'ticket',
         wsUrl: 'https://gamebox.example.com',
