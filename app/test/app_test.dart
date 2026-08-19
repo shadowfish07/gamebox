@@ -3,19 +3,33 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/auth/session.dart';
+import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/features/auth/auth_api.dart';
+import 'package:gamebox/features/auth/session_controller.dart';
 
 void main() {
-  testWidgets(
-    'default host-smoke setting keeps the unauthenticated holding UI',
-    (tester) async {
-      await tester.pumpWidget(GameboxApp(gameLauncher: _FakeGameLauncher()));
+  testWidgets('default host-smoke setting renders invite registration', (
+    tester,
+  ) async {
+    final controller = SessionController(
+      authApi: _UnusedAuthApi(),
+      tokenStore: _EmptyTokenStore(),
+    );
+    await controller.restore();
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: _FakeGameLauncher(),
+        sessionController: controller,
+      ),
+    );
 
-      expect(find.text('身份功能将在 Phase 3 接入'), findsOneWidget);
-      expect(find.byKey(const Key('host-smoke.launch')), findsNothing);
-    },
-  );
+    expect(find.byKey(const Key('invite-code')), findsOneWidget);
+    expect(find.byKey(const Key('register')), findsOneWidget);
+    expect(find.byKey(const Key('host-smoke.launch')), findsNothing);
+  });
 
   testWidgets('explicit host-smoke override renders one stable launch button', (
     tester,
@@ -160,4 +174,25 @@ class _FakeGameLauncher implements GameLauncher {
     }
     return pendingSmoke?.future ?? Future<void>.value();
   }
+}
+
+final class _UnusedAuthApi implements AuthApi {
+  @override
+  Future<Session> refresh(String refreshToken) =>
+      Future<Session>.error(StateError('unexpected refresh'));
+
+  @override
+  Future<Session> register(String inviteCode, String nickname) =>
+      Future<Session>.error(StateError('unexpected registration'));
+}
+
+final class _EmptyTokenStore implements TokenStore {
+  @override
+  Future<void> deleteRefreshToken() async {}
+
+  @override
+  Future<String?> readRefreshToken() async => null;
+
+  @override
+  Future<void> writeRefreshToken(String refreshToken) async {}
 }

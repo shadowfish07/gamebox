@@ -1,12 +1,21 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import 'core/api/api_client.dart';
+import 'core/auth/token_store.dart';
 import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
+import 'features/auth/auth_api.dart';
+import 'features/auth/registration_page.dart';
+import 'features/auth/session_controller.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
     super.key,
     required this.gameLauncher,
+    this.sessionController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
   }) : hostSmokeEnabled =
@@ -16,6 +25,7 @@ class GameboxApp extends StatefulWidget {
            const String.fromEnvironment('GAMEBOX_INSTRUMENTATION_CANARY_NONCE');
 
   final GameLauncher gameLauncher;
+  final SessionController? sessionController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
 
@@ -23,9 +33,68 @@ class GameboxApp extends StatefulWidget {
   State<GameboxApp> createState() => _GameboxAppState();
 }
 
-class _GameboxAppState extends State<GameboxApp> {
+class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   var _isLaunchingHostSmoke = false;
   var _hostSmokeError = false;
+  SessionController? _sessionController;
+  ApiClient? _ownedApiClient;
+  var _ownsSessionController = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!widget.hostSmokeEnabled) {
+      _configureAuthentication();
+    }
+  }
+
+  void _configureAuthentication() {
+    final injected = widget.sessionController;
+    if (injected != null) {
+      _sessionController = injected;
+    } else {
+      final apiClient = ApiClient(httpClient: http.Client());
+      _ownedApiClient = apiClient;
+      _sessionController = SessionController(
+        authApi: HttpAuthApi(apiClient),
+        tokenStore: SecureTokenStore(),
+      );
+      _ownsSessionController = true;
+    }
+    _sessionController!.addListener(_sessionChanged);
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_sessionController!.restore());
+  }
+
+  void _sessionChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final controller = _sessionController;
+      if (controller != null) {
+        unawaited(controller.handleAppResumed());
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    final controller = _sessionController;
+    if (controller != null) {
+      WidgetsBinding.instance.removeObserver(this);
+      controller.removeListener(_sessionChanged);
+      if (_ownsSessionController) {
+        controller.dispose();
+      }
+    }
+    _ownedApiClient?.close();
+    super.dispose();
+  }
 
   bool get _canLaunchInstrumentationCanary => RegExp(
     r'^[A-Za-z0-9_-]{8,64}$',
@@ -98,77 +167,98 @@ class _GameboxAppState extends State<GameboxApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: Scaffold(
+      home: widget.hostSmokeEnabled ? _buildHostSmoke() : _buildAuthFlow(),
+    );
+  }
+
+  Widget _buildAuthFlow() {
+    final controller = _sessionController!;
+    return switch (controller.status) {
+      SessionStatus.restoring => Scaffold(
         body: Center(
-          child: widget.hostSmokeEnabled
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Semantics(
-                      key: const Key('host-smoke.launch'),
-                      label: 'host-smoke.launch',
-                      button: true,
-                      enabled: !_isLaunchingHostSmoke,
-                      onTap: _isLaunchingHostSmoke ? null : _launchHostSmoke,
-                      excludeSemantics: true,
-                      child: FilledButton(
-                        onPressed: _isLaunchingHostSmoke
-                            ? null
-                            : _launchHostSmoke,
-                        child: const Text('启动宿主烟测'),
+          child: Semantics(
+            label: 'session-restoring',
+            child: const CircularProgressIndicator(),
+          ),
+        ),
+      ),
+      SessionStatus.unauthenticated ||
+      SessionStatus.submitting => RegistrationPage(controller: controller),
+      SessionStatus.authenticated => Scaffold(
+        key: const Key('home-shell'),
+        appBar: AppBar(title: const Text('Gamebox')),
+        body: Center(child: Text('你好，${controller.session!.user.nickname}')),
+      ),
+    };
+  }
+
+  Widget _buildHostSmoke() {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              key: const Key('host-smoke.launch'),
+              label: 'host-smoke.launch',
+              button: true,
+              enabled: !_isLaunchingHostSmoke,
+              onTap: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+              excludeSemantics: true,
+              child: FilledButton(
+                onPressed: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+                child: const Text('启动宿主烟测'),
+              ),
+            ),
+            if (_canLaunchInstrumentationCanary) ...[
+              const SizedBox(height: 12),
+              Semantics(
+                key: const Key('host-smoke.normal-canary'),
+                label: 'host-smoke.normal-canary',
+                button: true,
+                enabled: !_isLaunchingHostSmoke,
+                onTap: _isLaunchingHostSmoke
+                    ? null
+                    : _launchInstrumentationCanary,
+                excludeSemantics: true,
+                child: OutlinedButton(
+                  onPressed: _isLaunchingHostSmoke
+                      ? null
+                      : _launchInstrumentationCanary,
+                  child: const Text('启动普通启动验证'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                key: const Key('host-smoke.collision-canary'),
+                label: 'host-smoke.collision-canary',
+                button: true,
+                enabled: !_isLaunchingHostSmoke,
+                onTap: _isLaunchingHostSmoke
+                    ? null
+                    : () => _launchInstrumentationCanary(
+                        gameId: '--launch-ticket',
                       ),
-                    ),
-                    if (_canLaunchInstrumentationCanary) ...[
-                      const SizedBox(height: 12),
-                      Semantics(
-                        key: const Key('host-smoke.normal-canary'),
-                        label: 'host-smoke.normal-canary',
-                        button: true,
-                        enabled: !_isLaunchingHostSmoke,
-                        onTap: _isLaunchingHostSmoke
-                            ? null
-                            : _launchInstrumentationCanary,
-                        excludeSemantics: true,
-                        child: OutlinedButton(
-                          onPressed: _isLaunchingHostSmoke
-                              ? null
-                              : _launchInstrumentationCanary,
-                          child: const Text('启动普通启动验证'),
+                excludeSemantics: true,
+                child: OutlinedButton(
+                  onPressed: _isLaunchingHostSmoke
+                      ? null
+                      : () => _launchInstrumentationCanary(
+                          gameId: '--launch-ticket',
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Semantics(
-                        key: const Key('host-smoke.collision-canary'),
-                        label: 'host-smoke.collision-canary',
-                        button: true,
-                        enabled: !_isLaunchingHostSmoke,
-                        onTap: _isLaunchingHostSmoke
-                            ? null
-                            : () => _launchInstrumentationCanary(
-                                gameId: '--launch-ticket',
-                              ),
-                        excludeSemantics: true,
-                        child: OutlinedButton(
-                          onPressed: _isLaunchingHostSmoke
-                              ? null
-                              : () => _launchInstrumentationCanary(
-                                  gameId: '--launch-ticket',
-                                ),
-                          child: const Text('启动参数碰撞验证'),
-                        ),
-                      ),
-                    ],
-                    if (_hostSmokeError) ...[
-                      const SizedBox(height: 16),
-                      Semantics(
-                        label: 'host-smoke.error',
-                        excludeSemantics: true,
-                        child: const Text('无法启动宿主烟测，请重试'),
-                      ),
-                    ],
-                  ],
-                )
-              : const Text('身份功能将在 Phase 3 接入'),
+                  child: const Text('启动参数碰撞验证'),
+                ),
+              ),
+            ],
+            if (_hostSmokeError) ...[
+              const SizedBox(height: 16),
+              Semantics(
+                label: 'host-smoke.error',
+                excludeSemantics: true,
+                child: const Text('无法启动宿主烟测，请重试'),
+              ),
+            ],
+          ],
         ),
       ),
     );

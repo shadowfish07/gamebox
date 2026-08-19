@@ -1,0 +1,260 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_error.dart';
+import 'package:gamebox/core/auth/session.dart';
+import 'package:gamebox/core/auth/token_store.dart';
+import 'package:gamebox/core/platform/game_launch_request.dart';
+import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/features/auth/auth_api.dart';
+import 'package:gamebox/features/auth/registration_page.dart';
+import 'package:gamebox/features/auth/session_controller.dart';
+
+void main() {
+  final now = DateTime.utc(2026, 8, 20, 12);
+
+  testWidgets('registration controls expose stable semantics labels', (
+    tester,
+  ) async {
+    final fixture = await _RegistrationFixture.create(now);
+    await tester.pumpWidget(
+      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+    );
+
+    expect(
+      tester.getSemantics(find.byKey(const Key('invite-code'))),
+      matchesSemantics(label: 'invite-code', isTextField: true),
+    );
+    expect(
+      tester.getSemantics(find.byKey(const Key('nickname'))),
+      matchesSemantics(label: 'nickname', isTextField: true),
+    );
+    expect(
+      tester.getSemantics(find.byKey(const Key('register'))),
+      matchesSemantics(
+        label: 'register',
+        isButton: true,
+        isEnabled: true,
+        hasEnabledState: true,
+        hasTapAction: true,
+      ),
+    );
+  });
+
+  testWidgets('nickname shorter than two runes is rejected locally', (
+    tester,
+  ) async {
+    final fixture = await _RegistrationFixture.create(now);
+    await tester.pumpWidget(
+      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+    );
+    await _enter(tester, const Key('invite-code'), 'invite-one');
+    await _enter(tester, const Key('nickname'), '鱼');
+
+    await tester.tap(find.byKey(const Key('register')));
+    await tester.pump();
+
+    expect(find.text('昵称至少需要 2 个字符'), findsOneWidget);
+    expect(fixture.api.registerCalls, 0);
+  });
+
+  testWidgets('nickname longer than sixteen runes is rejected locally', (
+    tester,
+  ) async {
+    final fixture = await _RegistrationFixture.create(now);
+    await tester.pumpWidget(
+      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+    );
+    await _enter(tester, const Key('invite-code'), 'invite-one');
+    await _enter(tester, const Key('nickname'), List.filled(17, '鱼').join());
+
+    await tester.tap(find.byKey(const Key('register')));
+    await tester.pump();
+
+    expect(find.text('昵称不能超过 16 个字符'), findsOneWidget);
+    expect(fixture.api.registerCalls, 0);
+  });
+
+  testWidgets('submitting disables the button and prevents double submit', (
+    tester,
+  ) async {
+    final pending = Completer<Session>();
+    final fixture = await _RegistrationFixture.create(now)
+      ..api.onRegister = (_, _) => pending.future;
+    await tester.pumpWidget(
+      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+    );
+    await _enter(tester, const Key('invite-code'), 'invite-one');
+    await _enter(tester, const Key('nickname'), '小鱼');
+
+    await tester.tap(find.byKey(const Key('register')));
+    await tester.pump();
+
+    expect(fixture.controller.status, SessionStatus.submitting);
+    expect(
+      tester.getSemantics(find.byKey(const Key('register'))),
+      matchesSemantics(
+        label: 'register',
+        isButton: true,
+        isEnabled: false,
+        hasEnabledState: true,
+      ),
+    );
+    await tester.tap(find.byKey(const Key('register')), warnIfMissed: false);
+    await tester.pump();
+    expect(fixture.api.registerCalls, 1);
+
+    pending.complete(_session(now));
+    await tester.pump();
+  });
+
+  for (final testCase in const [
+    (
+      code: 'invite_invalid',
+      serverMessage: 'server invite detail',
+      expected: '邀请码无效或已使用',
+    ),
+    (
+      code: 'nickname_taken',
+      serverMessage: 'server nickname detail',
+      expected: '昵称已被使用',
+    ),
+  ]) {
+    testWidgets('${testCase.code} uses a stable Chinese error', (tester) async {
+      final fixture = await _RegistrationFixture.create(now)
+        ..api.onRegister = (_, _) => Future<Session>.error(
+          ApiError(code: testCase.code, message: testCase.serverMessage),
+        );
+      await tester.pumpWidget(
+        MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+      );
+      await _enter(tester, const Key('invite-code'), 'invite-one');
+      await _enter(tester, const Key('nickname'), '小鱼');
+
+      await tester.tap(find.byKey(const Key('register')));
+      await tester.pump();
+
+      expect(find.text(testCase.expected), findsOneWidget);
+      expect(find.text(testCase.serverMessage), findsNothing);
+    });
+  }
+
+  testWidgets('unknown registration errors never expose server diagnostics', (
+    tester,
+  ) async {
+    const secret = 'raw-server-token-and-database-detail';
+    final fixture = await _RegistrationFixture.create(now)
+      ..api.onRegister = (_, _) => Future<Session>.error(
+        const ApiError(code: 'future_error', message: secret),
+      );
+    await tester.pumpWidget(
+      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+    );
+    await _enter(tester, const Key('invite-code'), 'invite-one');
+    await _enter(tester, const Key('nickname'), '小鱼');
+
+    await tester.tap(find.byKey(const Key('register')));
+    await tester.pump();
+
+    expect(find.text('注册失败，请稍后重试'), findsOneWidget);
+    expect(find.textContaining(secret), findsNothing);
+  });
+
+  testWidgets('successful registration enters the Home shell', (tester) async {
+    final fixture = await _RegistrationFixture.create(now)
+      ..api.onRegister = (_, _) async => _session(now);
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: _NoopGameLauncher(),
+        sessionController: fixture.controller,
+      ),
+    );
+    await tester.pump();
+    await _enter(tester, const Key('invite-code'), 'invite-one');
+    await _enter(tester, const Key('nickname'), '小鱼');
+
+    await tester.tap(find.byKey(const Key('register')));
+    await tester.pump();
+
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
+    expect(find.text('你好，小鱼'), findsOneWidget);
+  });
+}
+
+Future<void> _enter(WidgetTester tester, Key semanticsKey, String value) async {
+  final field = find.descendant(
+    of: find.byKey(semanticsKey),
+    matching: find.byType(TextField),
+  );
+  await tester.enterText(field, value);
+}
+
+Session _session(DateTime now) => Session(
+  user: const SessionUser(
+    id: '11111111-1111-4111-8111-111111111111',
+    nickname: '小鱼',
+  ),
+  accessToken: 'access-token',
+  accessExpiresAt: now.add(const Duration(minutes: 15)),
+  refreshToken: 'refresh-token',
+  refreshExpiresAt: now.add(const Duration(days: 30)),
+);
+
+final class _RegistrationFixture {
+  _RegistrationFixture(this.api, this.controller);
+
+  static Future<_RegistrationFixture> create(DateTime now) async {
+    final api = _FakeAuthApi();
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: _MemoryTokenStore(),
+      now: () => now,
+    );
+    await controller.restore();
+    return _RegistrationFixture(api, controller);
+  }
+
+  final _FakeAuthApi api;
+  final SessionController controller;
+}
+
+final class _FakeAuthApi implements AuthApi {
+  Future<Session> Function(String inviteCode, String nickname)? onRegister;
+  int registerCalls = 0;
+
+  @override
+  Future<Session> refresh(String refreshToken) =>
+      Future<Session>.error(StateError('unexpected refresh'));
+
+  @override
+  Future<Session> register(String inviteCode, String nickname) {
+    registerCalls += 1;
+    return onRegister?.call(inviteCode, nickname) ??
+        Future<Session>.error(StateError('unexpected registration'));
+  }
+}
+
+final class _MemoryTokenStore implements TokenStore {
+  String? value;
+
+  @override
+  Future<void> deleteRefreshToken() async => value = null;
+
+  @override
+  Future<String?> readRefreshToken() async => value;
+
+  @override
+  Future<void> writeRefreshToken(String refreshToken) async {
+    value = refreshToken;
+  }
+}
+
+final class _NoopGameLauncher implements GameLauncher {
+  @override
+  Future<void> launch(GameLaunchRequest request) async {}
+
+  @override
+  Future<void> launchHostSmoke() async {}
+}
