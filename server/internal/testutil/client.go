@@ -300,9 +300,12 @@ func (failure *WebSocketError) Error() string {
 }
 
 type WebSocketClient struct {
-	connection  *websocket.Conn
-	closeOnce   sync.Once
-	onConnected func(matchID, userID string)
+	connection       *websocket.Conn
+	closeOnce        sync.Once
+	abortOnce        sync.Once
+	onHandshakeStart func() bool
+	onHandshakeDone  func()
+	onConnected      func(matchID, userID string)
 }
 
 func DialWebSocket(ctx context.Context, serverURL string) (*WebSocketClient, error) {
@@ -349,6 +352,12 @@ func (client *WebSocketClient) connect(ctx context.Context, credentialName, cred
 	payload, err := json.Marshal(map[string]string{credentialName: credential})
 	if err != nil {
 		return WebSocketHandshake{}, errors.New("invalid websocket credential")
+	}
+	if client.onHandshakeStart != nil && !client.onHandshakeStart() {
+		return WebSocketHandshake{}, errors.New("websocket client is closing")
+	}
+	if client.onHandshakeDone != nil {
+		defer client.onHandshakeDone()
 	}
 	if err := client.WriteEnvelope(ctx, protocol.Envelope{ProtocolVersion: protocol.Version1, Type: protocol.TypePlatformConnect, Payload: payload}); err != nil {
 		return WebSocketHandshake{}, err
@@ -452,8 +461,8 @@ func DecodeGomokuSnapshot(envelope protocol.Envelope) (GomokuSnapshot, error) {
 	if envelope.Type != protocol.TypePlatformSnapshot || envelope.Revision == nil || envelope.GameID != gomoku.GameID || !canonicalUUID(envelope.MatchID) {
 		return GomokuSnapshot{}, errors.New("invalid gomoku snapshot envelope")
 	}
-	var snapshot GomokuSnapshot
-	if decodeStrictJSON(envelope.Payload, &snapshot) != nil {
+	snapshot, err := decodeGomokuSnapshotPayload(envelope.Payload)
+	if err != nil {
 		return GomokuSnapshot{}, errors.New("invalid gomoku snapshot payload")
 	}
 	snapshot.GameID, snapshot.MatchID, snapshot.Revision = envelope.GameID, envelope.MatchID, *envelope.Revision
@@ -480,6 +489,44 @@ func DecodeGomokuSnapshot(envelope protocol.Envelope) (GomokuSnapshot, error) {
 	default:
 		return GomokuSnapshot{}, errors.New("invalid gomoku snapshot status")
 	}
+	return snapshot, nil
+}
+
+func decodeGomokuSnapshotPayload(data []byte) (GomokuSnapshot, error) {
+	var payload struct {
+		Status       json.RawMessage `json:"status"`
+		Board        json.RawMessage `json:"board"`
+		BoardSize    json.RawMessage `json:"boardSize"`
+		BlackUserID  json.RawMessage `json:"blackUserId"`
+		WhiteUserID  json.RawMessage `json:"whiteUserId"`
+		NextColor    json.RawMessage `json:"nextColor"`
+		WinnerUserID json.RawMessage `json:"winnerUserId"`
+		Result       json.RawMessage `json:"result"`
+	}
+	if decodeStrictJSON(data, &payload) != nil {
+		return GomokuSnapshot{}, errors.New("invalid snapshot object")
+	}
+	for _, required := range []json.RawMessage{
+		payload.Status, payload.Board, payload.BoardSize, payload.BlackUserID,
+		payload.WhiteUserID, payload.NextColor, payload.WinnerUserID, payload.Result,
+	} {
+		if len(required) == 0 {
+			return GomokuSnapshot{}, errors.New("missing snapshot field")
+		}
+	}
+	var snapshot GomokuSnapshot
+	var board []uint8
+	if decodeStrictJSON(payload.Status, &snapshot.Status) != nil ||
+		decodeStrictJSON(payload.Board, &board) != nil || len(board) != len(snapshot.Board) ||
+		decodeStrictJSON(payload.BoardSize, &snapshot.BoardSize) != nil ||
+		decodeStrictJSON(payload.BlackUserID, &snapshot.BlackUserID) != nil ||
+		decodeStrictJSON(payload.WhiteUserID, &snapshot.WhiteUserID) != nil ||
+		decodeStrictJSON(payload.NextColor, &snapshot.NextColor) != nil ||
+		decodeStrictJSON(payload.WinnerUserID, &snapshot.WinnerUserID) != nil ||
+		decodeStrictJSON(payload.Result, &snapshot.Result) != nil {
+		return GomokuSnapshot{}, errors.New("invalid snapshot field")
+	}
+	copy(snapshot.Board[:], board)
 	return snapshot, nil
 }
 
@@ -510,7 +557,7 @@ func (client *WebSocketClient) closeNow() {
 	if client == nil || client.connection == nil {
 		return
 	}
-	client.closeOnce.Do(func() { _ = client.connection.CloseNow() })
+	client.abortOnce.Do(func() { _ = client.connection.CloseNow() })
 }
 
 func canonicalUUID(value string) bool {

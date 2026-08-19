@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"me.zqydev/gamebox/server/internal/auth"
@@ -37,11 +39,6 @@ type ServerConfig struct {
 	CredentialRandom io.Reader
 }
 
-type connectionBinding struct {
-	matchID string
-	userID  string
-}
-
 // Server is a full real-transport integration harness. Only time and entropy
 // are injectable: persistence, migrations, services, Router, Hub, Presence,
 // HTTP, and WebSocket serialization are the production implementations.
@@ -59,13 +56,31 @@ type Server struct {
 	workers    context.CancelFunc
 	workerDone chan struct{}
 	workerErrs chan error
+	httpDone   chan struct{}
+	handlers   *handlerLifecycle
 
-	mu        sync.Mutex
-	closed    bool
-	clients   []*WebSocketClient
-	bindings  []connectionBinding
-	closeOnce sync.Once
-	closeErr  error
+	mu         sync.Mutex
+	closing    bool
+	dialing    int
+	handshakes int
+	clients    []*WebSocketClient
+	shutdown   sync.Once
+	finalizeMu sync.Mutex
+	finalized  bool
+	finalErr   error
+}
+
+type handlerLifecycle struct {
+	next   http.Handler
+	active atomic.Int64
+}
+
+func (lifecycle *handlerLifecycle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if request != nil && request.URL.Path == "/v1/ws" {
+		lifecycle.active.Add(1)
+		defer lifecycle.active.Add(-1)
+	}
+	lifecycle.next.ServeHTTP(writer, request)
 }
 
 type synchronizedBuffer struct {
@@ -145,7 +160,8 @@ func StartServer(ctx context.Context, config ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("start test server router: %w", err)
 	}
-	httpServer := httptest.NewServer(handler)
+	handlers := &handlerLifecycle{next: handler}
+	httpServer := httptest.NewServer(handlers)
 	apiClient, err := NewAPIClient(httpServer.URL, httpServer.Client())
 	if err != nil {
 		httpServer.Close()
@@ -158,6 +174,7 @@ func StartServer(ctx context.Context, config ServerConfig) (*Server, error) {
 		Matches: matchService, Presence: presence, Hub: hub,
 		httpServer: httpServer, logs: logs, workers: cancelWorkers,
 		workerDone: make(chan struct{}), workerErrs: make(chan error, 2),
+		httpDone: make(chan struct{}), handlers: handlers,
 	}
 	go server.runWorkers(workerContext)
 	closeDatabase = false
@@ -239,31 +256,53 @@ func (server *Server) DialWebSocket(ctx context.Context) (*WebSocketClient, erro
 		return nil, errors.New("invalid test server")
 	}
 	server.mu.Lock()
-	if server.closed {
+	if server.closing {
 		server.mu.Unlock()
 		return nil, errors.New("test server is closed")
 	}
+	server.dialing++
 	server.mu.Unlock()
 	client, err := DialWebSocket(ctx, server.URL)
+	server.mu.Lock()
+	server.dialing--
 	if err != nil {
+		server.mu.Unlock()
 		return nil, err
 	}
-	client.onConnected = server.recordBinding
-	server.mu.Lock()
-	if server.closed {
+	if server.closing {
 		server.mu.Unlock()
 		client.closeNow()
 		return nil, errors.New("test server is closed")
+	}
+	client.onHandshakeStart = server.beginHandshake
+	client.onHandshakeDone = server.finishHandshake
+	client.onConnected = func(_, _ string) {
+		server.mu.Lock()
+		closing := server.closing
+		server.mu.Unlock()
+		if closing {
+			client.closeNow()
+		}
 	}
 	server.clients = append(server.clients, client)
 	server.mu.Unlock()
 	return client, nil
 }
 
-func (server *Server) recordBinding(matchID, userID string) {
+func (server *Server) beginHandshake() bool {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	server.bindings = append(server.bindings, connectionBinding{matchID: matchID, userID: userID})
+	if server.closing {
+		return false
+	}
+	server.handshakes++
+	return true
+}
+
+func (server *Server) finishHandshake() {
+	server.mu.Lock()
+	server.handshakes--
+	server.mu.Unlock()
 }
 
 func (server *Server) Logs() string {
@@ -280,33 +319,19 @@ func (server *Server) Close(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("invalid close context")
 	}
-	server.closeOnce.Do(func() {
-		server.closeErr = server.close(ctx)
-	})
-	return server.closeErr
-}
-
-func (server *Server) close(ctx context.Context) error {
-	server.mu.Lock()
-	server.closed = true
-	clients := append([]*WebSocketClient(nil), server.clients...)
-	bindings := append([]connectionBinding(nil), server.bindings...)
-	server.mu.Unlock()
-
-	server.httpServer.Close()
-	server.workers()
-	for _, client := range clients {
-		client.closeNow()
-	}
-	if err := server.waitUntilDisconnected(ctx, bindings); err != nil {
+	server.shutdown.Do(server.beginShutdown)
+	if err := server.waitForShutdown(ctx); err != nil {
 		return err
 	}
-	select {
-	case <-server.workerDone:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 
+	server.finalizeMu.Lock()
+	defer server.finalizeMu.Unlock()
+	if server.finalized {
+		return server.finalErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var result error
 	for {
 		select {
@@ -316,26 +341,41 @@ func (server *Server) close(ctx context.Context) error {
 			if closeErr := server.DB.Close(); closeErr != nil {
 				result = errors.Join(result, closeErr)
 			}
+			server.finalErr = result
+			server.finalized = true
 			return result
 		}
 	}
 }
 
-func (server *Server) waitUntilDisconnected(ctx context.Context, bindings []connectionBinding) error {
-	if len(bindings) == 0 {
-		return nil
+func (server *Server) beginShutdown() {
+	server.mu.Lock()
+	server.closing = true
+	clients := append([]*WebSocketClient(nil), server.clients...)
+	server.mu.Unlock()
+
+	server.workers()
+	for _, client := range clients {
+		client.closeNow()
 	}
+	go func() {
+		server.httpServer.Close()
+		close(server.httpDone)
+	}()
+}
+
+func (server *Server) waitForShutdown(ctx context.Context) error {
 	ticker := time.NewTicker(testPresencePoll)
 	defer ticker.Stop()
 	for {
-		allOffline := true
-		for _, binding := range bindings {
-			if server.Presence.IsOnline(binding.matchID, binding.userID) {
-				allOffline = false
-				break
-			}
+		server.mu.Lock()
+		clients := append([]*WebSocketClient(nil), server.clients...)
+		transportWork := server.dialing + server.handshakes
+		server.mu.Unlock()
+		for _, client := range clients {
+			client.closeNow()
 		}
-		if allOffline {
+		if transportWork == 0 && server.handlers.active.Load() == 0 && channelClosed(server.workerDone) && channelClosed(server.httpDone) {
 			return nil
 		}
 		select {
@@ -343,5 +383,14 @@ func (server *Server) waitUntilDisconnected(ctx context.Context, bindings []conn
 			return ctx.Err()
 		case <-ticker.C:
 		}
+	}
+}
+
+func channelClosed(channel <-chan struct{}) bool {
+	select {
+	case <-channel:
+		return true
+	default:
+		return false
 	}
 }
