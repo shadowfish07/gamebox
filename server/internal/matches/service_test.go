@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -2391,6 +2393,390 @@ func runConcurrentActions(service *Service, requests ...ActionRequest) []concurr
 		collected = append(collected, result)
 	}
 	return collected
+}
+
+func TestResumeCredentialLaunchTicketIsAtomicSingleUseAndSlides(t *testing.T) {
+	fixture := newFixture(t)
+	credentialRandom := bytes.NewReader(append(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)...))
+	service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+		ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: credentialRandom,
+		TokenPepper: "resume-credential-test-pepper-at-least-thirty-two-bytes",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connected, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token})
+	if err != nil {
+		t.Fatalf("ConnectCredential launch: %v", err)
+	}
+	wantInitialExpiry := time.UnixMilli(fixture.clock.Now().UTC().Add(30 * time.Minute).UnixMilli()).UTC()
+	if connected.UserID != initiatorID || connected.MatchID != created.ID || connected.GameID != gomoku.GameID || connected.ResumeToken == "" || connected.ResumeExpiresAt != wantInitialExpiry {
+		t.Fatalf("credential=%+v", connected)
+	}
+	if second, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token}); !errors.Is(err, ErrInvalidCredential) || second.ResumeToken != "" {
+		t.Fatalf("ticket reuse=(%+v,%v)", second, err)
+	}
+	var consumed sql.NullInt64
+	if err := fixture.db.QueryRow(`SELECT consumed_at FROM launch_tickets`).Scan(&consumed); err != nil || !consumed.Valid || consumed.Int64 != fixture.clock.Now().UTC().UnixMilli() {
+		t.Fatalf("consumed=%v err=%v", consumed, err)
+	}
+	var storedHash string
+	if err := fixture.db.QueryRow(`SELECT token_hash FROM resume_tokens`).Scan(&storedHash); err != nil || storedHash == connected.ResumeToken || strings.Contains(fmt.Sprint(service), connected.ResumeToken) {
+		t.Fatalf("stored resume hash=%q err=%v service=%v", storedHash, err, service)
+	}
+	launchDomainHash, _ := hashLaunchTicket("resume-credential-test-pepper-at-least-thirty-two-bytes", connected.ResumeToken)
+	if storedHash == launchDomainHash {
+		t.Fatal("resume token reused the launch-ticket hash domain")
+	}
+
+	fixture.clock.Advance(29 * time.Minute)
+	resumed, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: connected.ResumeToken})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	wantSlidExpiry := time.UnixMilli(fixture.clock.Now().UTC().Add(30 * time.Minute).UnixMilli()).UTC()
+	if resumed.ResumeToken != connected.ResumeToken || resumed.ResumeExpiresAt != wantSlidExpiry {
+		t.Fatalf("sliding credential=%+v", resumed)
+	}
+	var lastUsed, expires int64
+	if err := fixture.db.QueryRow(`SELECT last_used_at,expires_at FROM resume_tokens`).Scan(&lastUsed, &expires); err != nil || lastUsed != fixture.clock.Now().UTC().UnixMilli() || expires != resumed.ResumeExpiresAt.UnixMilli() {
+		t.Fatalf("stored sliding=(%d,%d,%v)", lastUsed, expires, err)
+	}
+}
+
+func TestResumeCredentialRejectsInvalidExpiredAndTerminalTokensWithoutMutation(t *testing.T) {
+	fixture := newFixture(t)
+	service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+		ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(bytes.Repeat([]byte{3}, 96)),
+		TokenPepper: "resume-rejection-test-pepper-at-least-thirty-two-bytes",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, _ := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+	credential, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := []CredentialRequest{{}, {LaunchTicket: ticket.Token, ResumeToken: credential.ResumeToken}, {ResumeToken: "not-base64"}}
+	for _, request := range invalid {
+		if _, err := service.ConnectCredential(context.Background(), request); !errors.Is(err, ErrInvalidCredential) && !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("request=%+v err=%v", request, err)
+		}
+	}
+	fixture.clock.Advance(30 * time.Minute)
+	if _, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: credential.ResumeToken}); !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("expired resume err=%v", err)
+	}
+	if _, err := fixture.db.Exec(`UPDATE resume_tokens SET expires_at=? WHERE match_id=?`, fixture.clock.Now().Add(time.Hour).UnixMilli(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 990, 0, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), resignRequest(created.ID, opponentID, 991, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ConnectCredential(context.Background(), CredentialRequest{ResumeToken: credential.ResumeToken}); !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("terminal resume err=%v", err)
+	}
+	var revoked sql.NullInt64
+	if err := fixture.db.QueryRow(`SELECT revoked_at FROM resume_tokens`).Scan(&revoked); err != nil || !revoked.Valid {
+		t.Fatalf("revoked=%v err=%v", revoked, err)
+	}
+}
+
+func TestResumeCredentialRetriesCollisionAndRollsBackFailures(t *testing.T) {
+	const pepper = "resume-transaction-test-pepper-at-least-thirty-two-bytes"
+	t.Run("hash collision", func(t *testing.T) {
+		fixture := newFixture(t)
+		blocks := append(bytes.Repeat([]byte{4}, 32), bytes.Repeat([]byte{5}, 32)...)
+		blocks = append(blocks, bytes.Repeat([]byte{6}, 32)...)
+		service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+			ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(blocks), TokenPepper: pepper,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created, _ := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		ticket, err := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		collisionToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+		collisionHash, _ := hashCredential(pepper, collisionToken, resumeTokenHashDomain)
+		now := fixture.clock.Now().UTC().UnixMilli()
+		if _, err := fixture.db.Exec(`INSERT INTO resume_tokens(token_hash,match_id,user_id,expires_at,last_used_at,created_at) VALUES (?,?,?,?,?,?)`, collisionHash, created.ID, opponentID, now+int64(time.Hour/time.Millisecond), now, now); err != nil {
+			t.Fatal(err)
+		}
+		credential, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if credential.ResumeToken == collisionToken || credential.ResumeToken != base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32)) {
+			t.Fatalf("collision was not retried: %+v", credential)
+		}
+		var count int
+		if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM resume_tokens`).Scan(&count); err != nil || count != 2 {
+			t.Fatalf("resume rows=%d err=%v", count, err)
+		}
+	})
+
+	t.Run("deferred commit failure", func(t *testing.T) {
+		fixture := newFixture(t)
+		service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+			ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(distinctBlocks(7, 8)), TokenPepper: pepper,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created, _ := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		ticket, _ := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+		if _, err := fixture.db.Exec(`
+CREATE TABLE resume_commit_guard (
+  marker TEXT PRIMARY KEY,
+  missing_user_id TEXT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER fail_resume_at_commit AFTER INSERT ON resume_tokens
+BEGIN
+  INSERT INTO resume_commit_guard(marker,missing_user_id)
+  VALUES (NEW.token_hash,'ffffffff-ffff-4fff-8fff-ffffffffffff');
+END;`); err != nil {
+			t.Fatal(err)
+		}
+		fixture.db.SetMaxOpenConns(1)
+		connection, err := fixture.db.Conn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := connection.ExecContext(context.Background(), `PRAGMA defer_foreign_keys=ON`); err != nil {
+			_ = connection.Close()
+			t.Fatal(err)
+		}
+		if err := connection.Close(); err != nil {
+			t.Fatal(err)
+		}
+		credential, err := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token})
+		if !errors.Is(err, ErrInternal) || credential.ResumeToken != "" {
+			t.Fatalf("commit failure=(%+v,%v)", credential, err)
+		}
+		var consumed sql.NullInt64
+		if err := fixture.db.QueryRow(`SELECT consumed_at FROM launch_tickets`).Scan(&consumed); err != nil || consumed.Valid {
+			t.Fatalf("ticket mutated after failed commit: %v err=%v", consumed, err)
+		}
+		var count int
+		if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM resume_tokens`).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("resume rows=%d err=%v", count, err)
+		}
+	})
+
+	t.Run("busy cancellation and overflow", func(t *testing.T) {
+		fixture := newFixture(t)
+		service, err := NewServiceWithConfig(fixture.db, fixture.registry, fixture.clock, ServiceConfig{
+			ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(distinctBlocks(9, 10)), TokenPepper: pepper,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created, _ := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		ticket, _ := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+		blocking, err := fixture.db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := blocking.Exec(`UPDATE users SET updated_at=updated_at WHERE id=?`, initiatorID); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+		credential, connectErr := service.ConnectCredential(ctx, CredentialRequest{LaunchTicket: ticket.Token})
+		cancel()
+		_ = blocking.Rollback()
+		if !errors.Is(connectErr, context.DeadlineExceeded) || credential.ResumeToken != "" {
+			t.Fatalf("busy connect=(%+v,%v)", credential, connectErr)
+		}
+		cancelled, cancelNow := context.WithCancel(context.Background())
+		cancelNow()
+		if credential, err = service.ConnectCredential(cancelled, CredentialRequest{LaunchTicket: ticket.Token}); !errors.Is(err, context.Canceled) || credential.ResumeToken != "" {
+			t.Fatalf("cancelled connect=(%+v,%v)", credential, err)
+		}
+		var consumed sql.NullInt64
+		if err := fixture.db.QueryRow(`SELECT consumed_at FROM launch_tickets`).Scan(&consumed); err != nil || consumed.Valid {
+			t.Fatalf("busy/cancel consumed=%v err=%v", consumed, err)
+		}
+
+		overflowService, err := NewServiceWithConfig(fixture.db, fixture.registry, clock.NewFake(time.UnixMilli(math.MaxInt64-1)), ServiceConfig{
+			ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(distinctBlocks(11, 12)), TokenPepper: pepper,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if credential, err = overflowService.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token}); !errors.Is(err, ErrInternal) || credential.ResumeToken != "" {
+			t.Fatalf("overflow connect=(%+v,%v)", credential, err)
+		}
+
+		blocking, err = fixture.db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := blocking.Exec(`UPDATE users SET updated_at=updated_at WHERE id=?`, initiatorID); err != nil {
+			t.Fatal(err)
+		}
+		type connectResult struct {
+			credential ConnectionCredential
+			err        error
+		}
+		result := make(chan connectResult, 1)
+		go func() {
+			connected, connectErr := service.ConnectCredential(context.Background(), CredentialRequest{LaunchTicket: ticket.Token})
+			result <- connectResult{credential: connected, err: connectErr}
+		}()
+		time.Sleep(40 * time.Millisecond)
+		fixture.clock.Advance(30 * time.Second)
+		if err := blocking.Rollback(); err != nil {
+			t.Fatal(err)
+		}
+		connected := <-result
+		wantExpiry := time.UnixMilli(fixture.clock.Now().UTC().Add(resumeTokenLifetime).UnixMilli()).UTC()
+		if connected.err != nil || connected.credential.ResumeExpiresAt != wantExpiry {
+			t.Fatalf("post-lock clock=(%+v,%v) want expiry %v", connected.credential, connected.err, wantExpiry)
+		}
+		if strings.Contains(fmt.Sprintf("%+v %#v", CredentialRequest{LaunchTicket: ticket.Token}, connected.credential), ticket.Token) || strings.Contains(fmt.Sprintf("%+v", connected.credential), connected.credential.ResumeToken) {
+			t.Fatal("credential formatting exposed a secret")
+		}
+	})
+}
+
+func distinctBlocks(values ...byte) []byte {
+	result := make([]byte, 0, len(values)*32)
+	for _, value := range values {
+		result = append(result, bytes.Repeat([]byte{value}, 32)...)
+	}
+	return result
+}
+
+func TestHubPublishesConcurrentRevisionsInOrderAndDeduplicates(t *testing.T) {
+	connection := &hubConnection{ready: true, send: make(chan []byte, 4), matchID: initiatorID}
+	hub := &Hub{matches: map[string]*hubMatch{
+		initiatorID: {connections: map[*hubConnection]struct{}{connection: {}}, pendingEvents: make(map[int64][]byte), gameID: gomoku.GameID},
+	}}
+	event := func(revision int64) Event {
+		return Event{MatchID: initiatorID, Revision: revision, Type: protocol.TypePlatformMatchCancelled, Payload: json.RawMessage(`{}`)}
+	}
+	hub.Publish(initiatorID, event(2))
+	if len(connection.send) != 0 {
+		t.Fatal("out-of-order revision was published before its predecessor")
+	}
+	hub.Publish(initiatorID, event(1))
+	for want := int64(1); want <= 2; want++ {
+		data := <-connection.send
+		envelope, err := protocol.Decode(data)
+		if err != nil || envelope.Revision == nil || *envelope.Revision != want {
+			t.Fatalf("published revision %d: %s err=%v", want, data, err)
+		}
+	}
+	hub.Publish(initiatorID, event(2))
+	if len(connection.send) != 0 {
+		t.Fatal("duplicate committed revision was broadcast twice")
+	}
+}
+
+func TestHubSendQueueIsBoundedAndNonblocking(t *testing.T) {
+	connection := &hubConnection{send: make(chan []byte, 1)}
+	if !connection.enqueue([]byte("first")) {
+		t.Fatal("first enqueue failed")
+	}
+	started := time.Now()
+	if connection.enqueue([]byte("second")) {
+		t.Fatal("full queue accepted a second message")
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("full queue blocked for %s", elapsed)
+	}
+}
+
+func TestHubSlowQueueDoesNotBlockAnotherConnection(t *testing.T) {
+	slow := &hubConnection{ready: true, send: make(chan []byte, 1)}
+	slow.send <- []byte("already full")
+	fast := &hubConnection{ready: true, send: make(chan []byte, 2)}
+	match := &hubMatch{
+		connections:   map[*hubConnection]struct{}{slow: {}, fast: {}},
+		pendingEvents: map[int64][]byte{1: []byte(`{"revision":1}`)},
+		gameID:        gomoku.GameID,
+	}
+	hub := &Hub{}
+	started := time.Now()
+	closed := hub.flushPublishedLocked(match)
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("slow queue blocked fan-out for %s", elapsed)
+	}
+	if len(closed) != 1 || closed[0] != slow {
+		t.Fatalf("slow connections=%v", closed)
+	}
+	select {
+	case message := <-fast.send:
+		if string(message) != `{"revision":1}` {
+			t.Fatalf("fast message=%s", message)
+		}
+	default:
+		t.Fatal("fast connection did not receive the event")
+	}
+}
+
+func TestHubSnapshotObservedAheadResnapshotsExistingPeerBeforeReady(t *testing.T) {
+	existing := &hubConnection{ready: true, send: make(chan []byte, 2), matchID: initiatorID}
+	existing.revision.Store(0)
+	joining := &hubConnection{send: make(chan []byte, 2), matchID: initiatorID}
+	joining.revision.Store(2)
+	hub := &Hub{matches: map[string]*hubMatch{
+		initiatorID: {
+			connections:   map[*hubConnection]struct{}{existing: {}, joining: {}},
+			pendingEvents: make(map[int64][]byte),
+			gameID:        gomoku.GameID,
+		},
+	}}
+	snapshot := []byte(`{"revision":2,"type":"platform.snapshot"}`)
+	if ready, stale := hub.markReady(joining, 2, snapshot); !ready || stale {
+		t.Fatal("joining connection did not become ready")
+	}
+	if existing.revision.Load() != 2 || joining.revision.Load() != 2 {
+		t.Fatalf("revisions existing=%d joining=%d", existing.revision.Load(), joining.revision.Load())
+	}
+	select {
+	case message := <-existing.send:
+		if string(message) != string(snapshot) {
+			t.Fatalf("existing resnapshot=%s", message)
+		}
+	default:
+		t.Fatal("existing peer was left behind the observed snapshot")
+	}
+}
+
+func TestHubOlderConcurrentSnapshotMustBeRetriedBeforeReady(t *testing.T) {
+	joining := &hubConnection{send: make(chan []byte, 2), matchID: initiatorID}
+	hub := &Hub{matches: map[string]*hubMatch{
+		initiatorID: {
+			connections:       map[*hubConnection]struct{}{joining: {}},
+			publishedRevision: 2,
+			pendingEvents:     make(map[int64][]byte),
+			gameID:            gomoku.GameID,
+		},
+	}}
+	ready, stale := hub.markReady(joining, 0, []byte(`{"revision":0}`))
+	if ready || !stale || joining.ready {
+		t.Fatalf("older snapshot ready=%t stale=%t connectionReady=%t", ready, stale, joining.ready)
+	}
 }
 
 func moveRequest(matchID, actorID string, actionNumber int, expectedRevision int64, x, y int) ActionRequest {

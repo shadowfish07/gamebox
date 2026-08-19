@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/auth"
@@ -26,6 +27,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
+	"me.zqydev/gamebox/server/internal/protocol"
 	"me.zqydev/gamebox/server/internal/store"
 )
 
@@ -42,6 +44,7 @@ type recordedPublication struct {
 type recordingPublisher struct {
 	mu     sync.Mutex
 	events []recordedPublication
+	hub    *matches.Hub
 }
 
 type panickingPublisher struct{ marker string }
@@ -49,6 +52,9 @@ type panickingPublisher struct{ marker string }
 func (publisher panickingPublisher) Publish(string, matches.Event) { panic(publisher.marker) }
 
 func (publisher *recordingPublisher) Publish(matchID string, event matches.Event) {
+	if publisher.hub != nil {
+		publisher.hub.Publish(matchID, event)
+	}
 	publisher.mu.Lock()
 	defer publisher.mu.Unlock()
 	publisher.events = append(publisher.events, recordedPublication{matchID: matchID, event: event})
@@ -66,9 +72,27 @@ type apiFixture struct {
 	auth      *auth.Service
 	matches   *matches.Service
 	handler   http.Handler
-	logs      *bytes.Buffer
+	logs      *lockedBuffer
 	publisher *recordingPublisher
+	hub       *matches.Hub
 	now       time.Time
+}
+
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (buffer *lockedBuffer) Write(data []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.Write(data)
+}
+
+func (buffer *lockedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.String()
 }
 
 func newAPIFixture(t *testing.T) apiFixture {
@@ -93,26 +117,43 @@ func newAPIFixture(t *testing.T) apiFixture {
 	}
 	matchService, err := matches.NewServiceWithConfig(db, games.NewRegistry(), testClock, matches.ServiceConfig{
 		ColorRandom:        bytes.NewReader(bytes.Repeat([]byte{0}, 64)),
-		LaunchTicketRandom: bytes.NewReader(bytes.Repeat([]byte{1}, 32*64)),
+		LaunchTicketRandom: bytes.NewReader(distinctCredentialEntropy(64)),
 		TokenPepper:        testTokenPepper,
 	})
 	if err != nil {
 		t.Fatalf("new match service: %v", err)
 	}
-	logs := &bytes.Buffer{}
-	publisher := &recordingPublisher{}
+	logs := &lockedBuffer{}
+	presence, err := matches.NewPresence(matchService, testClock)
+	if err != nil {
+		t.Fatalf("new presence: %v", err)
+	}
+	hub, err := matches.NewHub(matchService, presence, testClock)
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+	publisher := &recordingPublisher{hub: hub}
 	handler, err := NewRouter(RouterConfig{
 		Auth:       authService,
 		Matches:    matchService,
 		Games:      games.NewRegistry(),
 		Publisher:  publisher,
+		Hub:        hub,
 		Logger:     log.New(logs, "", 0),
 		RequestIDs: sequentialRequestIDs(),
 	})
 	if err != nil {
 		t.Fatalf("new router: %v", err)
 	}
-	return apiFixture{db: db, clock: testClock, auth: authService, matches: matchService, handler: handler, logs: logs, publisher: publisher, now: now}
+	return apiFixture{db: db, clock: testClock, auth: authService, matches: matchService, handler: handler, logs: logs, publisher: publisher, hub: hub, now: now}
+}
+
+func distinctCredentialEntropy(count int) []byte {
+	result := make([]byte, 0, 32*count)
+	for index := 0; index < count; index++ {
+		result = append(result, bytes.Repeat([]byte{byte(index + 1)}, 32)...)
+	}
+	return result
 }
 
 func sequentialRequestIDs() func() (string, error) {
@@ -376,6 +417,305 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 
 func authTokenBytes(token string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(token)
+}
+
+func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "ws-a", "Alice")
+	bob := fixture.register(t, "ws-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	issue := func(user sessionResponse) string {
+		response := fixture.request(t, http.MethodPost, "/v1/matches/"+matchBody.Match.ID+"/launch-ticket", `{}`, user.Session.AccessToken)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("issue ticket=(%d,%s)", response.Code, response.Body.String())
+		}
+		var body struct {
+			LaunchTicket string `json:"launchTicket"`
+		}
+		decodeResponse(t, response, &body)
+		return body.LaunchTicket
+	}
+	aliceTicket, bobTicket := issue(alice), issue(bob)
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/ws"
+	connect := func(tokenKey, token string, wantRevision int64) (*websocket.Conn, protocol.Envelope, protocol.Envelope) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		connection, response, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial response=%v err=%v", response, err)
+		}
+		message := fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"%s":%s}}`, tokenKey, quote(token))
+		if err := connection.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
+			t.Fatalf("write connect: %v", err)
+		}
+		connected := readWSEnvelope(t, connection)
+		snapshot := readWSEnvelope(t, connection)
+		if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != wantRevision {
+			t.Fatalf("initial messages=(%+v,%+v)", connected, snapshot)
+		}
+		return connection, connected, snapshot
+	}
+	aliceWS, aliceConnected, aliceSnapshot := connect("launchTicket", aliceTicket, 0)
+	defer aliceWS.CloseNow()
+	bobWS, _, bobSnapshot := connect("launchTicket", bobTicket, 0)
+	defer bobWS.CloseNow()
+	if !bytes.Equal(aliceSnapshot.Payload, bobSnapshot.Payload) {
+		t.Fatalf("initial snapshots differ: %s / %s", aliceSnapshot.Payload, bobSnapshot.Payload)
+	}
+	var snapshotPayload struct {
+		Board       []int  `json:"board"`
+		BlackUserID string `json:"blackUserId"`
+		WhiteUserID string `json:"whiteUserId"`
+	}
+	if err := json.Unmarshal(aliceSnapshot.Payload, &snapshotPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshotPayload.Board) != gomoku.BoardSize*gomoku.BoardSize ||
+		!((snapshotPayload.BlackUserID == alice.Session.User.ID && snapshotPayload.WhiteUserID == bob.Session.User.ID) ||
+			(snapshotPayload.BlackUserID == bob.Session.User.ID && snapshotPayload.WhiteUserID == alice.Session.User.ID)) {
+		t.Fatalf("snapshot identity/board=%+v", snapshotPayload)
+	}
+	blackID := snapshotPayload.BlackUserID
+	blackWS := aliceWS
+	if blackID == bob.Session.User.ID {
+		blackWS = bobWS
+	}
+	actionID := "aaaaaaaa-aaaa-4aaa-8aaa-000000000001"
+	move := fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"expectedRevision":0,"type":"gomoku.move.requested","actionId":%s,"payload":{"x":7,"y":7}}`, quote(matchBody.Match.ID), quote(actionID))
+	writeWS(t, blackWS, move)
+	aliceEvent, bobEvent := readWSEnvelope(t, aliceWS), readWSEnvelope(t, bobWS)
+	if aliceEvent.Type != protocol.TypeGomokuMoveAccepted || bobEvent.Type != protocol.TypeGomokuMoveAccepted || aliceEvent.Revision == nil || *aliceEvent.Revision != 1 || bobEvent.Revision == nil || *bobEvent.Revision != 1 {
+		t.Fatalf("broadcast=(%+v,%+v)", aliceEvent, bobEvent)
+	}
+	staleActionID := "aaaaaaaa-aaaa-4aaa-8aaa-000000000002"
+	stale := fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"expectedRevision":0,"type":"gomoku.move.requested","actionId":%s,"payload":{"x":8,"y":8}}`, quote(matchBody.Match.ID), quote(staleActionID))
+	writeWS(t, bobWS, stale)
+	staleError, latest := readWSEnvelope(t, bobWS), readWSEnvelope(t, bobWS)
+	if staleError.Type != protocol.TypePlatformError || latest.Type != protocol.TypePlatformSnapshot || latest.Revision == nil || *latest.Revision != 1 || !bytes.Contains(staleError.Payload, []byte(`"code":"stale_revision"`)) {
+		t.Fatalf("stale response=(%+v,%+v)", staleError, latest)
+	}
+	var connectedPayload struct {
+		UserID          string `json:"userId"`
+		ConnectionID    string `json:"connectionId"`
+		ResumeToken     string `json:"resumeToken"`
+		ResumeExpiresAt int64  `json:"resumeExpiresAt"`
+	}
+	if err := json.Unmarshal(aliceConnected.Payload, &connectedPayload); err != nil || connectedPayload.ResumeToken == "" || connectedPayload.UserID != alice.Session.User.ID || !canonicalRequestID(connectedPayload.ConnectionID) || connectedPayload.ResumeExpiresAt != fixture.clock.Now().UTC().Add(30*time.Minute).UnixMilli() {
+		t.Fatalf("connected payload=%s err=%v", aliceConnected.Payload, err)
+	}
+	_ = aliceWS.Close(websocket.StatusNormalClosure, "")
+	aliceWS, _, resumedSnapshot := connect("resumeToken", connectedPayload.ResumeToken, 1)
+	defer aliceWS.CloseNow()
+	if resumedSnapshot.Revision == nil || *resumedSnapshot.Revision != 1 {
+		t.Fatalf("resumed snapshot=%+v", resumedSnapshot)
+	}
+	resignID := "aaaaaaaa-aaaa-4aaa-8aaa-000000000003"
+	resign := fmt.Sprintf(`{"protocolVersion":1,"gameId":"gomoku","matchId":%s,"expectedRevision":1,"type":"gomoku.resign.requested","actionId":%s,"payload":{}}`, quote(matchBody.Match.ID), quote(resignID))
+	writeWS(t, bobWS, resign)
+	for _, event := range []protocol.Envelope{readWSEnvelope(t, aliceWS), readWSEnvelope(t, bobWS)} {
+		if event.Type != protocol.TypeGomokuResigned || event.Revision == nil || *event.Revision != 2 {
+			t.Fatalf("terminal event=%+v", event)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	revoked, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	writeWS(t, revoked, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":%s}}`, quote(connectedPayload.ResumeToken)))
+	revokedError := readWSEnvelope(t, revoked)
+	_ = revoked.CloseNow()
+	cancel()
+	if revokedError.Type != protocol.TypePlatformError || !bytes.Contains(revokedError.Payload, []byte(`"code":"credential_invalid"`)) {
+		t.Fatalf("terminal resume=%+v", revokedError)
+	}
+	if strings.Contains(wsURL, aliceTicket) || strings.Contains(fixture.logs.String(), aliceTicket) || strings.Contains(fixture.logs.String(), connectedPayload.ResumeToken) {
+		t.Fatalf("credential leaked url=%q logs=%s", wsURL, fixture.logs.String())
+	}
+}
+
+func TestWebSocketRejectsInvalidHandshakeCredentialReuseAndCrossOrigin(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "ws-invalid-a", "Alice")
+	bob := fixture.register(t, "ws-invalid-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	ticketResponse := fixture.request(t, http.MethodPost, "/v1/matches/"+matchBody.Match.ID+"/launch-ticket", `{}`, alice.Session.AccessToken)
+	var ticketBody struct {
+		LaunchTicket string `json:"launchTicket"`
+	}
+	decodeResponse(t, ticketResponse, &ticketBody)
+
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/ws"
+
+	t.Run("first message must be connect", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		connection, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connection.CloseNow()
+		writeWS(t, connection, `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"00000000-0000-4000-8000-000000000001"}}`)
+		errorEnvelope := readWSEnvelope(t, connection)
+		if errorEnvelope.Type != protocol.TypePlatformError || errorEnvelope.MatchID != "" || errorEnvelope.Revision != nil || !bytes.Contains(errorEnvelope.Payload, []byte(`"code":"invalid_connect"`)) {
+			t.Fatalf("handshake error=%+v", errorEnvelope)
+		}
+	})
+
+	t.Run("ticket is consumed once", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		connection, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
+		if first, second := readWSEnvelope(t, connection), readWSEnvelope(t, connection); first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot {
+			t.Fatalf("connected=(%+v,%+v)", first, second)
+		}
+		_ = connection.Close(websocket.StatusNormalClosure, "")
+		cancel()
+
+		ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		reused, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reused.CloseNow()
+		writeWS(t, reused, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
+		failure := readWSEnvelope(t, reused)
+		if failure.Type != protocol.TypePlatformError || !bytes.Contains(failure.Payload, []byte(`"code":"credential_invalid"`)) {
+			t.Fatalf("ticket reuse=%+v", failure)
+		}
+	})
+
+	t.Run("query authorization and cross origin are rejected", func(t *testing.T) {
+		response, err := server.Client().Get(server.URL + "/v1/ws?launchTicket=" + ticketBody.LaunchTicket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("query status=%d", response.StatusCode)
+		}
+		const keyMarker = "upgrade-key-secret-marker"
+		malformed, err := http.NewRequest(http.MethodGet, server.URL+"/v1/ws", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		malformed.Header.Set("Connection", "Upgrade")
+		malformed.Header.Set("Upgrade", "websocket")
+		malformed.Header.Set("Sec-WebSocket-Version", "13")
+		malformed.Header.Set("Sec-WebSocket-Key", keyMarker)
+		response, err = server.Client().Do(malformed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest || readErr != nil || bytes.Contains(body, []byte(keyMarker)) || strings.Contains(fixture.logs.String(), keyMarker) {
+			t.Fatalf("upgrade error=(%d,%s,%v) logs=%s", response.StatusCode, body, readErr, fixture.logs.String())
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		const originMarker = "origin-secret-marker.example"
+		_, response, err = websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{"https://" + originMarker}}})
+		if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+			t.Fatalf("origin response=%v err=%v", response, err)
+		}
+		body, readErr = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil || bytes.Contains(body, []byte(originMarker)) || strings.Contains(fixture.logs.String(), originMarker) {
+			t.Fatalf("origin error leaked input: body=%s logs=%s err=%v", body, fixture.logs.String(), readErr)
+		}
+	})
+
+	logged := fixture.logs.String()
+	if strings.Contains(logged, ticketBody.LaunchTicket) {
+		t.Fatalf("logs leaked ticket: %s", logged)
+	}
+}
+
+func TestWebSocketReceivesCommittedHTTPCancellation(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "ws-cancel-a", "Alice")
+	bob := fixture.register(t, "ws-cancel-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	ticketResponse := fixture.request(t, http.MethodPost, "/v1/matches/"+matchBody.Match.ID+"/launch-ticket", `{}`, alice.Session.AccessToken)
+	var ticketBody struct {
+		LaunchTicket string `json:"launchTicket"`
+	}
+	decodeResponse(t, ticketResponse, &ticketBody)
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
+	connected, snapshot := readWSEnvelope(t, connection), readWSEnvelope(t, connection)
+	if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot {
+		t.Fatalf("initial=(%+v,%+v)", connected, snapshot)
+	}
+	cancelled := fixture.request(t, http.MethodDelete, "/v1/matches/"+matchBody.Match.ID, "", bob.Session.AccessToken)
+	if cancelled.Code != http.StatusNoContent {
+		t.Fatalf("cancel=(%d,%s)", cancelled.Code, cancelled.Body.String())
+	}
+	event := readWSEnvelope(t, connection)
+	if event.Type != protocol.TypePlatformMatchCancelled || event.Revision == nil || *event.Revision != 1 {
+		t.Fatalf("cancel event=%+v", event)
+	}
+}
+
+func writeWS(t *testing.T, connection *websocket.Conn, message string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := connection.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
+		t.Fatalf("websocket write: %v", err)
+	}
+}
+
+func readWSEnvelope(t *testing.T, connection *websocket.Conn) protocol.Envelope {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	typeOfMessage, data, err := connection.Read(ctx)
+	if err != nil || typeOfMessage != websocket.MessageText {
+		t.Fatalf("websocket read type=%v err=%v", typeOfMessage, err)
+	}
+	envelope, err := protocol.Decode(data)
+	if err != nil {
+		t.Fatalf("decode websocket message %s: %v", data, err)
+	}
+	return envelope
 }
 
 func TestRouterStrictJSONAuthenticationAndRoutingErrors(t *testing.T) {
@@ -685,7 +1025,7 @@ func TestLaunchTicketRequiresActiveParticipantAndRetriesHashCollision(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewRouter(RouterConfig{Auth: fixture.auth, Matches: matchService, Games: games.NewRegistry(), Publisher: fixture.publisher, Logger: log.New(fixture.logs, "", 0), RequestIDs: sequentialRequestIDs()})
+	handler, err := NewRouter(RouterConfig{Auth: fixture.auth, Matches: matchService, Games: games.NewRegistry(), Publisher: fixture.publisher, Hub: fixture.hub, Logger: log.New(fixture.logs, "", 0), RequestIDs: sequentialRequestIDs()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -806,7 +1146,7 @@ func TestCancelPublisherPanicCannotChangeCommittedHTTPOutcome(t *testing.T) {
 	const panicMarker = "publisher-panic-secret-marker"
 	handler, err := NewRouter(RouterConfig{
 		Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(),
-		Publisher: panickingPublisher{marker: panicMarker}, Logger: log.New(fixture.logs, "", 0), RequestIDs: sequentialRequestIDs(),
+		Publisher: panickingPublisher{marker: panicMarker}, Hub: fixture.hub, Logger: log.New(fixture.logs, "", 0), RequestIDs: sequentialRequestIDs(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1196,12 +1536,13 @@ func TestNewRouterRejectsInvalidDependenciesWithoutSecretFormatting(t *testing.T
 	fixture := newAPIFixture(t)
 	tests := []RouterConfig{
 		{},
-		{Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
-		{Auth: fixture.auth, Games: games.NewRegistry(), Publisher: fixture.publisher, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
-		{Auth: fixture.auth, Matches: fixture.matches, Publisher: fixture.publisher, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
-		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
-		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, RequestIDs: sequentialRequestIDs()},
-		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, Logger: log.Default()},
+		{Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, Hub: fixture.hub, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
+		{Auth: fixture.auth, Games: games.NewRegistry(), Publisher: fixture.publisher, Hub: fixture.hub, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
+		{Auth: fixture.auth, Matches: fixture.matches, Publisher: fixture.publisher, Hub: fixture.hub, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
+		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Hub: fixture.hub, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
+		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, Logger: log.Default(), RequestIDs: sequentialRequestIDs()},
+		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, Hub: fixture.hub, RequestIDs: sequentialRequestIDs()},
+		{Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(), Publisher: fixture.publisher, Hub: fixture.hub, Logger: log.Default()},
 	}
 	for _, config := range tests {
 		handler, err := NewRouter(config)

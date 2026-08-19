@@ -43,6 +43,7 @@ var (
 	ErrMatchNotCancellable  = errors.New("match_not_cancellable")
 	ErrStaleRevision        = errors.New("stale_revision")
 	ErrActionConflict       = errors.New("action_conflict")
+	ErrInvalidCredential    = errors.New("credential_invalid")
 	ErrInternal             = errors.New("internal_error")
 )
 
@@ -61,6 +62,8 @@ const (
 	launchTicketCollisionMax  = 8
 	minimumTokenPepperBytes   = 32
 	launchTicketHashDomain    = "gamebox/launch-ticket-hash/v1"
+	resumeTokenLifetime       = 30 * time.Minute
+	resumeTokenHashDomain     = "gamebox/resume-token-hash/v1"
 )
 
 // ServiceConfig supplies the independent randomness and secret used by the
@@ -103,6 +106,36 @@ type LaunchTicket struct {
 	Token     string
 	ExpiresAt time.Time
 }
+
+// CredentialRequest carries exactly one secret from the first WebSocket
+// message. It is intentionally never formatted into errors or logs.
+type CredentialRequest struct {
+	LaunchTicket string
+	ResumeToken  string
+}
+
+func (request CredentialRequest) String() string {
+	return fmt.Sprintf("CredentialRequest{LaunchTicket:<redacted:%t> ResumeToken:<redacted:%t>}", request.LaunchTicket != "", request.ResumeToken != "")
+}
+
+func (request CredentialRequest) GoString() string { return request.String() }
+
+// ConnectionCredential is returned only after ticket consumption/token
+// issuance or resume sliding-expiry has committed.
+type ConnectionCredential struct {
+	UserID          string
+	MatchID         string
+	GameID          string
+	ResumeToken     string
+	ResumeExpiresAt time.Time
+}
+
+func (credential ConnectionCredential) String() string {
+	return fmt.Sprintf("ConnectionCredential{UserID:%q MatchID:%q GameID:%q ResumeToken:<redacted> ResumeExpiresAt:%s}",
+		credential.UserID, credential.MatchID, credential.GameID, credential.ResumeExpiresAt.UTC().Format(time.RFC3339))
+}
+
+func (credential ConnectionCredential) GoString() string { return credential.String() }
 
 func (ticket LaunchTicket) String() string {
 	return fmt.Sprintf("LaunchTicket{MatchID:%q GameID:%q ExpiresAt:%s Token:<redacted>}", ticket.MatchID, ticket.GameID, ticket.ExpiresAt.UTC().Format(time.RFC3339))
@@ -491,6 +524,187 @@ func isLaunchTicketHashConflict(err error) bool {
 		strings.Contains(sqliteErr.Error(), "UNIQUE constraint failed: launch_tickets.token_hash")
 }
 
+// ConnectCredential authenticates a WebSocket's first message. Launch ticket
+// consumption and resume-token issuance share one IMMEDIATE transaction;
+// successful resume re-use slides expiry from the service clock.
+func (service *Service) ConnectCredential(ctx context.Context, request CredentialRequest) (_ ConnectionCredential, err error) {
+	if !service.configured() || nilDependency(service.ticketRandom) || len([]byte(service.tokenPepper)) < minimumTokenPepperBytes {
+		return ConnectionCredential{}, ErrInvalidConfiguration
+	}
+	if ctx == nil {
+		return ConnectionCredential{}, ErrInvalidRequest
+	}
+	launch := request.LaunchTicket != ""
+	resume := request.ResumeToken != ""
+	if launch == resume {
+		return ConnectionCredential{}, ErrInvalidCredential
+	}
+	plaintext := request.LaunchTicket
+	domain := launchTicketHashDomain
+	if resume {
+		plaintext = request.ResumeToken
+		domain = resumeTokenHashDomain
+	}
+	if !validOpaqueCredential(plaintext) {
+		return ConnectionCredential{}, ErrInvalidCredential
+	}
+	tokenHash, hashErr := hashCredential(service.tokenPepper, plaintext, domain)
+	if hashErr != nil {
+		return ConnectionCredential{}, ErrInvalidCredential
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return ConnectionCredential{}, beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+	// Sliding expiry starts only after the IMMEDIATE write lock has been
+	// acquired; time spent waiting for SQLite never shortens the session.
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	expiresMillis, expiryOK := safeAddMilliseconds(nowMillis, resumeTokenLifetime.Milliseconds())
+	if !expiryOK {
+		return ConnectionCredential{}, ErrInternal
+	}
+
+	var matchID, userID, storedGameID string
+	if launch {
+		var storedExpires int64
+		var consumed sql.NullInt64
+		queryErr := transaction.QueryRowContext(ctx, `
+SELECT match_id,user_id,game_id,expires_at,consumed_at
+FROM launch_tickets
+WHERE token_hash=?`, tokenHash).Scan(&matchID, &userID, &storedGameID, &storedExpires, &consumed)
+		if errors.Is(queryErr, sql.ErrNoRows) || queryErr == nil && (consumed.Valid || storedExpires <= nowMillis) {
+			return ConnectionCredential{}, ErrInvalidCredential
+		}
+		if queryErr != nil {
+			return ConnectionCredential{}, matchDatabaseError(ctx, queryErr)
+		}
+	} else {
+		var storedExpires, lastUsed int64
+		var revoked sql.NullInt64
+		queryErr := transaction.QueryRowContext(ctx, `
+SELECT match_id,user_id,expires_at,last_used_at,revoked_at
+FROM resume_tokens
+WHERE token_hash=?`, tokenHash).Scan(&matchID, &userID, &storedExpires, &lastUsed, &revoked)
+		if errors.Is(queryErr, sql.ErrNoRows) || queryErr == nil && (revoked.Valid || storedExpires <= nowMillis || lastUsed > storedExpires) {
+			return ConnectionCredential{}, ErrInvalidCredential
+		}
+		if queryErr != nil {
+			return ConnectionCredential{}, matchDatabaseError(ctx, queryErr)
+		}
+	}
+	if !canonicalUUID(matchID) || !canonicalUUID(userID) {
+		return ConnectionCredential{}, ErrInternal
+	}
+	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, matchID)
+	if loadErr != nil {
+		if errors.Is(loadErr, ErrMatchNotFound) {
+			return ConnectionCredential{}, ErrInvalidCredential
+		}
+		return ConnectionCredential{}, loadErr
+	}
+	if match.Status != StatusActive || !playerMember(players, userID) || launch && storedGameID != match.GameID {
+		return ConnectionCredential{}, ErrInvalidCredential
+	}
+	if _, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players); snapshotErr != nil {
+		return ConnectionCredential{}, snapshotErr
+	}
+
+	resumePlaintext := plaintext
+	if launch {
+		result, updateErr := transaction.ExecContext(ctx, `
+UPDATE launch_tickets
+SET consumed_at=?
+WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?`, nowMillis, tokenHash, nowMillis)
+		if updateErr != nil {
+			return ConnectionCredential{}, matchDatabaseError(ctx, updateErr)
+		}
+		if affectedExactlyOne(result) != nil {
+			return ConnectionCredential{}, ErrInvalidCredential
+		}
+		inserted := false
+		for attempt := 0; attempt < launchTicketCollisionMax; attempt++ {
+			resumePlaintext, err = service.randomLaunchTicket()
+			if err != nil {
+				return ConnectionCredential{}, ErrInternal
+			}
+			resumeHash, resumeHashErr := hashCredential(service.tokenPepper, resumePlaintext, resumeTokenHashDomain)
+			if resumeHashErr != nil {
+				return ConnectionCredential{}, ErrInternal
+			}
+			result, insertErr := transaction.ExecContext(ctx, `
+INSERT INTO resume_tokens(token_hash,match_id,user_id,expires_at,last_used_at,created_at)
+VALUES (?,?,?,?,?,?)`, resumeHash, matchID, userID, expiresMillis, nowMillis, nowMillis)
+			if insertErr != nil {
+				if isResumeTokenHashConflict(insertErr) {
+					continue
+				}
+				return ConnectionCredential{}, matchDatabaseError(ctx, insertErr)
+			}
+			if affectedExactlyOne(result) != nil {
+				return ConnectionCredential{}, ErrInternal
+			}
+			inserted = true
+			break
+		}
+		if !inserted {
+			return ConnectionCredential{}, ErrInternal
+		}
+	} else {
+		result, updateErr := transaction.ExecContext(ctx, `
+UPDATE resume_tokens
+SET last_used_at=?,expires_at=?
+WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?`, nowMillis, expiresMillis, tokenHash, nowMillis)
+		if updateErr != nil {
+			return ConnectionCredential{}, matchDatabaseError(ctx, updateErr)
+		}
+		if affectedExactlyOne(result) != nil {
+			return ConnectionCredential{}, ErrInvalidCredential
+		}
+	}
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return ConnectionCredential{}, matchDatabaseError(ctx, commitErr)
+	}
+	return ConnectionCredential{
+		UserID: userID, MatchID: matchID, GameID: match.GameID,
+		ResumeToken: resumePlaintext, ResumeExpiresAt: time.UnixMilli(expiresMillis).UTC(),
+	}, nil
+}
+
+func validOpaqueCredential(value string) bool {
+	if value == "" || len(value) > 256 || strings.ContainsAny(value, " \t\r\n") {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(decoded) == launchTicketEntropyBytes && base64.RawURLEncoding.EncodeToString(decoded) == value
+}
+
+func hashCredential(pepper, plaintext, domain string) (string, error) {
+	if pepper == "" || plaintext == "" || domain == "" {
+		return "", ErrInvalidRequest
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(domain))
+	writeCredentialHashField(hasher, []byte(pepper))
+	writeCredentialHashField(hasher, []byte(plaintext))
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func isResumeTokenHashConflict(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return (code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY || code == sqlite3.SQLITE_CONSTRAINT_UNIQUE) &&
+		strings.Contains(sqliteErr.Error(), "UNIQUE constraint failed: resume_tokens.token_hash")
+}
+
 // Create atomically creates a two-player match. Stable seats are based on the
 // call roles; only colors are random.
 func (service *Service) Create(ctx context.Context, gameID, initiatorID, opponentID string) (_ Match, err error) {
@@ -706,6 +920,9 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, gameID, matchID, playerIDs
 	}
 	if deleted != wantDeleted {
 		return Event{}, ErrInternal
+	}
+	if revokeErr := revokeMatchResumeTokens(ctx, transaction.Tx, matchID, nowMillis); revokeErr != nil {
+		return Event{}, revokeErr
 	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return Event{}, matchDatabaseError(ctx, commitErr)
@@ -933,6 +1150,9 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 		}
 		if deleted != wantDeleted {
 			return Event{}, Snapshot{}, ErrInternal
+		}
+		if revokeErr := revokeMatchResumeTokens(ctx, transaction.Tx, match.ID, nowMillis); revokeErr != nil {
+			return Event{}, Snapshot{}, revokeErr
 		}
 	} else {
 		resultExec, updateErr := transaction.ExecContext(ctx, `
@@ -1177,6 +1397,9 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 	if deleted != wantDeleted {
 		return Event{}, false, ErrInternal
 	}
+	if revokeErr := revokeMatchResumeTokens(ctx, transaction.Tx, match.ID, nowMillis); revokeErr != nil {
+		return Event{}, false, revokeErr
+	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return Event{}, false, matchDatabaseError(ctx, commitErr)
 	}
@@ -1184,6 +1407,19 @@ WHERE game_id=? AND match_id=? AND user_id IN (?,?)`, match.GameID, match.ID, pl
 		MatchID: match.ID, Revision: nextRevision, Type: protocol.TypePlatformMatchAbandoned,
 		Payload: append(json.RawMessage(nil), cancelledPayloadJSON...), CreatedAt: time.UnixMilli(nowMillis).UTC(),
 	}, true, nil
+}
+
+func revokeMatchResumeTokens(ctx context.Context, transaction *sql.Tx, matchID string, nowMillis int64) error {
+	if ctx == nil || transaction == nil || !canonicalUUID(matchID) {
+		return ErrInternal
+	}
+	if _, err := transaction.ExecContext(ctx, `
+UPDATE resume_tokens
+SET revoked_at=COALESCE(revoked_at,?)
+WHERE match_id=? AND revoked_at IS NULL`, nowMillis, matchID); err != nil {
+		return matchDatabaseError(ctx, err)
+	}
+	return nil
 }
 
 // MarkActiveMatchesOfflineOnBoot starts a timer only for active matches that

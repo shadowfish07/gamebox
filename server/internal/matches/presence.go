@@ -12,7 +12,9 @@ import (
 )
 
 const (
-	presenceSweepInterval     = 15 * time.Second
+	presenceSweepInterval = 15 * time.Second
+	// Shared with the WebSocket read deadline so transport closure and durable
+	// presence expiry cannot drift to different inactivity policies.
 	presenceConnectionTimeout = 45 * time.Second
 	// Keep expiry persistence within the SQLite store's eight-connection
 	// budget while retaining cross-match progress when one write is slow.

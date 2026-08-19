@@ -4,6 +4,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 	"unicode/utf8"
@@ -25,6 +27,8 @@ import (
 
 const maximumHTTPJSONBodyBytes int64 = 64 * 1024
 const maximumHTTPJSONDepth = 32
+const maximumWebSocketHeaderBytes = 8 * 1024
+const maximumWebSocketHeaderFields = 32
 
 type requestIDGenerator func() (string, error)
 
@@ -36,6 +40,7 @@ type RouterConfig struct {
 	Matches    *matches.Service
 	Games      *games.Registry
 	Publisher  MatchEventPublisher
+	Hub        *matches.Hub
 	Logger     *log.Logger
 	RequestIDs requestIDGenerator
 }
@@ -45,13 +50,14 @@ type router struct {
 	matches   *matches.Service
 	games     *games.Registry
 	publisher MatchEventPublisher
+	hub       *matches.Hub
 }
 
 func NewRouter(config RouterConfig) (http.Handler, error) {
-	if config.Auth == nil || config.Matches == nil || config.Games == nil || nilInterface(config.Publisher) || config.Logger == nil || config.RequestIDs == nil {
+	if config.Auth == nil || config.Matches == nil || config.Games == nil || nilInterface(config.Publisher) || config.Hub == nil || config.Logger == nil || config.RequestIDs == nil {
 		return nil, ErrInvalidConfiguration
 	}
-	router := &router{auth: config.Auth, matches: config.Matches, games: config.Games, publisher: config.Publisher}
+	router := &router{auth: config.Auth, matches: config.Matches, games: config.Games, publisher: config.Publisher, hub: config.Hub}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", router.health)
@@ -64,6 +70,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
+	mux.HandleFunc("GET /v1/ws", router.webSocket)
 
 	registerMethodFallback(mux, "/healthz", http.MethodGet)
 	registerMethodFallback(mux, "/v1/auth/register", http.MethodPost)
@@ -75,11 +82,84 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
+	registerMethodFallback(mux, "/v1/ws", http.MethodGet)
 	mux.HandleFunc("/", func(writer http.ResponseWriter, _ *http.Request) {
 		writeAPIError(writer, http.StatusNotFound, "invalid_request")
 	})
 
 	return requestMiddleware(config.Logger, config.RequestIDs)(mux), nil
+}
+
+func (router *router) webSocket(writer http.ResponseWriter, request *http.Request) {
+	// Credentials are accepted only in the first WebSocket data message. This
+	// rejects accidental query/header transport before any upgrade or logging.
+	if request.URL.RawQuery != "" || len(request.Header.Values("Authorization")) != 0 {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if !validWebSocketUpgrade(request) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if !webSocketOriginAllowed(request) {
+		writeAPIError(writer, http.StatusForbidden, "invalid_request")
+		return
+	}
+	router.hub.ServeHTTP(writer, request)
+}
+
+func validWebSocketUpgrade(request *http.Request) bool {
+	if request == nil || !request.ProtoAtLeast(1, 1) || len(request.Header) > maximumWebSocketHeaderFields || len(request.Host) > 1024 {
+		return false
+	}
+	headerBytes := len(request.Host)
+	for name, values := range request.Header {
+		headerBytes += len(name)
+		for _, value := range values {
+			headerBytes += len(value)
+			if headerBytes > maximumWebSocketHeaderBytes {
+				return false
+			}
+		}
+	}
+	if !headerContainsToken(request.Header.Values("Connection"), "upgrade") || !headerContainsToken(request.Header.Values("Upgrade"), "websocket") {
+		return false
+	}
+	versions := request.Header.Values("Sec-WebSocket-Version")
+	keys := request.Header.Values("Sec-WebSocket-Key")
+	if len(versions) != 1 || versions[0] != "13" || len(keys) != 1 {
+		return false
+	}
+	key := strings.TrimSpace(keys[0])
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	return err == nil && len(decoded) == 16 && base64.StdEncoding.EncodeToString(decoded) == key
+}
+
+func headerContainsToken(values []string, want string) bool {
+	for _, value := range values {
+		for token := range strings.SplitSeq(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func webSocketOriginAllowed(request *http.Request) bool {
+	values := request.Header.Values("Origin")
+	if len(values) == 0 {
+		return true
+	}
+	if len(values) != 1 {
+		return false
+	}
+	origin, err := url.Parse(values[0])
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" ||
+		origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(origin.Host, request.Host)
 }
 
 // NewProductionRequestID returns a cryptographically random UUIDv4 suitable

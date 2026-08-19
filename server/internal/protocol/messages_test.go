@@ -170,6 +170,43 @@ func TestFixturesAllowSemanticallyOmittedMatchFields(t *testing.T) {
 	}
 }
 
+func TestDecodeClientRequiresExactControlPayloadsAndCanonicalBindings(t *testing.T) {
+	valid := []string{
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"opaque"}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":"opaque"}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"00000000-0000-4000-8000-000000000001"}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.snapshot.requested","payload":{"currentRevision":3}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"y":7}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.resign.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{}}`,
+	}
+	for _, input := range valid {
+		if _, err := DecodeClient([]byte(input)); err != nil {
+			t.Fatalf("DecodeClient rejected %s: %v", input, err)
+		}
+	}
+
+	invalid := []string{
+		`{"protocolVersion":1,"type":"platform.connect","payload":{}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","resumeToken":"b"}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","extra":true}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","launchTicket":"b"}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launch\u0054icket":"a"}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"bad"}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"00000000-0000-4000-8000-000000000001","extra":true}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.snapshot.requested","payload":{"currentRevision":3.0}}`,
+		`{"protocolVersion":1,"gameId":"GOMOKU","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"y":7}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-11111111111A","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"y":7}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-33333333333A","payload":{"x":7,"y":7}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"x":8,"y":7}}`,
+		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","revision":3,"type":"platform.snapshot","payload":{}}`,
+	}
+	for _, input := range invalid {
+		if _, err := DecodeClient([]byte(input)); err == nil {
+			t.Fatalf("DecodeClient accepted %s", input)
+		}
+	}
+}
+
 func TestFixturesRejectNonCanonicalEnvelopeJSON(t *testing.T) {
 	action := `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"y":7}}`
 	snapshot := `{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","revision":3,"type":"platform.snapshot","payload":{}}`
