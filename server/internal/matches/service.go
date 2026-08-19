@@ -375,16 +375,16 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		return Event{}, Snapshot{}, lookupErr
 	}
 	if found {
-		snapshot, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players)
-		if snapshotErr != nil {
-			return Event{}, Snapshot{}, snapshotErr
-		}
 		matches, comparisonErr := committedActionMatches(committed, request, semantics, players)
 		if comparisonErr != nil {
 			return Event{}, Snapshot{}, comparisonErr
 		}
 		if !matches {
 			return Event{}, Snapshot{}, ErrActionConflict
+		}
+		snapshot, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players)
+		if snapshotErr != nil {
+			return Event{}, Snapshot{}, snapshotErr
 		}
 		if commitErr := transaction.Commit(); commitErr != nil {
 			return Event{}, Snapshot{}, matchDatabaseError(ctx, commitErr)

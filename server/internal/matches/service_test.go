@@ -1023,6 +1023,134 @@ func TestApplyActionIdempotencyUsesCanonicalRequestSemanticsAndDefensiveCopies(t
 	assertTableCount(t, fixture.db, "match_events", 1)
 }
 
+func TestApplyActionConflictPrecedesUnrelatedHistoryAndSlotValidation(t *testing.T) {
+	t.Run("different move ignores corrupt subsequent history", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		committed := moveRequest(created.ID, initiatorID, 30, 0, 1, 1)
+		if _, _, err := service.ApplyAction(context.Background(), committed); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, opponentID, 31, 1, 2, 2)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`UPDATE match_events SET payload_json='{' WHERE match_id=? AND revision=2`, created.ID); err != nil {
+			t.Fatal(err)
+		}
+		committed.Payload = json.RawMessage(`{"x":3,"y":3}`)
+		assertActionConflict(t, service, committed)
+	})
+
+	t.Run("different move ignores corrupt preceding history", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 32, 0, 1, 1)); err != nil {
+			t.Fatal(err)
+		}
+		committed := moveRequest(created.ID, opponentID, 33, 1, 2, 2)
+		if _, _, err := service.ApplyAction(context.Background(), committed); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`UPDATE match_events SET payload_json='{' WHERE match_id=? AND revision=1`, created.ID); err != nil {
+			t.Fatal(err)
+		}
+		committed.Payload = json.RawMessage(`{"x":4,"y":4}`)
+		assertActionConflict(t, service, committed)
+	})
+
+	t.Run("different type ignores corrupt active slots", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		committed := moveRequest(created.ID, initiatorID, 34, 0, 1, 1)
+		if _, _, err := service.ApplyAction(context.Background(), committed); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`DELETE FROM active_game_slots WHERE game_id=? AND user_id=?`, gomoku.GameID, opponentID); err != nil {
+			t.Fatal(err)
+		}
+		conflict := resignRequest(created.ID, initiatorID, 34, 0)
+		assertActionConflict(t, service, conflict)
+	})
+
+	t.Run("different move ignores corrupt slots after resignation", func(t *testing.T) {
+		fixture := newFixture(t)
+		service := fixture.service(t, bytes.NewReader([]byte{0}))
+		created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := service.ApplyAction(context.Background(), moveRequest(created.ID, initiatorID, 35, 0, 1, 1)); err != nil {
+			t.Fatal(err)
+		}
+		committed := resignRequest(created.ID, opponentID, 36, 1)
+		if _, _, err := service.ApplyAction(context.Background(), committed); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, gomoku.GameID, opponentID, created.ID); err != nil {
+			t.Fatal(err)
+		}
+		conflict := moveRequest(created.ID, opponentID, 36, 0, 4, 4)
+		assertActionConflict(t, service, conflict)
+	})
+}
+
+func TestApplyActionSameSemanticsStillFailsClosedOnCorruptHistoryOrSlots(t *testing.T) {
+	tests := []struct {
+		name    string
+		corrupt func(*testing.T, fixture, string)
+	}{
+		{name: "history", corrupt: func(t *testing.T, fixture fixture, matchID string) {
+			if _, err := fixture.db.Exec(`UPDATE match_events SET payload_json='{' WHERE match_id=?`, matchID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "slots", corrupt: func(t *testing.T, fixture fixture, matchID string) {
+			if _, err := fixture.db.Exec(`DELETE FROM active_game_slots WHERE game_id=? AND user_id=?`, gomoku.GameID, opponentID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			service := fixture.service(t, bytes.NewReader([]byte{0}))
+			created, err := service.Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			committed := moveRequest(created.ID, initiatorID, 37, 0, 1, 1)
+			if _, _, err := service.ApplyAction(context.Background(), committed); err != nil {
+				t.Fatal(err)
+			}
+			test.corrupt(t, fixture, created.ID)
+			event, snapshot, err := service.ApplyAction(context.Background(), committed)
+			if !errors.Is(err, ErrInternal) || event.MatchID != "" || snapshot.Match.ID != "" || err.Error() != ErrInternal.Error() {
+				t.Fatalf("same semantic retry=(%+v,%+v,%v), want zero/internal", event, snapshot, err)
+			}
+		})
+	}
+}
+
+func assertActionConflict(t *testing.T, service *Service, request ActionRequest) {
+	t.Helper()
+	event, snapshot, err := service.ApplyAction(context.Background(), request)
+	if !errors.Is(err, ErrActionConflict) || event.MatchID != "" || snapshot.Match.ID != "" || err.Error() != ErrActionConflict.Error() {
+		t.Fatalf("ApplyAction=(%+v,%+v,%v), want zero/action conflict", event, snapshot, err)
+	}
+}
+
 func TestSnapshotRebuildsMovesAndFailsClosedOnCorruptHistory(t *testing.T) {
 	fixture := newFixture(t)
 	service := fixture.service(t, bytes.NewReader([]byte{0}))
