@@ -11,6 +11,8 @@ static func cases() -> Array:
 		{"name": "host smoke rejects invalid delays", "run": _rejects_invalid_smoke_delays},
 		{"name": "main helper starts one full-viewport gomoku scene", "run": _starts_gomoku_in_main_scene},
 		{"name": "opaque smoke-looking ticket remains a normal launch", "run": _keeps_smoke_looking_ticket_in_normal_launch},
+		{"name": "host smoke exposes a controlled exit marker", "run": _has_controlled_exit_marker},
+		{"name": "private ticket is hydrated once before LaunchConfig", "run": _hydrates_private_ticket_once},
 	]
 
 
@@ -57,6 +59,29 @@ static func _keeps_smoke_looking_ticket_in_normal_launch() -> bool:
 		and _check(_gomoku_children(host).size() == 1, "expected normal Gomoku child for opaque ticket")
 	host.queue_free()
 	return result
+
+
+static func _has_controlled_exit_marker() -> bool:
+	return _check(
+		MainScript.HOST_SMOKE_EXITING_MARKER == "GAMEBOX_GODOT_EXITING",
+		"expected stable controlled exit marker",
+	)
+
+
+static func _hydrates_private_ticket_once() -> bool:
+	var host = MainScript.new()
+	var args := _valid_launch_args()
+	args[args.find("--launch-ticket") + 1] = MainScript.PRIVATE_TICKET_PLACEHOLDER
+	OS.set_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT, "private-canary-ticket")
+	var result: Dictionary = host._hydrate_private_launch_ticket(args)
+	var hydrated_args: PackedStringArray = result.get("args", PackedStringArray())
+	var hydrated_ticket := ""
+	if not hydrated_args.is_empty():
+		hydrated_ticket = hydrated_args[hydrated_args.find("--launch-ticket") + 1]
+	host.free()
+	return _check(result.get("ok", false), "expected private ticket hydration") \
+		and _check(hydrated_ticket == "private-canary-ticket", "expected unchanged private ticket") \
+		and _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "expected private environment to be cleared")
 
 
 static func _attached_main_scene() -> Control:

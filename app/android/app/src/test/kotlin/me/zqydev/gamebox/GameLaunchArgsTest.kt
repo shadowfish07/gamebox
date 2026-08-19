@@ -88,4 +88,17 @@ class GameLaunchArgsTest {
         val args = (result as GameLaunchArgs.ParseResult.Success).args
         assertFalse(args.toString().contains(ticket))
     }
+
+    @Test
+    fun `command line reads are defensive clones`() {
+        val args = GameLaunchArgs.hostSmoke()
+        val firstRead = args.commandLineParams
+
+        firstRead[1] = "mutated"
+
+        assertArrayEquals(
+            arrayOf("--", "--host-smoke", "--auto-exit-ms", "800"),
+            args.commandLineParams,
+        )
+    }
 }

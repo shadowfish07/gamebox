@@ -26,6 +26,30 @@ void main() {
 
     expect(find.byKey(const Key('host-smoke.launch')), findsOneWidget);
     expect(find.text('身份功能将在 Phase 3 接入'), findsNothing);
+    expect(find.byKey(const Key('host-smoke.normal-canary')), findsNothing);
+  });
+
+  testWidgets('instrumentation nonce exposes a normal launch canary', (
+    tester,
+  ) async {
+    final launcher = _FakeGameLauncher();
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: launcher,
+        hostSmokeEnabled: true,
+        instrumentationCanaryNonce: 'nonce_1234',
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('host-smoke.normal-canary')));
+    await tester.pump();
+
+    expect(launcher.launchCalls, 1);
+    expect(launcher.lastRequest?.gameId, 'gomoku');
+    expect(
+      launcher.lastRequest?.launchTicket,
+      'gamebox-canary-ticket-nonce_1234',
+    );
   });
 
   testWidgets('host-smoke button exposes a stable Android semantics label', (
@@ -79,6 +103,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('无法启动宿主烟测，请重试'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.text('无法启动宿主烟测，请重试')),
+      matchesSemantics(label: 'host-smoke.error'),
+    );
     expect(find.byKey(const Key('host-smoke.launch')), findsOneWidget);
     await tester.tap(find.byKey(const Key('host-smoke.launch')));
     await tester.pump();
@@ -102,12 +130,17 @@ void main() {
 }
 
 class _FakeGameLauncher implements GameLauncher {
+  int launchCalls = 0;
   int hostSmokeCalls = 0;
   Completer<void>? pendingSmoke;
   Object? smokeError;
+  GameLaunchRequest? lastRequest;
 
   @override
-  Future<void> launch(GameLaunchRequest request) async {}
+  Future<void> launch(GameLaunchRequest request) async {
+    launchCalls += 1;
+    lastRequest = request;
+  }
 
   @override
   Future<void> launchHostSmoke() {

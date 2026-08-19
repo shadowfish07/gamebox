@@ -4,6 +4,10 @@ const LaunchConfig = preload("res://core/launch_config.gd")
 const GameRegistry = preload("res://core/game_registry.gd")
 const SAFE_LAUNCH_ERROR := "Unable to launch game. Please return to Gamebox and try again."
 const HOST_SMOKE_MAX_DELAY_MS := 60000
+const HOST_SMOKE_EXITING_MARKER := "GAMEBOX_GODOT_EXITING"
+const NORMAL_READY_MARKER := "GAMEBOX_GODOT_NORMAL_READY"
+const PRIVATE_TICKET_ENVIRONMENT := "GAMEBOX_PRIVATE_LAUNCH_TICKET"
+const PRIVATE_TICKET_PLACEHOLDER := "__GAMEBOX_PRIVATE_LAUNCH_TICKET__"
 
 
 func _ready() -> void:
@@ -16,6 +20,11 @@ func _start_with_args(args: PackedStringArray) -> void:
 	if _has_host_smoke_key(args):
 		_start_host_smoke(args)
 		return
+	var hydration_result := _hydrate_private_launch_ticket(args)
+	if not hydration_result.get("ok", false):
+		_show_launch_error("invalid_private_launch_ticket")
+		return
+	args = hydration_result["args"]
 
 	var config_result: Dictionary = LaunchConfig.parse(args)
 	if not config_result.get("ok", false):
@@ -29,6 +38,23 @@ func _start_with_args(args: PackedStringArray) -> void:
 
 	$ReadyLabel.hide()
 	add_child(registry_result["scene"].instantiate())
+	print(NORMAL_READY_MARKER)
+
+
+func _hydrate_private_launch_ticket(args: PackedStringArray) -> Dictionary:
+	var hydrated_args := args.duplicate()
+	var ticket_key_index := hydrated_args.find("--launch-ticket")
+	if ticket_key_index < 0 or ticket_key_index + 1 >= hydrated_args.size():
+		return {"ok": true, "args": hydrated_args}
+	var ticket_index := ticket_key_index + 1
+	if hydrated_args[ticket_index] != PRIVATE_TICKET_PLACEHOLDER:
+		return {"ok": true, "args": hydrated_args}
+	var private_ticket := OS.get_environment(PRIVATE_TICKET_ENVIRONMENT)
+	OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
+	if private_ticket.is_empty():
+		return {"ok": false}
+	hydrated_args[ticket_index] = private_ticket
+	return {"ok": true, "args": hydrated_args}
 
 
 func _has_host_smoke_key(args: PackedStringArray) -> bool:
@@ -48,7 +74,12 @@ func _start_host_smoke(args: PackedStringArray) -> void:
 	print("GAMEBOX_GODOT_READY")
 	var auto_exit_ms: int = result.get("auto_exit_ms", 0)
 	if auto_exit_ms > 0:
-		get_tree().create_timer(auto_exit_ms / 1000.0).timeout.connect(get_tree().quit)
+		get_tree().create_timer(auto_exit_ms / 1000.0).timeout.connect(_controlled_host_smoke_exit)
+
+
+func _controlled_host_smoke_exit() -> void:
+	print(HOST_SMOKE_EXITING_MARKER)
+	get_tree().quit()
 
 
 func _parse_host_smoke_args(args: PackedStringArray) -> Dictionary:
