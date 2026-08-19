@@ -16,12 +16,28 @@ import (
 const malformedJWTMarker = "malformed-jwt-private-marker"
 
 func signRawJWTClaims(payload, secret string) string {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	claims := base64.RawURLEncoding.EncodeToString([]byte(payload))
-	signingInput := header + "." + claims
+	return signRawJWTDocuments([]byte(`{"alg":"HS256","typ":"JWT"}`), []byte(payload), secret)
+}
+
+func signRawJWTDocuments(header, payload []byte, secret string) string {
+	headerSegment := base64.RawURLEncoding.EncodeToString(header)
+	claims := base64.RawURLEncoding.EncodeToString(payload)
+	signingInput := headerSegment + "." + claims
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(signingInput))
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func canonicalClaimsJSON(now int64, extra string) string {
+	return fmt.Sprintf(`{"iss":"gamebox","sub":"access-user","iat":%d,"exp":%d%s}`, now, now+900, extra)
+}
+
+func nestedJSONObject(depth int) string {
+	value := `{}`
+	for level := 1; level < depth; level++ {
+		value = `{"nested":` + value + `}`
+	}
+	return value
 }
 
 func assertFixedUnauthorizedWithoutJWTDisclosure(t *testing.T, service *Service, raw string) {
@@ -104,5 +120,114 @@ func TestSessionAndServiceConfigFormattingRedactsSecretsForAllFmtVerbs(t *testin
 				t.Fatalf("secret-safe formatting failed: valueType=%T format=%s", value, format)
 			}
 		}
+	}
+}
+
+func TestParseAccessRejectsRegisteredClaimAndHeaderCaseFoldConfusion(t *testing.T) {
+	fixture := newAuthFixture(t)
+	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
+	now := fixture.now.UTC().Unix()
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "subject uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"SUB":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "issuer uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"ISS":"gamebox","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "issued at uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, fmt.Sprintf(`,"IAT":%d,"marker":"%s"`, now, malformedJWTMarker)), testJWTSecret)},
+		{name: "expiry uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, fmt.Sprintf(`,"EXP":%d,"marker":"%s"`, now+900, malformedJWTMarker)), testJWTSecret)},
+		{name: "audience uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"AUD":"gamebox","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "not before uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, fmt.Sprintf(`,"NBF":%d,"marker":"%s"`, now, malformedJWTMarker)), testJWTSecret)},
+		{name: "JWT ID uppercase", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"JTI":"one","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "escaped uppercase subject", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"\u0053UB":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "Unicode fold subject", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"\u017Fub":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "header algorithm uppercase companion", raw: signRawJWTDocuments([]byte(`{"alg":"HS256","ALG":"HS256","typ":"JWT"}`), []byte(canonicalClaimsJSON(now, `,"marker":"`+malformedJWTMarker+`"`)), testJWTSecret)},
+		{name: "header type uppercase companion", raw: signRawJWTDocuments([]byte(`{"alg":"HS256","typ":"JWT","TYP":"JWT"}`), []byte(canonicalClaimsJSON(now, `,"marker":"`+malformedJWTMarker+`"`)), testJWTSecret)},
+		{name: "header key id uppercase companion", raw: signRawJWTDocuments([]byte(`{"alg":"HS256","typ":"JWT","kid":"one","KID":"two"}`), []byte(canonicalClaimsJSON(now, `,"marker":"`+malformedJWTMarker+`"`)), testJWTSecret)},
+		{name: "escaped uppercase header algorithm", raw: signRawJWTDocuments([]byte(`{"alg":"HS256","\u0041LG":"HS256","typ":"JWT"}`), []byte(canonicalClaimsJSON(now, `,"marker":"`+malformedJWTMarker+`"`)), testJWTSecret)},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			assertFixedUnauthorizedWithoutJWTDisclosure(t, service, test.raw)
+		})
+	}
+}
+
+func TestParseAccessRequiresStrictUnicodeAndPairedSurrogates(t *testing.T) {
+	fixture := newAuthFixture(t)
+	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
+	now := fixture.now.UTC().Unix()
+	validPayload := []byte(canonicalClaimsJSON(now, `,"marker":"`+malformedJWTMarker+`"`))
+	invalidUTF8Payload := append([]byte(canonicalClaimsJSON(now, `,"custom":"`)), 0xff)
+	invalidUTF8Payload = append(invalidUTF8Payload, []byte(`"}`)...)
+	invalidUTF8Header := append([]byte(`{"alg":"HS256","typ":"JWT","custom":"`), 0xff)
+	invalidUTF8Header = append(invalidUTF8Header, []byte(`"}`)...)
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "invalid UTF-8 claims", raw: signRawJWTDocuments([]byte(`{"alg":"HS256","typ":"JWT"}`), invalidUTF8Payload, testJWTSecret)},
+		{name: "invalid UTF-8 header", raw: signRawJWTDocuments(invalidUTF8Header, validPayload, testJWTSecret)},
+		{name: "unpaired high surrogate value", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"custom":"\uD800","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "unpaired low surrogate value", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"custom":"\uDC00","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "unpaired high surrogate key", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"\uD800":"custom","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "unpaired low surrogate key", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"\uDC00":"custom","marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			assertFixedUnauthorizedWithoutJWTDisclosure(t, service, test.raw)
+		})
+	}
+
+	paired := signRawJWTClaims(canonicalClaimsJSON(now, `,"custom":"\uD83D\uDE00"`), testJWTSecret)
+	identity, err := service.ParseAccess(paired)
+	if err != nil || identity.UserID != "access-user" {
+		t.Fatalf("paired surrogate path: authenticated=%t expectedUser=%t", err == nil, identity.UserID == "access-user")
+	}
+	escapedLiteral := signRawJWTClaims(canonicalClaimsJSON(now, `,"custom":"\\uD800"`), testJWTSecret)
+	identity, err = service.ParseAccess(escapedLiteral)
+	if err != nil || identity.UserID != "access-user" {
+		t.Fatalf("escaped surrogate text path: authenticated=%t expectedUser=%t", err == nil, identity.UserID == "access-user")
+	}
+}
+
+func TestParseAccessRequiresTopLevelObjectsUniqueHeadersAndBoundedDepth(t *testing.T) {
+	fixture := newAuthFixture(t)
+	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
+	now := fixture.now.UTC().Unix()
+	header := []byte(`{"alg":"HS256","typ":"JWT"}`)
+	validPayload := []byte(canonicalClaimsJSON(now, `,"marker":"`+malformedJWTMarker+`"`))
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "claims top-level array", raw: signRawJWTDocuments(header, []byte(`[]`), testJWTSecret)},
+		{name: "claims top-level string", raw: signRawJWTDocuments(header, []byte(`"`+malformedJWTMarker+`"`), testJWTSecret)},
+		{name: "header top-level array", raw: signRawJWTDocuments([]byte(`[]`), validPayload, testJWTSecret)},
+		{name: "header top-level string", raw: signRawJWTDocuments([]byte(`"header"`), validPayload, testJWTSecret)},
+		{name: "header duplicate algorithm", raw: signRawJWTDocuments([]byte(`{"alg":"HS256","alg":"HS256","typ":"JWT"}`), validPayload, testJWTSecret)},
+		{name: "depth 33", raw: signRawJWTClaims(canonicalClaimsJSON(now, `,"custom":`+nestedJSONObject(32)+`,"marker":"`+malformedJWTMarker+`"`), testJWTSecret)},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			assertFixedUnauthorizedWithoutJWTDisclosure(t, service, test.raw)
+		})
+	}
+
+	depth32 := signRawJWTClaims(canonicalClaimsJSON(now, `,"custom":`+nestedJSONObject(31)), testJWTSecret)
+	identity, err := service.ParseAccess(depth32)
+	if err != nil || identity.UserID != "access-user" {
+		t.Fatalf("depth 32 boundary: authenticated=%t expectedUser=%t", err == nil, identity.UserID == "access-user")
+	}
+	exactKnownKeys := signRawJWTDocuments(
+		[]byte(`{"alg":"HS256","typ":"JWT","kid":"one"}`),
+		[]byte(canonicalClaimsJSON(now, fmt.Sprintf(`,"aud":"gamebox","nbf":%d,"jti":"one"`, now))),
+		testJWTSecret,
+	)
+	identity, err = service.ParseAccess(exactKnownKeys)
+	if err != nil || identity.UserID != "access-user" {
+		t.Fatalf("canonical optional keys: authenticated=%t expectedUser=%t", err == nil, identity.UserID == "access-user")
 	}
 }

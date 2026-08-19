@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -229,7 +230,7 @@ func (service *Service) ParseAccess(rawAccessToken string) (AccessIdentity, erro
 	if len(rawAccessToken) == 0 || len(rawAccessToken) > maximumAccessTokenTextBytes {
 		return AccessIdentity{}, ErrUnauthorized
 	}
-	if !jwtJSONObjectsHaveUniqueKeys(rawAccessToken) {
+	if !jwtJSONDocumentsAreStrict(rawAccessToken) {
 		return AccessIdentity{}, ErrUnauthorized
 	}
 	claims := &jwt.RegisteredClaims{}
@@ -259,33 +260,42 @@ func (service *Service) ParseAccess(rawAccessToken string) (AccessIdentity, erro
 
 const maximumJWTJSONDepth = 32
 
-func jwtJSONObjectsHaveUniqueKeys(raw string) bool {
+type jwtJSONDocumentKind uint8
+
+const (
+	jwtNestedDocument jwtJSONDocumentKind = iota
+	jwtHeaderDocument
+	jwtClaimsDocument
+)
+
+func jwtJSONDocumentsAreStrict(raw string) bool {
 	segments := strings.Split(raw, ".")
 	if len(segments) != 3 {
 		return false
 	}
 	strictBase64 := base64.RawURLEncoding.Strict()
-	for _, segment := range segments[:2] {
+	documentKinds := [2]jwtJSONDocumentKind{jwtHeaderDocument, jwtClaimsDocument}
+	for index, segment := range segments[:2] {
 		document, err := strictBase64.DecodeString(segment)
-		if err != nil || !uniqueJSONObject(document) {
+		if err != nil || !utf8.Valid(document) || !validJSONSurrogateEscapes(document) || !uniqueJSONObject(document, documentKinds[index]) {
 			return false
 		}
 	}
 	return true
 }
 
-func uniqueJSONObject(document []byte) bool {
+func uniqueJSONObject(document []byte, kind jwtJSONDocumentKind) bool {
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.UseNumber()
 	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') || !consumeUniqueJSONObject(decoder, 1) {
+	if err != nil || opening != json.Delim('{') || !consumeUniqueJSONObject(decoder, 1, kind) {
 		return false
 	}
 	_, err = decoder.Token()
 	return errors.Is(err, io.EOF)
 }
 
-func consumeUniqueJSONObject(decoder *json.Decoder, depth int) bool {
+func consumeUniqueJSONObject(decoder *json.Decoder, depth int, kind jwtJSONDocumentKind) bool {
 	if depth > maximumJWTJSONDepth {
 		return false
 	}
@@ -294,6 +304,9 @@ func consumeUniqueJSONObject(decoder *json.Decoder, depth int) bool {
 		keyToken, err := decoder.Token()
 		key, ok := keyToken.(string)
 		if err != nil || !ok {
+			return false
+		}
+		if !usesCanonicalKnownKey(key, kind) {
 			return false
 		}
 		if _, duplicate := keys[key]; duplicate {
@@ -319,7 +332,7 @@ func consumeUniqueJSONValue(decoder *json.Decoder, depth int) bool {
 	}
 	switch delimiter {
 	case '{':
-		return consumeUniqueJSONObject(decoder, depth+1)
+		return consumeUniqueJSONObject(decoder, depth+1, jwtNestedDocument)
 	case '[':
 		if depth >= maximumJWTJSONDepth {
 			return false
@@ -334,4 +347,92 @@ func consumeUniqueJSONValue(decoder *json.Decoder, depth int) bool {
 	default:
 		return false
 	}
+}
+
+func usesCanonicalKnownKey(key string, kind jwtJSONDocumentKind) bool {
+	switch kind {
+	case jwtHeaderDocument:
+		return exactOrUnrelatedKey(key, "alg") && exactOrUnrelatedKey(key, "typ") && exactOrUnrelatedKey(key, "kid")
+	case jwtClaimsDocument:
+		return exactOrUnrelatedKey(key, "iss") && exactOrUnrelatedKey(key, "sub") && exactOrUnrelatedKey(key, "aud") &&
+			exactOrUnrelatedKey(key, "exp") && exactOrUnrelatedKey(key, "nbf") && exactOrUnrelatedKey(key, "iat") &&
+			exactOrUnrelatedKey(key, "jti")
+	case jwtNestedDocument:
+		return true
+	default:
+		return false
+	}
+}
+
+func exactOrUnrelatedKey(key, canonical string) bool {
+	return key == canonical || !strings.EqualFold(key, canonical)
+}
+
+// validJSONSurrogateEscapes rejects the lossy behavior of encoding/json for an
+// isolated UTF-16 surrogate. Escaped pairs remain valid and are decoded by the
+// standard parser after this lexical pass.
+func validJSONSurrogateEscapes(document []byte) bool {
+	inString := false
+	for index := 0; index < len(document); index++ {
+		character := document[index]
+		if !inString {
+			if character == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch character {
+		case '"':
+			inString = false
+		case '\\':
+			if index+1 >= len(document) {
+				return false
+			}
+			if document[index+1] != 'u' {
+				index++
+				continue
+			}
+			codeUnit, ok := decodeJSONHexCodeUnit(document, index+2)
+			if !ok {
+				return false
+			}
+			index += 5
+			switch {
+			case codeUnit >= 0xd800 && codeUnit <= 0xdbff:
+				nextEscape := index + 1
+				if nextEscape+5 >= len(document) || document[nextEscape] != '\\' || document[nextEscape+1] != 'u' {
+					return false
+				}
+				lowSurrogate, lowOK := decodeJSONHexCodeUnit(document, nextEscape+2)
+				if !lowOK || lowSurrogate < 0xdc00 || lowSurrogate > 0xdfff {
+					return false
+				}
+				index = nextEscape + 5
+			case codeUnit >= 0xdc00 && codeUnit <= 0xdfff:
+				return false
+			}
+		}
+	}
+	return !inString
+}
+
+func decodeJSONHexCodeUnit(document []byte, start int) (uint16, bool) {
+	if start+4 > len(document) {
+		return 0, false
+	}
+	var value uint16
+	for _, digit := range document[start : start+4] {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value |= uint16(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value |= uint16(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value |= uint16(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return value, true
 }
