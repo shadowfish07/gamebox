@@ -116,12 +116,12 @@ static func _preserves_dash_prefixed_ticket() -> bool:
 
 
 static func _validates_websocket_hosts_and_ports() -> bool:
-	for valid_url in ["ws://10.0.2.2:8080/v1/ws", "wss://games.example.com", "ws://[2001:db8::1]:8080/v1/ws"]:
+	for valid_url in ["ws://10.0.2.2:8080/v1/ws", "wss://games.example.com", "ws://localhost", "ws://192.168.1.1", "ws://[2001:db8::1]:8080/v1/ws"]:
 		var valid_args := _valid_args()
 		valid_args[valid_args.find("--ws-url") + 1] = valid_url
 		if not _check(LaunchConfig.parse(valid_args).get("ok", false), "expected valid ws URL %s" % valid_url):
 			return false
-	for invalid_url in ["ws://host:0", "ws://host:99999", "ws://host\t/path", "ws://host\n/path", "ws://[2001:db8::1", "ws://2001:db8::1"]:
+	for invalid_url in ["ws://host:0", "ws://host:99999", "ws://host\t/path", "ws://host\n/path", "ws://[2001:db8::1", "ws://2001:db8::1", "ws://user@host", "ws://host\\path", "ws://host%2f.example", "ws://api..example", "ws://-api.example", "ws://api-.example", "ws://256.0.0.1"]:
 		var invalid_args := _valid_args()
 		invalid_args[invalid_args.find("--ws-url") + 1] = invalid_url
 		if not _fails_with(invalid_args, "invalid_ws_url"):

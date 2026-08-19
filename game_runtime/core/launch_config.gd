@@ -72,7 +72,7 @@ static func _is_valid_ws_url(value: String) -> bool:
 		if delimiter_index >= 0:
 			authority_end = min(authority_end, delimiter_index)
 	var authority := authority_and_suffix.left(authority_end)
-	if authority.is_empty():
+	if authority.is_empty() or authority.contains("@") or authority.contains("\\") or authority.contains("%"):
 		return false
 
 	if authority.begins_with("["):
@@ -124,12 +124,66 @@ static func _is_valid_ipv6(host: String) -> bool:
 
 static func _is_valid_host_authority(authority: String) -> bool:
 	var port_separator := authority.rfind(":")
-	if port_separator < 0:
-		return not authority.is_empty()
-	var host := authority.left(port_separator)
+	var host := authority
+	var port_suffix := ""
+	if port_separator >= 0:
+		host = authority.left(port_separator)
+		port_suffix = authority.substr(port_separator)
 	if host.is_empty() or host.contains(":"):
 		return false
-	return _is_valid_port_suffix(authority.substr(port_separator))
+	return _is_valid_hostname_or_ipv4(host) and _is_valid_port_suffix(port_suffix)
+
+
+static func _is_valid_hostname_or_ipv4(host: String) -> bool:
+	if host.length() > 253:
+		return false
+	if _looks_like_ipv4(host):
+		return _is_valid_ipv4(host)
+	return _is_valid_hostname(host)
+
+
+static func _looks_like_ipv4(host: String) -> bool:
+	if not host.contains("."):
+		return false
+	for index in host.length():
+		var code := host.unicode_at(index)
+		if code != 46 and (code < 48 or code > 57):
+			return false
+	return true
+
+
+static func _is_valid_ipv4(host: String) -> bool:
+	var octets := host.split(".", true)
+	if octets.size() != 4:
+		return false
+	for octet in octets:
+		if octet.is_empty() or octet.length() > 3:
+			return false
+		for index in octet.length():
+			var code := octet.unicode_at(index)
+			if code < 48 or code > 57:
+				return false
+		if octet.to_int() > 255:
+			return false
+	return true
+
+
+static func _is_valid_hostname(host: String) -> bool:
+	var labels := host.split(".", true)
+	for label in labels:
+		if label.is_empty() or label.length() > 63:
+			return false
+		if not _is_ascii_alphanumeric(label.unicode_at(0)) or not _is_ascii_alphanumeric(label.unicode_at(label.length() - 1)):
+			return false
+		for index in label.length():
+			var code := label.unicode_at(index)
+			if not _is_ascii_alphanumeric(code) and code != 45:
+				return false
+	return true
+
+
+static func _is_ascii_alphanumeric(code: int) -> bool:
+	return (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122)
 
 
 static func _is_valid_port_suffix(suffix: String) -> bool:

@@ -9,7 +9,8 @@ static func cases() -> Array:
 	return [
 		{"name": "host smoke accepts bounded decimal delay", "run": _accepts_bounded_smoke_delay},
 		{"name": "host smoke rejects invalid delays", "run": _rejects_invalid_smoke_delays},
-		{"name": "gomoku fills a viewport-hosted main scene", "run": _gomoku_fills_viewport_host},
+		{"name": "main helper starts one full-viewport gomoku scene", "run": _starts_gomoku_in_main_scene},
+		{"name": "opaque smoke-looking ticket remains a normal launch", "run": _keeps_smoke_looking_ticket_in_normal_launch},
 	]
 
 
@@ -31,22 +32,51 @@ static func _rejects_invalid_smoke_delays() -> bool:
 	return true
 
 
-static func _gomoku_fills_viewport_host() -> bool:
+static func _starts_gomoku_in_main_scene() -> bool:
+	var host = await _attached_main_scene()
+	host._start_with_args(_valid_launch_args())
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var ready_label := host.get_node("ReadyLabel") as Label
+	var gomoku_children := _gomoku_children(host)
+	var result := _check(not ready_label.visible, "expected ReadyLabel to hide after a valid launch") \
+		and _check(gomoku_children.size() == 1, "expected exactly one Gomoku child")
+	if result:
+		result = _check(gomoku_children[0].size == host.size, "expected Gomoku size to equal host viewport size")
+	host.queue_free()
+	return result
+
+
+static func _keeps_smoke_looking_ticket_in_normal_launch() -> bool:
+	var host = await _attached_main_scene()
+	var args := _valid_launch_args()
+	args[args.find("--launch-ticket") + 1] = "--host-smoke"
+	host._start_with_args(args)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var ready_label := host.get_node("ReadyLabel") as Label
+	var result := _check(not ready_label.visible, "expected smoke-looking ticket to remain a normal launch") \
+		and _check(_gomoku_children(host).size() == 1, "expected normal Gomoku child for opaque ticket")
+	host.queue_free()
+	return result
+
+
+static func _attached_main_scene() -> Control:
 	var tree := Engine.get_main_loop() as SceneTree
-	var host = MainScene.instantiate()
+	var host := MainScene.instantiate() as Control
 	tree.root.add_child(host)
 	await tree.process_frame
-	var host_control := host as Control
-	if not _check(host_control != null and host_control.size.x > 0.0 and host_control.size.y > 0.0, "expected positive host Control size"):
-		host.queue_free()
-		return false
-	var scene_result: Dictionary = GameRegistry.resolve("gomoku")
-	var gomoku = scene_result["scene"].instantiate() as Control
-	host.add_child(gomoku)
-	await tree.process_frame
-	var has_size: bool = gomoku.size.x > 0.0 and gomoku.size.y > 0.0
-	host.queue_free()
-	return _check(has_size, "expected positive Gomoku Control size after a process frame")
+	return host
+
+
+static func _valid_launch_args() -> PackedStringArray:
+	return PackedStringArray(["--game-id", "gomoku", "--match-id", "11111111-1111-4111-8111-111111111111", "--launch-ticket", "opaque-ticket", "--ws-url", "ws://10.0.2.2:8080/v1/ws"])
+
+
+static func _gomoku_children(host: Control) -> Array[Control]:
+	var gomoku_children: Array[Control] = []
+	for child in host.get_children():
+		if child is Control and child.name == "Gomoku":
+			gomoku_children.append(child)
+	return gomoku_children
 
 
 static func _check(condition: bool, message: String) -> bool:

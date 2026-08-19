@@ -7,10 +7,13 @@ const HOST_SMOKE_MAX_DELAY_MS := 60000
 
 
 func _ready() -> void:
-	var args := OS.get_cmdline_user_args()
+	_start_with_args(OS.get_cmdline_user_args())
+
+
+func _start_with_args(args: PackedStringArray) -> void:
 	if args.is_empty():
 		return
-	if args.has("--host-smoke"):
+	if _has_host_smoke_key(args):
 		_start_host_smoke(args)
 		return
 
@@ -26,6 +29,13 @@ func _ready() -> void:
 
 	$ReadyLabel.hide()
 	add_child(registry_result["scene"].instantiate())
+
+
+func _has_host_smoke_key(args: PackedStringArray) -> bool:
+	for index in range(0, args.size(), 2):
+		if args[index] == "--host-smoke":
+			return true
+	return false
 
 
 func _start_host_smoke(args: PackedStringArray) -> void:

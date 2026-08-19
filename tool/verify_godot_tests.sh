@@ -7,10 +7,28 @@ watchdog_seconds="${GODOT_TEST_WATCHDOG_SECONDS:-20}"
 log_file="$(mktemp -t gamebox-godot-tests.XXXXXX)"
 godot_pid=""
 
-cleanup() {
-	if [[ -n "$godot_pid" ]] && kill -0 "$godot_pid" 2>/dev/null; then
-		kill "$godot_pid" 2>/dev/null || true
+terminate_godot() {
+	if [[ -z "$godot_pid" ]]; then
+		return
 	fi
+	if kill -0 "$godot_pid" 2>/dev/null; then
+		kill -TERM "$godot_pid" 2>/dev/null || true
+		for _ in 1 2 3; do
+			if ! kill -0 "$godot_pid" 2>/dev/null; then
+				break
+			fi
+			sleep 1
+		done
+		if kill -0 "$godot_pid" 2>/dev/null; then
+			kill -KILL "$godot_pid" 2>/dev/null || true
+		fi
+	fi
+	wait "$godot_pid" 2>/dev/null || true
+	godot_pid=""
+}
+
+cleanup() {
+	terminate_godot
 	rm -f "$log_file"
 }
 trap cleanup EXIT
@@ -26,8 +44,7 @@ elapsed_seconds=0
 while kill -0 "$godot_pid" 2>/dev/null; do
 	if (( elapsed_seconds >= watchdog_seconds )); then
 		echo "Godot test runner exceeded ${watchdog_seconds}s watchdog" >&2
-		kill "$godot_pid" 2>/dev/null || true
-		wait "$godot_pid" || true
+		terminate_godot
 		cat "$log_file"
 		exit 1
 	fi
@@ -47,7 +64,7 @@ if (( godot_status != 0 )); then
 	echo "Godot test runner exited with status ${godot_status}" >&2
 	exit 1
 fi
-if grep -Eq 'SCRIPT ERROR:|Parse Error:|Compile Error:|Failed to load script|Invalid call\.' "$log_file"; then
+if grep -Eq '^ERROR:|SCRIPT ERROR:|Parse Error:|Compile Error:|Failed to load script|Invalid call\.' "$log_file"; then
 	echo "Godot emitted fatal script diagnostics" >&2
 	exit 1
 fi
