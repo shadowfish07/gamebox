@@ -47,4 +47,8 @@ post_marker_fixture="$fixture"$'\nFatal signal 6 (SIGABRT), code -1, pid 4242'
 post_marker_logs="$(gamebox_logs_after_marker "$MARKER" <<<"$post_marker_fixture")"
 [[ -n "$(gamebox_find_crash_evidence "$APP" "$GAME" "$HELPER" "$PID" <<<"$post_marker_logs")" ]]
 
+post_exit_fixture="$fixture"$'\nOnGodotTerminating\nFatal signal 6 (SIGABRT), code -1, pid 4242'
+post_exit_logs="$(gamebox_logs_after_marker "$MARKER" <<<"$post_exit_fixture")"
+[[ -n "$(gamebox_find_crash_evidence "$APP" "$GAME" "$HELPER" "$PID" <<<"$post_exit_logs")" ]]
+
 echo "Android smoke log parser tests passed."
