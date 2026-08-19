@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -709,5 +710,138 @@ func TestRegisterTokenGenerationFailureUsesFixedError(t *testing.T) {
 	token, err := randomToken(32, failingEntropyReader{})
 	if token != "" || !errors.Is(err, ErrTokenGeneration) || err.Error() != ErrTokenGeneration.Error() {
 		t.Fatalf("randomToken failure = (%q, %v), want no token and fixed ErrTokenGeneration", token, err)
+	}
+}
+
+type cancelingEntropyReader struct {
+	cancel context.CancelFunc
+	data   []byte
+	used   bool
+}
+
+func (reader *cancelingEntropyReader) Read(destination []byte) (int, error) {
+	if !reader.used {
+		reader.used = true
+		reader.cancel()
+	}
+	if len(reader.data) == 0 {
+		return 0, io.EOF
+	}
+	count := copy(destination, reader.data)
+	reader.data = reader.data[count:]
+	return count, nil
+}
+
+func TestRegisterAndIssueIsAtomicAcrossCredentialFailures(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "atomic-success")
+		session, err := fixture.service.RegisterAndIssue(context.Background(), "atomic-success", "Alice")
+		if err != nil || session.User.ID == "" || session.User.Nickname != "Alice" || session.AccessToken == "" || session.RefreshToken == "" {
+			t.Fatalf("RegisterAndIssue=(%+v,%v)", session, err)
+		}
+		assertAtomicRegistrationState(t, fixture, "atomic-success", 1, true)
+	})
+
+	t.Run("entropy failure", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "atomic-entropy")
+		fixture.service.entropy = failingEntropyReader{}
+		session, err := fixture.service.RegisterAndIssue(context.Background(), "atomic-entropy", "Alice")
+		if !errors.Is(err, ErrInternal) || session.AccessToken != "" || session.RefreshToken != "" {
+			t.Fatalf("entropy failure=(%+v,%v)", session, err)
+		}
+		assertAtomicRegistrationState(t, fixture, "atomic-entropy", 0, false)
+	})
+
+	t.Run("context cancelled by entropy between stages", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "atomic-cancel")
+		ctx, cancel := context.WithCancel(context.Background())
+		fixture.service.entropy = &cancelingEntropyReader{cancel: cancel, data: bytes.Repeat([]byte{7}, 32)}
+		session, err := fixture.service.RegisterAndIssue(ctx, "atomic-cancel", "Alice")
+		if !errors.Is(err, context.Canceled) || session.AccessToken != "" || session.RefreshToken != "" {
+			t.Fatalf("cancel failure=(%+v,%v)", session, err)
+		}
+		assertAtomicRegistrationState(t, fixture, "atomic-cancel", 0, false)
+	})
+
+	t.Run("refresh hash collision", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "atomic-collision")
+		entropy := bytes.Repeat([]byte{9}, 32)
+		fixture.service.entropy = bytes.NewReader(entropy)
+		plaintext := base64.RawURLEncoding.EncodeToString(entropy)
+		hash, err := HashRefreshToken(testPepper, plaintext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		existingID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+		if _, err := fixture.db.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, existingID, "Existing", "existing", fixture.now.Unix(), fixture.now.Unix()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.Exec(`INSERT INTO refresh_tokens(token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, hash, existingID, fixture.now.Add(time.Hour).Unix(), fixture.now.Unix()); err != nil {
+			t.Fatal(err)
+		}
+		session, issueErr := fixture.service.RegisterAndIssue(context.Background(), "atomic-collision", "Alice")
+		if !errors.Is(issueErr, ErrInternal) || session.RefreshToken != "" {
+			t.Fatalf("collision=(%+v,%v)", session, issueErr)
+		}
+		assertAtomicRegistrationState(t, fixture, "atomic-collision", 1, false)
+	})
+
+	t.Run("refresh insert failure", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "atomic-insert")
+		if _, err := fixture.db.Exec(`CREATE TRIGGER fail_atomic_refresh BEFORE INSERT ON refresh_tokens BEGIN SELECT RAISE(ABORT,'private-refresh-detail'); END`); err != nil {
+			t.Fatal(err)
+		}
+		session, issueErr := fixture.service.RegisterAndIssue(context.Background(), "atomic-insert", "Alice")
+		if !errors.Is(issueErr, ErrInternal) || session.AccessToken != "" {
+			t.Fatalf("insert failure=(%+v,%v)", session, issueErr)
+		}
+		assertAtomicRegistrationState(t, fixture, "atomic-insert", 0, false)
+	})
+
+	t.Run("deferred commit failure", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "atomic-commit")
+		if _, err := fixture.db.Exec(`
+CREATE TABLE registration_commit_guard (
+  marker TEXT PRIMARY KEY,
+  missing_user_id TEXT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER fail_atomic_commit AFTER INSERT ON refresh_tokens
+BEGIN
+  INSERT INTO registration_commit_guard(marker,missing_user_id)
+  VALUES (NEW.token_hash,'ffffffff-ffff-4fff-8fff-ffffffffffff');
+END;`); err != nil {
+			t.Fatal(err)
+		}
+		session, issueErr := fixture.service.RegisterAndIssue(context.Background(), "atomic-commit", "Alice")
+		if !errors.Is(issueErr, ErrInternal) || session.AccessToken != "" || session.RefreshToken != "" {
+			t.Fatalf("commit failure=(%+v,%v)", session, issueErr)
+		}
+		assertAtomicRegistrationState(t, fixture, "atomic-commit", 0, false)
+	})
+}
+
+func assertAtomicRegistrationState(t *testing.T, fixture authFixture, invite string, wantUsers int, wantConsumed bool) {
+	t.Helper()
+	var usersCount int
+	if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&usersCount); err != nil || usersCount != wantUsers {
+		t.Fatalf("users=%d want=%d err=%v", usersCount, wantUsers, err)
+	}
+	hash, err := HashToken(testPepper, invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var consumedBy sql.NullString
+	var consumedAt sql.NullInt64
+	if err := fixture.db.QueryRow(`SELECT consumed_by,consumed_at FROM invite_codes WHERE code_hash=?`, hash).Scan(&consumedBy, &consumedAt); err != nil {
+		t.Fatal(err)
+	}
+	if consumedBy.Valid != wantConsumed || consumedAt.Valid != wantConsumed {
+		t.Fatalf("invite consumed=(%v,%v) want=%t", consumedBy, consumedAt, wantConsumed)
 	}
 }

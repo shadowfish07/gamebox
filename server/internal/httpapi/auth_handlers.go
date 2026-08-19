@@ -38,14 +38,9 @@ func (router *router) register(writer http.ResponseWriter, request *http.Request
 		writeAPIError(writer, status, "invalid_request")
 		return
 	}
-	user, registerErr := router.auth.Register(request.Context(), body.InviteCode, body.Nickname)
+	session, registerErr := router.auth.RegisterAndIssue(request.Context(), body.InviteCode, body.Nickname)
 	if registerErr != nil {
 		writeServiceError(writer, registerErr)
-		return
-	}
-	session, issueErr := router.auth.Issue(request.Context(), user.ID)
-	if issueErr != nil {
-		writeServiceError(writer, issueErr)
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/matches"
 )
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
@@ -141,14 +142,23 @@ func (router *router) cancelMatch(writer http.ResponseWriter, request *http.Requ
 		writeAPIError(writer, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	matchID := request.PathValue("matchId")
+	matchID, valid := literalCanonicalPathUUID(request, "matchId")
+	if !valid {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
 	event, cancelErr := router.matches.Cancel(request.Context(), matchID, user.ID)
 	if cancelErr != nil {
 		writeServiceError(writer, cancelErr)
 		return
 	}
-	router.publisher.Publish(matchID, event)
+	publishCommittedEvent(router.publisher, matchID, event)
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+func publishCommittedEvent(publisher MatchEventPublisher, matchID string, event matches.Event) {
+	defer func() { _ = recover() }()
+	publisher.Publish(matchID, event)
 }
 
 func (router *router) createLaunchTicket(writer http.ResponseWriter, request *http.Request) {
@@ -171,7 +181,12 @@ func (router *router) createLaunchTicket(writer http.ResponseWriter, request *ht
 			return
 		}
 	}
-	ticket, ticketErr := router.matches.CreateLaunchTicket(request.Context(), request.PathValue("matchId"), user.ID)
+	matchID, valid := literalCanonicalPathUUID(request, "matchId")
+	if !valid {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	ticket, ticketErr := router.matches.CreateLaunchTicket(request.Context(), matchID, user.ID)
 	if ticketErr != nil {
 		writeServiceError(writer, ticketErr)
 		return

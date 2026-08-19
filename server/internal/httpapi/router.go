@@ -107,9 +107,16 @@ func nilInterface(value any) bool {
 
 func registerMethodFallback(mux *http.ServeMux, pattern, allowed string) {
 	mux.HandleFunc(pattern, func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Allow", allowed)
+		writer.Header().Set("Allow", allowedMethodsHeader(allowed))
 		writeAPIError(writer, http.StatusMethodNotAllowed, "invalid_request")
 	})
+}
+
+func allowedMethodsHeader(allowed string) string {
+	if allowed == http.MethodGet {
+		return "GET, HEAD"
+	}
+	return allowed
 }
 
 type responseCapture struct {
@@ -144,12 +151,15 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 			requestID, idErr := requestIDs()
 			if idErr != nil || !canonicalRequestID(requestID) {
 				writeAPIError(writer, http.StatusInternalServerError, "internal_error")
-				logger.Printf("request_id=unavailable method=%s path=unmatched status=500 panic=false", request.Method)
+				logger.Printf("request_id=unavailable method=%s path=unmatched status=500 panic=false", safeRequestMethod(request.Method))
 				return
 			}
 			writer.Header().Set("X-Request-ID", requestID)
+			// MaxBytesReader must receive the server's original writer so its
+			// private requestTooLarge signal can close an oversized HTTP/1.x
+			// connection. responseCapture deliberately stays outside this call.
+			request.Body = http.MaxBytesReader(writer, request.Body, maximumHTTPJSONBodyBytes)
 			capture := &responseCapture{ResponseWriter: writer, status: http.StatusOK}
-			request.Body = http.MaxBytesReader(capture, request.Body, maximumHTTPJSONBodyBytes)
 			panicked := false
 			defer func() {
 				if recover() != nil {
@@ -158,11 +168,50 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 						writeAPIError(capture, http.StatusInternalServerError, "internal_error")
 					}
 				}
-				logger.Printf("request_id=%s method=%s path=%s status=%d panic=%t", requestID, request.Method, safeRequestPattern(request.Pattern), capture.status, panicked)
+				logger.Printf("request_id=%s method=%s path=%s status=%d panic=%t", requestID, safeRequestMethod(request.Method), safeRequestPattern(request.Pattern), capture.status, panicked)
 			}()
+			if request.ContentLength > maximumHTTPJSONBodyBytes {
+				writeAPIError(capture, http.StatusRequestEntityTooLarge, "invalid_request")
+				return
+			}
+			if bodylessHTTPMethod(request.Method) {
+				nonempty, bodyErr := requestBodyIsNonempty(request)
+				if bodyErr != nil {
+					writeAPIError(capture, http.StatusBadRequest, "invalid_request")
+					return
+				}
+				if nonempty {
+					writeAPIError(capture, http.StatusBadRequest, "invalid_request")
+					return
+				}
+			}
 			next.ServeHTTP(capture, request)
 		})
 	}
+}
+
+func safeRequestMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete, http.MethodOptions:
+		return method
+	default:
+		return "OTHER"
+	}
+}
+
+func bodylessHTTPMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodDelete
+}
+
+func requestBodyIsNonempty(request *http.Request) (bool, error) {
+	if request.Body == nil || request.ContentLength == 0 {
+		return false, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(request.Body, 1))
+	if err != nil {
+		return false, err
+	}
+	return len(data) != 0, nil
 }
 
 func safeRequestPattern(pattern string) string {
@@ -227,7 +276,7 @@ func decodeJSONBody(request *http.Request, destination any, exactFields ...strin
 		return http.StatusBadRequest, errors.New("invalid body")
 	}
 	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(trimmed) {
+	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(trimmed) || !validHTTPJSONSurrogateEscapes(trimmed) {
 		return http.StatusBadRequest, errors.New("body must be an object")
 	}
 	if duplicateErr := rejectDuplicateJSONKeys(trimmed); duplicateErr != nil {
@@ -245,6 +294,85 @@ func decodeJSONBody(request *http.Request, destination any, exactFields ...strin
 		return http.StatusBadRequest, trailingErr
 	}
 	return 0, nil
+}
+
+// validHTTPJSONSurrogateEscapes prevents encoding/json from replacing an
+// isolated UTF-16 surrogate with U+FFFD. It inspects every JSON string,
+// including object keys; valid pairs and a literal escaped "\\uD800" remain
+// lossless and are accepted.
+func validHTTPJSONSurrogateEscapes(document []byte) bool {
+	inString := false
+	for index := 0; index < len(document); index++ {
+		character := document[index]
+		if !inString {
+			if character == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch character {
+		case '"':
+			inString = false
+		case '\\':
+			if index+1 >= len(document) {
+				return false
+			}
+			if document[index+1] != 'u' {
+				index++
+				continue
+			}
+			codeUnit, ok := decodeHTTPJSONHexCodeUnit(document, index+2)
+			if !ok {
+				return false
+			}
+			index += 5
+			switch {
+			case codeUnit >= 0xd800 && codeUnit <= 0xdbff:
+				nextEscape := index + 1
+				if nextEscape+5 >= len(document) || document[nextEscape] != '\\' || document[nextEscape+1] != 'u' {
+					return false
+				}
+				low, lowOK := decodeHTTPJSONHexCodeUnit(document, nextEscape+2)
+				if !lowOK || low < 0xdc00 || low > 0xdfff {
+					return false
+				}
+				index = nextEscape + 5
+			case codeUnit >= 0xdc00 && codeUnit <= 0xdfff:
+				return false
+			}
+		}
+	}
+	return !inString
+}
+
+func decodeHTTPJSONHexCodeUnit(document []byte, start int) (uint16, bool) {
+	if start+4 > len(document) {
+		return 0, false
+	}
+	var value uint16
+	for _, digit := range document[start : start+4] {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value |= uint16(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value |= uint16(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value |= uint16(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return value, true
+}
+
+func literalCanonicalPathUUID(request *http.Request, parameter string) (string, bool) {
+	value := request.PathValue(parameter)
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed.String() != value || parsed.Variant() != uuid.RFC4122 || strings.Contains(request.URL.EscapedPath(), "%") {
+		return "", false
+	}
+	return value, true
 }
 
 // requireExactTopLevelFields closes encoding/json's deliberate

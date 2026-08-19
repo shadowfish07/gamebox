@@ -166,6 +166,107 @@ WHERE code_hash = ? AND consumed_at IS NULL AND consumed_by IS NULL`, userID.Str
 	return users.User{ID: userID.String(), Nickname: displayNickname}, nil
 }
 
+// RegisterAndIssue creates the account, consumes its one-time invitation, and
+// persists the first refresh credential in one immediate transaction. No user
+// or consumed invitation can survive a token-generation, collision, insert,
+// cancellation, or commit failure.
+func (service *Service) RegisterAndIssue(ctx context.Context, inviteCode, rawNickname string) (_ Session, err error) {
+	if ctx == nil || inviteCode == "" {
+		return Session{}, ErrInvalidRequest
+	}
+	displayNickname, normalizedNickname, normalizeErr := users.NormalizeNickname(rawNickname)
+	if normalizeErr != nil {
+		return Session{}, ErrInvalidRequest
+	}
+	inviteHash, hashErr := HashToken(service.pepper, inviteCode)
+	if hashErr != nil {
+		return Session{}, ErrInvalidRequest
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return Session{}, beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = databaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+
+	var available int
+	queryErr := transaction.QueryRowContext(ctx, `
+SELECT 1
+FROM invite_codes
+WHERE code_hash = ? AND consumed_at IS NULL AND consumed_by IS NULL`, inviteHash).Scan(&available)
+	if errors.Is(queryErr, sql.ErrNoRows) {
+		return Session{}, ErrInviteInvalid
+	}
+	if queryErr != nil {
+		return Session{}, databaseError(ctx, queryErr)
+	}
+
+	userID, idErr := uuid.NewRandom()
+	if idErr != nil {
+		return Session{}, ErrInternal
+	}
+	user := users.User{ID: userID.String(), Nickname: displayNickname}
+	session, materialErr := service.newSession(user)
+	if materialErr != nil {
+		return Session{}, materialErr
+	}
+	refreshHash, refreshHashErr := HashRefreshToken(service.pepper, session.RefreshToken)
+	if refreshHashErr != nil {
+		return Session{}, ErrInternal
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return Session{}, contextErr
+	}
+	issuedAt := sessionAccessIssuedAt(session).UTC().Unix()
+	result, insertErr := transaction.ExecContext(ctx, `
+INSERT INTO users(id, nickname, normalized_nickname, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?)`, user.ID, user.Nickname, normalizedNickname, issuedAt, issuedAt)
+	if insertErr != nil {
+		if isNormalizedNicknameConflict(insertErr) {
+			return Session{}, ErrNicknameTaken
+		}
+		return Session{}, databaseError(ctx, insertErr)
+	}
+	if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+		return Session{}, databaseError(ctx, rowsErr)
+	} else if affected != 1 {
+		return Session{}, ErrInternal
+	}
+
+	result, updateErr := transaction.ExecContext(ctx, `
+UPDATE invite_codes
+SET consumed_by = ?, consumed_at = ?
+WHERE code_hash = ? AND consumed_at IS NULL AND consumed_by IS NULL`, user.ID, issuedAt, inviteHash)
+	if updateErr != nil {
+		return Session{}, databaseError(ctx, updateErr)
+	}
+	if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+		return Session{}, databaseError(ctx, rowsErr)
+	} else if affected != 1 {
+		return Session{}, ErrInviteInvalid
+	}
+
+	result, refreshInsertErr := transaction.ExecContext(ctx, `
+INSERT INTO refresh_tokens(token_hash, user_id, expires_at, created_at)
+VALUES (?, ?, ?, ?)`, refreshHash, user.ID, session.RefreshExpiresAt.UTC().Unix(), issuedAt)
+	if refreshInsertErr != nil {
+		return Session{}, databaseError(ctx, refreshInsertErr)
+	}
+	if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+		return Session{}, databaseError(ctx, rowsErr)
+	} else if affected != 1 {
+		return Session{}, ErrInternal
+	}
+	if commitErr := service.commit(transaction); commitErr != nil {
+		return Session{}, databaseError(ctx, commitErr)
+	}
+	return session, nil
+}
+
 // Authenticate verifies an access token against the signing policy, confirms
 // that its user is still enabled, and records authenticated activity in one
 // transaction. The timestamp is deliberately persisted in UTC milliseconds so

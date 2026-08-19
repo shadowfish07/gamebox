@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -41,6 +43,10 @@ type recordingPublisher struct {
 	mu     sync.Mutex
 	events []recordedPublication
 }
+
+type panickingPublisher struct{ marker string }
+
+func (publisher panickingPublisher) Publish(string, matches.Event) { panic(publisher.marker) }
 
 func (publisher *recordingPublisher) Publish(matchID string, event matches.Event) {
 	publisher.mu.Lock()
@@ -784,6 +790,358 @@ END;`); err != nil {
 			t.Fatalf("cancelled issue=(%+v,%v)", ticket, issueErr)
 		}
 	})
+}
+
+func TestCancelPublisherPanicCannotChangeCommittedHTTPOutcome(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "publisher-a", "Alice")
+	bob := fixture.register(t, "publisher-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	const panicMarker = "publisher-panic-secret-marker"
+	handler, err := NewRouter(RouterConfig{
+		Auth: fixture.auth, Matches: fixture.matches, Games: games.NewRegistry(),
+		Publisher: panickingPublisher{marker: panicMarker}, Logger: log.New(fixture.logs, "", 0), RequestIDs: sequentialRequestIDs(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodDelete, "/v1/matches/"+matchBody.Match.ID, nil)
+	request.Header.Set("Authorization", "Bearer "+alice.Session.AccessToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
+		t.Fatalf("publisher panic changed response=(%d,%s)", response.Code, response.Body.String())
+	}
+	var status string
+	var revision, eventCount, slotCount int
+	if err := fixture.db.QueryRow(`SELECT status,revision FROM matches WHERE id=?`, matchBody.Match.ID).Scan(&status, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM match_events WHERE match_id=?`, matchBody.Match.ID).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM active_game_slots WHERE match_id=?`, matchBody.Match.ID).Scan(&slotCount); err != nil {
+		t.Fatal(err)
+	}
+	if status != matches.StatusCancelled || revision != 1 || eventCount != 1 || slotCount != 0 {
+		t.Fatalf("committed cancel=(%s,%d events=%d slots=%d)", status, revision, eventCount, slotCount)
+	}
+	if strings.Contains(fixture.logs.String(), panicMarker) || strings.Contains(response.Body.String(), panicMarker) {
+		t.Fatalf("publisher panic leaked: logs=%s response=%s", fixture.logs.String(), response.Body.String())
+	}
+}
+
+func TestRegisterEndpointRollsBackUserAndInviteWhenSessionInsertFails(t *testing.T) {
+	fixture := newAPIFixture(t)
+	fixture.addInvite(t, "atomic-register-invite")
+	if _, err := fixture.db.Exec(`
+CREATE TRIGGER fail_atomic_registration BEFORE INSERT ON refresh_tokens
+BEGIN SELECT RAISE(ABORT,'refresh-insert-secret-marker'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	response := fixture.request(t, http.MethodPost, "/v1/auth/register", `{"inviteCode":"atomic-register-invite","nickname":"Alice"}`, "")
+	if response.Code != http.StatusInternalServerError || responseErrorCode(t, response) != "internal_error" {
+		t.Fatalf("registration failure=(%d,%s)", response.Code, response.Body.String())
+	}
+	if countRows(t, fixture.db, "users") != 0 {
+		t.Fatal("failed session issuance left a registered user")
+	}
+	hash, _ := auth.HashToken(testTokenPepper, "atomic-register-invite")
+	var consumedBy sql.NullString
+	var consumedAt sql.NullInt64
+	if err := fixture.db.QueryRow(`SELECT consumed_by,consumed_at FROM invite_codes WHERE code_hash=?`, hash).Scan(&consumedBy, &consumedAt); err != nil || consumedBy.Valid || consumedAt.Valid {
+		t.Fatalf("failed session issuance consumed invite=(%v,%v) err=%v", consumedBy, consumedAt, err)
+	}
+	if strings.Contains(fixture.logs.String(), "atomic-register-invite") || strings.Contains(response.Body.String(), "refresh-insert-secret-marker") {
+		t.Fatal("atomic registration failure leaked request or database detail")
+	}
+}
+
+func TestRequestLoggingNeverUsesAttackerControlledMethod(t *testing.T) {
+	fixture := newAPIFixture(t)
+	methods := []string{"invite-secret-method", "refresh-secret-method", "launch-secret-method", "eyJhbGciOiJIUzI1NiJ9"}
+	for _, method := range methods {
+		request := httptest.NewRequest(method, "/healthz", nil)
+		response := httptest.NewRecorder()
+		fixture.handler.ServeHTTP(response, request)
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("method %q status=%d", method, response.Code)
+		}
+	}
+	logged := fixture.logs.String()
+	for _, method := range methods {
+		if strings.Contains(logged, method) {
+			t.Fatalf("attacker method leaked in log: %s", logged)
+		}
+	}
+	if count := strings.Count(logged, "method=OTHER"); count != len(methods) {
+		t.Fatalf("safe method count=%d logs=%s", count, logged)
+	}
+}
+
+func TestSafeMethodLoggingCoversRequestIDFailureAndPanicBranches(t *testing.T) {
+	const methodSecret = "launch-ticket-shaped-secret-method"
+	t.Run("request id failure", func(t *testing.T) {
+		logs := &bytes.Buffer{}
+		handler := requestMiddleware(log.New(logs, "", 0), func() (string, error) {
+			return "", errors.New("private request id failure")
+		})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("next handler ran after request id failure")
+		}))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(methodSecret, "/secret-method-path", nil))
+		if response.Code != http.StatusInternalServerError || strings.Contains(logs.String(), methodSecret) || !strings.Contains(logs.String(), "method=OTHER") {
+			t.Fatalf("request id failure=(%d logs=%s)", response.Code, logs.String())
+		}
+	})
+
+	t.Run("panic recovery", func(t *testing.T) {
+		logs := &bytes.Buffer{}
+		handler := requestMiddleware(log.New(logs, "", 0), sequentialRequestIDs())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic("private panic detail")
+		}))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(methodSecret, "/secret-method-path", nil))
+		if response.Code != http.StatusInternalServerError || strings.Contains(logs.String(), methodSecret) || strings.Contains(logs.String(), "private panic detail") || !strings.Contains(logs.String(), "method=OTHER") || !strings.Contains(logs.String(), "panic=true") {
+			t.Fatalf("panic branch=(%d logs=%s)", response.Code, logs.String())
+		}
+	})
+}
+
+func TestBodyLimitsAndBodylessRoutesFailBeforeMutation(t *testing.T) {
+	t.Run("content length applies to every route", func(t *testing.T) {
+		fixture := newAPIFixture(t)
+		body := strings.Repeat("x", 65*1024)
+		response := fixture.request(t, http.MethodGet, "/healthz", body, "")
+		if response.Code != http.StatusRequestEntityTooLarge || responseErrorCode(t, response) != "invalid_request" {
+			t.Fatalf("health overlimit=(%d,%s)", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("bodyless get and delete", func(t *testing.T) {
+		fixture := newAPIFixture(t)
+		get := fixture.request(t, http.MethodGet, "/healthz", `{}`, "")
+		assertInvalidRequest(t, get)
+		alice := fixture.register(t, "body-a", "Alice")
+		bob := fixture.register(t, "body-b", "Bob")
+		created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+		var matchBody struct {
+			Match struct {
+				ID string `json:"id"`
+			} `json:"match"`
+		}
+		decodeResponse(t, created, &matchBody)
+		deleted := fixture.request(t, http.MethodDelete, "/v1/matches/"+matchBody.Match.ID, `{}`, alice.Session.AccessToken)
+		assertInvalidRequest(t, deleted)
+		var status string
+		if err := fixture.db.QueryRow(`SELECT status FROM matches WHERE id=?`, matchBody.Match.ID).Scan(&status); err != nil || status != matches.StatusActive {
+			t.Fatalf("delete body mutated match status=%q err=%v", status, err)
+		}
+		if len(fixture.publisher.snapshot()) != 0 {
+			t.Fatal("delete body published an event")
+		}
+	})
+
+	t.Run("chunked json overlimit closes real connection", func(t *testing.T) {
+		fixture := newAPIFixture(t)
+		fixture.addInvite(t, "chunked-overlimit-invite")
+		server := httptest.NewServer(fixture.handler)
+		defer server.Close()
+		large := `{"inviteCode":"chunked-overlimit-invite","nickname":"` + strings.Repeat("x", 65*1024) + `"}`
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/auth/register", io.NopCloser(strings.NewReader(large)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.ContentLength = -1
+		request.TransferEncoding = []string{"chunked"}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		data, _ := io.ReadAll(response.Body)
+		if response.StatusCode != http.StatusRequestEntityTooLarge || !response.Close {
+			t.Fatalf("chunked response=(%d close=%t body=%s)", response.StatusCode, response.Close, data)
+		}
+		if countRows(t, fixture.db, "users") != 0 {
+			t.Fatal("overlimit chunked body created user")
+		}
+	})
+}
+
+func TestHTTPSurrogateEscapesAreLossless(t *testing.T) {
+	invalid := []string{
+		`{"inviteCode":"surrogate-invite","nickname":"A\uD800"}`,
+		`{"inviteCode":"surrogate-invite","nickname":"A\uDC00"}`,
+		`{"inviteCode":"surrogate-invite","nickname":"A\uD800x"}`,
+		`{"inviteCode":"surrogate-invite","nickname":"A\uD800\u0041"}`,
+	}
+	for index, body := range invalid {
+		t.Run(fmt.Sprintf("invalid-%d", index), func(t *testing.T) {
+			fixture := newAPIFixture(t)
+			fixture.addInvite(t, "surrogate-invite")
+			response := fixture.request(t, http.MethodPost, "/v1/auth/register", body, "")
+			assertInvalidRequest(t, response)
+			if countRows(t, fixture.db, "users") != 0 {
+				t.Fatal("isolated surrogate created user")
+			}
+		})
+	}
+	for _, test := range []struct {
+		name     string
+		body     string
+		nickname string
+	}{
+		{name: "valid pair", body: `{"inviteCode":"surrogate-invite","nickname":"A\uD83D\uDE00"}`, nickname: "A😀"},
+		{name: "escaped literal", body: `{"inviteCode":"surrogate-invite","nickname":"A\\uD800"}`, nickname: `A\uD800`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAPIFixture(t)
+			fixture.addInvite(t, "surrogate-invite")
+			response := fixture.request(t, http.MethodPost, "/v1/auth/register", test.body, "")
+			if response.Code != http.StatusCreated {
+				t.Fatalf("valid surrogate path=(%d,%s)", response.Code, response.Body.String())
+			}
+			var session sessionResponse
+			decodeResponse(t, response, &session)
+			if session.Session.User.Nickname != test.nickname {
+				t.Fatalf("nickname=%q want %q", session.Session.User.Nickname, test.nickname)
+			}
+		})
+	}
+}
+
+func TestHTTPSurrogateLexicalScannerCoversKeysAndValues(t *testing.T) {
+	for _, document := range []string{
+		`{"\uD800":"value"}`,
+		`{"\uDC00":"value"}`,
+		`{"key":"\uD800"}`,
+		`{"key":"\uDC00"}`,
+	} {
+		if validHTTPJSONSurrogateEscapes([]byte(document)) {
+			t.Fatalf("accepted isolated surrogate in %s", document)
+		}
+	}
+	for _, document := range []string{
+		`{"\uD83D\uDE00":"value"}`,
+		`{"key":"\uD83D\uDE00"}`,
+		`{"\\uD800":"literal","key":"\\uDC00"}`,
+	} {
+		if !validHTTPJSONSurrogateEscapes([]byte(document)) {
+			t.Fatalf("rejected lossless surrogate spelling in %s", document)
+		}
+	}
+}
+
+func TestMatchPathRequiresLiteralCanonicalUUIDBeforeMutation(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "path-a", "Alice")
+	bob := fixture.register(t, "path-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	escaped := fmt.Sprintf("%%%02X%s", matchBody.Match.ID[0], matchBody.Match.ID[1:])
+	paths := []string{strings.ToUpper(matchBody.Match.ID), "{" + matchBody.Match.ID + "}", escaped}
+	for _, value := range paths {
+		t.Run(value, func(t *testing.T) {
+			for _, route := range []struct {
+				method string
+				path   string
+			}{
+				{method: http.MethodDelete, path: "/v1/matches/" + value},
+				{method: http.MethodPost, path: "/v1/matches/" + value + "/launch-ticket"},
+			} {
+				response := fixture.request(t, route.method, route.path, "", alice.Session.AccessToken)
+				assertInvalidRequest(t, response)
+			}
+		})
+	}
+	var status string
+	if err := fixture.db.QueryRow(`SELECT status FROM matches WHERE id=?`, matchBody.Match.ID).Scan(&status); err != nil || status != matches.StatusActive {
+		t.Fatalf("noncanonical path mutated match=%q err=%v", status, err)
+	}
+	if tableCount(t, fixture.db, "launch_tickets") != 0 || len(fixture.publisher.snapshot()) != 0 {
+		t.Fatal("noncanonical path created ticket or published event")
+	}
+}
+
+func TestExtremeClocksFailClosedForLobbyAndLaunchTicket(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "clock-a", "Alice")
+	bob := fixture.register(t, "clock-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	newService := func(nowMillis int64) *matches.Service {
+		service, err := matches.NewServiceWithConfig(fixture.db, games.NewRegistry(), clock.NewFake(time.UnixMilli(nowMillis)), matches.ServiceConfig{
+			ColorRandom: bytes.NewReader([]byte{0}), LaunchTicketRandom: bytes.NewReader(bytes.Repeat([]byte{3}, 64)), TokenPepper: testTokenPepper,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+	if opponents, err := newService(math.MinInt64).ListOpponents(context.Background(), gomoku.GameID, alice.Session.User.ID); !errors.Is(err, matches.ErrInternal) || opponents != nil {
+		t.Fatalf("minimum clock opponents=(%+v,%v)", opponents, err)
+	}
+	if ticket, err := newService(math.MaxInt64).CreateLaunchTicket(context.Background(), matchBody.Match.ID, alice.Session.User.ID); !errors.Is(err, matches.ErrInternal) || ticket.Token != "" {
+		t.Fatalf("maximum clock ticket=(%+v,%v)", ticket, err)
+	}
+	if tableCount(t, fixture.db, "launch_tickets") != 0 {
+		t.Fatal("overflow clock persisted launch ticket")
+	}
+}
+
+func TestGetRoutesAdvertiseAndHonorHEAD(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "head-a", "Alice")
+	for _, path := range []string{"/healthz", "/v1/me", "/v1/games", "/v1/games/gomoku/status", "/v1/games/gomoku/opponents"} {
+		request := httptest.NewRequest(http.MethodOptions, path, nil)
+		response := httptest.NewRecorder()
+		fixture.handler.ServeHTTP(response, request)
+		if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD" {
+			t.Fatalf("OPTIONS %s=(%d Allow=%q)", path, response.Code, response.Header().Get("Allow"))
+		}
+	}
+	server := httptest.NewServer(fixture.handler)
+	defer server.Close()
+	for _, test := range []struct {
+		path  string
+		token string
+	}{{path: "/healthz"}, {path: "/v1/games", token: alice.Session.AccessToken}} {
+		request, _ := http.NewRequest(http.MethodHead, server.URL+test.path, nil)
+		if test.token != "" {
+			request.Header.Set("Authorization", "Bearer "+test.token)
+		}
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK || len(data) != 0 || response.Header.Get("Content-Type") != "application/json; charset=utf-8" {
+			t.Fatalf("HEAD %s=(%d body=%q contentType=%q)", test.path, response.StatusCode, data, response.Header.Get("Content-Type"))
+		}
+	}
+	postFallback := fixture.request(t, http.MethodOptions, "/v1/auth/register", "", "")
+	if postFallback.Code != http.StatusMethodNotAllowed || postFallback.Header().Get("Allow") != http.MethodPost {
+		t.Fatalf("POST fallback=(%d Allow=%q)", postFallback.Code, postFallback.Header().Get("Allow"))
+	}
 }
 
 func TestOpponentPresenceBoundaryAndOfflineIdleSelection(t *testing.T) {

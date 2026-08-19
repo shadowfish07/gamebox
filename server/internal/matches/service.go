@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"sort"
 	"strconv"
@@ -266,6 +267,11 @@ func (service *Service) ListOpponents(ctx context.Context, gameID, userID string
 	if !ok || !singleActiveMatch(rules) {
 		return nil, ErrInvalidRequest
 	}
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	onlineCutoff, cutoffOK := safeSubtractMilliseconds(nowMillis, (90 * time.Second).Milliseconds())
+	if !cutoffOK {
+		return nil, ErrInternal
+	}
 	transaction, beginErr := service.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if beginErr != nil {
 		return nil, matchDatabaseError(ctx, beginErr)
@@ -296,8 +302,6 @@ WHERE users.enabled=1 AND users.id<>?`, gameID, userID)
 		return nil, matchDatabaseError(ctx, queryErr)
 	}
 	defer rows.Close()
-	nowMillis := service.clock.Now().UTC().UnixMilli()
-	onlineCutoff := nowMillis - (90 * time.Second).Milliseconds()
 	opponents := make([]Opponent, 0, 16)
 	for rows.Next() {
 		var id, nickname, normalizedNickname string
@@ -351,6 +355,11 @@ func (service *Service) CreateLaunchTicket(ctx context.Context, matchID, userID 
 	if ctx == nil || !canonicalUUID(matchID) || !canonicalUUID(userID) {
 		return LaunchTicket{}, ErrInvalidRequest
 	}
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	expiresMillis, expiryOK := safeAddMilliseconds(nowMillis, launchTicketLifetime.Milliseconds())
+	if !expiryOK {
+		return LaunchTicket{}, ErrInternal
+	}
 	transaction, beginErr := service.beginWriteTransaction(ctx)
 	if beginErr != nil {
 		return LaunchTicket{}, beginErr
@@ -380,8 +389,6 @@ func (service *Service) CreateLaunchTicket(ctx context.Context, matchID, userID 
 	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction.Tx, match.GameID, match.ID, playerIDs, singleActiveMatch(rules)); slotsErr != nil {
 		return LaunchTicket{}, slotsErr
 	}
-	nowMillis := service.clock.Now().UTC().UnixMilli()
-	expiresMillis := nowMillis + launchTicketLifetime.Milliseconds()
 	var plaintext string
 	inserted := false
 	for attempt := 0; attempt < launchTicketCollisionMax; attempt++ {
@@ -422,6 +429,20 @@ VALUES (?,?,?,?,?,?)`, hash, match.ID, userID, match.GameID, expiresMillis, nowM
 		MatchID: match.ID, GameID: match.GameID, Token: plaintext,
 		ExpiresAt: time.UnixMilli(expiresMillis).UTC(),
 	}, nil
+}
+
+func safeAddMilliseconds(value, delta int64) (int64, bool) {
+	if delta < 0 || value > math.MaxInt64-delta {
+		return 0, false
+	}
+	return value + delta, true
+}
+
+func safeSubtractMilliseconds(value, delta int64) (int64, bool) {
+	if delta < 0 || value < math.MinInt64+delta {
+		return 0, false
+	}
+	return value - delta, true
 }
 
 func validStoredUser(id, nickname, normalizedNickname string) bool {
