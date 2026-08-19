@@ -6,8 +6,8 @@ and an authoritative Go server. The first playable game is two-player Gomoku.
 ## Run the local server
 
 The server requires two independent secrets of at least 32 bytes. Its SQLite
-file must live in an existing private directory that is not group- or
-world-writable.
+file must live in an existing direct parent owned by the service user and not
+group- or world-writable.
 
 ```bash
 gamebox_data_dir=$(mktemp -d)
@@ -29,7 +29,9 @@ JSON-line operational logs to stderr. Request, WebSocket connection, and match
 identifiers are logged when applicable; invitation and session credentials are
 never logged. `SIGINT` and `SIGTERM` stop new HTTP work, allow a 10-second HTTP
 grace period, then stop background workers, close WebSockets, and finally close
-SQLite.
+SQLite. After the first termination signal starts this graceful path, normal
+signal handling is restored so a second `SIGINT` or `SIGTERM` immediately
+force-stops a stuck process.
 
 ## Create one-time invitation codes
 

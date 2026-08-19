@@ -1,18 +1,23 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -255,6 +260,183 @@ func TestShutdownTimeoutForcesHTTPClosedBeforeStoppingWorkers(t *testing.T) {
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("shutdown order=%v want=%v", order, want)
 	}
+}
+
+func TestProcessTerminationSignalsRestoreDefaultAfterFirstSignal(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "gameboxd")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build gameboxd: %v\n%s", err, output)
+	}
+
+	t.Run("single TERM exits zero", func(t *testing.T) {
+		process := startDaemonProcess(t, binary)
+		address := waitForStartedAddress(t, process.logs)
+		assertProcessHealth(t, address)
+		if err := process.command.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		if err := process.wait(t, 15*time.Second); err != nil {
+			t.Fatalf("single TERM wait: %v\nlogs:\n%s", err, process.logs.String())
+		}
+		logged := process.logs.String()
+		if !strings.Contains(logged, `"event":"server_stopped"`) || !strings.Contains(logged, `"exitCode":0`) {
+			t.Fatalf("single TERM missing clean stop: %s", logged)
+		}
+	})
+
+	t.Run("second TERM force terminates blocked shutdown", func(t *testing.T) {
+		process := startDaemonProcess(t, binary)
+		address := waitForStartedAddress(t, process.logs)
+		assertProcessHealth(t, address)
+		connection, err := net.DialTimeout("tcp", address, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connection.Close()
+		if _, err := fmt.Fprintf(connection, "POST /v1/auth/register HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n", address); err != nil {
+			t.Fatal(err)
+		}
+		if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		reader := bufio.NewReader(connection)
+		statusLine, err := reader.ReadString('\n')
+		if err != nil || !strings.Contains(statusLine, " 100 ") {
+			t.Fatalf("blocked request status=%q err=%v", statusLine, err)
+		}
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("read 100 Continue headers: %v", err)
+			}
+			if line == "\r\n" {
+				break
+			}
+		}
+		if err := connection.SetReadDeadline(time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := process.command.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		waitForListenerClosed(t, address, time.Second)
+		waitForLogEvent(t, process.logs, "shutdown_started", time.Second)
+		select {
+		case err := <-process.result:
+			process.finished = true
+			t.Fatalf("process exited before second TERM: %v\nlogs:\n%s", err, process.logs.String())
+		default:
+		}
+		started := time.Now()
+		if err := process.command.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		err = process.wait(t, time.Second)
+		if err == nil || time.Since(started) > time.Second {
+			t.Fatalf("second TERM result=%v elapsed=%s logs:\n%s", err, time.Since(started), process.logs.String())
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("second TERM error=%T %v", err, err)
+		}
+		status, ok := exitErr.Sys().(syscall.WaitStatus)
+		if !ok || !status.Signaled() || status.Signal() != syscall.SIGTERM {
+			t.Fatalf("second TERM wait status=%v", exitErr.Sys())
+		}
+	})
+}
+
+type daemonProcess struct {
+	command  *exec.Cmd
+	logs     *lockedBuffer
+	result   chan error
+	finished bool
+}
+
+func startDaemonProcess(t *testing.T, binary string) *daemonProcess {
+	t.Helper()
+	directory := t.TempDir()
+	logs := &lockedBuffer{}
+	command := exec.Command(binary)
+	command.Env = append(os.Environ(),
+		"GAMEBOX_ADDR=127.0.0.1:0",
+		"GAMEBOX_DB_PATH="+filepath.Join(directory, "gamebox.sqlite"),
+		"GAMEBOX_JWT_SECRET=process-test-jwt-secret-at-least-thirty-two-bytes",
+		"GAMEBOX_TOKEN_PEPPER=process-test-token-pepper-at-least-thirty-two-bytes",
+	)
+	command.Stdout = io.Discard
+	command.Stderr = logs
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	process := &daemonProcess{command: command, logs: logs, result: make(chan error, 1)}
+	go func() { process.result <- command.Wait() }()
+	t.Cleanup(func() {
+		if process.finished {
+			return
+		}
+		_ = command.Process.Kill()
+		select {
+		case <-process.result:
+		case <-time.After(2 * time.Second):
+		}
+		process.finished = true
+	})
+	return process
+}
+
+func assertProcessHealth(t *testing.T, address string) {
+	t.Helper()
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + address + "/healthz")
+	if err != nil {
+		t.Fatalf("GET healthz: %v", err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || string(body) != "{\"status\":\"ok\"}\n" {
+		t.Fatalf("health=(%d,%q,%v)", response.StatusCode, body, readErr)
+	}
+}
+
+func (process *daemonProcess) wait(t *testing.T, timeout time.Duration) error {
+	t.Helper()
+	select {
+	case err := <-process.result:
+		process.finished = true
+		return err
+	case <-time.After(timeout):
+		return errors.New("process wait timed out")
+	}
+}
+
+func waitForListenerClosed(t *testing.T, address string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp", address, 20*time.Millisecond)
+		if err != nil {
+			return
+		}
+		_ = connection.Close()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("listener remained open after first termination signal")
+}
+
+func waitForLogEvent(t *testing.T, logs *lockedBuffer, event string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, record := range decodeCompleteLogRecords(t, logs.String()) {
+			if record["event"] == event {
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("log event %q did not appear\nlogs:\n%s", event, logs.String())
 }
 
 type lockedBuffer struct {

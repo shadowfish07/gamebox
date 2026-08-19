@@ -28,8 +28,8 @@ const (
 )
 
 // ErrInsecureDatabaseParent requires callers to place SQLite files in a
-// direct parent that other users cannot write.
-var ErrInsecureDatabaseParent = errors.New("database parent is group/world-writable; use a private directory")
+// current-user-owned direct parent that other users cannot write.
+var ErrInsecureDatabaseParent = errors.New("database parent must be current-user-owned and not group/world-writable")
 
 // ErrReadOnlySnapshotBusy is returned when an active WAL changes during every
 // bounded attempt to capture a consistent administrative snapshot.
@@ -53,6 +53,7 @@ func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
 type readOnlyHooks struct {
 	snapshotParent  string
 	afterSourceCopy func() error
+	security        fileSecurityHooks
 }
 
 func openReadOnly(ctx context.Context, path string, hooks readOnlyHooks) (*sql.DB, error) {
@@ -68,7 +69,8 @@ func openReadOnly(ctx context.Context, path string, hooks readOnlyHooks) (*sql.D
 	if path == ":memory:" {
 		return nil, errors.New("store: read-only database must be a durable file")
 	}
-	guard, liveWAL, err := inspectSQLiteFilesReadOnly(path)
+	security := newParentSecurityPolicy(hooks.security)
+	guard, liveWAL, err := inspectSQLiteFilesReadOnly(path, security)
 	if err != nil {
 		return nil, fmt.Errorf("store: inspect read-only database files: %w", err)
 	}
@@ -205,7 +207,7 @@ func createLiveWALSnapshot(ctx context.Context, sourcePath string, hooks readOnl
 }
 
 func createLiveWALSnapshotAttempt(ctx context.Context, sourcePath string, hooks readOnlyHooks) (_ string, _ func() error, err error) {
-	source, err := openReadOnlySnapshotSource(sourcePath)
+	source, err := openReadOnlySnapshotSource(sourcePath, newParentSecurityPolicy(hooks.security))
 	if err != nil {
 		return "", nil, err
 	}
@@ -252,8 +254,8 @@ func createLiveWALSnapshotAttempt(ctx context.Context, sourcePath string, hooks 
 	return snapshotPath, cleanup, nil
 }
 
-func openReadOnlySnapshotSource(path string) (*readOnlySnapshotSource, error) {
-	guard, liveWAL, err := inspectSQLiteFilesReadOnly(path)
+func openReadOnlySnapshotSource(path string, security parentSecurityPolicy) (*readOnlySnapshotSource, error) {
+	guard, liveWAL, err := inspectSQLiteFilesReadOnly(path, security)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +464,24 @@ func newReadOnlySnapshotCleanup(directory string) func() error {
 
 type openHooks struct {
 	afterPreflight func()
+	security       fileSecurityHooks
+}
+
+type fileSecurityHooks struct {
+	statPath func(string) (os.FileInfo, error)
+}
+
+type parentSecurityPolicy struct {
+	effectiveUID uint32
+	statPath     func(string) (os.FileInfo, error)
+}
+
+func newParentSecurityPolicy(hooks fileSecurityHooks) parentSecurityPolicy {
+	statPath := hooks.statPath
+	if statPath == nil {
+		statPath = os.Stat
+	}
+	return parentSecurityPolicy{effectiveUID: uint32(os.Geteuid()), statPath: statPath}
 }
 
 func open(ctx context.Context, path string, hooks openHooks) (*sql.DB, error) {
@@ -474,7 +494,7 @@ func open(ctx context.Context, path string, hooks openHooks) (*sql.DB, error) {
 	if path == ":memory:" {
 		return nil, errors.New("store: in-memory databases do not support durable WAL mode")
 	}
-	guard, err := secureSQLiteFiles(path)
+	guard, err := secureSQLiteFiles(path, newParentSecurityPolicy(hooks.security))
 	if err != nil {
 		return nil, fmt.Errorf("store: secure database files: %w", err)
 	}
@@ -622,15 +642,16 @@ type databaseFileGuard struct {
 	parent     *os.File
 	fileInfo   os.FileInfo
 	parentInfo os.FileInfo
+	security   parentSecurityPolicy
 }
 
-func secureSQLiteFiles(path string) (*databaseFileGuard, error) {
+func secureSQLiteFiles(path string, security parentSecurityPolicy) (*databaseFileGuard, error) {
 	parentPath := filepath.Dir(path)
 	parent, err := os.Open(parentPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database parent: %w", err)
 	}
-	parentInfo, err := verifyParentPath(parentPath, parent, nil)
+	parentInfo, err := verifyParentPath(parentPath, parent, nil, security)
 	if err != nil {
 		_ = parent.Close()
 		return nil, err
@@ -648,6 +669,7 @@ func secureSQLiteFiles(path string) (*databaseFileGuard, error) {
 		parent:     parent,
 		fileInfo:   fileInfo,
 		parentInfo: parentInfo,
+		security:   security,
 	}
 	if err := secureSQLiteSidecars(path); err != nil {
 		return nil, closeOpenResources(nil, guard, err)
@@ -658,13 +680,13 @@ func secureSQLiteFiles(path string) (*databaseFileGuard, error) {
 	return guard, nil
 }
 
-func inspectSQLiteFilesReadOnly(path string) (*databaseFileGuard, bool, error) {
+func inspectSQLiteFilesReadOnly(path string, security parentSecurityPolicy) (*databaseFileGuard, bool, error) {
 	parentPath := filepath.Dir(path)
 	parent, err := os.Open(parentPath)
 	if err != nil {
 		return nil, false, fmt.Errorf("open database parent: %w", err)
 	}
-	parentInfo, err := verifyParentPath(parentPath, parent, nil)
+	parentInfo, err := verifyParentPath(parentPath, parent, nil, security)
 	if err != nil {
 		_ = parent.Close()
 		return nil, false, err
@@ -676,7 +698,7 @@ func inspectSQLiteFilesReadOnly(path string) (*databaseFileGuard, bool, error) {
 	}
 	guard := &databaseFileGuard{
 		path: path, parentPath: parentPath, file: file, parent: parent,
-		fileInfo: fileInfo, parentInfo: parentInfo,
+		fileInfo: fileInfo, parentInfo: parentInfo, security: security,
 	}
 	liveWAL, err := inspectSQLiteSidecarsReadOnly(path)
 	if err != nil {
@@ -865,7 +887,7 @@ func secureOpenFile(path string, file *os.File) (os.FileInfo, error) {
 }
 
 func (g *databaseFileGuard) Verify() error {
-	currentParent, err := verifyParentPath(g.parentPath, g.parent, g.parentInfo)
+	currentParent, err := verifyParentPath(g.parentPath, g.parent, g.parentInfo, g.security)
 	if err != nil {
 		return err
 	}
@@ -900,25 +922,37 @@ func (g *databaseFileGuard) Verify() error {
 	return nil
 }
 
-func verifyParentPath(path string, held *os.File, original os.FileInfo) (os.FileInfo, error) {
+func verifyParentPath(path string, held *os.File, original os.FileInfo, security parentSecurityPolicy) (os.FileInfo, error) {
+	if security.statPath == nil {
+		return nil, ErrInsecureDatabaseParent
+	}
 	heldInfo, err := held.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("inspect held database parent: %w", err)
 	}
-	pathInfo, err := os.Stat(path)
-	if err != nil || !pathInfo.IsDir() || !os.SameFile(heldInfo, pathInfo) {
+	pathInfo, err := security.statPath(path)
+	if err != nil || !pathInfo.IsDir() || !sameFileIdentity(heldInfo, pathInfo) {
 		return nil, errors.New("database parent identity changed")
 	}
 	// SQLite creates its WAL and SHM beside the main file, so the immediate
 	// parent is the security boundary. Writable ancestors (for example /tmp)
 	// remain valid when this direct parent is a private directory.
-	if heldInfo.Mode().Perm()&0o022 != 0 {
+	heldOwner, heldOwnerOK := ownerID(heldInfo)
+	pathOwner, pathOwnerOK := ownerID(pathInfo)
+	if heldInfo.Mode().Perm()&0o022 != 0 || pathInfo.Mode().Perm()&0o022 != 0 ||
+		!heldOwnerOK || !pathOwnerOK || heldOwner != security.effectiveUID || pathOwner != security.effectiveUID {
 		return nil, ErrInsecureDatabaseParent
 	}
-	if original != nil && !os.SameFile(original, heldInfo) {
+	if original != nil && !sameFileIdentity(original, heldInfo) {
 		return nil, errors.New("database parent identity changed")
 	}
 	return heldInfo, nil
+}
+
+func sameFileIdentity(left, right os.FileInfo) bool {
+	leftStat, leftOK := left.Sys().(*syscall.Stat_t)
+	rightStat, rightOK := right.Sys().(*syscall.Stat_t)
+	return leftOK && rightOK && leftStat.Dev == rightStat.Dev && leftStat.Ino == rightStat.Ino
 }
 
 func requireCurrentOwner(info os.FileInfo, label string) error {

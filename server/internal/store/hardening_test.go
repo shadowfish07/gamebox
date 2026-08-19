@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -263,6 +265,154 @@ func TestOpenRequiresPrivateDirectParent(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatalf("close private-child database: %v", err)
 	}
+}
+
+func TestOpenAndOpenReadOnlyRejectForeignOwnedDirectParentWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "foreign-parent")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(parent, "gamebox.sqlite")
+	foreignUID := uint32(os.Geteuid()) + 1
+	security := fileSecurityHooks{statPath: func(requested string) (os.FileInfo, error) {
+		info, err := os.Stat(requested)
+		if err != nil || requested != parent {
+			return info, err
+		}
+		return fileInfoWithOwner(t, info, foreignUID), nil
+	}}
+
+	beforeMissing := readOnlyDirectorySnapshot(t, parent)
+	database, err := open(context.Background(), path, openHooks{security: security})
+	if database != nil || !errors.Is(err, ErrInsecureDatabaseParent) {
+		if database != nil {
+			_ = database.Close()
+		}
+		t.Fatalf("foreign-owned Open=(%v,%v)", database, err)
+	}
+	if after := readOnlyDirectorySnapshot(t, parent); !reflect.DeepEqual(after, beforeMissing) {
+		t.Fatalf("foreign-owned Open mutated parent: before=%+v after=%+v", beforeMissing, after)
+	}
+
+	database, err = Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	beforeExisting := readOnlyDirectorySnapshot(t, parent)
+	snapshotParent := t.TempDir()
+	database, err = openReadOnly(context.Background(), path, readOnlyHooks{security: security, snapshotParent: snapshotParent})
+	if database != nil || !errors.Is(err, ErrInsecureDatabaseParent) {
+		if database != nil {
+			_ = database.Close()
+		}
+		t.Fatalf("foreign-owned OpenReadOnly=(%v,%v)", database, err)
+	}
+	if after := readOnlyDirectorySnapshot(t, parent); !reflect.DeepEqual(after, beforeExisting) {
+		t.Fatalf("foreign-owned OpenReadOnly mutated source: before=%+v after=%+v", beforeExisting, after)
+	}
+	if entries, readErr := os.ReadDir(snapshotParent); readErr != nil || len(entries) != 0 {
+		t.Fatalf("foreign-owned OpenReadOnly leaked temp: entries=%v err=%v", entries, readErr)
+	}
+}
+
+func TestOpenReadOnlyRejectsParentOwnerABADuringLiveWALCopy(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gamebox.sqlite")
+	writable, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writable.Close()
+	if _, err := writable.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, strings.Repeat("9", 64), 9); err != nil {
+		t.Fatal(err)
+	}
+	before := readOnlyDirectorySnapshot(t, directory)
+	foreignUID := uint32(os.Geteuid()) + 1
+	var exposeForeign atomic.Bool
+	var foreignObservations atomic.Int64
+	security := fileSecurityHooks{statPath: func(requested string) (os.FileInfo, error) {
+		info, err := os.Stat(requested)
+		if err != nil || requested != directory || !exposeForeign.CompareAndSwap(true, false) {
+			return info, err
+		}
+		foreignObservations.Add(1)
+		return fileInfoWithOwner(t, info, foreignUID), nil
+	}}
+	snapshotParent := t.TempDir()
+	readOnly, err := openReadOnly(context.Background(), path, readOnlyHooks{
+		security:       security,
+		snapshotParent: snapshotParent,
+		afterSourceCopy: func() error {
+			exposeForeign.Store(true)
+			return nil
+		},
+	})
+	if readOnly != nil || !errors.Is(err, ErrInsecureDatabaseParent) {
+		if readOnly != nil {
+			_ = readOnly.Close()
+		}
+		t.Fatalf("owner ABA OpenReadOnly=(%v,%v)", readOnly, err)
+	}
+	if foreignObservations.Load() != 1 || exposeForeign.Load() {
+		t.Fatalf("owner ABA observations=%d pending=%t", foreignObservations.Load(), exposeForeign.Load())
+	}
+	if after := readOnlyDirectorySnapshot(t, directory); !reflect.DeepEqual(after, before) {
+		t.Fatalf("owner ABA check mutated source: before=%+v after=%+v", before, after)
+	}
+	if entries, readErr := os.ReadDir(snapshotParent); readErr != nil || len(entries) != 0 {
+		t.Fatalf("owner ABA leaked temp: entries=%v err=%v", entries, readErr)
+	}
+}
+
+func TestOpenAndOpenReadOnlyAllowCurrentOwnedPrivateParentUnderTmp(t *testing.T) {
+	directory, err := os.MkdirTemp("/tmp", "gamebox-current-owner-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "gamebox.sqlite")
+	database, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Open current-owned /tmp child: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := OpenReadOnly(context.Background(), path)
+	if err != nil {
+		t.Fatalf("OpenReadOnly current-owned /tmp child: %v", err)
+	}
+	if err := readOnly.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type ownerOverrideFileInfo struct {
+	os.FileInfo
+	stat syscall.Stat_t
+}
+
+func (info ownerOverrideFileInfo) Sys() any { return &info.stat }
+
+func fileInfoWithOwner(t *testing.T, info os.FileInfo, uid uint32) os.FileInfo {
+	t.Helper()
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("file info sys=%T, want *syscall.Stat_t", info.Sys())
+	}
+	cloned := *stat
+	cloned.Uid = uid
+	return ownerOverrideFileInfo{FileInfo: info, stat: cloned}
 }
 
 func TestOpenRejectsHardlinkedDatabaseWithoutChangingTarget(t *testing.T) {

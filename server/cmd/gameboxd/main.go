@@ -35,9 +35,34 @@ const (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	os.Exit(run(ctx, os.Stderr))
+	os.Exit(runWithSignals(os.Stderr))
+}
+
+func runWithSignals(output io.Writer) int {
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	processDone := make(chan struct{})
+	signalDone := make(chan struct{})
+	go func() {
+		defer close(signalDone)
+		select {
+		case <-signals:
+			// Restore the operating system's default disposition before making
+			// graceful shutdown observable. A second signal must remain an
+			// operator-controlled hard stop if an HTTP handler is stuck.
+			signal.Stop(signals)
+			cancel()
+		case <-processDone:
+			signal.Stop(signals)
+			cancel()
+		}
+	}()
+	exitCode := run(ctx, output)
+	close(processDone)
+	cancel()
+	<-signalDone
+	return exitCode
 }
 
 func run(ctx context.Context, output io.Writer) int {
@@ -119,6 +144,7 @@ func run(ctx context.Context, output io.Writer) int {
 			reason = "serve_error"
 		}
 	}
+	logger.write("shutdown_started", map[string]any{"reason": reason})
 
 	shutdownStage, shutdownErr := shutdownRuntime(shutdownTimeout, shutdownHooks{
 		shutdownHTTP: httpServer.Shutdown,
