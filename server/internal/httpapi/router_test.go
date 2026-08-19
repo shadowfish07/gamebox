@@ -443,6 +443,124 @@ func TestRouterStrictJSONAuthenticationAndRoutingErrors(t *testing.T) {
 	}
 }
 
+func TestRequestDTOKeysRequireExactCanonicalDecodedSpelling(t *testing.T) {
+	registerCases := []struct {
+		name string
+		body string
+	}{
+		{name: "invite case fold", body: `{"InviteCode":"key-invite","nickname":"Alice"}`},
+		{name: "invite escaped case fold", body: `{"\u0049nviteCode":"key-invite","nickname":"Alice"}`},
+		{name: "nickname case fold", body: `{"inviteCode":"key-invite","Nickname":"Alice"}`},
+		{name: "nickname escaped case fold", body: `{"inviteCode":"key-invite","\u004eickname":"Alice"}`},
+		{name: "nickname unicode fold", body: `{"inviteCode":"key-invite","nic\u212Aname":"Alice"}`},
+		{name: "invite canonical then variant", body: `{"inviteCode":"invalid","InviteCode":"key-invite","nickname":"Alice"}`},
+		{name: "invite variant then canonical", body: `{"InviteCode":"invalid","inviteCode":"key-invite","nickname":"Alice"}`},
+		{name: "nickname canonical then variant", body: `{"inviteCode":"key-invite","nickname":"Alice","Nickname":"Bob"}`},
+		{name: "nickname variant then canonical", body: `{"inviteCode":"key-invite","Nickname":"Bob","nickname":"Alice"}`},
+	}
+	for _, test := range registerCases {
+		t.Run("register "+test.name, func(t *testing.T) {
+			fixture := newAPIFixture(t)
+			fixture.addInvite(t, "key-invite")
+			response := fixture.request(t, http.MethodPost, "/v1/auth/register", test.body, "")
+			assertInvalidRequest(t, response)
+			if count := countRows(t, fixture.db, "users"); count != 0 {
+				t.Fatalf("noncanonical register wrote %d users", count)
+			}
+		})
+	}
+
+	refreshCases := []struct {
+		name string
+		body func(valid string) string
+	}{
+		{name: "case fold", body: func(valid string) string { return `{"RefreshToken":` + quote(valid) + `}` }},
+		{name: "escaped case fold", body: func(valid string) string { return `{"\u0052efreshToken":` + quote(valid) + `}` }},
+		{name: "unicode fold", body: func(valid string) string { return `{"refre\u017FhToken":` + quote(valid) + `}` }},
+		{name: "exact unknown field", body: func(valid string) string { return `{"refreshToken":` + quote(valid) + `,"unknown":true}` }},
+		{name: "canonical then variant", body: func(valid string) string { return `{"refreshToken":"invalid","RefreshToken":` + quote(valid) + `}` }},
+		{name: "variant then canonical", body: func(valid string) string { return `{"RefreshToken":"invalid","refreshToken":` + quote(valid) + `}` }},
+	}
+	for _, test := range refreshCases {
+		t.Run("refresh "+test.name, func(t *testing.T) {
+			fixture := newAPIFixture(t)
+			alice := fixture.register(t, "refresh-key-invite", "Alice")
+			response := fixture.request(t, http.MethodPost, "/v1/auth/refresh", test.body(alice.Session.RefreshToken), "")
+			assertInvalidRequest(t, response)
+			var revoked sql.NullInt64
+			if err := fixture.db.QueryRow(`SELECT revoked_at FROM refresh_tokens`).Scan(&revoked); err != nil || revoked.Valid {
+				t.Fatalf("noncanonical refresh consumed token: revoked=%v err=%v", revoked, err)
+			}
+		})
+	}
+
+	opponentCases := []struct {
+		name string
+		body func(valid, other string) string
+	}{
+		{name: "case fold", body: func(valid, _ string) string { return `{"OpponentId":` + quote(valid) + `}` }},
+		{name: "escaped case fold", body: func(valid, _ string) string { return `{"\u004fpponentId":` + quote(valid) + `}` }},
+		{name: "exact unknown field", body: func(valid, _ string) string { return `{"opponentId":` + quote(valid) + `,"unknown":true}` }},
+		{name: "canonical then variant", body: func(valid, other string) string {
+			return `{"opponentId":` + quote(other) + `,"OpponentId":` + quote(valid) + `}`
+		}},
+		{name: "variant then canonical", body: func(valid, other string) string {
+			return `{"OpponentId":` + quote(other) + `,"opponentId":` + quote(valid) + `}`
+		}},
+	}
+	for _, test := range opponentCases {
+		t.Run("opponent "+test.name, func(t *testing.T) {
+			fixture := newAPIFixture(t)
+			alice := fixture.register(t, "opponent-key-a", "Alice")
+			bob := fixture.register(t, "opponent-key-b", "Bob")
+			carol := fixture.register(t, "opponent-key-c", "Carol")
+			response := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", test.body(bob.Session.User.ID, carol.Session.User.ID), alice.Session.AccessToken)
+			assertInvalidRequest(t, response)
+			if count := countRows(t, fixture.db, "matches"); count != 0 {
+				t.Fatalf("noncanonical opponent key wrote %d matches", count)
+			}
+		})
+	}
+
+	t.Run("launch ticket exact unknown field", func(t *testing.T) {
+		fixture := newAPIFixture(t)
+		alice := fixture.register(t, "launch-key-a", "Alice")
+		bob := fixture.register(t, "launch-key-b", "Bob")
+		created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+		var matchBody struct {
+			Match struct {
+				ID string `json:"id"`
+			} `json:"match"`
+		}
+		decodeResponse(t, created, &matchBody)
+		response := fixture.request(t, http.MethodPost, "/v1/matches/"+matchBody.Match.ID+"/launch-ticket", `{"unknown":true}`, alice.Session.AccessToken)
+		assertInvalidRequest(t, response)
+		if count := tableCount(t, fixture.db, "launch_tickets"); count != 0 {
+			t.Fatalf("unknown launch-ticket field wrote %d tickets", count)
+		}
+	})
+}
+
+func assertInvalidRequest(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	if response.Code != http.StatusBadRequest || responseErrorCode(t, response) != "invalid_request" {
+		t.Fatalf("response=(%d,%s), want 400/invalid_request", response.Code, response.Body.String())
+	}
+}
+
+func countRows(t *testing.T, db *sql.DB, table string) int {
+	t.Helper()
+	allowed := map[string]bool{"users": true, "matches": true}
+	if !allowed[table] {
+		t.Fatalf("unsafe table %q", table)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestAuthenticationRejectsDisabledUserAndMultipleCredentials(t *testing.T) {
 	fixture := newAPIFixture(t)
 	alice := fixture.register(t, "disabled-a", "Alice")

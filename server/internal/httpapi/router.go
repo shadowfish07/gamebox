@@ -209,7 +209,7 @@ func authenticatedUser(request *http.Request) (users.User, bool) {
 	return user, ok && user.ID != "" && user.Nickname != ""
 }
 
-func decodeJSONBody(request *http.Request, destination any) (int, error) {
+func decodeJSONBody(request *http.Request, destination any, exactFields ...string) (int, error) {
 	mediaType, parameters, mediaErr := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	charset, hasCharset := parameters["charset"]
 	if mediaErr != nil || mediaType != "application/json" || len(parameters) > 1 || len(parameters) == 1 && !hasCharset || hasCharset && !strings.EqualFold(charset, "utf-8") {
@@ -233,6 +233,9 @@ func decodeJSONBody(request *http.Request, destination any) (int, error) {
 	if duplicateErr := rejectDuplicateJSONKeys(trimmed); duplicateErr != nil {
 		return http.StatusBadRequest, duplicateErr
 	}
+	if fieldsErr := requireExactTopLevelFields(trimmed, exactFields); fieldsErr != nil {
+		return http.StatusBadRequest, fieldsErr
+	}
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
 	if decodeErr := decoder.Decode(destination); decodeErr != nil {
@@ -242,6 +245,35 @@ func decodeJSONBody(request *http.Request, destination any) (int, error) {
 		return http.StatusBadRequest, trailingErr
 	}
 	return 0, nil
+}
+
+// requireExactTopLevelFields closes encoding/json's deliberate
+// case-insensitive struct matching. Request DTO keys are protocol fields, so a
+// differently-cased or Unicode-fold-equivalent spelling is unknown rather
+// than an alias that can override the canonical key. Keys are compared after
+// JSON escape decoding; rejectDuplicateJSONKeys has already established that
+// each decoded spelling is unique.
+func requireExactTopLevelFields(data []byte, expected []string) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil || len(fields) != len(expected) {
+		return errors.New("invalid json fields")
+	}
+	allowed := make(map[string]struct{}, len(expected))
+	for _, field := range expected {
+		if field == "" {
+			return errors.New("invalid json field policy")
+		}
+		if _, duplicate := allowed[field]; duplicate {
+			return errors.New("invalid json field policy")
+		}
+		allowed[field] = struct{}{}
+	}
+	for field := range fields {
+		if _, ok := allowed[field]; !ok {
+			return errors.New("unknown json field")
+		}
+	}
+	return nil
 }
 
 func requireJSONEnd(decoder *json.Decoder) error {

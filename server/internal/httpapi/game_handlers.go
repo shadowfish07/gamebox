@@ -113,7 +113,7 @@ func (router *router) createGomokuMatch(writer http.ResponseWriter, request *htt
 		return
 	}
 	var body createMatchRequest
-	if status, decodeErr := decodeJSONBody(request, &body); decodeErr != nil {
+	if status, decodeErr := decodeJSONBody(request, &body, "opponentId"); decodeErr != nil {
 		writeAPIError(writer, status, "invalid_request")
 		return
 	}

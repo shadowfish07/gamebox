@@ -34,7 +34,7 @@ type sessionEnvelope struct {
 
 func (router *router) register(writer http.ResponseWriter, request *http.Request) {
 	var body registerRequest
-	if status, decodeErr := decodeJSONBody(request, &body); decodeErr != nil {
+	if status, decodeErr := decodeJSONBody(request, &body, "inviteCode", "nickname"); decodeErr != nil {
 		writeAPIError(writer, status, "invalid_request")
 		return
 	}
@@ -54,7 +54,7 @@ func (router *router) register(writer http.ResponseWriter, request *http.Request
 
 func (router *router) refresh(writer http.ResponseWriter, request *http.Request) {
 	var body refreshRequest
-	if status, decodeErr := decodeJSONBody(request, &body); decodeErr != nil {
+	if status, decodeErr := decodeJSONBody(request, &body, "refreshToken"); decodeErr != nil {
 		writeAPIError(writer, status, "invalid_request")
 		return
 	}
