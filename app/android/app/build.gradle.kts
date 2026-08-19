@@ -11,6 +11,33 @@ require(selectedGameboxAbi == null || selectedGameboxAbi in supportedGameboxAbis
     "Unsupported gameboxAndroidAbi"
 }
 val standaloneAndroidTestRuntime by configurations.creating
+val gameRuntimeSource = rootProject.file("../../game_runtime")
+val stagedGameRuntimeAssets = layout.buildDirectory.dir("generated/gameboxRuntimeAssets")
+val stageGameRuntimeAssets by tasks.registering(Sync::class) {
+    from(gameRuntimeSource) {
+        include(
+            "project.godot",
+            "main.gd",
+            "main.gd.uid",
+            "main.tscn",
+            "core/**",
+            "games/**",
+            ".godot/imported/**",
+        )
+        exclude(
+            ".gdignore",
+            "**/.gdignore",
+            ".godot/editor/**",
+            ".godot/uid_cache.bin",
+            ".godot/global_script_class_cache.cfg",
+            ".godot/filesystem_cache*",
+            ".godot/*metadata*",
+            "test/**",
+        )
+        includeEmptyDirs = false
+    }
+    into(stagedGameRuntimeAssets)
+}
 
 android {
     namespace = "me.zqydev.gamebox"
@@ -46,7 +73,7 @@ android {
         }
     }
 
-    sourceSets["main"].assets.srcDir(rootProject.file("../../game_runtime"))
+    sourceSets["main"].assets.srcDir(stagedGameRuntimeAssets)
 
     androidResources {
         // Android's default excludes hidden directories used by Godot project data.
@@ -63,6 +90,10 @@ android {
             }
         }
     }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(stageGameRuntimeAssets)
 }
 
 flutter {
