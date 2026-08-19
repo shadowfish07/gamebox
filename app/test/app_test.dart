@@ -28,6 +28,25 @@ void main() {
     expect(find.text('身份功能将在 Phase 3 接入'), findsNothing);
   });
 
+  testWidgets('host-smoke button exposes a stable Android semantics label', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      GameboxApp(gameLauncher: _FakeGameLauncher(), hostSmokeEnabled: true),
+    );
+
+    expect(
+      tester.getSemantics(find.byKey(const Key('host-smoke.launch'))),
+      matchesSemantics(
+        label: 'host-smoke.launch',
+        isButton: true,
+        isEnabled: true,
+        hasEnabledState: true,
+        hasTapAction: true,
+      ),
+    );
+  });
+
   testWidgets(
     'host-smoke tap invokes the injected launcher once while pending',
     (tester) async {

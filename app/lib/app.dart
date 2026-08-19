@@ -65,12 +65,19 @@ class _GameboxAppState extends State<GameboxApp> {
               ? Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    FilledButton(
+                    Semantics(
                       key: const Key('host-smoke.launch'),
-                      onPressed: _isLaunchingHostSmoke
-                          ? null
-                          : _launchHostSmoke,
-                      child: const Text('启动宿主烟测'),
+                      label: 'host-smoke.launch',
+                      button: true,
+                      enabled: !_isLaunchingHostSmoke,
+                      onTap: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+                      excludeSemantics: true,
+                      child: FilledButton(
+                        onPressed: _isLaunchingHostSmoke
+                            ? null
+                            : _launchHostSmoke,
+                        child: const Text('启动宿主烟测'),
+                      ),
                     ),
                     if (_hostSmokeError) ...[
                       const SizedBox(height: 16),
