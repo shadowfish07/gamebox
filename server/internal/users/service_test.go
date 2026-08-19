@@ -46,6 +46,14 @@ func TestNicknameRejectsInvalidUTF8WhitespaceAndRuneLengths(t *testing.T) {
 		{name: "one rune", nickname: "\U0001F642"},
 		{name: "seventeen runes", nickname: strings.Repeat("\u754c", 17)},
 		{name: "invalid utf8", nickname: string([]byte{'A', 0xff})},
+		{name: "embedded newline control", nickname: "A\nB"},
+		{name: "embedded nul control", nickname: "A\x00B"},
+		{name: "embedded c1 control", nickname: "A\u0085B"},
+		{name: "zero width format", nickname: "A\u200bB"},
+		{name: "only zero width formats", nickname: "\u200b\u200b"},
+		{name: "bidi format", nickname: "A\u202eB"},
+		{name: "only combining marks", nickname: "\u0301\u0302"},
+		{name: "space wrapped combining marks", nickname: " \u0301\u0302 "},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -55,6 +63,30 @@ func TestNicknameRejectsInvalidUTF8WhitespaceAndRuneLengths(t *testing.T) {
 			}
 			if display != "" || normalized != "" {
 				t.Fatalf("invalid nickname returned (%q, %q), want no derived values", display, normalized)
+			}
+		})
+	}
+}
+
+func TestNicknameAllowsVisibleUnicodeBasesSpacesAndAttachedCombiningMarks(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		wantDisplay string
+	}{
+		{name: "Chinese", raw: " \u5c0f\u9c7c ", wantDisplay: "\u5c0f\u9c7c"},
+		{name: "emoji symbols", raw: "\U0001F642\U0001F3AE", wantDisplay: "\U0001F642\U0001F3AE"},
+		{name: "attached combining mark", raw: " e\u0301 ", wantDisplay: "e\u0301"},
+		{name: "ordinary internal space", raw: "A B", wantDisplay: "A B"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			display, normalized, err := NormalizeNickname(test.raw)
+			if err != nil {
+				t.Fatalf("NormalizeNickname(%q) returned error: %v", test.raw, err)
+			}
+			if display != test.wantDisplay || normalized != strings.ToLower(test.wantDisplay) {
+				t.Fatalf("NormalizeNickname(%q) = (%q, %q), want (%q, %q)", test.raw, display, normalized, test.wantDisplay, strings.ToLower(test.wantDisplay))
 			}
 		})
 	}

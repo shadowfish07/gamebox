@@ -5,6 +5,7 @@ package users
 import (
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -32,6 +33,21 @@ func NormalizeNickname(raw string) (display string, normalized string, err error
 	display = strings.TrimSpace(raw)
 	runeCount := utf8.RuneCountInString(display)
 	if runeCount < minimumNicknameRunes || runeCount > maximumNicknameRunes {
+		return "", "", ErrInvalidNickname
+	}
+	hasVisibleBase := false
+	for _, character := range display {
+		if unicode.Is(unicode.Cc, character) || unicode.Is(unicode.Cf, character) {
+			return "", "", ErrInvalidNickname
+		}
+		// Ordinary internal spaces and combining marks may decorate a name,
+		// but cannot make an otherwise invisible nickname valid. Letters,
+		// numbers, punctuation, and symbols (including emoji) are base runes.
+		if unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.IsPunct(character) || unicode.IsSymbol(character) {
+			hasVisibleBase = true
+		}
+	}
+	if !hasVisibleBase {
 		return "", "", ErrInvalidNickname
 	}
 	return display, strings.ToLower(display), nil

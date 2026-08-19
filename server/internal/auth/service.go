@@ -153,7 +153,9 @@ func (service *Service) beginRegistrationTransaction(ctx context.Context) (*regi
 		}
 		originalBusyTimeout, err := configureRegistrationConnection(operationContext, connection)
 		if err != nil {
-			_ = connection.Close()
+			// The assignment may have taken effect before the driver reported
+			// failure. Never return a connection with unknown policy to the pool.
+			_ = discardConnection(connection)
 			cancel()
 			return nil, registrationBeginError(ctx, operationContext, err)
 		}
@@ -204,12 +206,8 @@ func (transaction *registrationTransaction) release() error {
 		_, restoreErr = transaction.connection.ExecContext(cleanupContext, `PRAGMA busy_timeout = `+strconv.Itoa(transaction.originalBusyTimeout))
 		if restoreErr != nil {
 			// Never return a connection with mutated lock policy to the pool.
-			_ = transaction.connection.Raw(func(rawConnection any) error {
-				if closer, ok := rawConnection.(driver.Conn); ok {
-					_ = closer.Close()
-				}
-				return driver.ErrBadConn
-			})
+			discardErr := discardConnection(transaction.connection)
+			return errors.Join(restoreErr, discardErr)
 		}
 		closeErr := transaction.connection.Close()
 		if restoreErr == nil {
@@ -217,6 +215,27 @@ func (transaction *registrationTransaction) release() error {
 		}
 	}
 	return restoreErr
+}
+
+// discardConnection transfers disposal ownership to database/sql. Returning
+// driver.ErrBadConn from Raw marks the sql.Conn unusable and makes the pool
+// close the physical connection exactly once; callers must never close the
+// exposed driver connection themselves.
+func discardConnection(connection *sql.Conn) error {
+	if connection == nil {
+		return nil
+	}
+	rawErr := connection.Raw(func(any) error {
+		return driver.ErrBadConn
+	})
+	closeErr := connection.Close()
+	if errors.Is(rawErr, driver.ErrBadConn) {
+		rawErr = nil
+	}
+	if errors.Is(closeErr, sql.ErrConnDone) {
+		closeErr = nil
+	}
+	return errors.Join(rawErr, closeErr)
 }
 
 func isSQLiteBusy(err error) bool {

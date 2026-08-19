@@ -3,10 +3,12 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -178,6 +180,81 @@ func TestRegisterConcurrentInviteConsumptionAllowsExactlyOneUser(t *testing.T) {
 	}
 }
 
+type concurrentRegistrationResult struct {
+	code   string
+	userID string
+	err    error
+}
+
+func TestRegisterConcurrentNormalizedNicknameConflictPreservesLosingInvite(t *testing.T) {
+	for attempt := 0; attempt < 12; attempt++ {
+		t.Run(fmt.Sprintf("attempt-%02d", attempt), func(t *testing.T) {
+			fixture := newAuthFixture(t)
+			codes := []string{fmt.Sprintf("nickname-left-%d", attempt), fmt.Sprintf("nickname-right-%d", attempt)}
+			hashes := map[string]string{
+				codes[0]: fixture.addInvite(t, codes[0]),
+				codes[1]: fixture.addInvite(t, codes[1]),
+			}
+			nicknames := map[string]string{codes[0]: " Alice ", codes[1]: "aLiCe"}
+
+			start := make(chan struct{})
+			results := make(chan concurrentRegistrationResult, 2)
+			var calls sync.WaitGroup
+			for _, code := range codes {
+				code := code
+				calls.Add(1)
+				go func() {
+					defer calls.Done()
+					<-start
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					user, err := fixture.service.Register(ctx, code, nicknames[code])
+					results <- concurrentRegistrationResult{code: code, userID: user.ID, err: err}
+				}()
+			}
+			close(start)
+			calls.Wait()
+			close(results)
+
+			var winner, loser concurrentRegistrationResult
+			for result := range results {
+				switch {
+				case result.err == nil:
+					if winner.code != "" {
+						t.Fatalf("both nickname registrations succeeded: %q and %q", winner.code, result.code)
+					}
+					winner = result
+				case errors.Is(result.err, ErrNicknameTaken):
+					if result.err.Error() != ErrNicknameTaken.Error() {
+						t.Fatalf("nickname conflict leaked internal details: %q", result.err)
+					}
+					loser = result
+				default:
+					t.Fatalf("concurrent nickname Register error = %v, want nil or ErrNicknameTaken", result.err)
+				}
+			}
+			if winner.code == "" || loser.code == "" || winner.userID == "" || loser.userID != "" {
+				t.Fatalf("concurrent nickname results = winner %+v, loser %+v", winner, loser)
+			}
+
+			for _, result := range []concurrentRegistrationResult{winner, loser} {
+				var consumedBy sql.NullString
+				var consumedAt sql.NullInt64
+				if err := fixture.db.QueryRow(`SELECT consumed_by, consumed_at FROM invite_codes WHERE code_hash = ?`, hashes[result.code]).Scan(&consumedBy, &consumedAt); err != nil {
+					t.Fatalf("read invite %q: %v", result.code, err)
+				}
+				if result.code == winner.code {
+					if !consumedBy.Valid || consumedBy.String != winner.userID || !consumedAt.Valid {
+						t.Fatalf("winning invite state = (%v, %v), want consumed by %q", consumedBy, consumedAt, winner.userID)
+					}
+				} else if consumedBy.Valid || consumedAt.Valid {
+					t.Fatalf("losing invite was consumed: consumed_by=%v consumed_at=%v", consumedBy, consumedAt)
+				}
+			}
+		})
+	}
+}
+
 func TestRegisterRejectsMissingConsumedAndEmptyInvitesWithoutLeakingSecrets(t *testing.T) {
 	fixture := newAuthFixture(t)
 	consumedHash := fixture.addInvite(t, "already-consumed-secret")
@@ -268,6 +345,209 @@ func TestRegisterHonorsContextCancellationWhileDatabaseIsBusy(t *testing.T) {
 	if users != 0 {
 		t.Fatalf("canceled registration stored %d users, want 0", users)
 	}
+	connection, err := fixture.db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("reserve connection after cancellation: %v", err)
+	}
+	defer connection.Close()
+	var busyTimeout int
+	if err := connection.QueryRowContext(context.Background(), `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("read busy timeout after cancellation: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy timeout after cancellation = %d, want restored 5000", busyTimeout)
+	}
+}
+
+type busyTimeoutFault int
+
+const (
+	busyTimeoutSetFault busyTimeoutFault = iota + 1
+	busyTimeoutRestoreFault
+)
+
+type busyTimeoutFaultState struct {
+	mu         sync.Mutex
+	fault      busyTimeoutFault
+	opened     int
+	closeCount map[int]int
+}
+
+func newBusyTimeoutFaultDatabase(fault busyTimeoutFault) (*sql.DB, *busyTimeoutFaultState) {
+	state := &busyTimeoutFaultState{fault: fault, closeCount: make(map[int]int)}
+	db := sql.OpenDB(busyTimeoutFaultConnector{state: state})
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	return db, state
+}
+
+func (state *busyTimeoutFaultState) snapshot() (opened int, firstCloseCount int) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.opened, state.closeCount[0]
+}
+
+type busyTimeoutFaultConnector struct {
+	state *busyTimeoutFaultState
+}
+
+func (connector busyTimeoutFaultConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	connector.state.mu.Lock()
+	id := connector.state.opened
+	connector.state.opened++
+	connector.state.mu.Unlock()
+	return &busyTimeoutFaultConnection{state: connector.state, id: id, busyTimeout: 5000}, nil
+}
+
+func (connector busyTimeoutFaultConnector) Driver() driver.Driver {
+	return busyTimeoutFaultDriver{connector: connector}
+}
+
+type busyTimeoutFaultDriver struct {
+	connector busyTimeoutFaultConnector
+}
+
+func (faultDriver busyTimeoutFaultDriver) Open(string) (driver.Conn, error) {
+	return faultDriver.connector.Connect(context.Background())
+}
+
+type busyTimeoutFaultConnection struct {
+	state       *busyTimeoutFaultState
+	id          int
+	busyTimeout int
+}
+
+func (*busyTimeoutFaultConnection) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare not supported")
+}
+
+func (connection *busyTimeoutFaultConnection) Close() error {
+	connection.state.mu.Lock()
+	defer connection.state.mu.Unlock()
+	connection.state.closeCount[connection.id]++
+	return nil
+}
+
+func (connection *busyTimeoutFaultConnection) Begin() (driver.Tx, error) {
+	return connection.BeginTx(context.Background(), driver.TxOptions{})
+}
+
+func (connection *busyTimeoutFaultConnection) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return busyTimeoutFaultTransaction{}, nil
+}
+
+func (connection *busyTimeoutFaultConnection) QueryContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(query) != "PRAGMA busy_timeout" {
+		return nil, fmt.Errorf("unexpected query %q", query)
+	}
+	return &singleIntegerRows{value: int64(connection.busyTimeout)}, nil
+}
+
+func (connection *busyTimeoutFaultConnection) ExecContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	switch strings.TrimSpace(query) {
+	case "PRAGMA busy_timeout = 25":
+		connection.busyTimeout = 25
+		if connection.id == 0 && connection.state.fault == busyTimeoutSetFault {
+			return nil, errors.New("busy timeout set failed after applying")
+		}
+	case "PRAGMA busy_timeout = 5000":
+		if connection.id == 0 && connection.state.fault == busyTimeoutRestoreFault {
+			return nil, errors.New("busy timeout restore failed")
+		}
+		connection.busyTimeout = 5000
+	default:
+		return nil, fmt.Errorf("unexpected exec %q", query)
+	}
+	return driver.RowsAffected(0), nil
+}
+
+type busyTimeoutFaultTransaction struct{}
+
+func (busyTimeoutFaultTransaction) Commit() error   { return nil }
+func (busyTimeoutFaultTransaction) Rollback() error { return nil }
+
+type singleIntegerRows struct {
+	value int64
+	done  bool
+}
+
+func (*singleIntegerRows) Columns() []string { return []string{"busy_timeout"} }
+func (*singleIntegerRows) Close() error      { return nil }
+func (rows *singleIntegerRows) Next(values []driver.Value) error {
+	if rows.done {
+		return io.EOF
+	}
+	rows.done = true
+	values[0] = rows.value
+	return nil
+}
+
+func assertFaultedConnectionDiscarded(t *testing.T, db *sql.DB, state *busyTimeoutFaultState) {
+	t.Helper()
+	connection, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("reserve connection after fault: %v", err)
+	}
+	var busyTimeout int
+	if err := connection.QueryRowContext(context.Background(), `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		_ = connection.Close()
+		t.Fatalf("read busy timeout after fault: %v", err)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("release connection after fault: %v", err)
+	}
+	opened, firstCloseCount := state.snapshot()
+	if busyTimeout != 5000 || opened != 2 || firstCloseCount != 1 {
+		t.Fatalf("post-fault pool = timeout %d, opened %d, first closes %d; want fresh timeout 5000, 2 opens, first closed exactly once", busyTimeout, opened, firstCloseCount)
+	}
+}
+
+func TestRegisterDiscardsConnectionWhenBusyTimeoutSetMayHaveApplied(t *testing.T) {
+	db, state := newBusyTimeoutFaultDatabase(busyTimeoutSetFault)
+	t.Cleanup(func() { _ = db.Close() })
+	service, err := NewService(db, clock.NewFake(time.Now()), testPepper)
+	if err != nil {
+		t.Fatalf("create auth service: %v", err)
+	}
+	if transaction, err := service.beginRegistrationTransaction(context.Background()); transaction != nil || !errors.Is(err, ErrInternal) {
+		t.Fatalf("beginRegistrationTransaction = (%v, %v), want nil and ErrInternal", transaction, err)
+	}
+	assertFaultedConnectionDiscarded(t, db, state)
+}
+
+func TestRegisterDiscardsConnectionOnceWhenBusyTimeoutRestoreFails(t *testing.T) {
+	db, state := newBusyTimeoutFaultDatabase(busyTimeoutRestoreFault)
+	t.Cleanup(func() { _ = db.Close() })
+	service, err := NewService(db, clock.NewFake(time.Now()), testPepper)
+	if err != nil {
+		t.Fatalf("create auth service: %v", err)
+	}
+	transaction, err := service.beginRegistrationTransaction(context.Background())
+	if err != nil {
+		t.Fatalf("beginRegistrationTransaction returned error: %v", err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatalf("rollback transaction: %v", err)
+	}
+	if err := transaction.release(); err == nil {
+		t.Fatal("release unexpectedly hid busy timeout restore failure")
+	}
+	if err := transaction.connection.PingContext(context.Background()); !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("discarded sql.Conn error = %v, want sql.ErrConnDone", err)
+	}
+	assertFaultedConnectionDiscarded(t, db, state)
 }
 
 func TestRegisterServiceRejectsInvalidDependenciesAndPepper(t *testing.T) {
