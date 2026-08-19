@@ -191,6 +191,205 @@ type failedReader struct{ err error }
 
 func (reader failedReader) Read([]byte) (int, error) { return 0, reader.err }
 
+type launchTicketEntropyReader struct {
+	reads int
+	value byte
+}
+
+func (reader *launchTicketEntropyReader) Read(destination []byte) (int, error) {
+	reader.reads++
+	for index := range destination {
+		destination[index] = reader.value
+	}
+	return len(destination), nil
+}
+
+type launchTicketGateClock struct {
+	base    *clock.Fake
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (serviceClock *launchTicketGateClock) Now() time.Time {
+	sampled := serviceClock.base.Now()
+	select {
+	case serviceClock.entered <- struct{}{}:
+	default:
+	}
+	<-serviceClock.release
+	return sampled
+}
+
+type launchTicketCountingClock struct {
+	now   time.Time
+	calls int
+}
+
+func (serviceClock *launchTicketCountingClock) Now() time.Time {
+	serviceClock.calls++
+	return serviceClock.now
+}
+
+func newLaunchTicketService(t *testing.T, fixture fixture, serviceClock clock.Clock, entropy io.Reader) *Service {
+	t.Helper()
+	service, err := NewServiceWithConfig(fixture.db, fixture.registry, serviceClock, ServiceConfig{
+		ColorRandom:        bytes.NewReader([]byte{0}),
+		LaunchTicketRandom: entropy,
+		TokenPepper:        strings.Repeat("p", minimumTokenPepperBytes),
+	})
+	if err != nil {
+		t.Fatalf("NewServiceWithConfig: %v", err)
+	}
+	return service
+}
+
+func TestCreateLaunchTicketTTLStartsAfterWriteLockAndValidation(t *testing.T) {
+	fixture := newFixture(t)
+	created, err := fixture.service(t, bytes.NewReader([]byte{0})).Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatalf("seed match: %v", err)
+	}
+
+	blocking, err := fixture.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("hold immediate transaction: %v", err)
+	}
+	blockingOpen := true
+	defer func() {
+		if blockingOpen {
+			_ = blocking.Rollback()
+		}
+	}()
+
+	baseClock := clock.NewFake(fixture.now)
+	releaseClock := make(chan struct{})
+	gateClock := &launchTicketGateClock{base: baseClock, entered: make(chan struct{}, 1), release: releaseClock}
+	entropy := &launchTicketEntropyReader{value: 0x5a}
+	service := newLaunchTicketService(t, fixture, gateClock, entropy)
+	type result struct {
+		ticket LaunchTicket
+		err    error
+	}
+	started := make(chan struct{})
+	resultChannel := make(chan result, 1)
+	go func() {
+		close(started)
+		ticket, issueErr := service.CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+		resultChannel <- result{ticket: ticket, err: issueErr}
+	}()
+	<-started
+
+	// On the buggy implementation Now is sampled before beginWriteTransaction,
+	// so this channel provides a deterministic barrier. Once fixed, the write
+	// lock prevents the sample and the bounded wait proves the request is still
+	// blocked before the test advances time and releases the lock.
+	select {
+	case <-gateClock.entered:
+	case <-time.After(75 * time.Millisecond):
+	}
+	baseClock.Advance(37 * time.Second)
+	close(releaseClock)
+	if err := blocking.Rollback(); err != nil {
+		t.Fatalf("release immediate transaction: %v", err)
+	}
+	blockingOpen = false
+
+	var outcome result
+	select {
+	case outcome = <-resultChannel:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateLaunchTicket did not finish after lock release")
+	}
+	if outcome.err != nil {
+		t.Fatalf("CreateLaunchTicket: %v", outcome.err)
+	}
+	wantCreatedAt := baseClock.Now().UTC().UnixMilli()
+	wantExpiresAt := wantCreatedAt + launchTicketLifetime.Milliseconds()
+	if got := outcome.ticket.ExpiresAt.UTC().UnixMilli(); got != wantExpiresAt {
+		t.Fatalf("ticket expiresAt=%d, want post-lock sample %d", got, wantExpiresAt)
+	}
+	var storedCreatedAt, storedExpiresAt int64
+	if err := fixture.db.QueryRow(`SELECT created_at,expires_at FROM launch_tickets`).Scan(&storedCreatedAt, &storedExpiresAt); err != nil {
+		t.Fatalf("read launch ticket timestamps: %v", err)
+	}
+	if storedCreatedAt != wantCreatedAt || storedExpiresAt != wantExpiresAt || storedExpiresAt-storedCreatedAt != launchTicketLifetime.Milliseconds() {
+		t.Fatalf("stored timestamps=(%d,%d), want (%d,%d)", storedCreatedAt, storedExpiresAt, wantCreatedAt, wantExpiresAt)
+	}
+	if entropy.reads != 1 {
+		t.Fatalf("ticket entropy reads=%d, want 1 after validation", entropy.reads)
+	}
+}
+
+func TestCreateLaunchTicketSamplesClockAfterValidationAndFailsClosed(t *testing.T) {
+	t.Run("overflow does not mask participant validation", func(t *testing.T) {
+		fixture := newFixture(t)
+		created, err := fixture.service(t, bytes.NewReader([]byte{0})).Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serviceClock := &launchTicketCountingClock{now: time.UnixMilli(int64(^uint64(0) >> 1))}
+		entropy := &launchTicketEntropyReader{value: 1}
+		ticket, issueErr := newLaunchTicketService(t, fixture, serviceClock, entropy).CreateLaunchTicket(context.Background(), created.ID, thirdID)
+		if !errors.Is(issueErr, ErrMatchNotFound) || ticket.Token != "" {
+			t.Fatalf("nonparticipant overflow=(%+v,%v), want match not found", ticket, issueErr)
+		}
+		if serviceClock.calls != 0 || entropy.reads != 0 {
+			t.Fatalf("validation failure sampled clock/generated entropy: clock=%d entropy=%d", serviceClock.calls, entropy.reads)
+		}
+		assertTableCount(t, fixture.db, "launch_tickets", 0)
+	})
+
+	t.Run("overflow after validation rolls back without plaintext", func(t *testing.T) {
+		fixture := newFixture(t)
+		created, err := fixture.service(t, bytes.NewReader([]byte{0})).Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serviceClock := &launchTicketCountingClock{now: time.UnixMilli(int64(^uint64(0) >> 1))}
+		entropy := &launchTicketEntropyReader{value: 2}
+		ticket, issueErr := newLaunchTicketService(t, fixture, serviceClock, entropy).CreateLaunchTicket(context.Background(), created.ID, initiatorID)
+		if !errors.Is(issueErr, ErrInternal) || ticket.Token != "" || ticket.MatchID != "" {
+			t.Fatalf("overflow=(%+v,%v), want zero/internal", ticket, issueErr)
+		}
+		if serviceClock.calls != 1 || entropy.reads != 0 {
+			t.Fatalf("overflow clock/entropy calls=(%d,%d), want (1,0)", serviceClock.calls, entropy.reads)
+		}
+		assertTableCount(t, fixture.db, "launch_tickets", 0)
+		writeContext, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
+		if _, err := fixture.db.ExecContext(writeContext, `UPDATE users SET updated_at=updated_at WHERE id=?`, initiatorID); err != nil {
+			t.Fatalf("overflow transaction was not released: %v", err)
+		}
+	})
+
+	t.Run("lock timeout never reaches clock or entropy", func(t *testing.T) {
+		fixture := newFixture(t)
+		created, err := fixture.service(t, bytes.NewReader([]byte{0})).Create(context.Background(), gomoku.GameID, initiatorID, opponentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blocking, err := fixture.db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serviceClock := &launchTicketCountingClock{now: fixture.now}
+		entropy := &launchTicketEntropyReader{value: 3}
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+		defer cancel()
+		ticket, issueErr := newLaunchTicketService(t, fixture, serviceClock, entropy).CreateLaunchTicket(ctx, created.ID, initiatorID)
+		if rollbackErr := blocking.Rollback(); rollbackErr != nil {
+			t.Fatal(rollbackErr)
+		}
+		if !errors.Is(issueErr, context.DeadlineExceeded) || ticket.Token != "" {
+			t.Fatalf("lock timeout=(%+v,%v), want deadline", ticket, issueErr)
+		}
+		if serviceClock.calls != 0 || entropy.reads != 0 {
+			t.Fatalf("lock timeout sampled clock/generated entropy: clock=%d entropy=%d", serviceClock.calls, entropy.reads)
+		}
+		assertTableCount(t, fixture.db, "launch_tickets", 0)
+	})
+}
+
 func TestCreateRandomFailureOrShortReadRollsBack(t *testing.T) {
 	tests := []struct {
 		name   string

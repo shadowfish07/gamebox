@@ -355,11 +355,6 @@ func (service *Service) CreateLaunchTicket(ctx context.Context, matchID, userID 
 	if ctx == nil || !canonicalUUID(matchID) || !canonicalUUID(userID) {
 		return LaunchTicket{}, ErrInvalidRequest
 	}
-	nowMillis := service.clock.Now().UTC().UnixMilli()
-	expiresMillis, expiryOK := safeAddMilliseconds(nowMillis, launchTicketLifetime.Milliseconds())
-	if !expiryOK {
-		return LaunchTicket{}, ErrInternal
-	}
 	transaction, beginErr := service.beginWriteTransaction(ctx)
 	if beginErr != nil {
 		return LaunchTicket{}, beginErr
@@ -388,6 +383,11 @@ func (service *Service) CreateLaunchTicket(ctx context.Context, matchID, userID 
 	playerIDs := [2]string{players[0].UserID, players[1].UserID}
 	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction.Tx, match.GameID, match.ID, playerIDs, singleActiveMatch(rules)); slotsErr != nil {
 		return LaunchTicket{}, slotsErr
+	}
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	expiresMillis, expiryOK := safeAddMilliseconds(nowMillis, launchTicketLifetime.Milliseconds())
+	if !expiryOK {
+		return LaunchTicket{}, ErrInternal
 	}
 	var plaintext string
 	inserted := false
