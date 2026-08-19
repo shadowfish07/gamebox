@@ -166,6 +166,63 @@ WHERE code_hash = ? AND consumed_at IS NULL AND consumed_by IS NULL`, userID.Str
 	return users.User{ID: userID.String(), Nickname: displayNickname}, nil
 }
 
+// Authenticate verifies an access token against the signing policy, confirms
+// that its user is still enabled, and records authenticated activity in one
+// transaction. The timestamp is deliberately persisted in UTC milliseconds so
+// lobby presence comparisons use the same unit as match lifecycle data.
+func (service *Service) Authenticate(ctx context.Context, rawAccessToken string) (_ users.User, err error) {
+	if ctx == nil {
+		return users.User{}, ErrUnauthorized
+	}
+	identity, parseErr := service.ParseAccess(rawAccessToken)
+	if parseErr != nil {
+		return users.User{}, ErrUnauthorized
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return users.User{}, beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = databaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	result, updateErr := transaction.ExecContext(ctx, `
+UPDATE users
+SET last_seen_at = ?
+WHERE id = ? AND enabled = 1`, nowMillis, identity.UserID)
+	if updateErr != nil {
+		return users.User{}, databaseError(ctx, updateErr)
+	}
+	affected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return users.User{}, databaseError(ctx, rowsErr)
+	}
+	if affected != 1 {
+		return users.User{}, ErrUnauthorized
+	}
+	user := users.User{ID: identity.UserID}
+	var normalizedNickname string
+	if queryErr := transaction.QueryRowContext(ctx, `SELECT nickname,normalized_nickname FROM users WHERE id = ? AND enabled = 1`, identity.UserID).Scan(&user.Nickname, &normalizedNickname); queryErr != nil {
+		if errors.Is(queryErr, sql.ErrNoRows) {
+			return users.User{}, ErrUnauthorized
+		}
+		return users.User{}, databaseError(ctx, queryErr)
+	}
+	parsedID, idErr := uuid.Parse(user.ID)
+	displayNickname, normalized, normalizeErr := users.NormalizeNickname(user.Nickname)
+	if idErr != nil || parsedID.String() != user.ID || parsedID.Variant() != uuid.RFC4122 || normalizeErr != nil || displayNickname != user.Nickname || normalized != normalizedNickname {
+		return users.User{}, ErrInternal
+	}
+	if commitErr := service.commit(transaction); commitErr != nil {
+		return users.User{}, databaseError(ctx, commitErr)
+	}
+	return user, nil
+}
+
 func isNormalizedNicknameConflict(err error) bool {
 	var sqliteErr *sqlite.Error
 	return errors.As(err, &sqliteErr) &&

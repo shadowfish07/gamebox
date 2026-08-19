@@ -4,12 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +30,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/protocol"
+	"me.zqydev/gamebox/server/internal/users"
 )
 
 var (
@@ -48,18 +55,79 @@ const (
 	maximumMatchEvents        = 226
 	cancelledPayloadJSON      = `{}`
 	fullyOfflineAbandonAfter  = 24 * time.Hour
+	launchTicketLifetime      = 60 * time.Second
+	launchTicketEntropyBytes  = 32
+	launchTicketCollisionMax  = 8
+	minimumTokenPepperBytes   = 32
+	launchTicketHashDomain    = "gamebox/launch-ticket-hash/v1"
 )
+
+// ServiceConfig supplies the independent randomness and secret used by the
+// HTTP launch-ticket boundary. String formatting always redacts the secret.
+type ServiceConfig struct {
+	ColorRandom        io.Reader
+	LaunchTicketRandom io.Reader
+	TokenPepper        string
+}
+
+func (config ServiceConfig) String() string {
+	return "ServiceConfig{ColorRandom:<reader> LaunchTicketRandom:<reader> TokenPepper:<redacted>}"
+}
+
+func (config ServiceConfig) GoString() string { return config.String() }
+
+// ActiveMatch is the lobby projection for one user's single active game slot.
+type ActiveMatch struct {
+	ID               string
+	GameID           string
+	OpponentID       string
+	OpponentNickname string
+	Color            Color
+	Revision         int64
+}
+
+// Opponent is a non-secret lobby projection. Availability is derived from the
+// durable game slot; Presence is advisory and never gates match creation.
+type Opponent struct {
+	ID           string
+	Nickname     string
+	Availability string
+	Presence     string
+}
+
+// LaunchTicket is returned exactly once after its independent hash commits.
+type LaunchTicket struct {
+	MatchID   string
+	GameID    string
+	Token     string
+	ExpiresAt time.Time
+}
+
+func (ticket LaunchTicket) String() string {
+	return fmt.Sprintf("LaunchTicket{MatchID:%q GameID:%q ExpiresAt:%s Token:<redacted>}", ticket.MatchID, ticket.GameID, ticket.ExpiresAt.UTC().Format(time.RFC3339))
+}
+
+func (ticket LaunchTicket) GoString() string { return ticket.String() }
 
 // Service atomically owns match creation and lifecycle transitions. The
 // database must be opened by store.Open so BeginTx acquires an immediate
 // SQLite write transaction.
 type Service struct {
-	db       *sql.DB
-	games    *games.Registry
-	clock    clock.Clock
-	random   io.Reader
-	randomMu sync.Mutex
+	db             *sql.DB
+	games          *games.Registry
+	clock          clock.Clock
+	random         io.Reader
+	randomMu       sync.Mutex
+	ticketRandom   io.Reader
+	ticketRandomMu sync.Mutex
+	tokenPepper    string
 }
+
+func (service *Service) String() string {
+	return "Service{database:<configured> games:<configured> clock:<configured> random:<reader> ticketRandom:<reader> tokenPepper:<redacted>}"
+}
+
+func (service *Service) GoString() string { return service.String() }
 
 // NewService validates the complete dependency set. Production callers omit
 // randomSource and receive crypto/rand.Reader; tests may supply exactly one
@@ -75,7 +143,331 @@ func NewService(db *sql.DB, registry *games.Registry, serviceClock clock.Clock, 
 		}
 		colorRandom = randomSource[0]
 	}
-	return &Service{db: db, games: registry, clock: serviceClock, random: colorRandom}, nil
+	return &Service{db: db, games: registry, clock: serviceClock, random: colorRandom, ticketRandom: rand.Reader}, nil
+}
+
+// NewServiceWithConfig constructs the complete service used by the HTTP and
+// WebSocket composition root. NewService remains available to rules/lifecycle
+// tests that do not issue launch credentials.
+func NewServiceWithConfig(db *sql.DB, registry *games.Registry, serviceClock clock.Clock, config ServiceConfig) (*Service, error) {
+	if db == nil || registry == nil || nilDependency(serviceClock) || nilDependency(config.ColorRandom) ||
+		nilDependency(config.LaunchTicketRandom) || len([]byte(config.TokenPepper)) < minimumTokenPepperBytes {
+		return nil, ErrInvalidConfiguration
+	}
+	return &Service{
+		db: db, games: registry, clock: serviceClock,
+		random: config.ColorRandom, ticketRandom: config.LaunchTicketRandom, tokenPepper: config.TokenPepper,
+	}, nil
+}
+
+// CurrentMatch returns nil when the user's durable game slot is idle. A slot
+// that disagrees with match lifecycle or seating is treated as corruption
+// instead of being hidden as idle/active lobby state.
+func (service *Service) CurrentMatch(ctx context.Context, gameID, userID string) (_ *ActiveMatch, err error) {
+	if !service.configured() {
+		return nil, ErrInvalidConfiguration
+	}
+	if ctx == nil || !canonicalUUID(userID) {
+		return nil, ErrInvalidRequest
+	}
+	rules, ok := service.games.Lookup(gameID)
+	if !ok || rules.PlayerLimit() != 2 || !singleActiveMatch(rules) {
+		return nil, ErrInvalidRequest
+	}
+	transaction, beginErr := service.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if beginErr != nil {
+		return nil, matchDatabaseError(ctx, beginErr)
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+	}()
+
+	var matchID string
+	queryErr := transaction.QueryRowContext(ctx, `
+SELECT match_id
+FROM active_game_slots
+WHERE game_id=? AND user_id=?`, gameID, userID).Scan(&matchID)
+	if errors.Is(queryErr, sql.ErrNoRows) {
+		var orphanedActiveMembership int
+		if checkErr := transaction.QueryRowContext(ctx, `
+SELECT EXISTS(
+  SELECT 1
+  FROM match_players
+  JOIN matches ON matches.id=match_players.match_id
+  WHERE match_players.user_id=? AND matches.game_id=? AND matches.status=?
+)`, userID, gameID, StatusActive).Scan(&orphanedActiveMembership); checkErr != nil {
+			return nil, matchDatabaseError(ctx, checkErr)
+		}
+		if orphanedActiveMembership != 0 {
+			return nil, ErrInternal
+		}
+		if commitErr := transaction.Commit(); commitErr != nil {
+			return nil, matchDatabaseError(ctx, commitErr)
+		}
+		return nil, nil
+	}
+	if queryErr != nil {
+		return nil, matchDatabaseError(ctx, queryErr)
+	}
+	if !canonicalUUID(matchID) {
+		return nil, ErrInternal
+	}
+	match, players, loadErr := loadMatchAndPlayers(ctx, transaction, matchID)
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	if match.GameID != gameID || match.Status != StatusActive {
+		return nil, ErrInternal
+	}
+	if _, snapshotErr := service.rebuildSnapshot(ctx, transaction, match, players); snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	player, opponent, member := actionPlayers(players, userID)
+	if !member {
+		return nil, ErrInternal
+	}
+	playerIDs := [2]string{players[0].UserID, players[1].UserID}
+	if slotErr := validateCompleteActiveSlotSet(ctx, transaction, gameID, matchID, playerIDs, true); slotErr != nil {
+		return nil, slotErr
+	}
+	var nickname, normalizedNickname string
+	var enabled int
+	if opponentErr := transaction.QueryRowContext(ctx, `
+SELECT nickname,normalized_nickname,enabled
+FROM users
+WHERE id=?`, opponent.UserID).Scan(&nickname, &normalizedNickname, &enabled); opponentErr != nil {
+		return nil, matchDatabaseError(ctx, opponentErr)
+	}
+	if !validStoredUser(opponent.UserID, nickname, normalizedNickname) || (enabled != 0 && enabled != 1) {
+		return nil, ErrInternal
+	}
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return nil, matchDatabaseError(ctx, commitErr)
+	}
+	return &ActiveMatch{
+		ID: match.ID, GameID: match.GameID, OpponentID: opponent.UserID,
+		OpponentNickname: nickname, Color: player.Color, Revision: match.Revision,
+	}, nil
+}
+
+// ListOpponents returns all enabled users except the caller in stable
+// nickname/id order. Availability comes only from the durable game slot;
+// offline idle users intentionally remain selectable.
+func (service *Service) ListOpponents(ctx context.Context, gameID, userID string) (_ []Opponent, err error) {
+	if !service.configured() {
+		return nil, ErrInvalidConfiguration
+	}
+	if ctx == nil || !canonicalUUID(userID) {
+		return nil, ErrInvalidRequest
+	}
+	rules, ok := service.games.Lookup(gameID)
+	if !ok || !singleActiveMatch(rules) {
+		return nil, ErrInvalidRequest
+	}
+	transaction, beginErr := service.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if beginErr != nil {
+		return nil, matchDatabaseError(ctx, beginErr)
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+	}()
+	var callerEnabled int
+	if callerErr := transaction.QueryRowContext(ctx, `SELECT enabled FROM users WHERE id=?`, userID).Scan(&callerEnabled); callerErr != nil {
+		if errors.Is(callerErr, sql.ErrNoRows) {
+			return nil, ErrInvalidRequest
+		}
+		return nil, matchDatabaseError(ctx, callerErr)
+	}
+	if callerEnabled != 1 {
+		return nil, ErrInvalidRequest
+	}
+	rows, queryErr := transaction.QueryContext(ctx, `
+SELECT users.id,users.nickname,users.normalized_nickname,users.enabled,users.last_seen_at,
+       CASE WHEN active_game_slots.user_id IS NULL THEN 0 ELSE 1 END
+FROM users
+LEFT JOIN active_game_slots
+  ON active_game_slots.game_id=? AND active_game_slots.user_id=users.id
+WHERE users.enabled=1 AND users.id<>?`, gameID, userID)
+	if queryErr != nil {
+		return nil, matchDatabaseError(ctx, queryErr)
+	}
+	defer rows.Close()
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	onlineCutoff := nowMillis - (90 * time.Second).Milliseconds()
+	opponents := make([]Opponent, 0, 16)
+	for rows.Next() {
+		var id, nickname, normalizedNickname string
+		var enabled, busy int
+		var lastSeen sql.NullInt64
+		if scanErr := rows.Scan(&id, &nickname, &normalizedNickname, &enabled, &lastSeen, &busy); scanErr != nil {
+			return nil, matchDatabaseError(ctx, scanErr)
+		}
+		if !validStoredUser(id, nickname, normalizedNickname) || enabled != 1 || (busy != 0 && busy != 1) {
+			return nil, ErrInternal
+		}
+		availability := "idle"
+		if busy == 1 {
+			availability = "busy"
+		}
+		presence := "offline"
+		if lastSeen.Valid && lastSeen.Int64 >= onlineCutoff {
+			presence = "online"
+		}
+		opponents = append(opponents, Opponent{ID: id, Nickname: nickname, Availability: availability, Presence: presence})
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, matchDatabaseError(ctx, rowsErr)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, matchDatabaseError(ctx, closeErr)
+	}
+	sort.Slice(opponents, func(left, right int) bool {
+		leftFolded, rightFolded := strings.ToLower(opponents[left].Nickname), strings.ToLower(opponents[right].Nickname)
+		if leftFolded != rightFolded {
+			return leftFolded < rightFolded
+		}
+		if opponents[left].Nickname != opponents[right].Nickname {
+			return opponents[left].Nickname < opponents[right].Nickname
+		}
+		return opponents[left].ID < opponents[right].ID
+	})
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return nil, matchDatabaseError(ctx, commitErr)
+	}
+	return opponents, nil
+}
+
+// CreateLaunchTicket validates active membership and stores only an
+// independently domain-separated credential hash. Hash collisions are retried
+// inside the same transaction; no plaintext is returned until commit succeeds.
+func (service *Service) CreateLaunchTicket(ctx context.Context, matchID, userID string) (_ LaunchTicket, err error) {
+	if !service.configured() || nilDependency(service.ticketRandom) || len([]byte(service.tokenPepper)) < minimumTokenPepperBytes {
+		return LaunchTicket{}, ErrInvalidConfiguration
+	}
+	if ctx == nil || !canonicalUUID(matchID) || !canonicalUUID(userID) {
+		return LaunchTicket{}, ErrInvalidRequest
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return LaunchTicket{}, beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+
+	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, matchID)
+	if loadErr != nil {
+		return LaunchTicket{}, loadErr
+	}
+	if match.Status != StatusActive || !playerMember(players, userID) {
+		return LaunchTicket{}, ErrMatchNotFound
+	}
+	if _, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players); snapshotErr != nil {
+		return LaunchTicket{}, snapshotErr
+	}
+	rules, ok := service.games.Lookup(match.GameID)
+	if !ok || rules.PlayerLimit() != 2 {
+		return LaunchTicket{}, ErrInternal
+	}
+	playerIDs := [2]string{players[0].UserID, players[1].UserID}
+	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction.Tx, match.GameID, match.ID, playerIDs, singleActiveMatch(rules)); slotsErr != nil {
+		return LaunchTicket{}, slotsErr
+	}
+	nowMillis := service.clock.Now().UTC().UnixMilli()
+	expiresMillis := nowMillis + launchTicketLifetime.Milliseconds()
+	var plaintext string
+	inserted := false
+	for attempt := 0; attempt < launchTicketCollisionMax; attempt++ {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return LaunchTicket{}, contextErr
+		}
+		var tokenErr error
+		plaintext, tokenErr = service.randomLaunchTicket()
+		if tokenErr != nil {
+			return LaunchTicket{}, ErrInternal
+		}
+		hash, hashErr := hashLaunchTicket(service.tokenPepper, plaintext)
+		if hashErr != nil {
+			return LaunchTicket{}, ErrInternal
+		}
+		result, insertErr := transaction.ExecContext(ctx, `
+INSERT INTO launch_tickets(token_hash,match_id,user_id,game_id,expires_at,created_at)
+VALUES (?,?,?,?,?,?)`, hash, match.ID, userID, match.GameID, expiresMillis, nowMillis)
+		if insertErr != nil {
+			if isLaunchTicketHashConflict(insertErr) {
+				continue
+			}
+			return LaunchTicket{}, matchDatabaseError(ctx, insertErr)
+		}
+		if affectedExactlyOne(result) != nil {
+			return LaunchTicket{}, ErrInternal
+		}
+		inserted = true
+		break
+	}
+	if !inserted {
+		return LaunchTicket{}, ErrInternal
+	}
+	if commitErr := transaction.Commit(); commitErr != nil {
+		return LaunchTicket{}, matchDatabaseError(ctx, commitErr)
+	}
+	return LaunchTicket{
+		MatchID: match.ID, GameID: match.GameID, Token: plaintext,
+		ExpiresAt: time.UnixMilli(expiresMillis).UTC(),
+	}, nil
+}
+
+func validStoredUser(id, nickname, normalizedNickname string) bool {
+	if !canonicalUUID(id) {
+		return false
+	}
+	display, normalized, normalizeErr := users.NormalizeNickname(nickname)
+	return normalizeErr == nil && display == nickname && normalized == normalizedNickname
+}
+
+func (service *Service) randomLaunchTicket() (string, error) {
+	service.ticketRandomMu.Lock()
+	defer service.ticketRandomMu.Unlock()
+	bytes := make([]byte, launchTicketEntropyBytes)
+	if _, err := io.ReadFull(service.ticketRandom, bytes); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+func hashLaunchTicket(pepper, plaintext string) (string, error) {
+	if pepper == "" || plaintext == "" {
+		return "", ErrInvalidRequest
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(launchTicketHashDomain))
+	writeCredentialHashField(hasher, []byte(pepper))
+	writeCredentialHashField(hasher, []byte(plaintext))
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func writeCredentialHashField(destination io.Writer, field []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+	_, _ = destination.Write(length[:])
+	_, _ = destination.Write(field)
+}
+
+func isLaunchTicketHashConflict(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return (code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY || code == sqlite3.SQLITE_CONSTRAINT_UNIQUE) &&
+		strings.Contains(sqliteErr.Error(), "UNIQUE constraint failed: launch_tickets.token_hash")
 }
 
 // Create atomically creates a two-player match. Stable seats are based on the
