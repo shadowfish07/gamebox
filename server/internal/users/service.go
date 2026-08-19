@@ -71,7 +71,7 @@ func NormalizeNickname(raw string) (display string, normalized string, err error
 	if !hasVisibleBase {
 		return "", "", ErrInvalidNickname
 	}
-	return display, strings.ToLower(display), nil
+	return display, normalizedNicknameKey(display), nil
 }
 
 func isForbiddenControlOrSeparator(character rune) bool {
@@ -79,26 +79,30 @@ func isForbiddenControlOrSeparator(character rune) bool {
 }
 
 // validEmojiJoinerContext intentionally supports only symbol-based emoji ZWJ
-// sequences. Marks such as variation selectors and the standard skin-tone
-// modifiers may decorate either adjacent emoji base, but letters cannot use a
-// zero-width joiner to masquerade as an unjoined spelling.
+// sequences. Marks and skin-tone modifiers may trail the left emoji base, but
+// the rune immediately after ZWJ must be the right emoji base; decorations may
+// then follow that base normally. Letters cannot use a zero-width joiner to
+// masquerade as an unjoined spelling.
 func validEmojiJoinerContext(characters []rune, joinerIndex int) bool {
-	left, leftFound := adjacentBase(characters, joinerIndex, -1, isEmojiDecoration)
-	right, rightFound := adjacentBase(characters, joinerIndex, 1, isEmojiDecoration)
-	return leftFound && rightFound && unicode.Is(unicode.So, left) && unicode.Is(unicode.So, right)
+	left, leftFound := precedingBase(characters, joinerIndex, isEmojiDecoration)
+	rightIndex := joinerIndex + 1
+	return leftFound && unicode.Is(unicode.So, left) &&
+		rightIndex < len(characters) && unicode.Is(unicode.So, characters[rightIndex])
 }
 
-// validTextNonJoinerContext permits ZWNJ only inside text: both sides must
-// resolve to letters after skipping attached combining marks. Symbols,
-// whitespace, another joiner, and leading or trailing placement all fail.
+// validTextNonJoinerContext permits ZWNJ only inside text: marks may trail the
+// left letter, while the rune immediately after ZWNJ must be the right letter
+// (and may itself be followed by marks). Symbols, whitespace, another joiner,
+// and leading or trailing placement all fail.
 func validTextNonJoinerContext(characters []rune, joinerIndex int) bool {
-	left, leftFound := adjacentBase(characters, joinerIndex, -1, unicode.IsMark)
-	right, rightFound := adjacentBase(characters, joinerIndex, 1, unicode.IsMark)
-	return leftFound && rightFound && unicode.IsLetter(left) && unicode.IsLetter(right)
+	left, leftFound := precedingBase(characters, joinerIndex, unicode.IsMark)
+	rightIndex := joinerIndex + 1
+	return leftFound && unicode.IsLetter(left) &&
+		rightIndex < len(characters) && unicode.IsLetter(characters[rightIndex])
 }
 
-func adjacentBase(characters []rune, start, direction int, decoration func(rune) bool) (rune, bool) {
-	for index := start + direction; index >= 0 && index < len(characters); index += direction {
+func precedingBase(characters []rune, start int, decoration func(rune) bool) (rune, bool) {
+	for index := start - 1; index >= 0; index-- {
 		if decoration(characters[index]) {
 			continue
 		}
@@ -109,4 +113,17 @@ func adjacentBase(characters []rune, start, direction int, decoration func(rune)
 
 func isEmojiDecoration(character rune) bool {
 	return unicode.IsMark(character) || character >= 0x1f3fb && character <= 0x1f3ff
+}
+
+// normalizedNicknameKey is deliberately more conservative than the display
+// spelling. Contextually valid joiners remain visible to the user, but are
+// removed only after lower-casing so invisible formatting cannot create a
+// second unique account for an otherwise identical nickname.
+func normalizedNicknameKey(display string) string {
+	return strings.Map(func(character rune) rune {
+		if character == zeroWidthJoiner || character == zeroWidthNonJoiner {
+			return -1
+		}
+		return character
+	}, strings.ToLower(display))
 }

@@ -255,6 +255,62 @@ func TestRegisterConcurrentNormalizedNicknameConflictPreservesLosingInvite(t *te
 	}
 }
 
+func TestRegisterContextualJoinersCannotBypassNormalizedNicknameUniqueness(t *testing.T) {
+	tests := []struct {
+		name               string
+		plainNickname      string
+		contextualNickname string
+		wantNormalized     string
+	}{
+		{name: "text ZWNJ", plainNickname: "ab", contextualNickname: "a\u200cb", wantNormalized: "ab"},
+		{name: "emoji ZWJ", plainNickname: "\U0001F642\U0001F642", contextualNickname: "\U0001F642\u200d\U0001F642", wantNormalized: "\U0001F642\U0001F642"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAuthFixture(t)
+			winningCode := "plain-winner"
+			losingCode := "contextual-loser"
+			winningHash := fixture.addInvite(t, winningCode)
+			losingHash := fixture.addInvite(t, losingCode)
+
+			winner, err := fixture.service.Register(context.Background(), winningCode, test.plainNickname)
+			if err != nil {
+				t.Fatalf("register plain nickname: %v", err)
+			}
+			loser, err := fixture.service.Register(context.Background(), losingCode, test.contextualNickname)
+			if loser.ID != "" || loser.Nickname != "" || !errors.Is(err, ErrNicknameTaken) {
+				t.Fatalf("contextual Register = (%+v, %v), want zero user and ErrNicknameTaken", loser, err)
+			}
+			if err.Error() != ErrNicknameTaken.Error() {
+				t.Fatalf("contextual conflict leaked internal details: %q", err)
+			}
+
+			var normalized string
+			if err := fixture.db.QueryRow(`SELECT normalized_nickname FROM users WHERE id = ?`, winner.ID).Scan(&normalized); err != nil {
+				t.Fatalf("read winner normalized nickname: %v", err)
+			}
+			if normalized != test.wantNormalized {
+				t.Fatalf("winner normalized nickname = %q, want %q", normalized, test.wantNormalized)
+			}
+
+			for hash, wantConsumedBy := range map[string]string{winningHash: winner.ID, losingHash: ""} {
+				var consumedBy sql.NullString
+				var consumedAt sql.NullInt64
+				if err := fixture.db.QueryRow(`SELECT consumed_by, consumed_at FROM invite_codes WHERE code_hash = ?`, hash).Scan(&consumedBy, &consumedAt); err != nil {
+					t.Fatalf("read invite %q: %v", hash, err)
+				}
+				if wantConsumedBy == "" {
+					if consumedBy.Valid || consumedAt.Valid {
+						t.Fatalf("losing invite consumed: consumed_by=%v consumed_at=%v", consumedBy, consumedAt)
+					}
+				} else if !consumedBy.Valid || consumedBy.String != wantConsumedBy || !consumedAt.Valid {
+					t.Fatalf("winning invite state = (%v, %v), want consumed by %q", consumedBy, consumedAt, wantConsumedBy)
+				}
+			}
+		})
+	}
+}
+
 func TestRegisterRejectsMissingConsumedAndEmptyInvitesWithoutLeakingSecrets(t *testing.T) {
 	fixture := newAuthFixture(t)
 	consumedHash := fixture.addInvite(t, "already-consumed-secret")

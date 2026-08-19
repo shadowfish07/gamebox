@@ -100,9 +100,11 @@ func TestNicknameAllowsContextualEmojiZWJAndTextZWNJ(t *testing.T) {
 		{name: "woman technologist", nickname: "\U0001F469\u200d\U0001F4BB"},
 		{name: "family", nickname: "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466"},
 		{name: "skin tone modifier", nickname: "\U0001F469\U0001F3FD\u200d\U0001F4BB"},
+		{name: "family skin tones", nickname: "\U0001F468\U0001F3FD\u200d\U0001F469\U0001F3FD\u200d\U0001F467\U0001F3FD\u200d\U0001F466\U0001F3FD"},
 		{name: "variation selector", nickname: "\u2764\ufe0f\u200d\U0001F525"},
+		{name: "right base variation selector", nickname: "\U0001F3C3\u200d\u2640\ufe0f"},
 		{name: "Persian non-joiner", nickname: "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"},
-		{name: "text marks around non-joiner", nickname: "\u0646\u064e\u200c\u0650\u0645"},
+		{name: "text marks after adjacent bases", nickname: "\u0646\u064e\u200c\u0645\u0650"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -110,8 +112,9 @@ func TestNicknameAllowsContextualEmojiZWJAndTextZWNJ(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NormalizeNickname(%q) returned error: %v", test.nickname, err)
 			}
-			if display != test.nickname || normalized != strings.ToLower(test.nickname) {
-				t.Fatalf("NormalizeNickname(%q) = (%q, %q), want preserved display and lower-case form", test.nickname, display, normalized)
+			wantNormalized := strings.NewReplacer("\u200c", "", "\u200d", "").Replace(strings.ToLower(test.nickname))
+			if display != test.nickname || normalized != wantNormalized {
+				t.Fatalf("NormalizeNickname(%q) = (%q, %q), want display %q and conservative key %q", test.nickname, display, normalized, test.nickname, wantNormalized)
 			}
 		})
 	}
@@ -135,8 +138,11 @@ func TestNicknameRejectsUnsafeSeparatorsFormatsAndJoinerContexts(t *testing.T) {
 		{name: "letters around ZWJ", nickname: "a\u200db"},
 		{name: "space before joiner", nickname: "\U0001F642 \u200d\U0001F4BB"},
 		{name: "space after joiner", nickname: "\U0001F642\u200d \U0001F4BB"},
+		{name: "mark before right emoji base", nickname: "\U0001F642\u200d\ufe0f\U0001F4BB"},
+		{name: "modifier before right emoji base", nickname: "\U0001F642\u200d\U0001F3FD\U0001F4BB"},
 		{name: "symbols around ZWNJ", nickname: "\U0001F642\u200c\U0001F4BB"},
 		{name: "space before ZWNJ", nickname: "\u0645 \u200c\u06cc"},
+		{name: "mark before right text base", nickname: "\u0646\u200c\u0650\u0645"},
 		{name: "zero width space", nickname: "A\u200bB"},
 		{name: "soft hyphen", nickname: "A\u00adB"},
 		{name: "word joiner", nickname: "A\u2060B"},
