@@ -9,7 +9,8 @@ readonly TEST_PACKAGE="$PACKAGE.test"
 readonly TEST_RUNNER="$TEST_PACKAGE/me.zqydev.gamebox.HostSmokeTestRunner"
 readonly TEST_CLASS="me.zqydev.gamebox.HostSmokeClickTest#clickHostSmokeLaunchByAccessibilityDescription"
 readonly READY_MARKER="GAMEBOX_GODOT_READY"
-readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT_DIR
 readonly APK_DIR="$ROOT_DIR/app/build/app/outputs/flutter-apk"
 readonly TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 
@@ -34,8 +35,24 @@ if [[ "$device_state" != "device" ]]; then
   exit 2
 fi
 
+helper_package_installed() {
+  "${ADB[@]}" shell pm path "$TEST_PACKAGE" 2>/dev/null \
+    | grep -q '^package:'
+}
+
+remove_helper_package() {
+  "${ADB[@]}" shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1 || return 1
+  if helper_package_installed; then
+    "${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null 2>&1 || return 1
+  fi
+}
+
 cleanup() {
-  "${ADB[@]}" shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1 || true
+  local exit_status=$?
+  trap - EXIT
+  set +e
+  remove_helper_package >/dev/null 2>&1
+  exit "$exit_status"
 }
 trap cleanup EXIT
 
@@ -248,5 +265,13 @@ for cycle in 1 2; do
   assert_no_crash_or_anr
   echo "cycle $cycle passed: ready marker observed, game process exited, MainActivity resumed, main PID $after_pid unchanged"
 done
+
+remove_helper_package || fail "could not remove the $TEST_PACKAGE instrumentation helper"
+if helper_package_installed; then
+  fail "$TEST_PACKAGE remained installed after cleanup"
+fi
+if [[ -n "$("${ADB[@]}" shell pidof "$TEST_PACKAGE" 2>/dev/null | tr -d '\r')" ]]; then
+  fail "$TEST_PACKAGE helper process remained after cleanup"
+fi
 
 echo "Android host smoke passed twice on $SERIAL."
