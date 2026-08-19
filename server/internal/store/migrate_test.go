@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +13,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const initialMigrationVersion = 1
@@ -159,6 +164,98 @@ INSERT INTO table_that_does_not_exist(id) VALUES (1);
 	}
 }
 
+func TestMigrationRegistryValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		registry []migration
+	}{
+		{name: "zero version", registry: []migration{{version: 0, path: "zero.sql"}}},
+		{name: "negative version", registry: []migration{{version: -1, path: "negative.sql"}}},
+		{name: "duplicate version", registry: []migration{{version: 1, path: "one.sql"}, {version: 1, path: "duplicate.sql"}}},
+		{name: "out of order", registry: []migration{{version: 2, path: "two.sql"}, {version: 1, path: "one.sql"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateMigrationRegistry(test.registry); err == nil {
+				t.Fatalf("validateMigrationRegistry(%v) unexpectedly succeeded", test.registry)
+			}
+		})
+	}
+	if err := validateMigrationRegistry([]migration{{version: 1, path: "one.sql"}, {version: 3, path: "three.sql"}}); err != nil {
+		t.Fatalf("strictly increasing registry: %v", err)
+	}
+}
+
+func TestMigrationLedgerStoresEmbeddedChecksum(t *testing.T) {
+	t.Parallel()
+
+	db := openDatabase(t, context.Background(), filepath.Join(t.TempDir(), "checksum.sqlite"))
+	defer db.Close()
+	contents, err := migrationFiles.ReadFile("migrations/001_initial.sql")
+	if err != nil {
+		t.Fatalf("read embedded migration: %v", err)
+	}
+	wantHash := sha256.Sum256(contents)
+	want := hex.EncodeToString(wantHash[:])
+	var got string
+	if err := db.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = 1`).Scan(&got); err != nil {
+		t.Fatalf("read migration checksum: %v", err)
+	}
+	if got != want {
+		t.Fatalf("migration checksum = %q, want SHA-256 %q", got, want)
+	}
+}
+
+func TestOpenRejectsMigrationChecksumDrift(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "drift.sqlite")
+	db := openDatabase(t, ctx, path)
+	if _, err := db.Exec(`UPDATE schema_migrations SET checksum = ? WHERE version = 1`, strings.Repeat("0", sha256.Size*2)); err != nil {
+		_ = db.Close()
+		t.Fatalf("modify migration checksum: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close drift setup: %v", err)
+	}
+
+	db, err := Open(ctx, path)
+	if db != nil {
+		_ = db.Close()
+		t.Fatal("Open returned a database with migration checksum drift")
+	}
+	if err == nil || !strings.Contains(err.Error(), "migration 1 checksum mismatch") {
+		t.Fatalf("Open drift error = %v, want stable checksum mismatch diagnostic", err)
+	}
+}
+
+func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "future.sqlite")
+	db := openDatabase(t, ctx, path)
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (3, ?, unixepoch()), (2, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
+		_ = db.Close()
+		t.Fatalf("insert future migration: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close future setup: %v", err)
+	}
+
+	db, err := Open(ctx, path)
+	if db != nil {
+		_ = db.Close()
+		t.Fatal("Open returned a database with an unknown future migration")
+	}
+	if err == nil || !strings.Contains(err.Error(), "unknown migration version 2") {
+		t.Fatalf("Open future-version error = %v, want stable unknown-version diagnostic", err)
+	}
+}
+
 func TestOpenRejectsNonDurableDatabasePaths(t *testing.T) {
 	t.Parallel()
 
@@ -181,13 +278,392 @@ func TestOpenHonorsCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "canceled.sqlite"))
+	path := filepath.Join(t.TempDir(), "canceled.sqlite")
+	db, err := Open(ctx, path)
 	if db != nil {
 		_ = db.Close()
 		t.Fatal("Open returned a database for a canceled context")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Open error = %v, want context.Canceled", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("canceled Open created a database file: %v", statErr)
+	}
+}
+
+func TestTextPrimaryKeysRejectNull(t *testing.T) {
+	t.Parallel()
+
+	db := openDatabase(t, context.Background(), filepath.Join(t.TempDir(), "null-primary-keys.sqlite"))
+	defer db.Close()
+	mustExec(t, db, `INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('u1','Alice','alice',1,1)`)
+	mustExec(t, db, `INSERT INTO matches(id,game_id,status,created_at,updated_at) VALUES ('m1','gomoku','active',1,1)`)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "users.id", query: `INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (NULL,'Null User','null-user',1,1)`},
+		{name: "invite_codes.code_hash", query: `INSERT INTO invite_codes(code_hash,created_at) VALUES (NULL,1)`},
+		{name: "refresh_tokens.token_hash", query: `INSERT INTO refresh_tokens(token_hash,user_id,expires_at,created_at) VALUES (NULL,'u1',2,1)`},
+		{name: "matches.id", query: `INSERT INTO matches(id,game_id,status,created_at,updated_at) VALUES (NULL,'gomoku','active',1,1)`},
+		{name: "launch_tickets.token_hash", query: `INSERT INTO launch_tickets(token_hash,match_id,user_id,game_id,expires_at,created_at) VALUES (NULL,'m1','u1','gomoku',2,1)`},
+		{name: "resume_tokens.token_hash", query: `INSERT INTO resume_tokens(token_hash,match_id,user_id,expires_at,last_used_at,created_at) VALUES (NULL,'m1','u1',2,1,1)`},
+		{name: "match_players.match_id", query: `INSERT INTO match_players(match_id,user_id,seat,color) VALUES (NULL,'u1',0,'black')`},
+		{name: "match_players.user_id", query: `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1',NULL,0,'black')`},
+		{name: "match_events.match_id", query: `INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES (NULL,1,'move','{}',1)`},
+		{name: "match_events.revision", query: `INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES ('m1',NULL,'move','{}',1)`},
+		{name: "active_game_slots.game_id", query: `INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (NULL,'u1','m1')`},
+		{name: "active_game_slots.user_id", query: `INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES ('gomoku',NULL,'m1')`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mustFail(t, db, test.query)
+		})
+	}
+}
+
+func TestOpenSecuresDatabaseAndWALFiles(t *testing.T) {
+	oldUmask := syscall.Umask(0o022)
+	defer syscall.Umask(oldUmask)
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod test directory: %v", err)
+	}
+	unrelatedPath := filepath.Join(dir, "unrelated.txt")
+	if err := os.WriteFile(unrelatedPath, []byte("leave me alone"), 0o644); err != nil {
+		t.Fatalf("write unrelated file: %v", err)
+	}
+
+	path := filepath.Join(dir, "secure #1?.sqlite")
+	if err := os.WriteFile(path, nil, 0o666); err != nil {
+		t.Fatalf("create permissive database: %v", err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatalf("force permissive database mode: %v", err)
+	}
+
+	db := openDatabase(t, context.Background(), path)
+	defer db.Close()
+	// Keep a write transaction open so both WAL sidecars remain observable.
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin sidecar transaction: %v", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('mode-user','Mode User','mode-user',1,1)`); err != nil {
+		t.Fatalf("write sidecar transaction: %v", err)
+	}
+
+	for _, securedPath := range []string{path, path + "-wal", path + "-shm"} {
+		assertFileMode(t, securedPath, 0o600)
+	}
+	assertFileMode(t, unrelatedPath, 0o644)
+	assertFileMode(t, dir, 0o755)
+
+	newPath := filepath.Join(dir, "new.sqlite")
+	newDB := openDatabase(t, context.Background(), newPath)
+	defer newDB.Close()
+	newTx, err := newDB.Begin()
+	if err != nil {
+		t.Fatalf("begin new database sidecar transaction: %v", err)
+	}
+	defer newTx.Rollback()
+	if _, err := newTx.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('new-mode-user','New Mode User','new-mode-user',1,1)`); err != nil {
+		t.Fatalf("write new database sidecar transaction: %v", err)
+	}
+	for _, securedPath := range []string{newPath, newPath + "-wal", newPath + "-shm"} {
+		assertFileMode(t, securedPath, 0o600)
+	}
+}
+
+func TestOpenRejectsSymlinkAndNonRegularPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat test directory: %v", err)
+	}
+	dirMode := dirInfo.Mode().Perm()
+	target := filepath.Join(dir, "target.sqlite")
+	if err := os.WriteFile(target, nil, 0o644); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatalf("chmod symlink target: %v", err)
+	}
+	symlink := filepath.Join(dir, "database-link")
+	if err := os.Symlink(target, symlink); err != nil {
+		t.Fatalf("create database symlink: %v", err)
+	}
+
+	for name, path := range map[string]string{
+		"symlink":   symlink,
+		"directory": dir,
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, err := Open(context.Background(), path)
+			if db != nil {
+				_ = db.Close()
+				t.Fatalf("Open(%q) returned a database", path)
+			}
+			if err == nil {
+				t.Fatalf("Open(%q) unexpectedly succeeded", path)
+			}
+		})
+	}
+	assertFileMode(t, target, 0o644)
+	assertFileMode(t, dir, dirMode)
+
+	sidecarDB := filepath.Join(dir, "sidecar.sqlite")
+	if err := os.WriteFile(sidecarDB, nil, 0o600); err != nil {
+		t.Fatalf("write sidecar database: %v", err)
+	}
+	sidecarTarget := filepath.Join(dir, "sidecar-target")
+	if err := os.WriteFile(sidecarTarget, []byte("unrelated"), 0o644); err != nil {
+		t.Fatalf("write sidecar target: %v", err)
+	}
+	if err := os.Chmod(sidecarTarget, 0o644); err != nil {
+		t.Fatalf("chmod sidecar target: %v", err)
+	}
+	if err := os.Symlink(sidecarTarget, sidecarDB+"-wal"); err != nil {
+		t.Fatalf("create WAL symlink: %v", err)
+	}
+	if db, err := Open(context.Background(), sidecarDB); err == nil || db != nil {
+		if db != nil {
+			_ = db.Close()
+		}
+		t.Fatal("Open accepted a symlink WAL sidecar")
+	}
+	assertFileMode(t, sidecarTarget, 0o644)
+}
+
+func TestOpenFailureStillSecuresOnlyDatabaseFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "invalid.sqlite")
+	unrelated := filepath.Join(dir, "unrelated")
+	if err := os.WriteFile(path, []byte("not a sqlite database"), 0o666); err != nil {
+		t.Fatalf("write invalid database: %v", err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatalf("chmod invalid database: %v", err)
+	}
+	if err := os.WriteFile(unrelated, []byte("untouched"), 0o644); err != nil {
+		t.Fatalf("write unrelated file: %v", err)
+	}
+	if err := os.Chmod(unrelated, 0o644); err != nil {
+		t.Fatalf("chmod unrelated file: %v", err)
+	}
+
+	db, err := Open(context.Background(), path)
+	if db != nil {
+		_ = db.Close()
+		t.Fatal("Open returned an invalid database")
+	}
+	if err == nil {
+		t.Fatal("Open unexpectedly accepted an invalid database")
+	}
+	assertFileMode(t, path, 0o600)
+	assertFileMode(t, unrelated, 0o644)
+}
+
+func TestOpenReturnsPromptlyWhenContextExpiresDuringSQLiteLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "locked.sqlite")
+	locker := openDatabase(t, context.Background(), path)
+	defer locker.Close()
+
+	if _, err := locker.Exec(`PRAGMA locking_mode=EXCLUSIVE`); err != nil {
+		t.Fatalf("enable exclusive locking: %v", err)
+	}
+	tx, err := locker.Begin()
+	if err != nil {
+		t.Fatalf("begin exclusive transaction: %v", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('locker','Locker','locker',1,1)`); err != nil {
+		t.Fatalf("acquire exclusive database lock: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	db, err := Open(ctx, path)
+	elapsed := time.Since(started)
+	if db != nil {
+		_ = db.Close()
+		t.Fatal("Open returned a database while an exclusive lock was held")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Open error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed > 750*time.Millisecond {
+		t.Fatalf("Open honored a 75ms context in %v, want <= 750ms", elapsed)
+	}
+}
+
+func TestCancelableConnectorClosesLateConnection(t *testing.T) {
+	t.Parallel()
+
+	base := &blockingConnector{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		conn:    &trackingConn{closed: make(chan struct{})},
+	}
+	connector := cancelableConnector{Connector: base}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	result := make(chan error, 1)
+	go func() {
+		conn, err := connector.Connect(ctx)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		result <- err
+	}()
+	<-base.started
+	if err := <-result; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Connect error = %v, want context.DeadlineExceeded", err)
+	}
+	close(base.release)
+	select {
+	case <-base.conn.closed:
+	case <-time.After(time.Second):
+		t.Fatal("late physical connection was not closed")
+	}
+}
+
+func TestCanceledOpenStressLeavesDatabaseReusable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "locked-stress.sqlite")
+	locker := openDatabase(t, context.Background(), path)
+	if _, err := locker.Exec(`PRAGMA locking_mode=EXCLUSIVE`); err != nil {
+		_ = locker.Close()
+		t.Fatalf("enable exclusive locking: %v", err)
+	}
+	tx, err := locker.Begin()
+	if err != nil {
+		_ = locker.Close()
+		t.Fatalf("begin exclusive transaction: %v", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('stress-locker','Stress Locker','stress-locker',1,1)`); err != nil {
+		_ = tx.Rollback()
+		_ = locker.Close()
+		t.Fatalf("acquire exclusive database lock: %v", err)
+	}
+
+	const workers = 12
+	errorsByWorker := make(chan error, workers)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			db, err := Open(ctx, path)
+			if db != nil {
+				_ = db.Close()
+				errorsByWorker <- errors.New("canceled Open returned a database")
+				return
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				errorsByWorker <- fmt.Errorf("canceled Open error = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errorsByWorker)
+	for err := range errorsByWorker {
+		t.Error(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("release exclusive transaction: %v", err)
+	}
+	if err := locker.Close(); err != nil {
+		t.Fatalf("close exclusive locker: %v", err)
+	}
+	if t.Failed() {
+		return
+	}
+	waitForConnectorWorkers(t, 2*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open after canceled stress: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close reopened stress database: %v", err)
+	}
+	waitForConnectorWorkers(t, 2*time.Second)
+}
+
+func waitForConnectorWorkers(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if activeConnectorWorkers.Load() == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d connector workers still active after %v", activeConnectorWorkers.Load(), timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type blockingConnector struct {
+	started chan struct{}
+	release chan struct{}
+	conn    *trackingConn
+}
+
+func (c *blockingConnector) Connect(context.Context) (driver.Conn, error) {
+	close(c.started)
+	<-c.release
+	return c.conn, nil
+}
+
+func (*blockingConnector) Driver() driver.Driver { return blockingDriver{} }
+
+type blockingDriver struct{}
+
+func (blockingDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("not implemented")
+}
+
+type trackingConn struct {
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func (*trackingConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *trackingConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func (*trackingConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("not implemented")
+}
+
+func assertFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %q: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("mode for %q = %#o, want %#o", path, got, want)
 	}
 }
 
@@ -310,7 +786,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 
 	wantConstraintFragments := map[string][]string{
 		"users": {
-			"id TEXT PRIMARY KEY",
+			"id TEXT NOT NULL PRIMARY KEY",
 			"nickname TEXT NOT NULL",
 			"normalized_nickname TEXT NOT NULL UNIQUE",
 			"enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1))",
@@ -319,21 +795,21 @@ func assertSchema(t *testing.T, db *sql.DB) {
 			"updated_at INTEGER NOT NULL",
 		},
 		"invite_codes": {
-			"code_hash TEXT PRIMARY KEY",
+			"code_hash TEXT NOT NULL PRIMARY KEY",
 			"created_at INTEGER NOT NULL",
 			"consumed_by TEXT REFERENCES users(id)",
 			"consumed_at INTEGER",
 			"CHECK ((consumed_by IS NULL) = (consumed_at IS NULL))",
 		},
 		"refresh_tokens": {
-			"token_hash TEXT PRIMARY KEY",
+			"token_hash TEXT NOT NULL PRIMARY KEY",
 			"user_id TEXT NOT NULL REFERENCES users(id)",
 			"expires_at INTEGER NOT NULL",
 			"revoked_at INTEGER",
 			"created_at INTEGER NOT NULL",
 		},
 		"matches": {
-			"id TEXT PRIMARY KEY",
+			"id TEXT NOT NULL PRIMARY KEY",
 			"game_id TEXT NOT NULL",
 			"status TEXT NOT NULL CHECK (status IN ('active','cancelled','finished','abandoned'))",
 			"revision INTEGER NOT NULL DEFAULT 0",
@@ -372,7 +848,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 			"UNIQUE (game_id, match_id, user_id)",
 		},
 		"launch_tickets": {
-			"token_hash TEXT PRIMARY KEY",
+			"token_hash TEXT NOT NULL PRIMARY KEY",
 			"match_id TEXT NOT NULL REFERENCES matches(id)",
 			"user_id TEXT NOT NULL REFERENCES users(id)",
 			"game_id TEXT NOT NULL",
@@ -381,7 +857,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 			"created_at INTEGER NOT NULL",
 		},
 		"resume_tokens": {
-			"token_hash TEXT PRIMARY KEY",
+			"token_hash TEXT NOT NULL PRIMARY KEY",
 			"match_id TEXT NOT NULL REFERENCES matches(id)",
 			"user_id TEXT NOT NULL REFERENCES users(id)",
 			"expires_at INTEGER NOT NULL",
@@ -408,7 +884,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 		t.Fatalf("read schema_migrations definition: %v", err)
 	}
 	normalized := normalizeSQL(migrationSQL)
-	for _, fragment := range []string{"version integer primary key", "applied_at integer not null"} {
+	for _, fragment := range []string{"version integer primary key", "checksum text not null", "applied_at integer not null"} {
 		if !strings.Contains(normalized, fragment) {
 			t.Errorf("schema_migrations missing %q in %q", fragment, normalized)
 		}

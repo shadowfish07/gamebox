@@ -1,5 +1,5 @@
 CREATE TABLE users (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL PRIMARY KEY,
   nickname TEXT NOT NULL,
   normalized_nickname TEXT NOT NULL UNIQUE,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
@@ -9,7 +9,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE invite_codes (
-  code_hash TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL PRIMARY KEY,
   created_at INTEGER NOT NULL,
   consumed_by TEXT REFERENCES users(id),
   consumed_at INTEGER,
@@ -17,7 +17,7 @@ CREATE TABLE invite_codes (
 );
 
 CREATE TABLE refresh_tokens (
-  token_hash TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
   expires_at INTEGER NOT NULL,
   revoked_at INTEGER,
@@ -25,7 +25,7 @@ CREATE TABLE refresh_tokens (
 );
 
 CREATE TABLE matches (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL PRIMARY KEY,
   game_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('active','cancelled','finished','abandoned')),
   revision INTEGER NOT NULL DEFAULT 0,
@@ -68,7 +68,7 @@ CREATE TABLE active_game_slots (
 );
 
 CREATE TABLE launch_tickets (
-  token_hash TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL PRIMARY KEY,
   match_id TEXT NOT NULL REFERENCES matches(id),
   user_id TEXT NOT NULL REFERENCES users(id),
   game_id TEXT NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE launch_tickets (
 );
 
 CREATE TABLE resume_tokens (
-  token_hash TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL PRIMARY KEY,
   match_id TEXT NOT NULL REFERENCES matches(id),
   user_id TEXT NOT NULL REFERENCES users(id),
   expires_at INTEGER NOT NULL,
