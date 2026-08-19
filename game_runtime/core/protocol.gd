@@ -138,8 +138,6 @@ static func encode_action(
 ) -> Dictionary:
 	if not payload is Dictionary:
 		return _failure("invalid_payload", "payload must be a JSON object")
-	if not _is_json_safe(payload, [], 2):
-		return _failure("invalid_payload", "payload contains a value that cannot be represented safely in JSON")
 	var envelope := {
 		"protocolVersion": VERSION,
 		"gameId": "gomoku",
@@ -152,6 +150,9 @@ static func encode_action(
 	var validation := _validate_envelope(envelope)
 	if not validation.get("ok", false):
 		return validation
+	var preflight := _preflight_json(envelope, [], 1, MAX_MESSAGE_BYTES)
+	if not preflight.get("ok", false):
+		return preflight
 	var text := JSON.stringify(envelope, "", true, true)
 	if text.length() > MAX_MESSAGE_BYTES or text.to_utf8_buffer().size() > MAX_MESSAGE_BYTES:
 		return _failure("message_too_large", "Message exceeds the size limit")
@@ -161,37 +162,124 @@ static func encode_action(
 	return {"ok": true, "text": text}
 
 
-static func _is_json_safe(value: Variant, ancestors: Array, depth: int) -> bool:
+static func _preflight_json(value: Variant, ancestors: Array, depth: int, remaining: int) -> Dictionary:
 	match typeof(value):
-		TYPE_NIL, TYPE_BOOL, TYPE_STRING:
-			return true
+		TYPE_NIL:
+			return _consume_json_budget(remaining, 4)
+		TYPE_BOOL:
+			return _consume_json_budget(remaining, 4 if value else 5)
+		TYPE_STRING:
+			return _preflight_json_string(value, remaining)
 		TYPE_INT:
-			return value >= -MAX_SAFE_JSON_INTEGER and value <= MAX_SAFE_JSON_INTEGER
+			if value < -MAX_SAFE_JSON_INTEGER or value > MAX_SAFE_JSON_INTEGER:
+				return _invalid_json_payload()
+			return _consume_json_budget(remaining, str(value).length())
 		TYPE_FLOAT:
 			if not is_finite(value):
-				return false
-			if value == floor(value):
-				return value >= -MAX_SAFE_JSON_INTEGER and value <= MAX_SAFE_JSON_INTEGER
-			return true
+				return _invalid_json_payload()
+			if value == floor(value) and (value < -MAX_SAFE_JSON_INTEGER or value > MAX_SAFE_JSON_INTEGER):
+				return _invalid_json_payload()
+			var encoded_number := JSON.stringify(value, "", true, true)
+			return _consume_json_budget(remaining, encoded_number.length())
 		TYPE_ARRAY, TYPE_DICTIONARY:
 			if depth > MAX_JSON_DEPTH:
-				return false
+				return _invalid_json_payload()
 			for ancestor in ancestors:
 				if is_same(ancestor, value):
-					return false
+					return _invalid_json_payload()
+
+			var item_count: int = value.size()
+			var minimum_bytes := 2
+			if item_count > 0:
+				minimum_bytes = (2 * item_count + 1) if value is Array else (5 * item_count + 1)
+			if minimum_bytes > remaining:
+				return _message_too_large()
+
 			var nested_ancestors := ancestors.duplicate()
 			nested_ancestors.append(value)
+			var budget_result := _consume_json_budget(remaining, 1)
+			if not budget_result.get("ok", false):
+				return budget_result
+			var remaining_bytes: int = budget_result["remaining"]
+			var first := true
 			if value is Array:
 				for item in value:
-					if not _is_json_safe(item, nested_ancestors, depth + 1):
-						return false
+					if not first:
+						budget_result = _consume_json_budget(remaining_bytes, 1)
+						if not budget_result.get("ok", false):
+							return budget_result
+						remaining_bytes = budget_result["remaining"]
+					first = false
+					budget_result = _preflight_json(item, nested_ancestors, depth + 1, remaining_bytes)
+					if not budget_result.get("ok", false):
+						return budget_result
+					remaining_bytes = budget_result["remaining"]
 			else:
 				for key in value:
-					if not key is String or not _is_json_safe(value[key], nested_ancestors, depth + 1):
-						return false
-			return true
+					if not first:
+						budget_result = _consume_json_budget(remaining_bytes, 1)
+						if not budget_result.get("ok", false):
+							return budget_result
+						remaining_bytes = budget_result["remaining"]
+					first = false
+					if not key is String:
+						return _invalid_json_payload()
+					budget_result = _preflight_json_string(key, remaining_bytes)
+					if not budget_result.get("ok", false):
+						return budget_result
+					remaining_bytes = budget_result["remaining"]
+					budget_result = _consume_json_budget(remaining_bytes, 1)
+					if not budget_result.get("ok", false):
+						return budget_result
+					remaining_bytes = budget_result["remaining"]
+					budget_result = _preflight_json(value[key], nested_ancestors, depth + 1, remaining_bytes)
+					if not budget_result.get("ok", false):
+						return budget_result
+					remaining_bytes = budget_result["remaining"]
+			return _consume_json_budget(remaining_bytes, 1)
 		_:
-			return false
+			return _invalid_json_payload()
+
+
+static func _preflight_json_string(value: String, remaining: int) -> Dictionary:
+	# Every character needs at least one byte, plus the two JSON quotes. This
+	# O(1) lower bound rejects giant strings before any UTF-8 conversion.
+	if value.length() + 2 > remaining:
+		return _message_too_large()
+	var remaining_bytes := remaining - 2
+	for character in value:
+		var codepoint := character.unicode_at(0)
+		var byte_count := 1
+		if character == '"' or character == "\\" or character in ["\b", "\f", "\n", "\r", "\t"]:
+			byte_count = 2
+		elif codepoint < 0x20:
+			byte_count = 6
+		elif codepoint <= 0x7f:
+			byte_count = 1
+		elif codepoint <= 0x7ff:
+			byte_count = 2
+		elif codepoint <= 0xffff:
+			byte_count = 3
+		else:
+			byte_count = 4
+		if byte_count > remaining_bytes:
+			return _message_too_large()
+		remaining_bytes -= byte_count
+	return {"ok": true, "remaining": remaining_bytes}
+
+
+static func _consume_json_budget(remaining: int, byte_count: int) -> Dictionary:
+	if byte_count > remaining:
+		return _message_too_large()
+	return {"ok": true, "remaining": remaining - byte_count}
+
+
+static func _message_too_large() -> Dictionary:
+	return _failure("message_too_large", "Message exceeds the size limit")
+
+
+static func _invalid_json_payload() -> Dictionary:
+	return _failure("invalid_payload", "payload contains a value that cannot be represented safely in JSON")
 
 
 static func _validate_optional_string(envelope: Dictionary, field: String) -> bool:

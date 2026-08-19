@@ -19,6 +19,8 @@ static func cases() -> Array:
 		{"name": "protocol errors never echo untrusted input", "run": _errors_do_not_echo_untrusted_input},
 		{"name": "protocol action encoding uses canonical camelCase fields", "run": _encodes_action_with_camel_case},
 		{"name": "protocol encodes both client action types", "run": _encodes_both_client_actions},
+		{"name": "protocol action encoding preflights byte budget", "run": _preflights_action_byte_budget},
+		{"name": "protocol action encoding enforces depth budget", "run": _enforces_action_depth_budget},
 		{"name": "protocol action encoding fails closed", "run": _rejects_invalid_action_encoding},
 	]
 
@@ -294,6 +296,57 @@ static func _encodes_both_client_actions() -> bool:
 		if not _check(Protocol.decode(result.get("text", "")).get("ok", false), "encoded %s must decode" % message_type):
 			return false
 	return true
+
+
+static func _preflights_action_byte_budget() -> bool:
+	var probe: Dictionary = Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, {"text": ""})
+	if not _check(probe.get("ok", false), "failed to encode budget probe"):
+		return false
+	var overhead: int = probe.get("text", "").to_utf8_buffer().size()
+	var exact_text := "x".repeat(Protocol.MAX_MESSAGE_BYTES - overhead)
+	var exact: Dictionary = Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, {"text": exact_text})
+	if not _check(exact.get("ok", false), "exact message byte limit must succeed") \
+		or not _check(exact.get("text", "").to_utf8_buffer().size() == Protocol.MAX_MESSAGE_BYTES, "exact message size mismatch"):
+		return false
+	var over: Dictionary = Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, {"text": exact_text + "x"})
+	if not _check(over.get("code", "") == "message_too_large", "limit plus one must fail with message_too_large"):
+		return false
+
+	var marker := "secret_after_budget_marker"
+	var huge_string_payload := {"huge": "x".repeat(100000), "later": RefCounted.new(), "marker": marker}
+	var multibyte_payload := {"huge": "界".repeat(24000), "later": RefCounted.new(), "marker": marker}
+	var wide_array: Array = []
+	wide_array.resize(33000)
+	wide_array.append(RefCounted.new())
+	var wide_array_payload := {"wide": wide_array, "marker": marker}
+	var wide_dictionary := {}
+	for index in 13108:
+		wide_dictionary["k%d" % index] = null
+	wide_dictionary["later"] = RefCounted.new()
+	wide_dictionary["marker"] = marker
+
+	var started := Time.get_ticks_msec()
+	for payload in [huge_string_payload, multibyte_payload, wide_array_payload, wide_dictionary]:
+		var result: Dictionary = Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, payload)
+		if not _check(result.get("code", "") == "message_too_large", "oversized payload did not short-circuit with message_too_large"):
+			return false
+		var public_error := "%s %s" % [result.get("code", ""), result.get("message", "")]
+		if not _check(not public_error.contains(marker) and public_error.length() <= 128, "budget error leaked input or was unbounded"):
+			return false
+	return _check(Time.get_ticks_msec() - started < 10000, "encode preflight exceeded ten seconds")
+
+
+static func _enforces_action_depth_budget() -> bool:
+	var nested: Variant = 0
+	for _index in Protocol.MAX_JSON_DEPTH - 2:
+		nested = [nested]
+	var at_limit: Dictionary = Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, {"nested": nested})
+	if not _check(at_limit.get("ok", false), "action at JSON depth limit must encode"):
+		return false
+	nested = [nested]
+	var over_limit: Dictionary = Protocol.encode_action("gomoku.move.requested", MATCH_ID, 3, ACTION_ID, {"nested": nested})
+	return _check(not over_limit.get("ok", true), "action over JSON depth limit must fail") \
+		and _check(over_limit.get("code", "") == "invalid_payload", "depth failure contract changed")
 
 
 static func _rejects_invalid_action_encoding() -> bool:

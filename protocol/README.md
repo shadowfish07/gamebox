@@ -87,8 +87,15 @@ values use `unsafe_number`.
 success. Invalid types, identifiers, revisions, cyclic containers, non-finite
 numbers, unsafe integers, non-string object keys, and non-JSON variants return
 `{"ok":false,"code":"...","message":"..."}` and never produce wire text.
-Every successful encoding is passed through the same strict decoder before it
-is returned.
+Before serialization, encoding walks the complete envelope with a remaining
+byte and depth budget. Strings use a constant-time character-count lower bound
+before bounded UTF-8 and JSON-escape counting; arrays and objects use their
+element count to reject an impossible budget before visiting their contents.
+This prevents a wide container or huge string from forcing an unbounded walk or
+temporary JSON allocation. Serialization still performs the authoritative
+UTF-8 byte-size check, and every successful encoding is passed through the same
+strict decoder before it is returned. A complete message of exactly 65,536
+bytes is accepted; 65,537 bytes is rejected.
 
 The four fixtures freeze a snapshot, a requested Gomoku move, its accepted
 server event, and a match-bound error. `snapshot.json` contains a 15 by 15 board
