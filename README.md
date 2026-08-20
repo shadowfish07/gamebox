@@ -85,7 +85,14 @@ positional extras are rejected.
 ```bash
 (cd server && go test ./... -race -count=1 && go vet ./...)
 bash tool/verify_fast.sh
+(cd app && flutter test -d emulator-5560 integration_test/semantics_test.dart)
+bash tool/e2e_android.sh
 ```
+
+The semantics integration test is an Android-device test. In a multi-device
+environment, replace `emulator-5560` with the selected Gamebox-owned serial;
+`tool/e2e_android.sh` runs the equivalent command explicitly on its selected A
+device and preserves the sanitized result in the run artifacts.
 
 Cloudflare Tunnel, machine boot auto-start, production log rotation, and SQLite
 backup/restore belong to the documented follow-up specification **F2 公网部署与

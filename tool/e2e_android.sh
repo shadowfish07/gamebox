@@ -84,6 +84,12 @@ xml_query() {
       values.uniq!
       exit 3 unless values.length == 1
       puts values.first
+    when "field-empty"
+      matches = nodes.select { |node| node.attributes["resource-id"] == expected }
+      exit 3 unless matches.length == 1
+      values = [matches.first.attributes["text"].to_s]
+      matches.first.each_element(".//node") { |node| values << node.attributes["text"].to_s }
+      exit 3 unless values.all?(&:empty?)
     when "diagnostics"
       nodes.each do |node|
         identifier = node.attributes["resource-id"].to_s
@@ -104,6 +110,134 @@ sanitize_stream() {
     -e 's/("(accessToken|refreshToken|launchTicket|inviteCode|invites)"[[:space:]]*:[[:space:]]*)"[^"]*"/\1"[REDACTED]"/g' \
     -e 's/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/[REDACTED_JWT]/g' \
     -e 's/[A-Za-z0-9_-]{40,}/[REDACTED_HIGH_ENTROPY]/g'
+}
+
+device_summary_json() {
+  local serial_a="$1"
+  local serial_b="$2"
+  local api_level_a="$3"
+  local api_level_b="$4"
+  local api_base_url="$5"
+  jq -cn \
+    --arg serialA "$serial_a" \
+    --arg serialB "$serial_b" \
+    --arg apiLevelA "$api_level_a" \
+    --arg apiLevelB "$api_level_b" \
+    --arg apiBaseUrl "$api_base_url" \
+    '{
+      serialA:$serialA,
+      serialB:$serialB,
+      apiLevelA:($apiLevelA | tonumber),
+      apiLevelB:($apiLevelB | tonumber),
+      apiBaseUrl:$apiBaseUrl
+    }'
+}
+
+failure_media_safe() {
+  local secret_active="$1"
+  local clear_verified="$2"
+  [[ "$secret_active" == "0" || ("$secret_active" == "1" && "$clear_verified" == "1") ]]
+}
+
+fixed_value_absent() {
+  local file="$1"
+  local value="$2"
+  local status
+  if rg --text --fixed-strings -- "$value" "$file" >/dev/null 2>&1; then
+    return 1
+  else
+    status=$?
+    [[ "$status" == "1" ]]
+  fi
+}
+
+protect_artifact_directory() {
+  local directory="$1"
+  local scratch="$2"
+  shift 2
+  local unsafe=0
+  local scanner_failed=0
+  local value status file
+  : >"$scratch"
+
+  for value in "$@"; do
+    [[ -n "$value" ]] || continue
+    if rg --text --files-with-matches --fixed-strings -- "$value" "$directory" >"$scratch" 2>/dev/null; then
+      while IFS= read -r file; do
+        case "$file" in
+          "$directory"/*)
+            [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+            ;;
+          *) scanner_failed=1 ;;
+        esac
+      done <"$scratch"
+      unsafe=1
+    else
+      status=$?
+      ((status == 1)) || scanner_failed=1
+    fi
+  done
+
+  local credential_pattern='eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|Authorization[[:space:]]*:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]{8,}|"(accessToken|refreshToken|launchTicket|inviteCode)"[[:space:]]*:[[:space:]]*"[A-Za-z0-9._-]{8,}'
+  if rg --text --files-with-matches "$credential_pattern" "$directory" >"$scratch" 2>/dev/null; then
+    while IFS= read -r file; do
+      case "$file" in
+        "$directory"/*)
+          [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+          ;;
+        *) scanner_failed=1 ;;
+      esac
+    done <"$scratch"
+    unsafe=1
+  else
+    status=$?
+    ((status == 1)) || scanner_failed=1
+  fi
+
+  if ((scanner_failed)); then
+    for file in "$directory"/*; do
+      [[ -e "$file" || -L "$file" ]] || continue
+      [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+    done
+    return 1
+  fi
+
+  for value in "$@"; do
+    [[ -n "$value" ]] || continue
+    if rg --text --fixed-strings -- "$value" "$directory" >/dev/null 2>&1; then
+      for file in "$directory"/*; do
+        [[ -e "$file" || -L "$file" ]] || continue
+        [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+      done
+      return 1
+    else
+      status=$?
+      if ((status != 1)); then
+        for file in "$directory"/*; do
+          [[ -e "$file" || -L "$file" ]] || continue
+          [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+        done
+        return 1
+      fi
+    fi
+  done
+  if rg --text "$credential_pattern" "$directory" >/dev/null 2>&1; then
+    for file in "$directory"/*; do
+      [[ -e "$file" || -L "$file" ]] || continue
+      [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+    done
+    return 1
+  else
+    status=$?
+    if ((status != 1)); then
+      for file in "$directory"/*; do
+        [[ -e "$file" || -L "$file" ]] || continue
+        [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+      done
+      return 1
+    fi
+  fi
+  ((unsafe == 0))
 }
 
 self_test() {
@@ -127,6 +261,10 @@ self_test() {
     || { printf 'field text fixture failed\n' >&2; return 1; }
   [[ "$(xml_query field-text "$fixture" nickname)" == "fixture-nickname" ]] \
     || { printf 'direct field text fixture failed\n' >&2; return 1; }
+  if xml_query field-empty "$fixture" invite-code >/dev/null 2>&1; then
+    printf 'nonempty field was accepted as cleared\n' >&2
+    return 1
+  fi
   if xml_query bounds "$fixture" disabled >/dev/null 2>&1; then
     printf 'disabled resource-id fixture was accepted\n' >&2
     return 1
@@ -151,11 +289,67 @@ self_test() {
     return 1
   fi
 
+  local empty_field="$fixture_dir/empty-field.xml"
+  printf '<hierarchy><node resource-id="invite-code" text=""><node resource-id="" text=""/></node></hierarchy>\n' >"$empty_field"
+  xml_query field-empty "$empty_field" invite-code >/dev/null \
+    || { printf 'empty field fixture failed\n' >&2; return 1; }
+
   local marker='known-secret-value-abcdefghijklmnopqrstuvwxyz0123456789'
   local sanitized
   sanitized="$(printf 'Authorization: Bearer abc.def.ghi %s\n' "$marker" | sanitize_stream)"
   [[ "$sanitized" != *"$marker"* && "$sanitized" != *"abc.def.ghi"* ]] \
     || { printf 'sanitizer fixture failed\n' >&2; return 1; }
+
+  local devices
+  devices="$(device_summary_json fixture-A fixture-B 36 35 http://fixture.invalid:18080)"
+  jq -e '
+    . == {
+      serialA:"fixture-A", serialB:"fixture-B",
+      apiLevelA:36, apiLevelB:35,
+      apiBaseUrl:"http://fixture.invalid:18080"
+    } and (has("api") | not)
+  ' <<<"$devices" >/dev/null \
+    || { printf 'device summary fixture failed\n' >&2; return 1; }
+
+  failure_media_safe 0 0 \
+    || { printf 'inactive secret media gate fixture failed\n' >&2; return 1; }
+  failure_media_safe 1 1 \
+    || { printf 'verified clear media gate fixture failed\n' >&2; return 1; }
+  if failure_media_safe 1 0; then
+    printf 'uncleared secret media gate fixture was accepted\n' >&2
+    return 1
+  fi
+
+  local artifact_fixture="$fixture_dir/artifact"
+  mkdir "$artifact_fixture"
+  printf 'safe diagnostic\n' >"$artifact_fixture/safe.txt"
+  printf '%s\n' "$marker" >"$artifact_fixture/known-secret.txt"
+  printf 'Authorization: Bearer fixture-token-1234567890\n' >"$artifact_fixture/token.txt"
+  if protect_artifact_directory "$artifact_fixture" "$fixture_dir/scan.txt" "$marker"; then
+    printf 'contaminated artifact fixture was accepted\n' >&2
+    return 1
+  fi
+  [[ -f "$artifact_fixture/safe.txt" && ! -e "$artifact_fixture/known-secret.txt" && ! -e "$artifact_fixture/token.txt" ]] \
+    || { printf 'artifact protection fixture failed\n' >&2; return 1; }
+  protect_artifact_directory "$artifact_fixture" "$fixture_dir/scan-clean.txt" "$marker" \
+    || { printf 'clean artifact fixture was rejected\n' >&2; return 1; }
+
+  local runtime_source
+  runtime_source="$(sed -n '/^for required_command in /,$p' "${BASH_SOURCE[0]}")"
+  grep -F 'failure_media_safe' <<<"$runtime_source" >/dev/null \
+    || { printf 'failure screenshot safety gate is missing\n' >&2; return 1; }
+  grep -F 'failure-artifact-scan.txt' <<<"$runtime_source" >/dev/null \
+    || { printf 'failure artifact scanner is missing\n' >&2; return 1; }
+  if grep -E 'screencap.*ARTIFACT_DIR' <<<"$runtime_source" >/dev/null; then
+    printf 'raw failure screenshot is written directly to artifacts\n' >&2
+    return 1
+  fi
+  grep -F "flutter test -d \"\$SERIAL_A\" integration_test/semantics_test.dart" <<<"$runtime_source" >/dev/null \
+    || { printf 'selected-device semantics command is missing\n' >&2; return 1; }
+  if grep -F 'SECONDS + 10' <<<"$runtime_source" >/dev/null; then
+    printf 'render revision wait still uses a hard-coded 10 second deadline\n' >&2
+    return 1
+  fi
   printf 'Gamebox E2E parser fixtures passed.\n'
 }
 
@@ -289,37 +483,74 @@ trap 'exit 143' TERM
 clear_secret_field_for_failure() {
   local serial="$1"
   local enabled="$2"
+  local secret="$3"
   ((enabled)) || return 0
+  [[ -n "$secret" ]] || return 1
   local xml="$TEMP_DIR/failure-clear-${serial//[^A-Za-z0-9_.-]/_}.xml"
-  declare -F dump_ui >/dev/null 2>&1 || return 0
+  local verification_xml="$TEMP_DIR/failure-clear-verified-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  declare -F dump_ui >/dev/null 2>&1 || return 1
   local center
-  if dump_ui "$serial" "$xml" && center="$(xml_query bounds "$xml" invite-code 2>/dev/null)"; then
-    local x y
-    read -r x y <<<"$center"
-    adb_for "$serial" shell input tap "$x" "$y" >/dev/null 2>&1 || true
-    adb_for "$serial" shell input keyevent KEYCODE_MOVE_END >/dev/null 2>&1 || true
-    local index
-    for ((index = 0; index < 96; index++)); do
-      adb_for "$serial" shell input keyevent KEYCODE_DEL >/dev/null 2>&1 || true
-    done
-  fi
+  dump_ui "$serial" "$xml" || return 1
+  center="$(xml_query bounds "$xml" invite-code 2>/dev/null)" || return 1
+  local x y
+  read -r x y <<<"$center"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null 2>&1 || return 1
+  adb_for "$serial" shell input keyevent KEYCODE_MOVE_END >/dev/null 2>&1 || return 1
+  local index
+  for ((index = 0; index < 96; index++)); do
+    adb_for "$serial" shell input keyevent KEYCODE_DEL >/dev/null 2>&1 || return 1
+  done
+
+  local _
+  for _ in 1 2 3; do
+    if dump_ui "$serial" "$verification_xml" \
+      && xml_query field-empty "$verification_xml" invite-code >/dev/null 2>&1 \
+      && fixed_value_absent "$verification_xml" "$secret"; then
+      sleep 1
+      dump_ui "$serial" "$verification_xml" || return 1
+      xml_query field-empty "$verification_xml" invite-code >/dev/null 2>&1 || return 1
+      fixed_value_absent "$verification_xml" "$secret" || return 1
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 capture_failure() {
   local message="$1"
   ((FAILURE_CAPTURED)) && return 0
   FAILURE_CAPTURED=1
-  clear_secret_field_for_failure "$SERIAL_A" "$SECRETS_ON_UI_A"
-  clear_secret_field_for_failure "$SERIAL_B" "$SECRETS_ON_UI_B"
-  local serial label xml
-  for pair in "A:$SERIAL_A" "B:$SERIAL_B"; do
-    label="${pair%%:*}"
-    serial="${pair#*:}"
+  local serial label xml secret_active secret clear_verified screenshot
+  for label in A B; do
+    if [[ "$label" == "A" ]]; then
+      serial="$SERIAL_A"
+      secret_active="$SECRETS_ON_UI_A"
+      secret="$INVITE_A"
+    else
+      serial="$SERIAL_B"
+      secret_active="$SECRETS_ON_UI_B"
+      secret="$INVITE_B"
+    fi
     [[ -n "$serial" ]] || continue
-    adb_for "$serial" exec-out screencap -p >"$ARTIFACT_DIR/failure-$label.png" 2>/dev/null || true
-    xml="$TEMP_DIR/failure-$label.xml"
-    if declare -F dump_ui >/dev/null 2>&1 && dump_ui "$serial" "$xml"; then
-      xml_query diagnostics "$xml" 2>/dev/null | sanitize_stream >"$ARTIFACT_DIR/failure-$label-ui.txt" || true
+    clear_verified=0
+    if clear_secret_field_for_failure "$serial" "$secret_active" "$secret"; then
+      clear_verified=1
+    fi
+    if failure_media_safe "$secret_active" "$clear_verified"; then
+      screenshot="$TEMP_DIR/failure-$label.png"
+      rm -f -- "$screenshot"
+      if adb_for "$serial" exec-out screencap -p >"$screenshot" 2>/dev/null && [[ -s "$screenshot" ]]; then
+        cp "$screenshot" "$ARTIFACT_DIR/failure-$label.png" 2>/dev/null || true
+      fi
+      rm -f -- "$screenshot"
+      xml="$TEMP_DIR/failure-$label.xml"
+      if declare -F dump_ui >/dev/null 2>&1 && dump_ui "$serial" "$xml"; then
+        xml_query diagnostics "$xml" 2>/dev/null | sanitize_stream >"$ARTIFACT_DIR/failure-$label-ui.txt" || true
+      fi
+    else
+      printf 'Failure screenshot and UI dump omitted because secret-field clearing could not be verified.\n' \
+        >"$ARTIFACT_DIR/failure-$label-media-omitted.txt" || true
     fi
     if declare -F game_logs_after_boundary >/dev/null 2>&1 && declare -F boundary_for_serial >/dev/null 2>&1; then
       game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
@@ -341,6 +572,12 @@ capture_failure() {
   [[ -f "$SERVER_LOG" ]] && sanitize_stream <"$SERVER_LOG" >"$ARTIFACT_DIR/server-sanitized.log" || true
   jq -n --arg status failure --arg message "$message" --arg serialA "$SERIAL_A" --arg serialB "$SERIAL_B" \
     '{status:$status,message:$message,serials:[$serialA,$serialB]}' >"$ARTIFACT_DIR/summary.json" || true
+  if ! protect_artifact_directory \
+    "$ARTIFACT_DIR" "$TEMP_DIR/failure-artifact-scan.txt" \
+    "$INVITE_A" "$INVITE_B" "$JWT_SECRET" "$TOKEN_PEPPER"; then
+    printf 'Unsafe or unverifiable failure artifacts were removed.\n' \
+      >"$ARTIFACT_DIR/artifact-safety.txt" || true
+  fi
 }
 
 fail() {
@@ -454,6 +691,7 @@ readonly SERIAL_A SERIAL_B
 
 validate_device() {
   local serial="$1"
+  local api_variable="$2"
   [[ "$(adb_for "$serial" get-state 2>/dev/null || true)" == "device" ]] \
     || fail "$serial is not a ready Android device"
   local api abi
@@ -463,9 +701,24 @@ validate_device() {
   [[ "$abi" == "arm64-v8a" ]] || fail "$serial ABI is $abi, expected arm64-v8a"
   adb_for "$serial" shell wm size | grep -Eq '[0-9]+x[0-9]+' \
     || fail "$serial did not report a usable display size"
+  printf -v "$api_variable" '%s' "$api"
 }
-validate_device "$SERIAL_A"
-validate_device "$SERIAL_B"
+API_LEVEL_A=""
+API_LEVEL_B=""
+validate_device "$SERIAL_A" API_LEVEL_A
+validate_device "$SERIAL_B" API_LEVEL_B
+readonly API_LEVEL_A API_LEVEL_B
+
+SEMANTICS_LOG="$TEMP_DIR/semantics-test.log"
+readonly SEMANTICS_LOG
+printf 'Running semantics integration test on selected device %s...\n' "$SERIAL_A"
+if ! (
+  cd "$ROOT_DIR/app"
+  flutter test -d "$SERIAL_A" integration_test/semantics_test.dart
+) >"$SEMANTICS_LOG" 2>&1; then
+  sanitize_stream <"$SEMANTICS_LOG" >"$ARTIFACT_DIR/semantics-test.log" || true
+  fail "selected-device semantics integration test failed on $SERIAL_A"
+fi
 
 server_port="${GAMEBOX_E2E_API_PORT:-$((18080 + ($$ % 1000)))}"
 [[ "$server_port" =~ ^[0-9]+$ ]] \
@@ -929,7 +1182,7 @@ assert_both_render_revision() {
   local state_fragment="$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$revision"
   wait_for_log_marker "$SERIAL_A" "$state_fragment" || fail "A did not render revision $revision marker"
   wait_for_log_marker "$SERIAL_B" "$state_fragment" || fail "B did not render revision $revision marker"
-  local deadline=$((SECONDS + 10))
+  local deadline=$((SECONDS + WAIT_SECONDS))
   local crop_a="$TEMP_DIR/board-A.png"
   local crop_b="$TEMP_DIR/board-B.png"
   local snapshot board_json
@@ -1083,13 +1336,13 @@ wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not id
 printf '%s\n' "$final_snapshot" | jq -S . >"$ARTIFACT_DIR/final-match.json"
 cp "$VISUAL_METRICS" "$ARTIFACT_DIR/visual-metrics.tsv"
 sanitize_stream <"$SERVER_LOG" >"$ARTIFACT_DIR/server-sanitized.log"
+sanitize_stream <"$SEMANTICS_LOG" >"$ARTIFACT_DIR/semantics-test.log"
 source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+devices_json="$(device_summary_json "$SERIAL_A" "$SERIAL_B" "$API_LEVEL_A" "$API_LEVEL_B" "$api_base")"
 jq -n \
   --arg status passed \
   --arg sourceRevision "$source_revision" \
-  --arg serialA "$SERIAL_A" \
-  --arg serialB "$SERIAL_B" \
-  --arg api "$api_base" \
+  --argjson devices "$devices_json" \
   --arg matchId "$MATCH_ID" \
   --arg secondMatchId "$SECOND_MATCH_ID" \
   --arg recoverySerial "$RECOVERY_SERIAL" \
@@ -1098,7 +1351,7 @@ jq -n \
   '{
     status:$status,
     sourceRevision:$sourceRevision,
-    devices:{serialA:$serialA,serialB:$serialB,api:$api},
+    devices:$devices,
     firstMatch:{id:$matchId,revisions:[0,1,2,3,4,5,6,7,8,9],status:"finished",result:"five"},
     recovery:{serial:$recoverySerial,beforeRevision:$recoveryBefore,afterRevision:$recoveryAfter,eventLoss:false},
     secondMatch:{id:$secondMatchId,revision:1,status:"cancelled",slotsReleased:true},
@@ -1106,26 +1359,15 @@ jq -n \
       "resource-id-only-ui-driving","two-registered-users","random-color-mapping",
       "revision-and-board-after-each-move","two-authoritative-board-crops-with-ssim",
       "force-stop-auto-login-resume","shared-five-result","lobby-idle",
-      "second-match-created","zero-step-cancelled","slots-released"
+      "second-match-created","zero-step-cancelled","slots-released",
+      "selected-device-semantics-integration"
     ]
   }' >"$ARTIFACT_DIR/summary.json"
 
-scan_secret_value() {
-  local value="$1"
-  local label="$2"
-  [[ -n "$value" ]] || return 0
-  if rg --text --fixed-strings "$value" "$ARTIFACT_DIR" >/dev/null 2>&1; then
-    fail "artifact secret scanner found $label"
-  fi
-}
-scan_secret_value "$INVITE_A" invite-A
-scan_secret_value "$INVITE_B" invite-B
-scan_secret_value "$JWT_SECRET" jwt-secret
-scan_secret_value "$TOKEN_PEPPER" token-pepper
-if rg --text -n \
-  'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|Authorization[[:space:]]*:[[:space:]]*Bearer|"(accessToken|refreshToken|launchTicket|inviteCode|invites)"' \
-  "$ARTIFACT_DIR" >/dev/null 2>&1; then
-  fail "artifact token-pattern scanner found a credential-shaped value"
+if ! protect_artifact_directory \
+  "$ARTIFACT_DIR" "$TEMP_DIR/success-artifact-scan.txt" \
+  "$INVITE_A" "$INVITE_B" "$JWT_SECRET" "$TOKEN_PEPPER"; then
+  fail "artifact secret scanner removed unsafe or unverifiable output"
 fi
 
 printf 'Gamebox two-emulator E2E passed. Artifacts: %s\n' "$ARTIFACT_DIR"
