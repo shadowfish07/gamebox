@@ -120,6 +120,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
                 const SizedBox(height: 8),
                 Semantics(
                   key: const Key('invite-code'),
+                  identifier: 'invite-code',
                   label: 'invite-code',
                   textField: true,
                   child: TextField(
@@ -138,6 +139,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
                 const SizedBox(height: 8),
                 Semantics(
                   key: const Key('nickname'),
+                  identifier: 'nickname',
                   label: 'nickname',
                   textField: true,
                   child: TextField(
@@ -167,6 +169,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
                 const SizedBox(height: 24),
                 Semantics(
                   key: const Key('register'),
+                  identifier: 'register',
                   label: 'register',
                   button: true,
                   enabled: canSubmit,

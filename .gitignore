@@ -1,6 +1,7 @@
 .superpowers/
 .worktrees/
 app/build/
+app/android/build/
 app/.dart_tool/
 game_runtime/.godot/
 server/data/

@@ -23,6 +23,7 @@ import (
 const (
 	maxConnections        = 8
 	sqliteBusyCode        = 5
+	sqliteBusyTimeoutMS   = 5000
 	connectionRetryLimit  = 5 * time.Second
 	readOnlySnapshotTries = 3
 )
@@ -81,9 +82,8 @@ func openReadOnly(ctx context.Context, path string, hooks readOnlyHooks) (*sql.D
 		return openLiveWALSnapshot(ctx, path, hooks)
 	}
 	dsn := "file:" + escapeURIPath(path) + "?mode=ro&_foreign_keys=on&_busy_timeout=5000&_query_only=1"
-	// store.Open checkpoints and removes WAL sidecars on the last close. An
-	// immutable view of that closed file avoids SQLite creating a new empty
-	// WAL/SHM pair merely to perform an administrative read.
+	// With no live WAL sidecars, an immutable view avoids SQLite creating a new
+	// empty WAL/SHM pair merely to perform an administrative read.
 	dsn += "&immutable=1"
 	baseConnector, err := sqlite.NewConnector(dsn)
 	if err != nil {
@@ -503,12 +503,12 @@ func open(ctx context.Context, path string, hooks openHooks) (*sql.DB, error) {
 	}
 
 	dsn := "file:" + escapeURIPath(path) +
-		"?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000&_txlock=immediate"
+		"?_journal_mode=WAL&_foreign_keys=on&_txlock=immediate"
 	baseConnector, err := sqlite.NewConnector(dsn)
 	if err != nil {
 		return nil, closeOpenResources(nil, guard, fmt.Errorf("store: configure database: %w", err))
 	}
-	db := sql.OpenDB(cancelableConnector{Connector: baseConnector})
+	db := sql.OpenDB(cancelableConnector{Connector: baseConnector, persistWAL: true})
 	db.SetMaxOpenConns(maxConnections)
 	db.SetMaxIdleConns(maxConnections)
 
@@ -559,6 +559,7 @@ func pingContext(ctx context.Context, db *sql.DB) error {
 
 type cancelableConnector struct {
 	driver.Connector
+	persistWAL bool
 }
 
 func (connector cancelableConnector) Close() error {
@@ -595,6 +596,26 @@ func (c cancelableConnector) Connect(ctx context.Context) (driver.Conn, error) {
 			<-physicalConnectPermits
 		}()
 		conn, err := c.Connector.Connect(ctx)
+		if err == nil && c.persistWAL {
+			fileControl, ok := conn.(sqlite.FileControl)
+			if !ok {
+				err = errors.New("store: SQLite connection does not support persistent WAL")
+			} else {
+				var mode int
+				mode, err = fileControl.FileControlPersistWAL("main", 1)
+				if err == nil && mode != 1 {
+					err = fmt.Errorf("store: unexpected persistent WAL mode %d", mode)
+				}
+			}
+		}
+		if err == nil && c.persistWAL {
+			execer, ok := conn.(driver.ExecerContext)
+			if !ok {
+				err = errors.New("store: SQLite connection does not support busy-timeout configuration")
+			} else {
+				_, err = execer.ExecContext(ctx, fmt.Sprintf(`PRAGMA busy_timeout=%d`, sqliteBusyTimeoutMS), nil)
+			}
+		}
 		if err != nil && conn != nil {
 			_ = conn.Close()
 			conn = nil

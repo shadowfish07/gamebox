@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	sqlite "modernc.org/sqlite"
 )
 
 const initialMigrationVersion = 1
@@ -706,7 +708,7 @@ func assertConnectionPragmas(t *testing.T, ctx context.Context, db *sql.DB) {
 		connections = append(connections, conn)
 
 		var journalMode string
-		var foreignKeys, busyTimeout int
+		var foreignKeys, busyTimeout, persistentWAL int
 		if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
 			t.Fatalf("connection %d journal_mode: %v", i, err)
 		}
@@ -716,6 +718,17 @@ func assertConnectionPragmas(t *testing.T, ctx context.Context, db *sql.DB) {
 		if err := conn.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
 			t.Fatalf("connection %d busy_timeout: %v", i, err)
 		}
+		if err := conn.Raw(func(raw any) error {
+			fileControl, ok := raw.(sqlite.FileControl)
+			if !ok {
+				return errors.New("connection does not support persistent WAL")
+			}
+			mode, err := fileControl.FileControlPersistWAL("main", -1)
+			persistentWAL = mode
+			return err
+		}); err != nil {
+			t.Fatalf("connection %d persistent WAL: %v", i, err)
+		}
 		if !strings.EqualFold(journalMode, "wal") {
 			t.Errorf("connection %d journal_mode = %q, want wal", i, journalMode)
 		}
@@ -724,6 +737,9 @@ func assertConnectionPragmas(t *testing.T, ctx context.Context, db *sql.DB) {
 		}
 		if busyTimeout != 5000 {
 			t.Errorf("connection %d busy_timeout = %d, want 5000", i, busyTimeout)
+		}
+		if persistentWAL != 1 {
+			t.Errorf("connection %d persistent WAL = %d, want 1", i, persistentWAL)
 		}
 	}
 }
