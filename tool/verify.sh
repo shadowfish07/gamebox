@@ -7,22 +7,53 @@ cd "$ROOT_DIR"
 
 asset_path_is_forbidden() {
   local asset_path="$1"
-  local relative_path component lowercase_component compact_component
-  local -a path_components
+  local relative_path component lowercase_component normalized_component
+  local component_stem normalized_stem component_token previous_token
+  local -a path_components component_tokens
 
   [[ "$asset_path" == assets/* ]] || return 1
   relative_path="${asset_path#assets/}"
   IFS='/' read -r -a path_components <<<"$relative_path"
   for component in "${path_components[@]}"; do
     lowercase_component="$(printf '%s' "$component" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
-    compact_component="$(printf '%s' "$lowercase_component" | LC_ALL=C tr -d '[:space:]_.-')"
-    case "$lowercase_component" in
-      *'.env'*|*secret*|*token*|*credential*) return 0 ;;
-      .godot|.gdignore|test|tests|test.*|tests.*|test_*|tests_*|*_test|*_tests|*_test.*|*_tests.*) return 0 ;;
+    normalized_component="$(printf '%s' "$lowercase_component" | LC_ALL=C tr -d '[:space:]_.-')"
+    component_stem="${lowercase_component%.*}"
+    normalized_stem="$(printf '%s' "$component_stem" | LC_ALL=C tr -d '[:space:]_.-')"
+
+    case "$normalized_component" in
+      secret|secrets|token|tokens|credential|credentials|privatekey|test|tests) return 0 ;;
+      *secret|*secrets|*token|*tokens|*credential|*credentials|*privatekey) return 0 ;;
     esac
-    case "$compact_component" in
-      *privatekey*) return 0 ;;
+    case "$normalized_stem" in
+      secret|secrets|token|tokens|credential|credentials|privatekey|test|tests) return 0 ;;
+      *secret|*secrets|*token|*tokens|*credential|*credentials|*privatekey) return 0 ;;
     esac
+    if [[ "$lowercase_component" == .* ]]; then
+      case "$normalized_component" in
+        env|gdignore|godot) return 0 ;;
+      esac
+      case "$normalized_stem" in
+        env|gdignore|godot) return 0 ;;
+      esac
+    fi
+
+    IFS=$'._- \t' read -r -a component_tokens <<<"$lowercase_component"
+    previous_token=""
+    for component_token in "${component_tokens[@]}"; do
+      case "$component_token" in
+        secret|secrets|token|tokens|credential|credentials|test|tests) return 0 ;;
+        env)
+          [[ "$lowercase_component" == *'.env'* ]] && return 0
+          ;;
+        gdignore|godot)
+          [[ "$lowercase_component" == .* ]] && return 0
+          ;;
+        key)
+          [[ "$previous_token" == private ]] && return 0
+          ;;
+      esac
+      previous_token="$component_token"
+    done
   done
   return 1
 }
@@ -41,6 +72,19 @@ verify_asset_path_fixtures() {
     assets/.godot/scene_groups_cache.cfg
     assets/.godot/shader_cache/cache.bin
     assets/.godot/imported/runtime-texture.ctex
+    assets/s_e_c_r_e_t/config.json
+    assets/t-o.k_e_n/data.json
+    assets/cre-den_tial/config.json
+    assets/t-e_s.t/run.gd
+    assets/SECRETS/config.json
+    assets/Access-Token/data.json
+    assets/CREDENTIALS/config.json
+    "assets/Private Key/key.pem"
+    assets/.ENV/production
+    assets/TeStS/run.gd
+    assets/.GDIGNORE
+    assets/.GoDoT/imported/runtime-texture.ctex
+    assets/.g-o_d.o-t/cache.bin
   )
   local -a allowed_fixtures=(
     assets/project.godot
@@ -50,6 +94,22 @@ verify_asset_path_fixtures() {
     assets/games/gomoku/gomoku_scene.tscn
     assets/flutter_assets/AssetManifest.bin
     assets/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf
+    assets/core/secretary.gd
+    assets/core/tokenizer.gd
+    assets/core/credentialed.gd
+    assets/core/credentialsafe.gd
+    assets/core/privateer-keynote.gd
+    assets/core/contest.gd
+    assets/core/attestation.gd
+    assets/core/environment.gd
+    assets/core/envoy.gd
+    assets/core/.godotter/runtime.gd
+    assets/core/.gdignores/runtime.gd
+    assets/godot/runtime.gd
+    assets/gdignore/runtime.gd
+    assets/env/runtime.gd
+    assets/s_e_c/r_e_t/runtime.gd
+    assets/t-o/k_e_n/runtime.gd
   )
 
   for asset_path in "${forbidden_fixtures[@]}"; do
