@@ -79,7 +79,9 @@ final class _OpponentPageState extends State<OpponentPage> {
     });
     final error = await widget.controller.createAndOpen(opponent.id);
     if (!mounted) return;
-    if (error == null || widget.controller.status is GomokuActiveStatus) {
+    if (error == null ||
+        (error.code != 'operation_in_progress' &&
+            widget.controller.status is GomokuActiveStatus)) {
       Navigator.of(context).pop<ApiError?>(error);
       return;
     }
@@ -191,6 +193,7 @@ final class _OpponentPageState extends State<OpponentPage> {
     'network_error' => '网络连接失败，请稍后重试',
     'timeout' => '请求超时，请稍后重试',
     'launch_failed' => '无法启动游戏，请重试',
+    'operation_in_progress' => '已有操作正在进行，请稍后重试',
     _ => '创建对局失败，请稍后重试',
   };
 

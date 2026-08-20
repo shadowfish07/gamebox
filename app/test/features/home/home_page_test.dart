@@ -13,6 +13,7 @@ import 'package:gamebox/features/home/home_page.dart';
 
 void main() {
   const aliceId = '11111111-1111-4111-8111-111111111111';
+  const carolId = '44444444-4444-4444-8444-444444444444';
   final now = DateTime.utc(2026, 8, 20, 12);
 
   testWidgets('idle catalog exposes stable game and opponent semantics', (
@@ -250,6 +251,62 @@ void main() {
     fixture.dispose();
   });
 
+  testWidgets('idle creation stays disabled after its opponent route pops', (
+    tester,
+  ) async {
+    final created = Completer<CreatedGomokuMatch>();
+    final fixture = _Fixture(now)
+      ..api.status = const GomokuIdleStatus()
+      ..api.opponents = const [
+        GomokuOpponent(
+          id: carolId,
+          nickname: '小鸟',
+          availability: OpponentAvailability.idle,
+          presence: OpponentPresence.online,
+        ),
+      ]
+      ..api.onCreate = (_) => created.future;
+    await tester.pumpWidget(_app(fixture.controller, aliceId));
+    await _flushWidget(tester);
+
+    await tester.tap(find.byKey(const Key('choose-opponent')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('opponent-$carolId')));
+    await tester.pump();
+    expect(fixture.api.createCalls, 1);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
+    expect(
+      tester.getSemantics(find.byKey(const Key('choose-opponent'))),
+      containsSemantics(
+        identifier: 'choose-opponent',
+        label: '选择对手',
+        isButton: true,
+        isEnabled: false,
+        hasEnabledState: true,
+        hasTapAction: false,
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('choose-opponent')),
+      warnIfMissed: false,
+    );
+    expect(fixture.api.opponentCalls, 1);
+
+    fixture.api.status = _active(revision: 0);
+    created.complete(
+      const CreatedGomokuMatch(
+        id: '33333333-3333-4333-8333-333333333333',
+        gameId: 'gomoku',
+      ),
+    );
+    await tester.pumpAndSettle();
+    fixture.dispose();
+  });
+
   testWidgets('initial Home failure is retryable instead of spinning forever', (
     tester,
   ) async {
@@ -358,12 +415,15 @@ final class _FakeLauncher implements GameLauncher {
 
 final class _FakeHomeApi implements HomeApi {
   GomokuStatus status = const GomokuIdleStatus();
+  List<GomokuOpponent> opponents = const [];
   ApiError? statusError;
   ApiError? cancelError;
   Future<void> Function(String matchId)? onCancel;
+  Future<CreatedGomokuMatch> Function(String opponentId)? onCreate;
   int ticketCalls = 0;
   int opponentCalls = 0;
   int cancelCalls = 0;
+  int createCalls = 0;
 
   @override
   Future<GomokuStatus> fetchStatus() async {
@@ -375,7 +435,7 @@ final class _FakeHomeApi implements HomeApi {
   @override
   Future<List<GomokuOpponent>> fetchOpponents() async {
     opponentCalls += 1;
-    return const [];
+    return opponents;
   }
 
   @override
@@ -403,6 +463,9 @@ final class _FakeHomeApi implements HomeApi {
   }
 
   @override
-  Future<CreatedGomokuMatch> createMatch(String opponentId) =>
-      Future<CreatedGomokuMatch>.error(StateError('unexpected create'));
+  Future<CreatedGomokuMatch> createMatch(String opponentId) {
+    createCalls += 1;
+    return onCreate?.call(opponentId) ??
+        Future<CreatedGomokuMatch>.error(StateError('unexpected create'));
+  }
 }

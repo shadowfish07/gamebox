@@ -289,7 +289,73 @@ void main() {
       fixture.dispose();
     },
   );
+
+  testWidgets(
+    'a different pending create stays on page with operation busy feedback',
+    (tester) async {
+      final firstCreate = Completer<CreatedGomokuMatch>();
+      final fixture = _Fixture(now)
+        ..api.status = _activeStatus()
+        ..api.opponents = const [
+          GomokuOpponent(
+            id: carolId,
+            nickname: '小鸟',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.online,
+          ),
+        ]
+        ..api.onCreate = (opponentId) {
+          if (opponentId != bobId) {
+            throw StateError('the second opponent must not reach the API');
+          }
+          return firstCreate.future;
+        }
+        ..api.onTicket = (matchId) async {
+          return GomokuLaunchTicket(
+            matchId: matchId,
+            gameId: 'gomoku',
+            launchTicket: 'launch-ticket',
+            expiresAt: now.add(const Duration(minutes: 1)),
+          );
+        };
+      await fixture.controller.refresh();
+      final first = fixture.controller.createAndOpen(bobId);
+
+      await tester.pumpWidget(_navigatorApp(fixture.controller, aliceId));
+      await tester.tap(find.byKey(const Key('open-opponents')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('opponent-$carolId')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('选择对手'), findsOneWidget);
+      expect(find.text('已有操作正在进行，请稍后重试'), findsOneWidget);
+      expect(fixture.api.createCalls, 1);
+
+      firstCreate.complete(
+        const CreatedGomokuMatch(
+          id: '33333333-3333-4333-8333-333333333333',
+          gameId: 'gomoku',
+        ),
+      );
+      expect(await first, isNull);
+      await _flushWidget(tester);
+      expect(find.text('选择对手'), findsOneWidget);
+      fixture.dispose();
+    },
+  );
 }
+
+GomokuActiveStatus _activeStatus() => const GomokuActiveStatus(
+  match: GomokuActiveMatch(
+    id: '33333333-3333-4333-8333-333333333333',
+    opponent: GomokuOpponentIdentity(
+      id: '22222222-2222-4222-8222-222222222222',
+      nickname: '小猫',
+    ),
+    color: GomokuColor.black,
+    revision: 0,
+  ),
+);
 
 Widget _app(HomeController controller, String userId) => MaterialApp(
   theme: ThemeData(useMaterial3: true),
@@ -363,6 +429,7 @@ final class _FakeLauncher implements GameLauncher {
 }
 
 final class _FakeHomeApi implements HomeApi {
+  GomokuStatus status = const GomokuIdleStatus();
   List<GomokuOpponent> opponents = const [];
   List<GomokuOpponent>? afterCreateFailureOpponents;
   Future<List<GomokuOpponent>> Function()? onOpponents;
@@ -394,7 +461,7 @@ final class _FakeHomeApi implements HomeApi {
   Future<GomokuStatus> fetchStatus() async {
     final error = statusError;
     if (error != null) throw error;
-    return const GomokuIdleStatus();
+    return status;
   }
 
   @override

@@ -54,6 +54,7 @@ final class HomeController extends ChangeNotifier {
   DateTime? _lastUpdatedAt;
   HomeScheduledCall? _polling;
   Future<ApiError?>? _mutationInFlight;
+  _HomeMutationKey? _mutationKey;
   var _generation = 0;
   var _started = false;
   var _foreground = false;
@@ -112,46 +113,82 @@ final class HomeController extends ChangeNotifier {
 
   Future<ApiError?> openActiveMatch() {
     if (_disposed) return Future<ApiError?>.value(_invalidState);
-    final existing = _mutationInFlight;
+    final key = (kind: _HomeMutationKind.launch, id: _activeMatchId ?? '');
+    final existing = _existingMutation(key);
     if (existing != null) return existing;
     final current = _status;
     if (current is! GomokuActiveStatus) {
       return Future<ApiError?>.value(_invalidState);
     }
-    late final Future<ApiError?> operation;
-    operation = _performOpen(current.match.id).whenComplete(() {
-      if (identical(_mutationInFlight, operation)) _mutationInFlight = null;
-    });
-    _mutationInFlight = operation;
-    return operation;
+    return _beginMutation((
+      kind: _HomeMutationKind.launch,
+      id: current.match.id,
+    ), () => _performOpen(current.match.id));
   }
 
   Future<ApiError?> createAndOpen(String opponentId) {
     if (_disposed) return Future<ApiError?>.value(_invalidState);
-    final existing = _mutationInFlight;
+    final key = (kind: _HomeMutationKind.create, id: opponentId);
+    final existing = _existingMutation(key);
     if (existing != null) return existing;
-    late final Future<ApiError?> operation;
-    operation = _performCreate(opponentId).whenComplete(() {
-      if (identical(_mutationInFlight, operation)) _mutationInFlight = null;
-    });
-    _mutationInFlight = operation;
-    return operation;
+    return _beginMutation(key, () => _performCreate(opponentId));
   }
 
   Future<ApiError?> cancelActiveMatch() {
     if (_disposed) return Future<ApiError?>.value(_invalidState);
-    final existing = _mutationInFlight;
+    final key = (kind: _HomeMutationKind.cancel, id: _activeMatchId ?? '');
+    final existing = _existingMutation(key);
     if (existing != null) return existing;
     final current = _status;
     if (current is! GomokuActiveStatus || current.match.revision != 0) {
       return Future<ApiError?>.value(_invalidState);
     }
-    late final Future<ApiError?> operation;
-    operation = _performCancel(current.match.id).whenComplete(() {
-      if (identical(_mutationInFlight, operation)) _mutationInFlight = null;
-    });
+    return _beginMutation((
+      kind: _HomeMutationKind.cancel,
+      id: current.match.id,
+    ), () => _performCancel(current.match.id));
+  }
+
+  String? get _activeMatchId => switch (_status) {
+    GomokuActiveStatus active => active.match.id,
+    _ => null,
+  };
+
+  Future<ApiError?>? _existingMutation(_HomeMutationKey key) {
+    final existing = _mutationInFlight;
+    if (existing == null) return null;
+    return _mutationKey == key
+        ? existing
+        : Future<ApiError?>.value(_operationInProgress);
+  }
+
+  Future<ApiError?> _beginMutation(
+    _HomeMutationKey key,
+    Future<ApiError?> Function() perform,
+  ) {
+    final completer = Completer<ApiError?>();
+    final operation = completer.future;
+    _mutationKey = key;
     _mutationInFlight = operation;
+    unawaited(_completeMutation(operation, completer, perform));
     return operation;
+  }
+
+  Future<void> _completeMutation(
+    Future<ApiError?> operation,
+    Completer<ApiError?> completer,
+    Future<ApiError?> Function() perform,
+  ) async {
+    try {
+      completer.complete(await perform());
+    } catch (error, stackTrace) {
+      completer.completeError(error, stackTrace);
+    } finally {
+      if (identical(_mutationInFlight, operation)) {
+        _mutationInFlight = null;
+        _mutationKey = null;
+      }
+    }
   }
 
   Future<ApiError?> _performOpen(String matchId) async {
@@ -277,6 +314,7 @@ final class HomeController extends ChangeNotifier {
     _polling?.cancel();
     _polling = null;
     _mutationInFlight = null;
+    _mutationKey = null;
     super.dispose();
   }
 
@@ -284,4 +322,13 @@ final class HomeController extends ChangeNotifier {
     code: 'invalid_state',
     message: '当前无法执行此操作',
   );
+
+  static const _operationInProgress = ApiError(
+    code: 'operation_in_progress',
+    message: '已有操作正在进行，请稍后重试',
+  );
 }
+
+enum _HomeMutationKind { create, launch, cancel }
+
+typedef _HomeMutationKey = ({_HomeMutationKind kind, String id});

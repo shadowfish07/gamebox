@@ -12,6 +12,7 @@ import 'package:gamebox/features/home/home_controller.dart';
 void main() {
   const matchId = '33333333-3333-4333-8333-333333333333';
   const opponentId = '22222222-2222-4222-8222-222222222222';
+  const otherOpponentId = '44444444-4444-4444-8444-444444444444';
   var now = DateTime.utc(2026, 8, 20, 12);
 
   setUp(() => now = DateTime.utc(2026, 8, 20, 12));
@@ -147,7 +148,9 @@ void main() {
       await _flush();
       final blockedCancel = controller.cancelActiveMatch();
 
-      expect(identical(opening, blockedCancel), isTrue);
+      expect(identical(opening, blockedCancel), isFalse);
+      expect((await blockedCancel)?.code, 'operation_in_progress');
+      expect((await blockedCancel)?.message, '已有操作正在进行，请稍后重试');
       expect(controller.isLaunching, isTrue);
       expect(controller.isCancelling, isFalse);
       expect(controller.canCancel, isFalse);
@@ -155,7 +158,6 @@ void main() {
 
       launched.complete();
       expect(await opening, isNull);
-      expect(await blockedCancel, isNull);
       expect(api.cancelCalls, 0);
     },
   );
@@ -186,14 +188,14 @@ void main() {
       final blockedOpen = controller.openActiveMatch();
 
       expect(identical(cancelling, duplicate), isTrue);
-      expect(identical(cancelling, blockedOpen), isTrue);
+      expect(identical(cancelling, blockedOpen), isFalse);
+      expect((await blockedOpen)?.code, 'operation_in_progress');
       expect(controller.isCancelling, isTrue);
       expect(controller.isLaunching, isFalse);
       expect(api.ticketCalls, 0);
 
       cancelled.complete();
       expect(await cancelling, isNull);
-      expect(await blockedOpen, isNull);
       expect(api.cancelCalls, 1);
       expect(controller.status, isA<GomokuIdleStatus>());
     },
@@ -225,7 +227,10 @@ void main() {
 
       final first = controller.createAndOpen(opponentId);
       final second = controller.createAndOpen(opponentId);
+      final different = controller.createAndOpen(otherOpponentId);
       expect(identical(first, second), isTrue);
+      expect(identical(first, different), isFalse);
+      expect((await different)?.code, 'operation_in_progress');
       expect(controller.isCreating, isTrue);
       create.complete(const CreatedGomokuMatch(id: matchId, gameId: 'gomoku'));
 
@@ -237,6 +242,11 @@ void main() {
         'status',
       ]);
       expect(controller.isCreating, isFalse);
+      expect(api.createCalls, 1);
+
+      expect(await controller.createAndOpen(otherOpponentId), isNull);
+      expect(api.createCalls, 2);
+      expect(api.ticketCalls, 2);
     },
   );
 

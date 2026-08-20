@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
@@ -111,6 +113,108 @@ void main() {
       fixture.dispose();
     },
   );
+
+  testWidgets(
+    'auth invalidation disposes protected routes and reauth has a fresh stack',
+    (tester) async {
+      const opponentId = '44444444-4444-4444-8444-444444444444';
+      final fixture = await _Fixture.create(now)
+        ..api.opponents = const [
+          GomokuOpponent(
+            id: opponentId,
+            nickname: '小鸟',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.online,
+          ),
+        ];
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: fixture.launcher,
+          sessionController: fixture.session,
+          homeController: fixture.home,
+        ),
+      );
+      await _flush(tester);
+      await tester.tap(find.byKey(const Key('choose-opponent')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('opponent-$opponentId')), findsOneWidget);
+      expect(fixture.api.opponentCalls, 1);
+
+      final deleteBarrier = Completer<void>();
+      fixture.tokenStore.deleteBarrier = deleteBarrier;
+      fixture.authApi.rejectRefresh = true;
+      final invalidating = fixture.session.refresh();
+      await _flush(tester);
+
+      expect(
+        find.byKey(const Key('credential-cleanup-pending')),
+        findsOneWidget,
+      );
+      expect(find.text('选择对手'), findsNothing);
+      expect(find.byKey(const Key('opponent-$opponentId')), findsNothing);
+
+      deleteBarrier.complete();
+      expect(await invalidating, isFalse);
+      await _flush(tester);
+      expect(find.byKey(const Key('invite-code')), findsOneWidget);
+      expect(find.byKey(const Key('opponent-$opponentId')), findsNothing);
+
+      fixture.authApi
+        ..rejectRefresh = false
+        ..userId = '55555555-5555-4555-8555-555555555555'
+        ..nickname = '新用户';
+      expect(await fixture.session.register('invite', '新用户'), isNull);
+      await _flush(tester);
+
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(find.text('你好，新用户'), findsOneWidget);
+      expect(find.text('选择对手'), findsOneWidget);
+      expect(find.byKey(const Key('opponent-$opponentId')), findsNothing);
+      expect(await tester.binding.handlePopRoute(), isFalse);
+      await _flush(tester);
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(fixture.api.opponentCalls, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      fixture.dispose();
+    },
+  );
+
+  testWidgets('routine same-user token refresh preserves the protected route', (
+    tester,
+  ) async {
+    const opponentId = '44444444-4444-4444-8444-444444444444';
+    final fixture = await _Fixture.create(now)
+      ..api.opponents = const [
+        GomokuOpponent(
+          id: opponentId,
+          nickname: '小鸟',
+          availability: OpponentAvailability.idle,
+          presence: OpponentPresence.online,
+        ),
+      ];
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: fixture.launcher,
+        sessionController: fixture.session,
+        homeController: fixture.home,
+      ),
+    );
+    await _flush(tester);
+    await tester.tap(find.byKey(const Key('choose-opponent')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('opponent-$opponentId')), findsOneWidget);
+
+    expect(await fixture.session.refresh(), isTrue);
+    await _flush(tester);
+
+    expect(find.text('选择对手'), findsOneWidget);
+    expect(find.byKey(const Key('opponent-$opponentId')), findsOneWidget);
+    expect(fixture.api.opponentCalls, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fixture.dispose();
+  });
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -126,13 +230,15 @@ final class _Fixture {
     required this.scheduler,
     required this.launcher,
     required this.authApi,
+    required this.tokenStore,
   });
 
   static Future<_Fixture> create(DateTime now) async {
     final authApi = _FakeAuthApi(now);
+    final tokenStore = _MemoryTokenStore('refresh-zero');
     final session = SessionController(
       authApi: authApi,
-      tokenStore: _MemoryTokenStore('refresh-zero'),
+      tokenStore: tokenStore,
       now: () => now,
     );
     await session.restore();
@@ -156,6 +262,7 @@ final class _Fixture {
       scheduler: scheduler,
       launcher: launcher,
       authApi: authApi,
+      tokenStore: tokenStore,
     );
   }
 
@@ -165,6 +272,7 @@ final class _Fixture {
   final _FakeScheduler scheduler;
   final _FakeLauncher launcher;
   final _FakeAuthApi authApi;
+  final _MemoryTokenStore tokenStore;
 
   void dispose() {
     home.dispose();
@@ -215,6 +323,8 @@ final class _FakeLauncher implements GameLauncher {
 
 final class _FakeHomeApi implements HomeApi {
   int statusCalls = 0;
+  int opponentCalls = 0;
+  List<GomokuOpponent> opponents = const [];
 
   @override
   Future<GomokuStatus> fetchStatus() async {
@@ -223,7 +333,10 @@ final class _FakeHomeApi implements HomeApi {
   }
 
   @override
-  Future<List<GomokuOpponent>> fetchOpponents() async => const [];
+  Future<List<GomokuOpponent>> fetchOpponents() async {
+    opponentCalls += 1;
+    return opponents;
+  }
 
   @override
   Future<void> cancelMatch(String matchId) async {}
@@ -242,6 +355,8 @@ final class _FakeAuthApi implements AuthApi {
 
   final DateTime now;
   bool rejectRefresh = false;
+  String userId = '11111111-1111-4111-8111-111111111111';
+  String nickname = '自己';
 
   @override
   Future<Session> refresh(String refreshToken) async {
@@ -256,10 +371,7 @@ final class _FakeAuthApi implements AuthApi {
       _session();
 
   Session _session() => Session(
-    user: const SessionUser(
-      id: '11111111-1111-4111-8111-111111111111',
-      nickname: '自己',
-    ),
+    user: SessionUser(id: userId, nickname: nickname),
     accessToken: 'access-token',
     accessExpiresAt: now.add(const Duration(minutes: 15)),
     refreshToken: 'refresh-token',
@@ -271,9 +383,14 @@ final class _MemoryTokenStore implements TokenStore {
   _MemoryTokenStore(this.value);
 
   String? value;
+  Completer<void>? deleteBarrier;
 
   @override
-  Future<void> deleteRefreshToken() async => value = null;
+  Future<void> deleteRefreshToken() async {
+    final barrier = deleteBarrier;
+    if (barrier != null) await barrier.future;
+    value = null;
+  }
 
   @override
   Future<String?> readRefreshToken() async => value;

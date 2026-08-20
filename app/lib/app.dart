@@ -227,6 +227,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      key: ValueKey<String>(_navigationBoundary),
       title: 'Gamebox',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -234,6 +235,16 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       ),
       home: widget.hostSmokeEnabled ? _buildHostSmoke() : _buildAuthFlow(),
     );
+  }
+
+  String get _navigationBoundary {
+    if (widget.hostSmokeEnabled) return 'host-smoke';
+    final controller = _sessionController;
+    final session = controller?.session;
+    if (controller?.status == SessionStatus.authenticated && session != null) {
+      return 'authenticated:${session.user.id}';
+    }
+    return 'public';
   }
 
   Widget _buildAuthFlow() {

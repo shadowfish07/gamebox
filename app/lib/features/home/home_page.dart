@@ -190,7 +190,7 @@ final class _GomokuCard extends StatelessWidget {
               GomokuIdleStatus _ => _ActionButton(
                 semanticKey: const Key('choose-opponent'),
                 semanticLabel: 'choose-opponent',
-                onPressed: onChoose,
+                onPressed: isMutating ? null : onChoose,
                 child: const Text('选择对手'),
               ),
               GomokuActiveStatus active => _ActiveMatchActions(
