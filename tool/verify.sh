@@ -5,6 +5,82 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 cd "$ROOT_DIR"
 
+asset_path_is_forbidden() {
+  local asset_path="$1"
+  local relative_path component lowercase_component compact_component
+  local -a path_components
+
+  [[ "$asset_path" == assets/* ]] || return 1
+  relative_path="${asset_path#assets/}"
+  IFS='/' read -r -a path_components <<<"$relative_path"
+  for component in "${path_components[@]}"; do
+    lowercase_component="$(printf '%s' "$component" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+    compact_component="$(printf '%s' "$lowercase_component" | LC_ALL=C tr -d '[:space:]_.-')"
+    case "$lowercase_component" in
+      *'.env'*|*secret*|*token*|*credential*) return 0 ;;
+      .godot|.gdignore|test|tests|test.*|tests.*|test_*|tests_*|*_test|*_tests|*_test.*|*_tests.*) return 0 ;;
+    esac
+    case "$compact_component" in
+      *privatekey*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+verify_asset_path_fixtures() {
+  local asset_path
+  local -a forbidden_fixtures=(
+    assets/credentials/config.json
+    assets/games/gomoku/private_key/key.pem
+    assets/games/gomoku/private-key/key.pem
+    assets/.env/production
+    assets/flutter_assets/config.env.local
+    assets/test/run_tests.gd
+    assets/games/gomoku/tests.gd
+    assets/games/gomoku/gomoku_controller_test.gd
+    assets/.godot/scene_groups_cache.cfg
+    assets/.godot/shader_cache/cache.bin
+    assets/.godot/imported/runtime-texture.ctex
+  )
+  local -a allowed_fixtures=(
+    assets/project.godot
+    assets/main.gd
+    assets/core/match_client.gd
+    assets/games/gomoku/gomoku_controller.gd
+    assets/games/gomoku/gomoku_scene.tscn
+    assets/flutter_assets/AssetManifest.bin
+    assets/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf
+  )
+
+  for asset_path in "${forbidden_fixtures[@]}"; do
+    asset_path_is_forbidden "$asset_path" || {
+      printf 'Forbidden APK asset fixture was accepted: %s\n' "$asset_path" >&2
+      return 1
+    }
+  done
+  for asset_path in "${allowed_fixtures[@]}"; do
+    if asset_path_is_forbidden "$asset_path"; then
+      printf 'Valid runtime APK asset fixture was rejected: %s\n' "$asset_path" >&2
+      return 1
+    fi
+  done
+  printf 'APK asset path fixtures passed.\n'
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  [[ $# -eq 1 ]] || {
+    printf 'usage: %s [--self-test]\n' "$0" >&2
+    exit 2
+  }
+  verify_asset_path_fixtures
+  exit 0
+fi
+[[ $# -eq 0 ]] || {
+  printf 'usage: %s [--self-test]\n' "$0" >&2
+  exit 2
+}
+verify_asset_path_fixtures
+
 # setup-godot exposes the executable on PATH in CI, while the local bootstrap
 # retains its macOS application-bundle default.
 if [[ -z "${GODOT_BIN:-}" ]] && command -v godot >/dev/null 2>&1; then
@@ -50,10 +126,16 @@ for required_asset in \
   }
 done
 
-readonly excluded_asset_pattern='^assets/(test/|\.gdignore$|\.godot/(editor/|uid_cache\.bin$|global_script_class_cache\.cfg$|filesystem_cache|.*metadata)|(.*/)?(\.env([^/]*)?|[^/]*(secret|token|credentials?|private[_-]?key)[^/]*)$)'
-if grep -Ei "$excluded_asset_pattern" <<<"$apk_entries" >/dev/null; then
+rejected_assets=""
+while IFS= read -r asset_path; do
+  if asset_path_is_forbidden "$asset_path"; then
+    rejected_assets+="$asset_path"$'\n'
+  fi
+done <<<"$apk_entries"
+readonly rejected_assets
+if [[ -n "$rejected_assets" ]]; then
   printf 'Debug APK contains excluded Godot test/editor/cache or secret-named assets:\n' >&2
-  grep -Ei "$excluded_asset_pattern" <<<"$apk_entries" >&2
+  printf '%s' "$rejected_assets" >&2
   exit 1
 fi
 
