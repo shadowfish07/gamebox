@@ -68,6 +68,7 @@ func present(cells: Array, last_move: Vector2i = INVALID_CELL, pending: Vector2i
 
 func set_interactable(next_interactable: bool) -> void:
 	_interactable = next_interactable
+	mouse_filter = Control.MOUSE_FILTER_STOP if _interactable else Control.MOUSE_FILTER_IGNORE
 	if not _interactable:
 		_reset_touch()
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if _interactable else Control.CURSOR_ARROW

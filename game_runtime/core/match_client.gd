@@ -1,6 +1,7 @@
 extends RefCounted
 
 signal connection_state_changed(next_state: String)
+signal snapshot_sync_started
 signal snapshot_received(envelope: Dictionary)
 signal event_received(envelope: Dictionary)
 signal match_error(code: String)
@@ -356,20 +357,22 @@ func _handle_error(envelope: Dictionary) -> bool:
 	var handled: Dictionary = _game_state.apply_error(envelope)
 	if not handled.get("ok", false):
 		return _protocol_failure()
+	var recovery_started := true
 	if handled.get("status") == "needs_snapshot":
-		_snapshot_requested = true
+		recovery_started = _request_snapshot()
 	match_error.emit(code)
-	return true
+	return recovery_started
 
 
 func _request_snapshot() -> bool:
 	if _snapshot_requested:
 		return true
+	_snapshot_requested = true
+	snapshot_sync_started.emit()
 	var encoded: Dictionary = Protocol.encode_snapshot_request(_match_id, max(_game_state.revision, 0))
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		_attempt_failed("send_failed")
 		return false
-	_snapshot_requested = true
 	return true
 
 

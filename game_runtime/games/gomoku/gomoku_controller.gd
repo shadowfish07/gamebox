@@ -168,6 +168,11 @@ func _on_connection_state_changed(next_state: String) -> void:
 	_refresh_ui()
 
 
+func _on_snapshot_sync_started() -> void:
+	_awaiting_snapshot = true
+	_refresh_ui()
+
+
 func _on_snapshot_received(envelope: Dictionary) -> void:
 	if _state == null:
 		return
@@ -175,7 +180,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
-	else:
+	elif applied.get("status") == "applied":
 		_error_text = ""
 		_awaiting_snapshot = false
 		_last_move = INVALID_CELL
@@ -316,6 +321,7 @@ func _validated_config(config: Dictionary) -> Dictionary:
 
 func _connect_client_signals() -> void:
 	_client.connection_state_changed.connect(_on_connection_state_changed)
+	_client.snapshot_sync_started.connect(_on_snapshot_sync_started)
 	_client.snapshot_received.connect(_on_snapshot_received)
 	_client.event_received.connect(_on_event_received)
 	_client.match_error.connect(_on_match_error)
@@ -328,10 +334,30 @@ func _valid_client(client: Variant) -> bool:
 	for method in ["start", "poll", "request_move", "request_resign", "dispose"]:
 		if not client.has_method(method):
 			return false
-	for signal_name in ["connection_state_changed", "snapshot_received", "event_received", "match_error", "return_to_lobby_requested"]:
+	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "match_error", "return_to_lobby_requested"]:
 		if not client.has_signal(signal_name):
 			return false
 	return true
+
+
+func _disconnect_client_signals() -> void:
+	if _client == null:
+		return
+	if _client.has_signal("connection_state_changed") \
+		and _client.connection_state_changed.is_connected(_on_connection_state_changed):
+		_client.connection_state_changed.disconnect(_on_connection_state_changed)
+	if _client.has_signal("snapshot_sync_started") \
+		and _client.snapshot_sync_started.is_connected(_on_snapshot_sync_started):
+		_client.snapshot_sync_started.disconnect(_on_snapshot_sync_started)
+	if _client.has_signal("snapshot_received") and _client.snapshot_received.is_connected(_on_snapshot_received):
+		_client.snapshot_received.disconnect(_on_snapshot_received)
+	if _client.has_signal("event_received") and _client.event_received.is_connected(_on_event_received):
+		_client.event_received.disconnect(_on_event_received)
+	if _client.has_signal("match_error") and _client.match_error.is_connected(_on_match_error):
+		_client.match_error.disconnect(_on_match_error)
+	if _client.has_signal("return_to_lobby_requested") \
+		and _client.return_to_lobby_requested.is_connected(_on_return_to_lobby_requested):
+		_client.return_to_lobby_requested.disconnect(_on_return_to_lobby_requested)
 
 
 func _dispose_client() -> void:
@@ -340,6 +366,7 @@ func _dispose_client() -> void:
 	_disposed = true
 	_cancel_ready_marker()
 	set_process(false)
+	_disconnect_client_signals()
 	if _client != null and _client.has_method("dispose"):
 		_client.dispose()
 

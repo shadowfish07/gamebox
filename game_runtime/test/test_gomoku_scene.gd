@@ -2,6 +2,8 @@ extends RefCounted
 
 const GomokuScene = preload("res://games/gomoku/gomoku_scene.tscn")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+const MatchClient = preload("res://core/match_client.gd")
+const Protocol = preload("res://core/protocol.gd")
 
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
@@ -14,7 +16,9 @@ static func cases() -> Array:
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
+		{"name": "gomoku scene ignores non-authoritative snapshot callbacks while locked", "run": _ignores_non_authoritative_snapshots},
 		{"name": "gomoku scene keeps reconnect locked until authoritative snapshot", "run": _keeps_reconnect_locked},
+		{"name": "gomoku scene locks immediately when real client requests snapshot recovery", "run": _locks_real_snapshot_recovery},
 		{"name": "gomoku scene gates resign and keeps back non-destructive", "run": _gates_resign_and_back},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
@@ -80,6 +84,29 @@ static func _blocks_stale_actions() -> bool:
 	return _cleanup(scene, _check(client.move_requests == [Vector2i(7, 7)], "fresh snapshot did not restore move input"))
 
 
+static func _ignores_non_authoritative_snapshots() -> bool:
+	var older_harness: Dictionary = await _scene_harness(BLACK_ID)
+	var older_scene: Control = older_harness["scene"]
+	var older_client: FakeMatchClient = older_harness["client"]
+	older_client.accept_snapshot(_snapshot(2, _two_stone_board(), "active", "black"))
+	older_client.begin_snapshot_sync()
+	older_client.emit_snapshot_raw(_snapshot(0))
+	if not (_check(_status(older_scene) == "正在同步对局…", "older snapshot callback unlocked controller") \
+		and _check(older_scene.get_node("ResignButton").disabled, "older snapshot callback unlocked resign")):
+		return _cleanup(older_scene)
+	_cleanup(older_scene, true)
+
+	var invalid_harness: Dictionary = await _scene_harness(BLACK_ID)
+	var invalid_scene: Control = invalid_harness["scene"]
+	var invalid_client: FakeMatchClient = invalid_harness["client"]
+	invalid_client.accept_snapshot(_snapshot(2, _two_stone_board(), "active", "black"))
+	invalid_client.begin_snapshot_sync()
+	invalid_client.emit_snapshot_raw({"type": "platform.snapshot"})
+	var result := _check(_status(invalid_scene) == "正在同步对局…", "invalid snapshot callback unlocked controller") \
+		and _check(invalid_scene.get_node("ResignButton").disabled, "invalid snapshot callback unlocked resign")
+	return _cleanup(invalid_scene, result)
+
+
 static func _keeps_reconnect_locked() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
@@ -123,6 +150,74 @@ static func _keeps_reconnect_locked() -> bool:
 	var result := _check(_status(scene) == "你赢了", "terminal copy was hidden by reconnect sync") \
 		and _check(not scene.get_node("ResignButton").visible, "terminal reconnect showed resign") \
 		and _check(client.move_requests == [Vector2i(7, 7)], "terminal reconnect accepted another move")
+	return _cleanup(scene, result)
+
+
+static func _locks_real_snapshot_recovery() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	var transport := ControllerTransport.new()
+	var scheduler := ControllerScheduler.new()
+	var client = MatchClient.new(transport, scheduler, ControllerRandom.new())
+	var scene: Control = GomokuScene.instantiate()
+	scene.configure_launch(_launch_config())
+	scene.set_match_client_factory(func() -> Variant: return client)
+	scene.set_quit_callback(func() -> void: pass)
+	tree.root.add_child(scene)
+	await tree.process_frame
+	transport.open()
+	client.poll()
+	transport.queue(_connected(2))
+	transport.queue(_snapshot(2, _two_stone_board(), "active", "black"))
+	client.poll()
+	if not (_check(_status(scene) == "轮到我", "real client fixture did not reach local turn") \
+		and _check(not scene.get_node("ResignButton").disabled, "real client fixture did not enable resign")):
+		return _cleanup(scene)
+
+	var sent_before: int = transport.sent.size()
+	transport.queue(_move(4, BLACK_ID, "black", 7, 7))
+	client.poll()
+	transport.queue(_move(5, BLACK_ID, "black", 8, 8))
+	client.poll()
+	scene._on_cell_pressed(9, 9)
+	scene._on_resign_pressed()
+	if not (_check(_status(scene) == "正在同步对局…", "revision gap left real controller actionable") \
+		and _check((scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE, "revision gap left board input enabled") \
+		and _check(scene.get_node("ResignButton").disabled, "revision gap left resign enabled") \
+		and _check(_sent_type_count(transport, "platform.snapshot.requested", sent_before) == 1, "duplicate gaps sent repeated snapshot requests") \
+		and _check(_sent_type_count(transport, "gomoku.move.requested", sent_before) == 0, "locked controller sent a move") \
+		and _check(_sent_type_count(transport, "gomoku.resign.requested", sent_before) == 0, "locked controller sent resignation")):
+		return _cleanup(scene)
+
+	transport.queue(_snapshot(4, _four_stone_board(), "active", "black"))
+	client.poll()
+	if not (_check(_status(scene) == "轮到我", "fresh recovery snapshot did not unlock real controller") \
+		and _check(not scene.get_node("ResignButton").disabled, "fresh recovery snapshot did not unlock resign")):
+		return _cleanup(scene)
+
+	transport.queue(_error_bound(4, "stale_revision"))
+	client.poll()
+	if not _check(_status(scene) == "正在同步对局…", "stale error did not relock real controller"):
+		return _cleanup(scene)
+	transport.queue(_snapshot(2, _two_stone_board(), "active", "black"))
+	client.poll()
+	if not (_check(_status(scene) != "轮到我", "older snapshot unlocked real controller") \
+		and _check(scene.get_node("ResignButton").disabled, "older snapshot unlocked resignation")):
+		return _cleanup(scene)
+
+	scheduler.fire()
+	transport.open()
+	client.poll()
+	transport.queue(_connected(4))
+	transport.queue(_snapshot(4, _four_stone_board(), "active", "black"))
+	client.poll()
+	if not _check(_status(scene) == "轮到我", "reconnect platform.connected unlocked before or failed to unlock after snapshot"):
+		return _cleanup(scene)
+
+	transport.fail_send = true
+	transport.queue(_move(6, BLACK_ID, "black", 9, 9))
+	client.poll()
+	var result := _check(_status(scene) == "重连中", "failed snapshot request did not remain locked through reconnect") \
+		and _check(scene.get_node("ResignButton").disabled, "failed snapshot request left resign enabled")
 	return _cleanup(scene, result)
 
 
@@ -241,8 +336,10 @@ static func _disposes_once() -> bool:
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	scene._exit_tree()
+	client.begin_snapshot_sync()
 	scene._exit_tree()
-	var result := _check(client.dispose_calls == 1, "client disposed more than once")
+	var result := _check(client.dispose_calls == 1, "client disposed more than once") \
+		and _check(client.snapshot_sync_started.get_connections().is_empty(), "disposed controller retained snapshot sync signal")
 	return _cleanup(scene, result)
 
 
@@ -325,6 +422,20 @@ static func _five_board() -> Array:
 	return board
 
 
+static func _two_stone_board() -> Array:
+	var board := _empty_board()
+	board[0] = 1
+	board[1] = 2
+	return board
+
+
+static func _four_stone_board() -> Array:
+	var board := _two_stone_board()
+	board[2] = 1
+	board[3] = 2
+	return board
+
+
 static func _draw_board() -> Array:
 	var board := _empty_board()
 	for y in 15:
@@ -343,6 +454,7 @@ class FakeMatchClient:
 	extends RefCounted
 
 	signal connection_state_changed(next_state: String)
+	signal snapshot_sync_started
 	signal snapshot_received(envelope: Dictionary)
 	signal event_received(envelope: Dictionary)
 	signal match_error(code: String)
@@ -394,6 +506,12 @@ class FakeMatchClient:
 	func emit_error(code: String) -> void:
 		match_error.emit(code)
 
+	func begin_snapshot_sync() -> void:
+		snapshot_sync_started.emit()
+
+	func emit_snapshot_raw(envelope: Dictionary) -> void:
+		snapshot_received.emit(envelope)
+
 	func accept_event(envelope: Dictionary) -> void:
 		var applied: Dictionary = state.apply_event(envelope)
 		if not applied.get("ok", false):
@@ -426,3 +544,101 @@ class FakeFrameGate:
 		for callback in pending:
 			fired_callbacks += 1
 			callback.call()
+
+
+class ControllerTransport:
+	extends RefCounted
+
+	var ready_state := "closed"
+	var sent: Array[String] = []
+	var incoming: Array[String] = []
+	var fail_send := false
+
+	func connect_to_url(_url: String) -> bool:
+		ready_state = "connecting"
+		return true
+
+	func poll() -> void:
+		pass
+
+	func get_ready_state() -> String:
+		return ready_state
+
+	func receive_text() -> Dictionary:
+		if incoming.is_empty():
+			return {"ok": false}
+		return {"ok": true, "text": incoming.pop_front()}
+
+	func send_text(value: String) -> bool:
+		if fail_send:
+			return false
+		sent.append(value)
+		return true
+
+	func close() -> void:
+		ready_state = "closed"
+
+	func get_close_info() -> Dictionary:
+		return {"code": -1, "reason": ""}
+
+	func open() -> void:
+		ready_state = "open"
+
+	func queue(message: Dictionary) -> void:
+		incoming.append(JSON.stringify(message))
+
+
+class ControllerScheduler:
+	extends RefCounted
+
+	var next_handle := 0
+	var callback := Callable()
+
+	func schedule(_delay_seconds: float, scheduled: Callable) -> int:
+		next_handle += 1
+		callback = scheduled
+		return next_handle
+
+	func cancel(_handle: int = -1) -> void:
+		callback = Callable()
+
+	func fire() -> void:
+		var scheduled := callback
+		callback = Callable()
+		if scheduled.is_valid():
+			scheduled.call()
+
+
+class ControllerRandom:
+	extends RefCounted
+
+	func generate_bytes(_count: int) -> PackedByteArray:
+		return PackedByteArray(range(16))
+
+
+static func _connected(revision: int) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+		"revision": revision, "type": "platform.connected",
+		"payload": {
+			"userId": BLACK_ID, "connectionId": "55555555-5555-4555-8555-555555555555",
+			"resumeToken": "resume-secret", "resumeExpiresAt": 4102444800000,
+		},
+	}
+
+
+static func _error_bound(revision: int, code: String) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+		"revision": revision, "type": "platform.error",
+		"payload": {"code": code, "message": "fixed", "details": {}},
+	}
+
+
+static func _sent_type_count(transport: ControllerTransport, message_type: String, start_index: int = 0) -> int:
+	var count := 0
+	for index in range(start_index, transport.sent.size()):
+		var decoded: Dictionary = Protocol.decode(transport.sent[index])
+		if decoded.get("ok", false) and decoded["envelope"].get("type") == message_type:
+			count += 1
+	return count

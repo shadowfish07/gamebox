@@ -248,6 +248,7 @@ static func cases() -> Array:
 		{"name": "match client maps close reasons through a fixed allowlist", "run": _maps_policy_close_reasons},
 		{"name": "match client production transport handles real policy closes", "run": _handles_real_policy_closes},
 		{"name": "match client answers ping and requests snapshots on gaps", "run": _handles_ping_and_gap},
+		{"name": "match client signals every transition into snapshot recovery once", "run": _signals_snapshot_recovery_once},
 		{"name": "match client sends UUIDv4 actions without optimistic stones", "run": _sends_actions_authoritatively},
 		{"name": "match client sends a fresh resignation action after the first move", "run": _sends_resignation},
 		{"name": "match client rolls back pending when send fails", "run": _rolls_back_failed_send},
@@ -552,6 +553,38 @@ static func _handles_ping_and_gap() -> bool:
 		and _check(fixture.state.revision == 0 and fixture.state.cell(7, 7) == 0, "gap event changed state")
 
 
+static func _signals_snapshot_recovery_once() -> bool:
+	var fixture := _connected_fixture()
+	if not fixture.client.has_signal("snapshot_sync_started"):
+		return _check(false, "match client does not expose snapshot recovery signal")
+	var sync_starts: Array[int] = []
+	fixture.client.snapshot_sync_started.connect(func() -> void: sync_starts.append(1))
+	var sent_before: int = fixture.transport.sent.size()
+	fixture.transport.queue(_move(2, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", BLACK_ID, "black", 7, 7))
+	fixture.client.poll()
+	fixture.transport.queue(_move(3, "ffffffff-ffff-4fff-8fff-ffffffffffff", BLACK_ID, "black", 8, 8))
+	fixture.client.poll()
+	if not (_check(sync_starts.size() == 1, "duplicate revision gaps emitted repeated recovery signals") \
+		and _check(_sent_type_count(fixture.transport, "platform.snapshot.requested", sent_before) == 1, "duplicate revision gaps sent repeated snapshot requests")):
+		return false
+
+	fixture.transport.queue(_snapshot(0))
+	fixture.client.poll()
+	fixture.client._request_snapshot()
+	fixture.client._request_snapshot()
+	if not (_check(sync_starts.size() == 2, "manual recovery emitted repeated signals") \
+		and _check(_sent_type_count(fixture.transport, "platform.snapshot.requested", sent_before) == 2, "manual recovery sent repeated snapshot requests")):
+		return false
+	fixture.transport.queue(_snapshot(0))
+	fixture.client.poll()
+	fixture.transport.queue(_error_bound(0, "stale_revision"))
+	fixture.client.poll()
+	fixture.transport.queue(_error_bound(0, "stale_revision"))
+	fixture.client.poll()
+	return _check(sync_starts.size() == 3, "stale revision did not start exactly one new recovery") \
+		and _check(_sent_type_count(fixture.transport, "platform.snapshot.requested", sent_before) == 3, "stale revision did not send exactly one new snapshot request")
+
+
 static func _sends_actions_authoritatively() -> bool:
 	var fixture := _connected_fixture()
 	var action_id: String = fixture.client.request_move(7, 7)
@@ -696,6 +729,15 @@ static func _last_sent(transport: FakeTransport) -> Dictionary:
 	return decoded.get("envelope", {}) if decoded.get("ok", false) else {}
 
 
+static func _sent_type_count(transport: FakeTransport, message_type: String, start_index: int = 0) -> int:
+	var count := 0
+	for index in range(start_index, transport.sent.size()):
+		var decoded: Dictionary = Protocol.decode(transport.sent[index])
+		if decoded.get("ok", false) and decoded["envelope"].get("type") == message_type:
+			count += 1
+	return count
+
+
 static func _connected(revision: int, resume_token: String) -> Dictionary:
 	return {
 		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID, "revision": revision,
@@ -737,6 +779,14 @@ static func _ping(revision: int, nonce: String) -> Dictionary:
 
 static func _error_unbound(code: String) -> Dictionary:
 	return {"protocolVersion": 1, "type": "platform.error", "payload": {"code": code, "message": "fixed", "details": {}}}
+
+
+static func _error_bound(revision: int, code: String) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+		"revision": revision, "type": "platform.error",
+		"payload": {"code": code, "message": "fixed", "details": {}},
+	}
 
 
 static func _check(condition: bool, message: String) -> bool:
