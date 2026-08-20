@@ -1,1 +1,348 @@
 extends Control
+
+const LaunchConfig = preload("res://core/launch_config.gd")
+const MatchClient = preload("res://core/match_client.gd")
+const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+
+const INVALID_CELL := Vector2i(-1, -1)
+const TERMINAL_STATUSES := ["finished", "cancelled", "abandoned"]
+const SAFE_ERROR_COPY := {
+	"ticket_invalid": "登录状态已失效，请返回大厅",
+	"resume_expired": "登录状态已失效，请返回大厅",
+	"stale_revision": "棋盘已更新，正在同步",
+	"action_conflict": "操作冲突，请重试",
+	"not_your_turn": "还没轮到你",
+	"cell_occupied": "这个位置已经有棋子",
+	"invalid_request": "操作无效，请重试",
+	"match_not_found": "对局不存在，请返回大厅",
+	"internal_error": "服务暂时不可用，请稍后重试",
+	"connection_failed": "连接失败，请返回大厅",
+}
+
+var _launch_config := {}
+var _match_client_factory := Callable()
+var _quit_callback := Callable()
+var _state: Variant
+var _client: Variant
+var _match_id := ""
+var _connection_state := "connecting"
+var _error_text := ""
+var _last_move := INVALID_CELL
+var _disposed := false
+var _returning := false
+var _started := false
+var _force_return := false
+var _awaiting_snapshot := false
+var _last_log_signature := ""
+var _reported_terminal_signature := ""
+
+
+func configure_launch(config: Dictionary) -> bool:
+	if is_inside_tree() or not _launch_config.is_empty() or not _validated_config(config).get("ok", false):
+		return false
+	_launch_config = config.duplicate(true)
+	return true
+
+
+func set_match_client_factory(factory: Callable) -> bool:
+	if is_inside_tree() or not factory.is_valid():
+		return false
+	_match_client_factory = factory
+	return true
+
+
+func set_quit_callback(callback: Callable) -> bool:
+	if is_inside_tree() or not callback.is_valid():
+		return false
+	_quit_callback = callback
+	return true
+
+
+func _ready() -> void:
+	$Board.cell_pressed.connect(_on_cell_pressed)
+	$BackButton.pressed.connect(_on_back_pressed)
+	$ResignButton.pressed.connect(_on_resign_pressed)
+	_refresh_ui()
+
+	var resolved := _resolve_launch_config()
+	if not resolved.get("ok", false):
+		_show_start_failure()
+		return
+	var config: Dictionary = resolved["config"]
+	_match_id = config["match_id"]
+	_state = GomokuState.new(_match_id)
+	_client = _match_client_factory.call() if _match_client_factory.is_valid() else MatchClient.new()
+	if not _valid_client(_client):
+		config["launch_ticket"] = ""
+		_launch_config.clear()
+		_show_start_failure()
+		return
+	_connect_client_signals()
+	var started: bool = _client.start(config["ws_url"], _match_id, config["launch_ticket"], _state)
+	config["launch_ticket"] = ""
+	_launch_config.clear()
+	if not started:
+		_show_start_failure()
+		return
+	_started = true
+	_connection_state = _client.connection_state
+	set_process(true)
+	print("GAMEBOX_GODOT_READY game=gomoku match=%s" % _match_id)
+	_refresh_ui()
+
+
+func _process(_delta: float) -> void:
+	if _started and not _disposed:
+		_client.poll()
+
+
+func _exit_tree() -> void:
+	_dispose_client()
+
+
+func _on_cell_pressed(x: int, y: int) -> void:
+	if not _started or _disposed or _awaiting_snapshot or _state == null \
+		or not _state.can_request_move(x, y, _client.local_user_id):
+		return
+	if not _client.request_move(x, y).is_empty():
+		_error_text = ""
+		_refresh_ui()
+
+
+func _on_resign_pressed() -> void:
+	if not _started or _disposed or _awaiting_snapshot or _state == null \
+		or not _state.can_request_resign(_client.local_user_id):
+		return
+	if not _client.request_resign().is_empty():
+		_error_text = ""
+		_refresh_ui()
+
+
+func _on_back_pressed() -> void:
+	if _returning:
+		return
+	_returning = true
+	_dispose_client()
+	if _quit_callback.is_valid():
+		_quit_callback.call()
+	elif is_inside_tree():
+		get_tree().quit()
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and not event.is_echo():
+		get_viewport().set_input_as_handled()
+		_on_back_pressed()
+
+
+func _on_connection_state_changed(next_state: String) -> void:
+	if next_state not in ["connecting", "connected", "reconnecting", "failed", "closed"]:
+		return
+	_connection_state = next_state
+	_refresh_ui()
+
+
+func _on_snapshot_received(envelope: Dictionary) -> void:
+	if _state == null:
+		return
+	var applied: Dictionary = _state.apply_snapshot(envelope)
+	if not applied.get("ok", false):
+		_error_text = "同步失败，请返回大厅"
+		_force_return = true
+	else:
+		_error_text = ""
+		_awaiting_snapshot = false
+		_last_move = INVALID_CELL
+	_refresh_ui()
+
+
+func _on_event_received(envelope: Dictionary) -> void:
+	if _state == null:
+		return
+	var applied: Dictionary = _state.apply_event(envelope)
+	if not applied.get("ok", false):
+		_error_text = "同步失败，请返回大厅"
+		_force_return = true
+	elif envelope.get("type") == "gomoku.move.accepted":
+		var payload: Dictionary = envelope.get("payload", {})
+		if typeof(payload.get("x")) == TYPE_INT and typeof(payload.get("y")) == TYPE_INT:
+			_last_move = Vector2i(payload["x"], payload["y"])
+	_refresh_ui()
+
+
+func _on_match_error(code: String) -> void:
+	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
+	if code == "stale_revision":
+		_awaiting_snapshot = true
+	_refresh_ui()
+
+
+func _on_return_to_lobby_requested(code: String) -> void:
+	_error_text = str(SAFE_ERROR_COPY.get(code, "连接失败，请返回大厅"))
+	_force_return = true
+	_refresh_ui()
+
+
+func _refresh_ui() -> void:
+	var board: Control = $Board
+	var has_state: bool = _state != null and _state.revision >= 0
+	var local_user_id: String = _client.local_user_id if _client != null else ""
+	var local_color: String = _local_color(local_user_id) if has_state else ""
+	var pending: Vector2i = INVALID_CELL
+	if has_state:
+		var pending_action: Dictionary = _state.pending_action
+		if pending_action.get("type") == "gomoku.move.requested":
+			pending = Vector2i(pending_action.get("x", -1), pending_action.get("y", -1))
+		board.present(_state.board, _last_move, pending)
+	else:
+		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
+
+	$StatusLabel.text = _status_text(local_user_id) if has_state else _connection_text()
+	$ConnectionLabel.text = _connection_detail()
+	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
+	$RevisionLabel.text = "版本 %d" % _state.revision if has_state else ""
+	$ErrorLabel.text = _error_text
+	$ErrorLabel.visible = not _error_text.is_empty()
+
+	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
+	$BackButton.text = "返回大厅" if terminal or _force_return else "返回"
+	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
+	$ResignButton.visible = can_resign
+	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot
+	var can_move: bool = has_state and _connection_state == "connected" \
+		and not _awaiting_snapshot \
+		and _state.status == "active" and _state.pending_action.is_empty() \
+		and _local_color(local_user_id) == _state.next_color
+	board.set_interactable(can_move)
+	_log_safe_state(has_state)
+
+
+func _status_text(local_user_id: String) -> String:
+	match _state.status:
+		"finished":
+			if _state.result == "draw":
+				return "和棋"
+			return "你赢了" if _state.winner_user_id == local_user_id else "你输了"
+		"cancelled":
+			return "对局已取消"
+		"abandoned":
+			return "对局已作废"
+	if _connection_state != "connected":
+		return _connection_text()
+	if _awaiting_snapshot:
+		return "正在同步棋盘"
+	if not _state.pending_action.is_empty():
+		return "等待服务器确认"
+	return "轮到我" if _local_color(local_user_id) == _state.next_color else "等待对手"
+
+
+func _connection_text() -> String:
+	match _connection_state:
+		"reconnecting":
+			return "重连中"
+		"failed", "closed":
+			return "连接失败"
+		_:
+			return "连接中"
+
+
+func _connection_detail() -> String:
+	match _connection_state:
+		"connected":
+			return "已连接"
+		"reconnecting":
+			return "正在恢复连接…"
+		"failed", "closed":
+			return "连接已断开"
+		_:
+			return "正在连接服务器…"
+
+
+func _local_color(local_user_id: String) -> String:
+	if _state == null:
+		return ""
+	if local_user_id == _state.black_user_id:
+		return "black"
+	if local_user_id == _state.white_user_id:
+		return "white"
+	return ""
+
+
+func _resolve_launch_config() -> Dictionary:
+	if not _launch_config.is_empty():
+		return _validated_config(_launch_config)
+	return LaunchConfig.parse(OS.get_cmdline_user_args())
+
+
+func _validated_config(config: Dictionary) -> Dictionary:
+	if config.size() != 4:
+		return {"ok": false}
+	for key in config:
+		if key not in ["game_id", "match_id", "launch_ticket", "ws_url"] or not config[key] is String:
+			return {"ok": false}
+	return LaunchConfig.parse(PackedStringArray([
+		"--game-id", config["game_id"], "--match-id", config["match_id"],
+		"--launch-ticket", config["launch_ticket"], "--ws-url", config["ws_url"],
+	]))
+
+
+func _connect_client_signals() -> void:
+	_client.connection_state_changed.connect(_on_connection_state_changed)
+	_client.snapshot_received.connect(_on_snapshot_received)
+	_client.event_received.connect(_on_event_received)
+	_client.match_error.connect(_on_match_error)
+	_client.return_to_lobby_requested.connect(_on_return_to_lobby_requested)
+
+
+func _valid_client(client: Variant) -> bool:
+	if client == null:
+		return false
+	for method in ["start", "poll", "request_move", "request_resign", "dispose"]:
+		if not client.has_method(method):
+			return false
+	for signal_name in ["connection_state_changed", "snapshot_received", "event_received", "match_error", "return_to_lobby_requested"]:
+		if not client.has_signal(signal_name):
+			return false
+	return true
+
+
+func _dispose_client() -> void:
+	if _disposed:
+		return
+	_disposed = true
+	set_process(false)
+	if _client != null and _client.has_method("dispose"):
+		_client.dispose()
+
+
+func _show_start_failure() -> void:
+	_launch_config.clear()
+	_error_text = "无法进入对局，请返回大厅"
+	_connection_state = "failed"
+	_force_return = true
+	set_process(false)
+	_refresh_ui()
+
+
+func _log_safe_state(has_state: bool) -> void:
+	if _match_id.is_empty():
+		return
+	var revision: int = _state.revision if has_state else -1
+	var status: String = _state.status if has_state else "loading"
+	var signature := "%d|%s|%s" % [revision, status, _connection_state]
+	if signature != _last_log_signature:
+		_last_log_signature = signature
+		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s" % [_match_id, revision, status, _connection_state])
+	if has_state and status in TERMINAL_STATUSES:
+		var result: String = str(_state.result) if _state.result in ["five", "resignation", "draw"] else status
+		var terminal_signature := "%d|%s" % [revision, result]
+		if terminal_signature != _reported_terminal_signature:
+			_reported_terminal_signature = terminal_signature
+			print("GAMEBOX_MATCH_RESULT match=%s result=%s" % [_match_id, result])
+
+
+func _empty_board() -> Array:
+	var board: Array = []
+	board.resize(225)
+	board.fill(0)
+	return board

@@ -13,6 +13,7 @@ static func cases() -> Array:
 		{"name": "opaque smoke-looking ticket remains a normal launch", "run": _keeps_smoke_looking_ticket_in_normal_launch},
 		{"name": "host smoke exposes a controlled exit marker", "run": _has_controlled_exit_marker},
 		{"name": "private ticket is hydrated once before LaunchConfig", "run": _hydrates_private_ticket_once},
+		{"name": "main injects hydrated launch config without retaining a second ticket", "run": _injects_hydrated_config_once},
 		{"name": "private ticket hydration uses fixed key positions", "run": _hydrates_ticket_with_key_collision_value},
 		{"name": "malformed private ticket arguments fail closed", "run": _rejects_malformed_private_ticket_args},
 		{"name": "project requests portrait handheld orientation", "run": _requests_portrait_orientation},
@@ -85,6 +86,26 @@ static func _hydrates_private_ticket_once() -> bool:
 	return _check(result.get("ok", false), "expected private ticket hydration") \
 		and _check(hydrated_ticket == "private-canary-ticket", "expected unchanged private ticket") \
 		and _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "expected private environment to be cleared")
+
+
+static func _injects_hydrated_config_once() -> bool:
+	var host = await _attached_main_scene()
+	var args := _valid_launch_args()
+	args[args.find("--launch-ticket") + 1] = MainScript.PRIVATE_TICKET_PLACEHOLDER
+	const PRIVATE_CANARY := "private-injected-canary-ticket"
+	OS.set_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT, PRIVATE_CANARY)
+	host._start_with_args(args)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var gomoku_children := _gomoku_children(host)
+	var result := _check(gomoku_children.size() == 1, "expected configured Gomoku child")
+	if result:
+		var controller: Control = gomoku_children[0]
+		result = _check(controller._launch_config.is_empty(), "controller retained injected config after start") \
+			and _check(controller._client._launch_ticket == PRIVATE_CANARY, "hydrated ticket was not passed to MatchClient") \
+			and _check(not str(controller).contains(PRIVATE_CANARY), "controller string exposed private ticket")
+	result = _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "private environment survived controller injection") and result
+	host.queue_free()
+	return result
 
 
 static func _hydrates_ticket_with_key_collision_value() -> bool:

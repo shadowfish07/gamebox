@@ -7,6 +7,8 @@ const TEST_SUITES := [
 	preload("res://test/test_protocol.gd"),
 	preload("res://test/test_gomoku_state.gd"),
 	preload("res://test/test_match_client.gd"),
+	preload("res://test/test_gomoku_board.gd"),
+	preload("res://test/test_gomoku_scene.gd"),
 ]
 
 

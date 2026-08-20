@@ -38,8 +38,16 @@ func _start_with_args(args: PackedStringArray) -> void:
 		_show_launch_error(registry_result.get("code", "unsupported_game"))
 		return
 
+	var game_scene: Node = registry_result["scene"].instantiate()
+	if not game_scene.has_method("configure_launch") \
+		or not game_scene.configure_launch(config_result["config"].duplicate(true)):
+		config_result["config"]["launch_ticket"] = ""
+		game_scene.free()
+		_show_launch_error("game_configuration_rejected")
+		return
+	config_result["config"]["launch_ticket"] = ""
 	$ReadyLabel.hide()
-	add_child(registry_result["scene"].instantiate())
+	add_child(game_scene)
 	print(NORMAL_READY_MARKER)
 
 

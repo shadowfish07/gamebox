@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://games/gomoku/gomoku_controller.gd" id="1_controller"]
+[ext_resource type="Script" path="res://games/gomoku/gomoku_board.gd" id="2_board"]
 
 [node name="Gomoku" type="Control"]
 layout_mode = 3
@@ -11,13 +12,109 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_controller")
 
-[node name="PlaceholderLabel" type="Label" parent="."]
+[node name="Background" type="ColorRect" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-text = "Gomoku gameplay coming soon"
+mouse_filter = 2
+color = Color(0.956863, 0.945098, 0.909804, 1)
+
+[node name="BackButton" type="Button" parent="."]
+offset_left = 48.0
+offset_top = 72.0
+offset_right = 240.0
+offset_bottom = 168.0
+custom_minimum_size = Vector2(192, 96)
+theme_override_font_sizes/font_size = 30
+text = "返回"
+
+[node name="TitleLabel" type="Label" parent="."]
+offset_left = 260.0
+offset_top = 72.0
+offset_right = 820.0
+offset_bottom = 168.0
+theme_override_colors/font_color = Color(0.105882, 0.129412, 0.180392, 1)
+theme_override_font_sizes/font_size = 42
+text = "五子棋"
 horizontal_alignment = 1
 vertical_alignment = 1
+text_overrun_behavior = 3
+
+[node name="RevisionLabel" type="Label" parent="."]
+offset_left = 824.0
+offset_top = 72.0
+offset_right = 1032.0
+offset_bottom = 168.0
+theme_override_colors/font_color = Color(0.290196, 0.337255, 0.407843, 1)
+theme_override_font_sizes/font_size = 24
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="StatusLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 196.0
+offset_right = 1032.0
+offset_bottom = 276.0
+theme_override_colors/font_color = Color(0.105882, 0.129412, 0.180392, 1)
+theme_override_font_sizes/font_size = 40
+text = "连接中"
+horizontal_alignment = 1
+vertical_alignment = 1
+text_overrun_behavior = 3
+
+[node name="ConnectionLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 280.0
+offset_right = 1032.0
+offset_bottom = 328.0
+theme_override_colors/font_color = Color(0.290196, 0.337255, 0.407843, 1)
+theme_override_font_sizes/font_size = 24
+text = "正在连接服务器…"
+horizontal_alignment = 1
+vertical_alignment = 1
+text_overrun_behavior = 3
+
+[node name="Board" type="Control" parent="."]
+offset_left = 60.0
+offset_top = 360.0
+offset_right = 1020.0
+offset_bottom = 1320.0
+custom_minimum_size = Vector2(960, 960)
+script = ExtResource("2_board")
+
+[node name="ColorLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 1350.0
+offset_right = 1032.0
+offset_bottom = 1418.0
+theme_override_colors/font_color = Color(0.105882, 0.129412, 0.180392, 1)
+theme_override_font_sizes/font_size = 32
+horizontal_alignment = 1
+vertical_alignment = 1
+text_overrun_behavior = 3
+
+[node name="ErrorLabel" type="Label" parent="."]
+visible = false
+offset_left = 48.0
+offset_top = 1438.0
+offset_right = 1032.0
+offset_bottom = 1548.0
+theme_override_colors/font_color = Color(0.705882, 0.109804, 0.109804, 1)
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+text_overrun_behavior = 3
+
+[node name="ResignButton" type="Button" parent="."]
+visible = false
+offset_left = 354.0
+offset_top = 1588.0
+offset_right = 726.0
+offset_bottom = 1692.0
+custom_minimum_size = Vector2(372, 104)
+theme_override_font_sizes/font_size = 32
+text = "认输"
