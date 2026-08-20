@@ -103,11 +103,14 @@ func can_request_resign(local_user_id: String) -> bool:
 
 
 func mark_pending(action_id: String, x: int, y: int) -> bool:
-	if not _pending_action.is_empty() or not _canonical_uuid(action_id) or not _in_bounds(x, y):
+	var actor_user_id := _actor_for_color(next_color)
+	if not _pending_action.is_empty() or not _canonical_uuid(action_id) or not _in_bounds(x, y) \
+		or status != STATUS_ACTIVE or actor_user_id.is_empty():
 		return false
 	_pending_action = {
 		"action_id": action_id,
 		"type": "gomoku.move.requested",
+		"actor_user_id": actor_user_id,
 		"x": x,
 		"y": y,
 		"expected_revision": revision,
@@ -115,12 +118,14 @@ func mark_pending(action_id: String, x: int, y: int) -> bool:
 	return true
 
 
-func mark_pending_resign(action_id: String) -> bool:
-	if not _pending_action.is_empty() or not _canonical_uuid(action_id) or revision <= 0:
+func mark_pending_resign(action_id: String, local_user_id: String = "") -> bool:
+	if not _pending_action.is_empty() or not _canonical_uuid(action_id) or revision <= 0 \
+		or status != STATUS_ACTIVE or local_user_id not in [black_user_id, white_user_id]:
 		return false
 	_pending_action = {
 		"action_id": action_id,
 		"type": "gomoku.resign.requested",
+		"actor_user_id": local_user_id,
 		"expected_revision": revision,
 	}
 	return true
@@ -166,6 +171,9 @@ func apply_event(envelope: Dictionary) -> Dictionary:
 		return {"ok": true, "status": "needs_snapshot"}
 	if status != STATUS_ACTIVE:
 		return _failure("invalid_event")
+	var confirmation := _pending_confirmation(envelope)
+	if not confirmation.get("ok", false):
+		return confirmation
 
 	var event_type: String = envelope["type"]
 	var result_value: Dictionary
@@ -183,9 +191,8 @@ func apply_event(envelope: Dictionary) -> Dictionary:
 	if not result_value.get("ok", false):
 		return result_value
 	_revision = event_revision
-	var confirmed_action: String = envelope.get("actionId", "")
-	if not confirmed_action.is_empty():
-		clear_pending(confirmed_action)
+	if confirmation.get("status") == "matching":
+		_pending_action.clear()
 	if status != STATUS_ACTIVE:
 		_pending_action.clear()
 	return {"ok": true, "status": "applied"}
@@ -206,9 +213,47 @@ func apply_error(envelope: Dictionary) -> Dictionary:
 		or not payload["message"] is String or payload["message"].is_empty() or payload["message"].length() > 256 \
 		or not payload["details"] is Dictionary or not payload["details"].is_empty():
 		return _failure("invalid_error")
-	if envelope.has("actionId"):
-		clear_pending(envelope["actionId"])
-	return {"ok": true, "status": "handled", "code": payload["code"]}
+	var error_revision: int = envelope["revision"]
+	var code: String = payload["code"]
+	var matching_pending: bool = envelope.has("actionId") \
+		and envelope["actionId"] == _pending_action.get("action_id", "")
+	if code == "stale_revision":
+		if error_revision < revision \
+			or (matching_pending and error_revision <= _pending_action.get("expected_revision", -1)):
+			return _failure("invalid_error")
+		if matching_pending:
+			_pending_action.clear()
+		return {"ok": true, "status": "needs_snapshot", "code": code}
+	if error_revision != revision \
+		or (matching_pending and error_revision != _pending_action.get("expected_revision", -1)):
+		return _failure("invalid_error")
+	if matching_pending:
+		_pending_action.clear()
+	return {"ok": true, "status": "handled", "code": code}
+
+
+func _pending_confirmation(envelope: Dictionary) -> Dictionary:
+	if _pending_action.is_empty() or not envelope.has("actionId") \
+		or envelope["actionId"] != _pending_action.get("action_id", ""):
+		return {"ok": true, "status": "unrelated"}
+	var payload: Dictionary = envelope["payload"]
+	var actor_user_id: String = payload.get("userId", "")
+	if actor_user_id != _pending_action.get("actor_user_id", ""):
+		return {"ok": true, "status": "unrelated"}
+	if envelope["revision"] != _pending_action.get("expected_revision", -1) + 1:
+		return _failure("invalid_event")
+	match _pending_action.get("type", ""):
+		"gomoku.move.requested":
+			if envelope["type"] != "gomoku.move.accepted" \
+				or payload.get("x") != _pending_action.get("x") \
+				or payload.get("y") != _pending_action.get("y"):
+				return _failure("invalid_event")
+		"gomoku.resign.requested":
+			if envelope["type"] != "gomoku.resigned" or payload.get("userId") != actor_user_id:
+				return _failure("invalid_event")
+		_:
+			return _failure("invalid_event")
+	return {"ok": true, "status": "matching"}
 
 
 func _apply_move(envelope: Dictionary) -> Dictionary:
@@ -317,6 +362,8 @@ func _validate_snapshot(envelope: Dictionary) -> Dictionary:
 					return _failure("invalid_snapshot")
 			elif move_count == BOARD_CELLS or black_has_five or white_has_five:
 				return _failure("invalid_snapshot")
+			if payload["result"] == "resignation" and move_count == 0:
+				return _failure("invalid_snapshot")
 		STATUS_CANCELLED:
 			if payload["result"] != null or payload["winnerUserId"] != null or move_count != 0 or snapshot_revision != 1:
 				return _failure("invalid_snapshot")
@@ -372,6 +419,14 @@ func _user_color(user_id: String) -> String:
 		return "black"
 	if user_id == white_user_id:
 		return "white"
+	return ""
+
+
+func _actor_for_color(color: String) -> String:
+	if color == "black":
+		return black_user_id
+	if color == "white":
+		return white_user_id
 	return ""
 
 

@@ -22,6 +22,7 @@ static func cases() -> Array:
 		{"name": "protocol action encoding preflights byte budget", "run": _preflights_action_byte_budget},
 		{"name": "protocol action encoding enforces depth budget", "run": _enforces_action_depth_budget},
 		{"name": "protocol action encoding fails closed", "run": _rejects_invalid_action_encoding},
+		{"name": "protocol matches Go JSON v1 string escape semantics without diagnostics", "run": _matches_go_string_semantics},
 	]
 
 
@@ -369,6 +370,23 @@ static func _rejects_invalid_action_encoding() -> bool:
 		if not _check(result is Dictionary and not result.get("ok", true), "invalid action encoding did not fail closed"):
 			return false
 	return true
+
+
+static func _matches_go_string_semantics() -> bool:
+	var document := _read_fixture("compat/string_semantics.json")
+	var decoded: Dictionary = Protocol.decode(document)
+	if not _check(decoded.get("ok", false), "Go-compatible string document was rejected: %s" % [decoded]):
+		return false
+	var raw_control := '{"protocolVersion":1,"type":"platform.connect","payload":{"value":"before' \
+		+ String.chr(1) + 'after"}}'
+	if not _check(not Protocol.decode(raw_control).get("ok", true), "unescaped raw control character was accepted"):
+		return false
+	var nested: Dictionary = decoded["envelope"]["payload"]["nested"]
+	var nul_value: Variant = nested.get("nul")
+	return _check(nested.get("pair") == "😀", "surrogate pair was not combined") \
+		and _check(nested.get("high") == "�" and nested.get("low") == "�", "lone surrogate did not become U+FFFD") \
+		and _check(nul_value is PackedByteArray and nul_value == PackedByteArray([0]), "escaped NUL bytes were not preserved") \
+		and _check(nested.get("simple") == "quote=\" slash=\\ solidus=/ back=\b form=\f line=\n return=\r tab=\t", "simple JSON escapes changed")
 
 
 static func _read_fixture(filename: String) -> String:

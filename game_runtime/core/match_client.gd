@@ -15,6 +15,10 @@ const STATE_FAILED := "failed"
 const STATE_CLOSED := "closed"
 const RETRY_DELAYS := [1.0, 2.0, 4.0, 8.0, 15.0]
 const MAX_FAILURES := 6
+const ATTEMPT_TIMEOUT_SECONDS := 10.0
+const INBOUND_TIMEOUT_SECONDS := 45.0
+const POLICY_VIOLATION_CLOSE_CODE := 1008
+const TERMINAL_HANDSHAKE_REASONS := ["resume_expired", "ticket_invalid", "invalid_request"]
 const KNOWN_ERROR_CODES := [
 	"ticket_invalid", "resume_expired", "stale_revision", "action_conflict",
 	"not_your_turn", "cell_occupied", "invalid_request", "match_not_found", "internal_error",
@@ -40,6 +44,8 @@ var _handshake_revision := -1
 var _failure_count := 0
 var _retry_handle := -1
 var _retry_generation := 0
+var _watchdog_handle := -1
+var _watchdog_generation := 0
 var _issued_action_ids := {}
 
 
@@ -84,16 +90,18 @@ func poll() -> void:
 		if not _connect_sent and not _send_connect():
 			_attempt_failed("send_failed")
 			return
+	if ready in ["open", "closing", "closed"]:
 		while connection_state not in [STATE_FAILED, STATE_CLOSED]:
 			var received: Dictionary = _transport.receive_text()
 			if not received.get("ok", false):
 				if received.get("fatal", false):
 					_attempt_failed("invalid_message")
-				return
+					return
+				break
 			if not _handle_text(received.get("text", "")):
 				return
-	elif ready == "closed":
-		_attempt_failed("connection_lost")
+	if ready == "closed" and _attempt_active:
+		_handle_transport_closed()
 
 
 func request_move(x: int, y: int) -> String:
@@ -122,7 +130,7 @@ func request_resign() -> String:
 		or not _game_state.can_request_resign(local_user_id):
 		return ""
 	var action_id := _new_action_id()
-	if action_id.is_empty() or not _game_state.mark_pending_resign(action_id):
+	if action_id.is_empty() or not _game_state.mark_pending_resign(action_id, local_user_id):
 		return ""
 	var encoded: Dictionary = Protocol.encode_action(
 		Protocol.TYPE_GOMOKU_RESIGN_REQUESTED,
@@ -144,6 +152,7 @@ func close() -> void:
 	_retry_generation += 1
 	_scheduler.cancel(_retry_handle)
 	_retry_handle = -1
+	_cancel_watchdog()
 	_attempt_active = false
 	_connect_sent = false
 	_transport.close()
@@ -200,6 +209,7 @@ func _begin_attempt(initial: bool = false) -> void:
 	_awaiting_initial_snapshot = false
 	_handshake_revision = -1
 	_set_connection_state(STATE_CONNECTING if initial else STATE_RECONNECTING)
+	_schedule_watchdog(ATTEMPT_TIMEOUT_SECONDS, "attempt")
 	if not _transport.connect_to_url(_ws_url):
 		_attempt_active = false
 		_attempt_failed("connect_failed")
@@ -222,21 +232,25 @@ func _handle_text(text: String) -> bool:
 		return false
 	var envelope: Dictionary = decoded["envelope"]
 	var message_type: String = envelope["type"]
+	var handled := false
 	match message_type:
 		Protocol.TYPE_PLATFORM_CONNECTED:
-			return _handle_connected(envelope)
+			handled = _handle_connected(envelope)
 		Protocol.TYPE_PLATFORM_SNAPSHOT:
-			return _handle_snapshot(envelope)
+			handled = _handle_snapshot(envelope)
 		Protocol.TYPE_PLATFORM_PING:
-			return _handle_ping(envelope)
+			handled = _handle_ping(envelope)
 		Protocol.TYPE_PLATFORM_ERROR:
-			return _handle_error(envelope)
+			handled = _handle_error(envelope)
 		Protocol.TYPE_GOMOKU_MOVE_ACCEPTED, Protocol.TYPE_GOMOKU_RESIGNED, \
 		Protocol.TYPE_PLATFORM_MATCH_CANCELLED, Protocol.TYPE_PLATFORM_MATCH_ABANDONED:
-			return _handle_event(envelope)
+			handled = _handle_event(envelope)
 		_:
 			_attempt_failed("invalid_message")
 			return false
+	if handled:
+		_record_valid_inbound()
+	return handled
 
 
 func _handle_connected(envelope: Dictionary) -> bool:
@@ -274,6 +288,7 @@ func _handle_snapshot(envelope: Dictionary) -> bool:
 	_snapshot_requested = false
 	_awaiting_initial_snapshot = false
 	_handshake_revision = -1
+	_cancel_watchdog()
 	# Only a complete authoritative snapshot makes a connection attempt
 	# meaningful enough to reset the consecutive-failure budget.
 	_failure_count = 0
@@ -332,7 +347,7 @@ func _handle_error(envelope: Dictionary) -> bool:
 	if code not in KNOWN_ERROR_CODES:
 		return _protocol_failure()
 	last_error_code = code
-	if code == "resume_expired":
+	if code in TERMINAL_HANDSHAKE_REASONS and not bound:
 		_fail(code)
 		return false
 	if not bound:
@@ -341,6 +356,8 @@ func _handle_error(envelope: Dictionary) -> bool:
 	var handled: Dictionary = _game_state.apply_error(envelope)
 	if not handled.get("ok", false):
 		return _protocol_failure()
+	if handled.get("status") == "needs_snapshot":
+		_snapshot_requested = true
 	match_error.emit(code)
 	return true
 
@@ -366,6 +383,7 @@ func _attempt_failed(code: String) -> void:
 		return
 	_attempt_active = false
 	_connect_sent = false
+	_cancel_watchdog()
 	_transport.close()
 	_failure_count += 1
 	last_error_code = code
@@ -393,6 +411,7 @@ func _fail(code: String) -> void:
 	_retry_generation += 1
 	_scheduler.cancel(_retry_handle)
 	_retry_handle = -1
+	_cancel_watchdog()
 	_attempt_active = false
 	_transport.close()
 	_launch_ticket = ""
@@ -416,6 +435,52 @@ func _valid_bound(envelope: Dictionary, message_type: String) -> bool:
 		and envelope.get("matchId") == _match_id and envelope.get("type") == message_type \
 		and typeof(envelope.get("revision")) == TYPE_INT and envelope["revision"] >= 0 \
 		and not envelope.has("expectedRevision")
+
+
+func _record_valid_inbound() -> void:
+	if connection_state == STATE_CONNECTED and not _awaiting_initial_snapshot:
+		_schedule_watchdog(INBOUND_TIMEOUT_SECONDS, "inbound")
+
+
+func _schedule_watchdog(delay_seconds: float, kind: String) -> void:
+	_cancel_watchdog()
+	_watchdog_generation += 1
+	var generation := _watchdog_generation
+	var client_reference: WeakRef = weakref(self)
+	_watchdog_handle = _scheduler.schedule(delay_seconds, func() -> void:
+		var client: Variant = client_reference.get_ref()
+		if client != null:
+			client._on_watchdog(generation, kind)
+	)
+
+
+func _cancel_watchdog() -> void:
+	_watchdog_generation += 1
+	if _watchdog_handle >= 0:
+		_scheduler.cancel(_watchdog_handle)
+	_watchdog_handle = -1
+
+
+func _on_watchdog(generation: int, kind: String) -> void:
+	if generation != _watchdog_generation or not _attempt_active:
+		return
+	_watchdog_handle = -1
+	if kind == "attempt" and (connection_state in [STATE_CONNECTING, STATE_RECONNECTING] or _awaiting_initial_snapshot):
+		_attempt_failed("connection_timeout")
+	elif kind == "inbound" and connection_state == STATE_CONNECTED and not _awaiting_initial_snapshot:
+		_attempt_failed("connection_lost")
+
+
+func _handle_transport_closed() -> void:
+	var info: Dictionary = _transport.get_close_info()
+	var code: Variant = info.get("code", -1)
+	var reason: Variant = info.get("reason", "")
+	var handshake_phase := connection_state in [STATE_CONNECTING, STATE_RECONNECTING] or _awaiting_initial_snapshot
+	if handshake_phase and typeof(code) == TYPE_INT and code == POLICY_VIOLATION_CLOSE_CODE \
+		and reason is String and reason in TERMINAL_HANDSHAKE_REASONS:
+		_fail(reason)
+		return
+	_attempt_failed("connection_lost")
 
 
 static func _exact_keys(value: Dictionary, expected: Array) -> bool:
@@ -456,7 +521,7 @@ static func _valid_ws_url(value: String) -> bool:
 func _dependencies_configured() -> bool:
 	if _transport == null or _scheduler == null or _random_source == null:
 		return false
-	for method in ["connect_to_url", "poll", "get_ready_state", "receive_text", "send_text", "close"]:
+	for method in ["connect_to_url", "poll", "get_ready_state", "receive_text", "send_text", "get_close_info", "close"]:
 		if not _transport.has_method(method):
 			return false
 	for method in ["schedule", "cancel"]:
@@ -514,15 +579,22 @@ class _PollingScheduler:
 class _WebSocketTransport:
 	extends RefCounted
 	var _peer: WebSocketPeer
+	var _close_code := -1
+	var _close_reason := ""
 
 	func connect_to_url(url: String) -> bool:
 		close()
+		_close_code = -1
+		_close_reason = ""
 		_peer = WebSocketPeer.new()
 		return _peer.connect_to_url(url) == OK
 
 	func poll() -> void:
 		if _peer != null:
 			_peer.poll()
+			if _peer.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+				_close_code = _peer.get_close_code()
+				_close_reason = _peer.get_close_reason()
 
 	func get_ready_state() -> String:
 		if _peer == null:
@@ -551,6 +623,9 @@ class _WebSocketTransport:
 	func send_text(text: String) -> bool:
 		return _peer != null and _peer.get_ready_state() == WebSocketPeer.STATE_OPEN \
 			and text.to_utf8_buffer().size() <= Protocol.MAX_MESSAGE_BYTES and _peer.send_text(text) == OK
+
+	func get_close_info() -> Dictionary:
+		return {"code": _close_code, "reason": _close_reason}
 
 	func close() -> void:
 		if _peer != null:

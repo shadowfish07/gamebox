@@ -19,6 +19,9 @@ static func cases() -> Array:
 		{"name": "gomoku state pending markers never place stones", "run": _keeps_pending_out_of_board},
 		{"name": "gomoku state clears pending only with authoritative confirmation", "run": _clears_pending_safely},
 		{"name": "gomoku state rejects malformed typed dictionary boundaries", "run": _rejects_malformed_boundaries},
+		{"name": "gomoku state rejects empty resignation snapshots", "run": _rejects_empty_resignation_snapshot},
+		{"name": "gomoku state confirms pending actions semantically", "run": _confirms_pending_semantically},
+		{"name": "gomoku state validates pending error revision semantics", "run": _validates_pending_errors},
 	]
 
 
@@ -197,6 +200,82 @@ static func _rejects_malformed_boundaries() -> bool:
 			or not _check(state.revision == -1 and state.board.size() == 225, "malformed snapshot partially mutated state"):
 			return false
 	return true
+
+
+static func _rejects_empty_resignation_snapshot() -> bool:
+	var state = GomokuState.new(MATCH_ID)
+	var invalid := _snapshot(1, _empty_board(), "finished", "black", "resignation", BLACK_ID)
+	var result_value: Dictionary = state.apply_snapshot(invalid)
+	return _check(not result_value.get("ok", true), "empty resignation snapshot was accepted") \
+		and _check(state.revision == -1 and state.status.is_empty() and state.board == _empty_board(), "invalid resignation snapshot mutated state")
+
+
+static func _confirms_pending_semantically() -> bool:
+	var mismatched = GomokuState.new(MATCH_ID)
+	mismatched.apply_snapshot(_snapshot(0))
+	mismatched.mark_pending(BLACK_ACTION, 7, 7)
+	var mismatch_result: Dictionary = mismatched.apply_event(_move(1, BLACK_ACTION, BLACK_ID, "black", 8, 8))
+	if not _check(not mismatch_result.get("ok", true), "same action id with different coordinates was accepted") \
+		or not _check(mismatched.cell(8, 8) == 0 and not mismatched.pending_action.is_empty(), "coordinate mismatch corrupted state/pending"):
+		return false
+
+	var one_stone := _empty_board()
+	one_stone[0] = 1
+	var wrong_kind = GomokuState.new(MATCH_ID)
+	wrong_kind.apply_snapshot(_snapshot(1, one_stone, "active", "white"))
+	wrong_kind.mark_pending_resign(WHITE_ACTION, WHITE_ID)
+	var kind_result: Dictionary = wrong_kind.apply_event(_move(2, WHITE_ACTION, WHITE_ID, "white", 1, 0))
+	if not _check(not kind_result.get("ok", true), "resign action id confirmed a move") \
+		or not _check(wrong_kind.cell(1, 0) == 0 and not wrong_kind.pending_action.is_empty(), "kind mismatch corrupted state/pending"):
+		return false
+	var matching_resign = GomokuState.new(MATCH_ID)
+	matching_resign.apply_snapshot(_snapshot(1, one_stone, "active", "white"))
+	matching_resign.mark_pending_resign(WHITE_ACTION, WHITE_ID)
+	var resign_result: Dictionary = matching_resign.apply_event(_resigned(2, WHITE_ACTION, WHITE_ID, BLACK_ID))
+	if not _check(resign_result.get("status") == "applied" and matching_resign.pending_action.is_empty(), "matching resignation did not clear pending") \
+		or not _check(matching_resign.status == "finished" and matching_resign.winner_user_id == BLACK_ID, "matching resignation did not apply terminal state"):
+		return false
+
+	var opponent = GomokuState.new(MATCH_ID)
+	opponent.apply_snapshot(_snapshot(1, one_stone, "active", "white"))
+	opponent.mark_pending_resign(WHITE_ACTION, BLACK_ID)
+	var opponent_result: Dictionary = opponent.apply_event(_move(2, WHITE_ACTION, WHITE_ID, "white", 1, 0))
+	return _check(opponent_result.get("status") == "applied", "opponent event sharing an action id was rejected") \
+		and _check(opponent.cell(1, 0) == 2 and opponent.pending_action.get("actor_user_id") == BLACK_ID, "opponent event cleared unrelated pending")
+
+
+static func _validates_pending_errors() -> bool:
+	var future = GomokuState.new(MATCH_ID)
+	future.apply_snapshot(_snapshot(0))
+	future.mark_pending(BLACK_ACTION, 7, 7)
+	var future_result: Dictionary = future.apply_error(_error(1, BLACK_ACTION, "cell_occupied"))
+	if not _check(not future_result.get("ok", true), "future non-stale error was accepted") \
+		or not _check(not future.pending_action.is_empty() and future.revision == 0, "future error cleared pending"):
+		return false
+	var impossible_stale = GomokuState.new(MATCH_ID)
+	impossible_stale.apply_snapshot(_snapshot(0))
+	impossible_stale.mark_pending(BLACK_ACTION, 7, 7)
+	var impossible_stale_result: Dictionary = impossible_stale.apply_error(_error(0, BLACK_ACTION, "stale_revision"))
+	if not _check(not impossible_stale_result.get("ok", true), "stale error at the pending expected revision was accepted") \
+		or not _check(not impossible_stale.pending_action.is_empty(), "impossible stale error cleared pending"):
+		return false
+
+	var stale = GomokuState.new(MATCH_ID)
+	stale.apply_snapshot(_snapshot(0))
+	stale.mark_pending(BLACK_ACTION, 7, 7)
+	var stale_result: Dictionary = stale.apply_error(_error(1, BLACK_ACTION, "stale_revision"))
+	if not _check(stale_result.get("status") == "needs_snapshot", "matching stale error did not request snapshot") \
+		or not _check(stale.pending_action.is_empty() and stale.revision == 0, "stale error changed board revision or kept pending"):
+		return false
+
+	var normal = GomokuState.new(MATCH_ID)
+	normal.apply_snapshot(_snapshot(0))
+	normal.mark_pending(BLACK_ACTION, 7, 7)
+	var unrelated: Dictionary = normal.apply_error(_error(0, WHITE_ACTION, "cell_occupied"))
+	if not _check(unrelated.get("ok", false) and not normal.pending_action.is_empty(), "unrelated error cleared pending"):
+		return false
+	var matching: Dictionary = normal.apply_error(_error(0, BLACK_ACTION, "cell_occupied"))
+	return _check(matching.get("status") == "handled" and normal.pending_action.is_empty(), "matching same-revision error did not clear pending")
 
 
 static func _snapshot(

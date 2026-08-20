@@ -44,6 +44,12 @@ may contain message-specific fields. Go stores it as `json.RawMessage`; it does
 not define a cross-game board model. Extra payload fields are therefore allowed
 even though extra envelope fields are not.
 
+Godot 4.7 cannot construct a `String` containing U+0000 without replacing it.
+To keep valid escaped NUL data lossless and diagnostic-free, its decoder exposes
+any such payload string as a `PackedByteArray` containing the exact UTF-8 bytes;
+typed message fields that require `String` reject that variant. All other JSON
+strings remain ordinary Godot `String` values.
+
 Explicit JSON `null` is not accepted for optional envelope fields: omit an
 unused field instead. `null` remains valid inside payloads. Every JSON number
 must be finite. Any mathematically integral JSON number, including one written
@@ -97,6 +103,8 @@ UTF-8 byte-size check, and every successful encoding is passed through the same
 strict decoder before it is returned. A complete message of exactly 65,536
 bytes is accepted; 65,537 bytes is rejected.
 
-The four fixtures freeze a snapshot, a requested Gomoku move, its accepted
-server event, and a match-bound error. `snapshot.json` contains a 15 by 15 board
-with exactly 225 integer cells.
+The four message fixtures freeze a snapshot, a requested Gomoku move, its
+accepted server event, and a match-bound error. `snapshot.json` contains a 15
+by 15 board with exactly 225 integer cells. The compatibility fixture under
+`fixtures/compat/` is consumed by both runtimes to keep JSON string escape,
+UTF-16 surrogate, and escaped NUL byte semantics aligned with Go v1.

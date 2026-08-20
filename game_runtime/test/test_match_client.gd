@@ -19,6 +19,8 @@ class FakeTransport:
 	var fail_connect := false
 	var fail_send := false
 	var closed_count := 0
+	var close_code := -1
+	var close_reason := ""
 
 	func connect_to_url(url: String) -> bool:
 		urls.append(url)
@@ -46,10 +48,18 @@ class FakeTransport:
 		closed_count += 1
 		ready_state = "closed"
 
+	func get_close_info() -> Dictionary:
+		return {"code": close_code, "reason": close_reason}
+
 	func open() -> void:
 		ready_state = "open"
 
 	func disconnect_now() -> void:
+		ready_state = "closed"
+
+	func remote_close(code: int, reason: String) -> void:
+		close_code = code
+		close_reason = reason
 		ready_state = "closed"
 
 	func queue(message: Dictionary) -> void:
@@ -96,6 +106,33 @@ class FakeRandom:
 		return generated
 
 
+class ReplayableScheduler:
+	extends RefCounted
+	var callbacks := {}
+	var active := {}
+	var latest_handle := -1
+	var next_handle := 0
+
+	func schedule(_delay_seconds: float, scheduled: Callable) -> int:
+		next_handle += 1
+		latest_handle = next_handle
+		callbacks[latest_handle] = scheduled
+		active[latest_handle] = true
+		return latest_handle
+
+	func cancel(handle: int = -1) -> void:
+		if handle >= 0:
+			active.erase(handle)
+
+	func replay(handle: int) -> void:
+		var scheduled: Callable = callbacks.get(handle, Callable())
+		if scheduled.is_valid():
+			scheduled.call()
+
+	func active_count() -> int:
+		return active.size()
+
+
 class FakeClock:
 	extends RefCounted
 	var current_msec := 0
@@ -107,13 +144,109 @@ class FakeClock:
 		current_msec += delta_msec
 
 
+class LocalPolicyWebSocketServer:
+	extends RefCounted
+	const WEBSOCKET_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	var _server := TCPServer.new()
+	var _peer: StreamPeerTCP
+	var _request_bytes := PackedByteArray()
+	var _reason := ""
+	var _send_error := false
+	var _upgraded := false
+	var _sent_terminal := false
+	var _polls_after_terminal := 0
+
+	func start(reason: String, send_error: bool) -> bool:
+		_reason = reason
+		_send_error = send_error
+		return _server.listen(0, "127.0.0.1") == OK
+
+	func url() -> String:
+		return "ws://127.0.0.1:%d/v1/ws" % _server.get_local_port()
+
+	func sent_terminal() -> bool:
+		return _sent_terminal
+
+	func poll() -> void:
+		if _peer == null and _server.is_connection_available():
+			_peer = _server.take_connection()
+		if _peer == null or _peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			return
+		if _sent_terminal:
+			_polls_after_terminal += 1
+			if _polls_after_terminal >= 4:
+				_peer.disconnect_from_host()
+			return
+		var available := _peer.get_available_bytes()
+		if available <= 0:
+			return
+		var received: Array = _peer.get_data(available)
+		if received[0] != OK:
+			return
+		if not _upgraded:
+			_request_bytes.append_array(received[1])
+			var request := _request_bytes.get_string_from_ascii()
+			if not request.contains("\r\n\r\n"):
+				return
+			var websocket_key := ""
+			for line in request.split("\r\n"):
+				if line.to_lower().begins_with("sec-websocket-key:"):
+					websocket_key = line.substr(line.find(":") + 1).strip_edges()
+			if websocket_key.is_empty():
+				return
+			var hash := HashingContext.new()
+			hash.start(HashingContext.HASH_SHA1)
+			hash.update((websocket_key + WEBSOCKET_GUID).to_utf8_buffer())
+			var accept := Marshalls.raw_to_base64(hash.finish())
+			var response := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % accept
+			_peer.put_data(response.to_utf8_buffer())
+			_upgraded = true
+			return
+		_send_terminal_frames()
+
+	func stop() -> void:
+		if _peer != null:
+			_peer.disconnect_from_host()
+		_server.stop()
+
+	func _send_terminal_frames() -> void:
+		var frames := PackedByteArray()
+		if _send_error:
+			var error_text := '{"protocolVersion":1,"type":"platform.error","payload":{"code":"%s","message":"fixed","details":{}}}' % _reason
+			frames.append_array(_server_frame(0x1, error_text.to_utf8_buffer()))
+		var close_payload := PackedByteArray([0x03, 0xf0])
+		close_payload.append_array(_reason.to_utf8_buffer())
+		frames.append_array(_server_frame(0x8, close_payload))
+		_peer.put_data(frames)
+		_sent_terminal = true
+
+	static func _server_frame(opcode: int, payload: PackedByteArray) -> PackedByteArray:
+		var frame := PackedByteArray([0x80 | opcode])
+		if payload.size() < 126:
+			frame.append(payload.size())
+		else:
+			frame.append(126)
+			frame.append((payload.size() >> 8) & 0xff)
+			frame.append(payload.size() & 0xff)
+		frame.append_array(payload)
+		return frame
+
+
 static func cases() -> Array:
 	return [
 		{"name": "match client connects with launch then resumes in memory", "run": _connects_and_resumes},
 		{"name": "match client retries with bounded deterministic backoff", "run": _bounds_retries},
+		{"name": "match client watchdog bounds every incomplete handshake phase", "run": _bounds_incomplete_handshakes},
+		{"name": "match client inbound watchdog resets only on valid messages", "run": _bounds_half_open_connections},
+		{"name": "match client watchdog callbacks are generation safe", "run": _ignores_stale_watchdogs},
+		{"name": "match client watchdog callbacks do not retain disposed clients", "run": _does_not_leak_disposed_clients},
+		{"name": "match client real WebSocketPeer bounds a hanging TCP handshake", "run": _bounds_real_hanging_tcp},
 		{"name": "match client production scheduler uses injected monotonic time", "run": _uses_injected_clock},
 		{"name": "match client resets retry budget only after a snapshot", "run": _resets_retry_budget_after_snapshot},
 		{"name": "match client fails immediately when resume expires", "run": _fails_expired_resume},
+		{"name": "match client drains policy errors before handling close", "run": _drains_policy_error_before_close},
+		{"name": "match client maps close reasons through a fixed allowlist", "run": _maps_policy_close_reasons},
+		{"name": "match client production transport handles real policy closes", "run": _handles_real_policy_closes},
 		{"name": "match client answers ping and requests snapshots on gaps", "run": _handles_ping_and_gap},
 		{"name": "match client sends UUIDv4 actions without optimistic stones", "run": _sends_actions_authoritatively},
 		{"name": "match client sends a fresh resignation action after the first move", "run": _sends_resignation},
@@ -180,6 +313,182 @@ static func _fails_expired_resume() -> bool:
 	fixture.client.poll()
 	return _check(fixture.client.connection_state == "failed", "resume_expired must fail immediately") \
 		and _check(not fixture.scheduler.active, "resume_expired scheduled a retry")
+
+
+static func _bounds_incomplete_handshakes() -> bool:
+	var tcp = _fixture()
+	tcp.client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", tcp.state)
+	for expected_delay in [1.0, 2.0, 4.0, 8.0, 15.0]:
+		tcp.scheduler.fire()
+		if not _check(tcp.client.connection_state == "reconnecting" and tcp.scheduler.delays.back() == expected_delay, "TCP watchdog retry delay was not exact"):
+			return false
+		tcp.scheduler.fire()
+	tcp.scheduler.fire()
+	if not _check(tcp.client.connection_state == "failed" and not tcp.scheduler.active, "sixth TCP watchdog failure did not stop") \
+		or not _check(tcp.transport.urls.size() == 6, "watchdog retry sequence did not make exactly six attempts"):
+		return false
+
+	var opened = _fixture()
+	opened.client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", opened.state)
+	opened.transport.open()
+	opened.client.poll()
+	opened.scheduler.fire()
+	if not _check(opened.client.connection_state == "reconnecting" and opened.scheduler.delays.back() == 1.0, "open-without-connected watchdog failed"):
+		return false
+
+	var no_snapshot = _fixture()
+	no_snapshot.client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", no_snapshot.state)
+	no_snapshot.transport.open()
+	no_snapshot.client.poll()
+	no_snapshot.transport.queue(_connected(0, "resume"))
+	no_snapshot.client.poll()
+	no_snapshot.scheduler.fire()
+	return _check(no_snapshot.client.connection_state == "reconnecting" and no_snapshot.scheduler.delays.back() == 1.0, "connected-without-snapshot watchdog failed")
+
+
+static func _bounds_half_open_connections() -> bool:
+	var fixture := _connected_fixture()
+	if not _check(fixture.scheduler.active and fixture.scheduler.delays.back() == 45.0, "connected inbound watchdog missing"):
+		return false
+	var schedules_before: int = fixture.scheduler.delays.size()
+	fixture.transport.queue(_ping(0, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"))
+	fixture.client.poll()
+	if not _check(fixture.scheduler.active and fixture.scheduler.delays.size() == schedules_before + 1, "valid inbound did not reset watchdog"):
+		return false
+	fixture.scheduler.fire()
+	return _check(fixture.client.connection_state == "reconnecting" and fixture.scheduler.delays.back() == 1.0, "half-open inbound timeout did not retry")
+
+
+static func _ignores_stale_watchdogs() -> bool:
+	var scheduler := ReplayableScheduler.new()
+	var transport := FakeTransport.new()
+	var state = GomokuState.new(MATCH_ID)
+	var client = MatchClient.new(transport, scheduler, FakeRandom.new())
+	client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", state)
+	var attempt_watchdog: int = scheduler.latest_handle
+	transport.open()
+	client.poll()
+	transport.queue(_connected(0, "resume"))
+	transport.queue(_snapshot(0))
+	client.poll()
+	var first_inbound_watchdog: int = scheduler.latest_handle
+	scheduler.replay(attempt_watchdog)
+	if not _check(client.connection_state == "connected", "cancelled attempt watchdog changed connected state"):
+		return false
+	transport.queue(_ping(0, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"))
+	client.poll()
+	var current_inbound_watchdog: int = scheduler.latest_handle
+	scheduler.replay(first_inbound_watchdog)
+	if not _check(client.connection_state == "connected", "replaced inbound watchdog changed connected state"):
+		return false
+	client.dispose()
+	scheduler.replay(current_inbound_watchdog)
+	return _check(client.connection_state == "closed" and scheduler.active_count() == 0, "disposed client accepted a stale watchdog callback")
+
+
+static func _does_not_leak_disposed_clients() -> bool:
+	for _iteration in 250:
+		var scheduler := ReplayableScheduler.new()
+		var client = MatchClient.new(FakeTransport.new(), scheduler, FakeRandom.new())
+		var state = GomokuState.new(MATCH_ID)
+		client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", state)
+		var watchdog_handle: int = scheduler.latest_handle
+		var reference: WeakRef = weakref(client)
+		client.dispose()
+		client = null
+		scheduler.replay(watchdog_handle)
+		if not _check(reference.get_ref() == null and scheduler.active_count() == 0, "disposed client was retained by a watchdog callback"):
+			return false
+	return true
+
+
+static func _bounds_real_hanging_tcp() -> bool:
+	var server := TCPServer.new()
+	if server.listen(0, "127.0.0.1") != OK:
+		return _check(false, "unable to start local hanging TCP fixture")
+	var scheduler := FakeScheduler.new()
+	var state = GomokuState.new(MATCH_ID)
+	var client = MatchClient.new(null, scheduler, FakeRandom.new())
+	client.start("ws://127.0.0.1:%d/v1/ws" % server.get_local_port(), MATCH_ID, "ticket", state)
+	var peer: StreamPeerTCP = null
+	var tree := Engine.get_main_loop() as SceneTree
+	for _iteration in 120:
+		client.poll()
+		if server.is_connection_available():
+			peer = server.take_connection()
+			break
+		await tree.process_frame
+	if peer == null:
+		server.stop()
+		client.close()
+		return _check(false, "real WebSocketPeer never reached local hanging TCP server")
+	scheduler.fire()
+	var bounded: bool = client.connection_state == "reconnecting" and scheduler.delays.back() == 1.0
+	peer.disconnect_from_host()
+	server.stop()
+	client.close()
+	return _check(bounded, "real hanging WebSocket handshake was not bounded")
+
+
+static func _drains_policy_error_before_close() -> bool:
+	var fixture := _fixture()
+	fixture.client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", fixture.state)
+	fixture.transport.open()
+	fixture.client.poll()
+	fixture.transport.queue(_error_unbound("resume_expired"))
+	fixture.transport.remote_close(1008, "resume_expired")
+	fixture.client.poll()
+	return _check(fixture.client.connection_state == "failed" and fixture.client.last_error_code == "resume_expired", "queued policy error was not drained before close") \
+		and _check(not fixture.scheduler.active, "terminal policy error scheduled retry")
+
+
+static func _maps_policy_close_reasons() -> bool:
+	for reason in ["resume_expired", "ticket_invalid", "invalid_request"]:
+		var terminal := _fixture()
+		terminal.client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", terminal.state)
+		terminal.transport.open()
+		terminal.client.poll()
+		terminal.transport.remote_close(1008, reason)
+		terminal.client.poll()
+		if not _check(terminal.client.connection_state == "failed" and terminal.client.last_error_code == reason, "allowlisted policy reason was not terminal") \
+			or not _check(not terminal.scheduler.active, "allowlisted policy reason retried"):
+			return false
+	var unknown := _fixture()
+	unknown.client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "ticket", unknown.state)
+	unknown.transport.open()
+	unknown.client.poll()
+	unknown.transport.remote_close(1008, "untrusted-secret-close-reason")
+	unknown.client.poll()
+	return _check(unknown.client.connection_state == "reconnecting" and unknown.client.last_error_code == "connection_lost", "unknown close reason was not mapped to fixed failure") \
+		and _check(not unknown.client.last_error_code.contains("secret"), "unknown close reason leaked")
+
+
+static func _handles_real_policy_closes() -> bool:
+	for send_error in [true, false]:
+		var server := LocalPolicyWebSocketServer.new()
+		var reason := "resume_expired" if send_error else "ticket_invalid"
+		if not server.start(reason, send_error):
+			return _check(false, "unable to start local policy-close fixture")
+		var scheduler := FakeScheduler.new()
+		var state = GomokuState.new(MATCH_ID)
+		var client = MatchClient.new(null, scheduler, FakeRandom.new())
+		client.start(server.url(), MATCH_ID, "ticket", state)
+		var tree := Engine.get_main_loop() as SceneTree
+		for _iteration in 240:
+			server.poll()
+			client.poll()
+			if client.connection_state == "failed":
+				break
+			await tree.process_frame
+		var terminal_seen: bool = server.sent_terminal()
+		var terminal_result: bool = client.connection_state == "failed" \
+			and client.last_error_code == reason and not scheduler.active
+		client.dispose()
+		server.stop()
+		if not _check(terminal_seen, "real WebSocket fixture never sent terminal frames") \
+			or not _check(terminal_result, "production transport did not preserve real policy-close semantics"):
+			return false
+	return true
 
 
 static func _uses_injected_clock() -> bool:

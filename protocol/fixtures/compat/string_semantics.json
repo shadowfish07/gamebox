@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "type": "platform.connect",
+  "payload": {
+    "nested": {
+      "pair": "\uD83D\uDE00",
+      "high": "\uD800",
+      "low": "\uDC00",
+      "nul": "\u0000",
+      "simple": "quote=\" slash=\\ solidus=\/ back=\b form=\f line=\n return=\r tab=\t"
+    }
+  }
+}

@@ -5,6 +5,7 @@ const MAX_SAFE_JSON_INTEGER := 9007199254740991
 const MAX_MESSAGE_BYTES := 64 * 1024
 const MAX_JSON_DEPTH := 32
 const MAX_NUMBER_TOKEN_BYTES := 128
+const _SCANNED_STRING_PREFIX := "gbox-json-v1:"
 
 const TYPE_PLATFORM_CONNECT := "platform.connect"
 const TYPE_PLATFORM_CONNECTED := "platform.connected"
@@ -60,12 +61,15 @@ static func decode(text: String) -> Dictionary:
 	if not strict_scan.get("ok", false):
 		return strict_scan
 	var parser := JSON.new()
-	if parser.parse(text) != OK:
+	if parser.parse(strict_scan.get("sanitized_text", text)) != OK:
 		return _failure("invalid_json", "Message is not valid JSON")
-	if not parser.data is Dictionary:
+	var restored := _restore_scanned_strings(parser.data)
+	if not restored.get("ok", false):
+		return _failure("invalid_json", "Message is not valid JSON")
+	if not restored["value"] is Dictionary:
 		return _failure("invalid_envelope", "Message must be a JSON object")
 
-	var envelope: Dictionary = _normalize_json_numbers(parser.data)
+	var envelope: Dictionary = _normalize_json_numbers(restored["value"])
 	return _validate_envelope(envelope)
 
 
@@ -353,6 +357,56 @@ static func _normalize_json_numbers(value: Variant) -> Variant:
 	return value
 
 
+static func _restore_scanned_strings(value: Variant) -> Dictionary:
+	if value is String:
+		if not value.begins_with(_SCANNED_STRING_PREFIX):
+			return {"ok": false}
+		var encoded: String = (value as String).substr(_SCANNED_STRING_PREFIX.length())
+		if encoded.length() < 2 or encoded[1] != ":":
+			return {"ok": false}
+		var kind := encoded[0]
+		var payload := encoded.substr(2)
+		if kind == "b":
+			if payload.length() % 2 != 0:
+				return {"ok": false}
+			# Godot String rejects U+0000 at construction time. Preserve a valid
+			# JSON string containing NUL as its exact UTF-8 bytes instead of
+			# silently replacing data or emitting an engine diagnostic.
+			var decoded_bytes := PackedByteArray()
+			for offset in range(0, payload.length(), 2):
+				decoded_bytes.append(("0x" + payload.substr(offset, 2)).hex_to_int())
+			return {"ok": true, "value": decoded_bytes}
+		if kind != "s" or payload.length() % 6 != 0:
+			return {"ok": false}
+		var decoded_parts := PackedStringArray()
+		for offset in range(0, payload.length(), 6):
+			var codepoint := ("0x" + payload.substr(offset, 6)).hex_to_int()
+			if codepoint <= 0 or codepoint > 0x10ffff:
+				return {"ok": false}
+			decoded_parts.append(String.chr(codepoint))
+		return {"ok": true, "value": "".join(decoded_parts)}
+	if value is Array:
+		var restored_array: Array = []
+		restored_array.resize(value.size())
+		for index in value.size():
+			var restored_item := _restore_scanned_strings(value[index])
+			if not restored_item.get("ok", false):
+				return {"ok": false}
+			restored_array[index] = restored_item["value"]
+		return {"ok": true, "value": restored_array}
+	if value is Dictionary:
+		var restored_dictionary := {}
+		for key in value:
+			var restored_key := _restore_scanned_strings(key)
+			var restored_value := _restore_scanned_strings(value[key])
+			if not restored_key.get("ok", false) or not restored_key["value"] is String \
+				or not restored_value.get("ok", false) or restored_dictionary.has(restored_key["value"]):
+				return {"ok": false}
+			restored_dictionary[restored_key["value"]] = restored_value["value"]
+		return {"ok": true, "value": restored_dictionary}
+	return {"ok": true, "value": value}
+
+
 static func _is_client_action(message_type: String) -> bool:
 	return message_type == TYPE_GOMOKU_MOVE_REQUESTED or message_type == TYPE_GOMOKU_RESIGN_REQUESTED
 
@@ -382,6 +436,7 @@ class _StrictJSONScanner:
 	var _position := 0
 	var _depth := 0
 	var _top_level_keys := {}
+	var _string_replacements: Array = []
 	var _error := ""
 	var _error_code := "invalid_json"
 
@@ -405,7 +460,7 @@ class _StrictJSONScanner:
 		_skip_whitespace()
 		if _position != _text.length():
 			return {"ok": false, "code": "invalid_json", "message": "Message contains trailing data"}
-		return {"ok": true}
+		return {"ok": true, "sanitized_text": _materialize_sanitized_text()}
 
 
 	func _parse_value() -> bool:
@@ -447,7 +502,10 @@ class _StrictJSONScanner:
 			var key_result := _parse_string()
 			if not key_result.get("ok", false):
 				return false
-			var key: String = key_result["value"]
+			var key_value: Variant = key_result["value"]
+			if not key_value is String:
+				return _fail("Message object is invalid", "invalid_envelope")
+			var key: String = key_value
 			# Every object is required to use literal, unique keys. This mirrors
 			# Go's strict payload decoder and prevents nested duplicate-key
 			# smuggling before a typed message boundary sees the Dictionary.
@@ -511,11 +569,16 @@ class _StrictJSONScanner:
 			var character := _character()
 			if character == '"':
 				var raw := _text.substr(content_start, _position - content_start)
+				var token_start := content_start - 1
+				var token_end := _position + 1
 				_position += 1
-				var decoded = JSON.parse_string('"' + raw + '"')
-				if not decoded is String:
+				var decoded_result := _decode_json_string(raw)
+				if not decoded_result.get("ok", false):
 					_fail("Invalid JSON string")
 					return {"ok": false}
+				var decoded: Variant = decoded_result["value"]
+				var safe_token := _encode_safe_json_string(decoded, decoded_result["encoded"])
+				_string_replacements.append({"start": token_start, "end": token_end, "text": safe_token})
 				return {"ok": true, "value": decoded, "raw": raw}
 			if character == "\\":
 				_position += 1
@@ -538,6 +601,139 @@ class _StrictJSONScanner:
 			_position += 1
 		_fail("Unterminated JSON string")
 		return {"ok": false}
+
+
+	func _decode_json_string(raw: String) -> Dictionary:
+		var codepoints: Array[int] = []
+		var index := 0
+		while index < raw.length():
+			var character := raw[index]
+			if character != "\\":
+				var raw_codepoint := character.unicode_at(0)
+				if raw_codepoint < 0x20:
+					return {"ok": false}
+				codepoints.append(raw_codepoint)
+				index += 1
+				continue
+			if index + 1 >= raw.length():
+				return {"ok": false}
+			var escape := raw[index + 1]
+			match escape:
+				'"', "\\", "/":
+					codepoints.append(escape.unicode_at(0))
+					index += 2
+				"b":
+					codepoints.append(8)
+					index += 2
+				"f":
+					codepoints.append(12)
+					index += 2
+				"n":
+					codepoints.append(10)
+					index += 2
+				"r":
+					codepoints.append(13)
+					index += 2
+				"t":
+					codepoints.append(9)
+					index += 2
+				"u":
+					if index + 6 > raw.length():
+						return {"ok": false}
+					var code_unit := _decode_hex_code_unit(raw.substr(index + 2, 4))
+					if code_unit < 0:
+						return {"ok": false}
+					if code_unit >= 0xd800 and code_unit <= 0xdbff:
+						var next_escape := index + 6
+						if next_escape + 6 <= raw.length() and raw.substr(next_escape, 2) == "\\u":
+							var low := _decode_hex_code_unit(raw.substr(next_escape + 2, 4))
+							if low >= 0xdc00 and low <= 0xdfff:
+								var codepoint := 0x10000 + ((code_unit - 0xd800) << 10) + (low - 0xdc00)
+								codepoints.append(codepoint)
+								index += 12
+								continue
+						codepoints.append(0xfffd)
+					elif code_unit >= 0xdc00 and code_unit <= 0xdfff:
+						codepoints.append(0xfffd)
+					else:
+						codepoints.append(code_unit)
+					index += 6
+				_:
+					return {"ok": false}
+		return _materialize_codepoints(codepoints)
+
+
+	func _materialize_codepoints(codepoints: Array[int]) -> Dictionary:
+		var encoded_parts := PackedStringArray()
+		var text_parts := PackedStringArray()
+		var has_nul := false
+		for codepoint in codepoints:
+			encoded_parts.append("%06x" % codepoint)
+			has_nul = has_nul or codepoint == 0
+			if codepoint != 0:
+				text_parts.append(String.chr(codepoint))
+		if not has_nul:
+			return {"ok": true, "value": "".join(text_parts), "encoded": "".join(encoded_parts)}
+		var utf8_bytes := PackedByteArray()
+		for codepoint in codepoints:
+			if codepoint <= 0x7f:
+				utf8_bytes.append(codepoint)
+			elif codepoint <= 0x7ff:
+				utf8_bytes.append(0xc0 | (codepoint >> 6))
+				utf8_bytes.append(0x80 | (codepoint & 0x3f))
+			elif codepoint <= 0xffff:
+				utf8_bytes.append(0xe0 | (codepoint >> 12))
+				utf8_bytes.append(0x80 | ((codepoint >> 6) & 0x3f))
+				utf8_bytes.append(0x80 | (codepoint & 0x3f))
+			else:
+				utf8_bytes.append(0xf0 | (codepoint >> 18))
+				utf8_bytes.append(0x80 | ((codepoint >> 12) & 0x3f))
+				utf8_bytes.append(0x80 | ((codepoint >> 6) & 0x3f))
+				utf8_bytes.append(0x80 | (codepoint & 0x3f))
+		return {"ok": true, "value": utf8_bytes, "encoded": "".join(encoded_parts)}
+
+
+	func _decode_hex_code_unit(value: String) -> int:
+		if value.length() != 4:
+			return -1
+		var result := 0
+		for character in value:
+			var code := character.unicode_at(0)
+			var digit := -1
+			if code >= 48 and code <= 57:
+				digit = code - 48
+			elif code >= 65 and code <= 70:
+				digit = code - 65 + 10
+			elif code >= 97 and code <= 102:
+				digit = code - 97 + 10
+			else:
+				return -1
+			result = (result << 4) | digit
+		return result
+
+
+	func _encode_safe_json_string(value: Variant, encoded_codepoints: String) -> String:
+		if value is PackedByteArray:
+			var encoded_bytes := PackedStringArray()
+			for byte in value:
+				encoded_bytes.append("%02x" % byte)
+			return '"%sb:%s"' % [_SCANNED_STRING_PREFIX, "".join(encoded_bytes)]
+		return '"%ss:%s"' % [_SCANNED_STRING_PREFIX, encoded_codepoints]
+
+
+	func _materialize_sanitized_text() -> String:
+		if _string_replacements.is_empty():
+			return _text
+		var parts := PackedStringArray()
+		var cursor := 0
+		for replacement in _string_replacements:
+			var start: int = replacement["start"]
+			var end: int = replacement["end"]
+			parts.append(_text.substr(cursor, start - cursor))
+			parts.append(replacement["text"])
+			cursor = end
+		parts.append(_text.substr(cursor))
+		return "".join(parts)
 
 
 	func _parse_number() -> bool:

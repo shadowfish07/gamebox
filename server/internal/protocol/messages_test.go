@@ -83,6 +83,38 @@ func TestFixtures(t *testing.T) {
 	}
 }
 
+func TestStringSemanticsFixtureMatchesEncodingJSONV1(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtureDirectory(t), "compat", "string_semantics.json"))
+	if err != nil {
+		t.Fatalf("read string fixture: %v", err)
+	}
+	envelope, err := Decode(data)
+	if err != nil {
+		t.Fatalf("decode string fixture: %v", err)
+	}
+	var payload struct {
+		Nested struct {
+			Pair   string `json:"pair"`
+			High   string `json:"high"`
+			Low    string `json:"low"`
+			NUL    string `json:"nul"`
+			Simple string `json:"simple"`
+		} `json:"nested"`
+	}
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		t.Fatalf("decode string payload: %v", err)
+	}
+	if payload.Nested.Pair != "😀" || payload.Nested.High != "�" || payload.Nested.Low != "�" {
+		t.Fatalf("surrogate semantics changed: pair=%q high=%q low=%q", payload.Nested.Pair, payload.Nested.High, payload.Nested.Low)
+	}
+	if len(payload.Nested.NUL) != 1 || payload.Nested.NUL[0] != 0 {
+		t.Fatalf("NUL string bytes = %v, want [0]", []byte(payload.Nested.NUL))
+	}
+	if payload.Nested.Simple != "quote=\" slash=\\ solidus=/ back=\b form=\f line=\n return=\r tab=\t" {
+		t.Fatalf("simple escapes changed: %q", payload.Nested.Simple)
+	}
+}
+
 func TestFixturesSnapshotHasExactBoardAndNullResults(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(fixtureDirectory(t), "snapshot.json"))
 	if err != nil {
