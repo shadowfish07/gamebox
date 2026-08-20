@@ -138,6 +138,8 @@ static func encode_action(
 ) -> Dictionary:
 	if not payload is Dictionary:
 		return _failure("invalid_payload", "payload must be a JSON object")
+	if not _is_canonical_uuid(match_id) or not _is_canonical_uuid(action_id):
+		return _failure("invalid_action", "Action identifiers are invalid")
 	var envelope := {
 		"protocolVersion": VERSION,
 		"gameId": "gomoku",
@@ -147,6 +149,48 @@ static func encode_action(
 		"actionId": action_id,
 		"payload": payload,
 	}
+	var validation := _validate_envelope(envelope)
+	if not validation.get("ok", false):
+		return validation
+	return _encode_envelope(envelope)
+
+
+static func encode_connect(credential_name: String, credential: String) -> Dictionary:
+	if credential_name not in ["launchTicket", "resumeToken"] or credential.is_empty() \
+		or credential.length() > 256 or credential.to_utf8_buffer().size() > 256:
+		return _failure("invalid_connect", "Connection credential is invalid")
+	return _encode_envelope({
+		"protocolVersion": VERSION,
+		"type": TYPE_PLATFORM_CONNECT,
+		"payload": {credential_name: credential},
+	})
+
+
+static func encode_pong(match_id: String, nonce: String) -> Dictionary:
+	if not _is_canonical_uuid(match_id) or not _is_canonical_uuid(nonce):
+		return _failure("invalid_control", "Control message is invalid")
+	return _encode_envelope({
+		"protocolVersion": VERSION,
+		"gameId": "gomoku",
+		"matchId": match_id,
+		"type": TYPE_PLATFORM_PONG,
+		"payload": {"nonce": nonce},
+	})
+
+
+static func encode_snapshot_request(match_id: String, current_revision: int) -> Dictionary:
+	if not _is_canonical_uuid(match_id) or current_revision < 0:
+		return _failure("invalid_control", "Control message is invalid")
+	return _encode_envelope({
+		"protocolVersion": VERSION,
+		"gameId": "gomoku",
+		"matchId": match_id,
+		"type": TYPE_PLATFORM_SNAPSHOT_REQUESTED,
+		"payload": {"currentRevision": current_revision},
+	})
+
+
+static func _encode_envelope(envelope: Dictionary) -> Dictionary:
 	var validation := _validate_envelope(envelope)
 	if not validation.get("ok", false):
 		return validation
@@ -321,6 +365,11 @@ static func _is_revisionless_control(message_type: String) -> bool:
 	]
 
 
+static func _is_canonical_uuid(value: String) -> bool:
+	var pattern := RegEx.create_from_string("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+	return pattern.search(value) != null
+
+
 static func _failure(code: String, message: String) -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
 
@@ -391,6 +440,7 @@ class _StrictJSONScanner:
 		if _consume("}"):
 			_depth -= 1
 			return true
+		var object_keys := {}
 		while true:
 			if _at_end() or _character() != '"':
 				return _fail("Expected a JSON object key")
@@ -398,9 +448,13 @@ class _StrictJSONScanner:
 			if not key_result.get("ok", false):
 				return false
 			var key: String = key_result["value"]
+			# Every object is required to use literal, unique keys. This mirrors
+			# Go's strict payload decoder and prevents nested duplicate-key
+			# smuggling before a typed message boundary sees the Dictionary.
+			if key_result.get("raw", "") != key or object_keys.has(key):
+				return _fail("Message object is invalid", "invalid_envelope")
+			object_keys[key] = true
 			if top_level:
-				if key_result.get("raw", "") != key:
-					return _fail("Message envelope is invalid", "invalid_envelope")
 				if not _allowed_top_level_keys.has(key):
 					return _fail("Message envelope is invalid", "invalid_envelope")
 				if _top_level_keys.has(key):
