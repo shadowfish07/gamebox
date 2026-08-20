@@ -5,7 +5,8 @@ readonly PACKAGE="me.zqydev.gamebox"
 readonly MAIN_ACTIVITY="$PACKAGE/.MainActivity"
 readonly TEST_PACKAGE="$PACKAGE.test"
 readonly TEST_RUNNER="$TEST_PACKAGE/me.zqydev.gamebox.HostSmokeTestRunner"
-readonly SET_TEXT_TEST="me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromBase64WithoutEchoingValue"
+readonly SET_TEXT_TEST="me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue"
+readonly CLEAR_CLIPBOARD_TEST="me.zqydev.gamebox.E2eSetTextTest#clearClipboardWithoutReadingIt"
 readonly MANAGED_AVD_A="Gamebox_A_API_36"
 readonly MANAGED_AVD_B="Gamebox_B_API_36"
 readonly MANAGED_PORT_A=5560
@@ -22,6 +23,16 @@ readonly BOARD_GRID_SIDE=888
 readonly GAMEBOX_READY_MARKER="GAMEBOX_GODOT_READY"
 readonly GAMEBOX_STATE_MARKER="GAMEBOX_GODOT_STATE"
 readonly GAMEBOX_RESULT_MARKER="GAMEBOX_MATCH_RESULT"
+
+ADB_BIN="${GAMEBOX_E2E_ADB_BIN:-adb}"
+ADB_TIMEOUT_SECONDS="${GAMEBOX_E2E_ADB_TIMEOUT_SECONDS:-30}"
+INPUT_TIMEOUT_SECONDS="${GAMEBOX_E2E_INPUT_TIMEOUT_SECONDS:-20}"
+BUILD_TIMEOUT_SECONDS="${GAMEBOX_E2E_BUILD_TIMEOUT_SECONDS:-600}"
+SEMANTICS_TIMEOUT_SECONDS="${GAMEBOX_E2E_SEMANTICS_TIMEOUT_SECONDS:-300}"
+AVD_SETUP_TIMEOUT_SECONDS="${GAMEBOX_E2E_AVD_SETUP_TIMEOUT_SECONDS:-120}"
+TIMEOUT_KILL_GRACE_SECONDS="${GAMEBOX_E2E_TIMEOUT_KILL_GRACE_SECONDS:-2}"
+BOUND_CHILD_REGISTRY=""
+readonly HARNESS_PID=$$
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
@@ -40,6 +51,85 @@ fi
 [[ $# -eq 0 ]] || {
   printf 'usage: %s [--self-test]\n' "$0" >&2
   exit 2
+}
+
+terminate_exact_child() {
+  local pid="$1"
+  local grace_seconds="$2"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  kill -TERM "$pid" 2>/dev/null || return 0
+  local deadline=$((SECONDS + grace_seconds))
+  while ((SECONDS < deadline)) && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+  done
+  kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+}
+
+run_with_timeout() (
+  local timeout_seconds="$1"
+  shift
+  [[ "$timeout_seconds" =~ ^[0-9]+$ ]] && ((timeout_seconds > 0)) || return 2
+  (($# > 0)) || return 2
+
+  "$@" <&0 &
+  local child_pid=$!
+  local child_marker=""
+  if [[ -n "$BOUND_CHILD_REGISTRY" ]]; then
+    child_marker="$BOUND_CHILD_REGISTRY/$child_pid"
+    : >"$child_marker"
+  fi
+  trap 'terminate_exact_child "$child_pid" "$TIMEOUT_KILL_GRACE_SECONDS"; [[ -z "$child_marker" ]] || rm -f -- "$child_marker"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  local deadline=$((SECONDS + timeout_seconds))
+  while kill -0 "$child_pid" 2>/dev/null; do
+    if ((SECONDS >= deadline)); then
+      terminate_exact_child "$child_pid" "$TIMEOUT_KILL_GRACE_SECONDS"
+      wait "$child_pid" 2>/dev/null || true
+      child_pid=""
+      [[ -z "$child_marker" ]] || rm -f -- "$child_marker"
+      trap - EXIT INT TERM
+      return 124
+    fi
+    sleep 0.1
+  done
+
+  local status
+  if wait "$child_pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  child_pid=""
+  [[ -z "$child_marker" ]] || rm -f -- "$child_marker"
+  trap - EXIT INT TERM
+  return "$status"
+)
+
+adb_for_timeout() {
+  local timeout_seconds="$1"
+  local serial="$2"
+  shift 2
+  run_with_timeout "$timeout_seconds" "$ADB_BIN" -s "$serial" "$@"
+}
+
+adb_for() {
+  local serial="$1"
+  shift
+  adb_for_timeout "$ADB_TIMEOUT_SECONDS" "$serial" "$@"
+}
+
+provenance_contract() {
+  local start_head="$1"
+  local start_status="$2"
+  local end_head="$3"
+  local end_status="$4"
+  [[ "$start_head" =~ ^[0-9a-f]{40}$ \
+    && -z "$start_status" \
+    && "$end_head" == "$start_head" \
+    && -z "$end_status" ]]
 }
 
 # This parser is deliberately resource-id only. Human-readable labels and
@@ -143,7 +233,8 @@ fixed_value_absent() {
   local file="$1"
   local value="$2"
   local status
-  if rg --text --fixed-strings -- "$value" "$file" >/dev/null 2>&1; then
+  if printf '%s\n' "$value" \
+    | rg --text --fixed-strings --file - -- "$file" >/dev/null 2>&1; then
     return 1
   else
     status=$?
@@ -162,7 +253,8 @@ protect_artifact_directory() {
 
   for value in "$@"; do
     [[ -n "$value" ]] || continue
-    if rg --text --files-with-matches --fixed-strings -- "$value" "$directory" >"$scratch" 2>/dev/null; then
+    if printf '%s\n' "$value" \
+      | rg --text --files-with-matches --fixed-strings --file - -- "$directory" >"$scratch" 2>/dev/null; then
       while IFS= read -r file; do
         case "$file" in
           "$directory"/*)
@@ -204,7 +296,8 @@ protect_artifact_directory() {
 
   for value in "$@"; do
     [[ -n "$value" ]] || continue
-    if rg --text --fixed-strings -- "$value" "$directory" >/dev/null 2>&1; then
+    if printf '%s\n' "$value" \
+      | rg --text --fixed-strings --file - -- "$directory" >/dev/null 2>&1; then
       for file in "$directory"/*; do
         [[ -e "$file" || -L "$file" ]] || continue
         [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
@@ -238,6 +331,120 @@ protect_artifact_directory() {
     fi
   fi
   ((unsafe == 0))
+}
+
+valid_private_input_name() {
+  [[ "$1" =~ ^gamebox-e2e-input-[A-Za-z0-9_.-]{8,96}$ ]]
+}
+
+stage_private_input() {
+  local serial="$1"
+  local input_name="$2"
+  valid_private_input_name "$input_name" || return 2
+  local private_path="/data/user/0/$TEST_PACKAGE/$input_name"
+  local remote_command="run-as $TEST_PACKAGE sh -c 'umask 077; cat > $private_path && chmod 600 $private_path'"
+  adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" \
+    shell "$remote_command"
+}
+
+remove_private_input() {
+  local serial="$1"
+  local input_name="$2"
+  valid_private_input_name "$input_name" || return 2
+  local private_path="/data/user/0/$TEST_PACKAGE/$input_name"
+  local remote_command="run-as $TEST_PACKAGE sh -c 'rm -f -- $private_path'"
+  adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" \
+    shell "$remote_command" >/dev/null 2>&1
+}
+
+private_input_absent() {
+  local serial="$1"
+  local input_name="$2"
+  valid_private_input_name "$input_name" || return 2
+  local private_path="/data/user/0/$TEST_PACKAGE/$input_name"
+  local remote_command="run-as $TEST_PACKAGE sh -c 'test ! -e $private_path'"
+  adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" \
+    shell "$remote_command" >/dev/null 2>&1
+}
+
+run_helper_instrumentation() {
+  local serial="$1"
+  local test_name="$2"
+  local output_variable="$3"
+  shift 3
+  local output status
+  if output="$(
+    adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" shell am instrument -w -r \
+      -e class "$test_name" "$@" "$TEST_RUNNER" 2>&1
+  )"; then
+    status=0
+  else
+    status=$?
+  fi
+  printf -v "$output_variable" '%s' "$output"
+  ((status == 0)) \
+    && grep -F 'OK (1 test)' <<<"$output" >/dev/null \
+    && ! grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' <<<"$output" >/dev/null
+}
+
+clear_helper_clipboard() {
+  local serial="$1"
+  adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" \
+    shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1 || return 1
+  local output
+  run_helper_instrumentation "$serial" "$CLEAR_CLIPBOARD_TEST" output
+}
+
+set_text_from_private_input() {
+  local serial="$1"
+  local target="$2"
+  local input_name="$3"
+  valid_private_input_name "$input_name" || return 2
+  local output
+  if ! run_helper_instrumentation \
+    "$serial" "$SET_TEXT_TEST" output \
+    -e gameboxTextTarget "$target" \
+    -e gameboxTextInputName "$input_name"; then
+    remove_private_input "$serial" "$input_name" || true
+    clear_helper_clipboard "$serial" || true
+    return 1
+  fi
+  if ! private_input_absent "$serial" "$input_name"; then
+    remove_private_input "$serial" "$input_name" || true
+    clear_helper_clipboard "$serial" || true
+    return 1
+  fi
+  clear_helper_clipboard "$serial"
+}
+
+valid_remote_ui_path() {
+  [[ "$1" =~ ^/data/local/tmp/gamebox-e2e-[A-Za-z0-9_.-]{8,96}\.xml$ ]]
+}
+
+valid_installed_apk_path() {
+  [[ "$1" =~ ^/data/app/[A-Za-z0-9._~+=-]+/[A-Za-z0-9._~+=-]+/base\.apk$ ]]
+}
+
+cleanup_remote_ui_dump() {
+  local serial="$1"
+  local remote="$2"
+  valid_remote_ui_path "$remote" || return 2
+  adb_for "$serial" shell rm -f -- "$remote" >/dev/null 2>&1
+}
+
+dump_ui_remote() {
+  local serial="$1"
+  local local_path="$2"
+  local remote="$3"
+  valid_remote_ui_path "$remote" || return 2
+  local status=1
+  if adb_for "$serial" shell uiautomator dump --compressed "$remote" >/dev/null 2>&1 \
+    && adb_for "$serial" pull "$remote" "$local_path" >/dev/null 2>&1 \
+    && [[ -s "$local_path" ]]; then
+    status=0
+  fi
+  cleanup_remote_ui_dump "$serial" "$remote" || status=1
+  return "$status"
 }
 
 self_test() {
@@ -334,6 +541,100 @@ self_test() {
   protect_artifact_directory "$artifact_fixture" "$fixture_dir/scan-clean.txt" "$marker" \
     || { printf 'clean artifact fixture was rejected\n' >&2; return 1; }
 
+  local fixture_head='1111111111111111111111111111111111111111'
+  provenance_contract "$fixture_head" "" "$fixture_head" "" \
+    || { printf 'clean provenance fixture failed\n' >&2; return 1; }
+  if provenance_contract "$fixture_head" ' M tracked-file' "$fixture_head" ""; then
+    printf 'dirty start provenance fixture was accepted\n' >&2
+    return 1
+  fi
+  if provenance_contract "$fixture_head" "" '2222222222222222222222222222222222222222' ""; then
+    printf 'changed HEAD provenance fixture was accepted\n' >&2
+    return 1
+  fi
+  if provenance_contract "$fixture_head" "" "$fixture_head" '?? generated-file'; then
+    printf 'dirty end provenance fixture was accepted\n' >&2
+    return 1
+  fi
+  valid_installed_apk_path '/data/app/~~Ab_C-123==/me.zqydev.gamebox-Xy_Z+987==/base.apk' \
+    || { printf 'installed APK path fixture failed\n' >&2; return 1; }
+  if valid_installed_apk_path '/data/app/../../data/local/tmp/unsafe.apk'; then
+    printf 'unsafe installed APK path fixture was accepted\n' >&2
+    return 1
+  fi
+
+  local fake_adb="$ROOT_DIR/tool/fixtures/e2e_fake_adb.sh"
+  local fake_log="$fixture_dir/fake-adb.log"
+  local fake_device_root="$fixture_dir/fake-device"
+  local fake_pid_file="$fixture_dir/fake-adb.pid"
+  mkdir "$fake_device_root"
+  : >"$fake_log"
+  export FAKE_ADB_LOG="$fake_log"
+  export FAKE_DEVICE_ROOT="$fake_device_root"
+  export FAKE_ADB_PID_FILE="$fake_pid_file"
+  ADB_BIN="$fake_adb"
+  INPUT_TIMEOUT_SECONDS=1
+  TIMEOUT_KILL_GRACE_SECONDS=1
+
+  local private_secret='FixtureInvite_1234567890'
+  local private_secret_base64
+  private_secret_base64="$(printf '%s' "$private_secret" | openssl base64 -A)"
+  local private_name='gamebox-e2e-input-fixture-normal-0001'
+  printf '%s' "$private_secret" | stage_private_input fixture-serial "$private_name" \
+    || { printf 'private input staging fixture failed\n' >&2; return 1; }
+  [[ "$(stat -f '%Lp' "$fake_device_root/$private_name")" == "600" \
+    && "$(<"$fake_device_root/$private_name")" == "$private_secret" ]] \
+    || { printf 'private input permissions fixture failed\n' >&2; return 1; }
+  set_text_from_private_input fixture-serial invite-code "$private_name" \
+    || { printf 'private input consumption fixture failed\n' >&2; return 1; }
+  [[ ! -e "$fake_device_root/$private_name" ]] \
+    || { printf 'consumed private input fixture remained\n' >&2; return 1; }
+  fixed_value_absent "$fake_log" "$private_secret" \
+    || { printf 'raw private input appeared in adb argv fixture\n' >&2; return 1; }
+  fixed_value_absent "$fake_log" "$private_secret_base64" \
+    || { printf 'base64 private input appeared in adb argv fixture\n' >&2; return 1; }
+
+  local hanging_name='gamebox-e2e-input-fixture-hanging-0002'
+  printf '%s' "$private_secret" | stage_private_input fixture-serial "$hanging_name" \
+    || { printf 'hanging private input staging fixture failed\n' >&2; return 1; }
+  export FAKE_ADB_MODE=hang-instrument
+  local timeout_start=$SECONDS
+  if set_text_from_private_input fixture-serial invite-code "$hanging_name"; then
+    printf 'permanently blocking fake adb was accepted\n' >&2
+    return 1
+  fi
+  unset FAKE_ADB_MODE
+  ((SECONDS - timeout_start <= 5)) \
+    || { printf 'fake adb watchdog exceeded its injected bound\n' >&2; return 1; }
+  [[ ! -e "$fake_device_root/$hanging_name" ]] \
+    || { printf 'killed helper private input was not externally removed\n' >&2; return 1; }
+  grep -F 'private-input-cleanup=gamebox-e2e-input-fixture-hanging-0002' "$fake_log" >/dev/null \
+    || { printf 'killed helper cleanup invocation fixture failed\n' >&2; return 1; }
+  grep -F 'clipboard-clear' "$fake_log" >/dev/null \
+    || { printf 'killed helper clipboard recovery fixture failed\n' >&2; return 1; }
+  if [[ -s "$fake_pid_file" ]] && kill -0 "$(<"$fake_pid_file")" 2>/dev/null; then
+    printf 'fake adb process survived watchdog\n' >&2
+    return 1
+  fi
+
+  local remote_fixture='/data/local/tmp/gamebox-e2e-fixture-pull-failure.xml'
+  export FAKE_ADB_MODE=pull-fail
+  if dump_ui_remote fixture-serial "$fixture_dir/pull-failure.xml" "$remote_fixture"; then
+    printf 'fake adb pull failure was accepted\n' >&2
+    return 1
+  fi
+  unset FAKE_ADB_MODE
+  [[ ! -e "$fake_device_root/remote-ui.xml" ]] \
+    || { printf 'remote UI XML survived pull failure cleanup\n' >&2; return 1; }
+  grep -F 'remote-cleanup' "$fake_log" >/dev/null \
+    || { printf 'remote UI XML cleanup invocation fixture failed\n' >&2; return 1; }
+
+  local helper_source="$ROOT_DIR/app/android/app/src/androidTest/kotlin/me/zqydev/gamebox/E2eSetTextTest.kt"
+  if rg -n 'Base64|gameboxTextValueBase64' "$helper_source" >/dev/null; then
+    printf 'Android helper still accepts reversible secret argv\n' >&2
+    return 1
+  fi
+
   local runtime_source
   runtime_source="$(sed -n '/^for required_command in /,$p' "${BASH_SOURCE[0]}")"
   grep -F 'failure_media_safe' <<<"$runtime_source" >/dev/null \
@@ -350,6 +651,16 @@ self_test() {
     printf 'render revision wait still uses a hard-coded 10 second deadline\n' >&2
     return 1
   fi
+  if grep -F 'gameboxTextValueBase64' <<<"$runtime_source" >/dev/null; then
+    printf 'secret text still crosses an instrumentation argv as base64\n' >&2
+    return 1
+  fi
+  grep -F 'run_with_timeout' <<<"$runtime_source" >/dev/null \
+    || { printf 'process-level command watchdog is missing\n' >&2; return 1; }
+  grep -F 'cleanup_remote_ui_dump' <<<"$runtime_source" >/dev/null \
+    || { printf 'remote UI dump cleanup contract is missing\n' >&2; return 1; }
+  grep -F 'apkSha256' <<<"$runtime_source" >/dev/null \
+    || { printf 'APK build provenance is missing\n' >&2; return 1; }
   printf 'Gamebox E2E parser fixtures passed.\n'
 }
 
@@ -358,18 +669,39 @@ if ((SELF_TEST_ONLY)); then
   exit 0
 fi
 
-for required_command in adb curl ffmpeg git go jq lsof openssl rg ruby sed shasum unzip; do
+for required_command in curl ffmpeg git go jq lsof openssl rg ruby sed shasum unzip; do
   command -v "$required_command" >/dev/null 2>&1 \
     || { printf 'Gamebox E2E failed: missing required command %s\n' "$required_command" >&2; exit 2; }
 done
+command -v "$ADB_BIN" >/dev/null 2>&1 \
+  || { printf 'Gamebox E2E failed: configured adb is not available\n' >&2; exit 2; }
 command -v flutter >/dev/null 2>&1 \
   || { printf 'Gamebox E2E failed: flutter is not available on PATH\n' >&2; exit 2; }
+for timeout_value in \
+  "$ADB_TIMEOUT_SECONDS" "$INPUT_TIMEOUT_SECONDS" "$BUILD_TIMEOUT_SECONDS" \
+  "$SEMANTICS_TIMEOUT_SECONDS" "$AVD_SETUP_TIMEOUT_SECONDS" "$TIMEOUT_KILL_GRACE_SECONDS"; do
+  if [[ ! "$timeout_value" =~ ^[0-9]+$ ]] || ((timeout_value <= 0)); then
+    printf 'Gamebox E2E failed: every watchdog timeout must be a positive integer\n' >&2
+    exit 2
+  fi
+done
+
+SOURCE_REVISION_START="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+SOURCE_STATUS_START="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)"
+if ! provenance_contract "$SOURCE_REVISION_START" "$SOURCE_STATUS_START" "$SOURCE_REVISION_START" ""; then
+  printf 'Gamebox E2E failed: build provenance requires a clean worktree at start\n' >&2
+  exit 2
+fi
+readonly SOURCE_REVISION_START SOURCE_STATUS_START
 
 umask 077
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 readonly RUN_ID
 TEMP_DIR="$(mktemp -d)"
 readonly TEMP_DIR
+BOUND_CHILD_REGISTRY="$TEMP_DIR/bounded-children"
+mkdir "$BOUND_CHILD_REGISTRY"
+readonly BOUND_CHILD_REGISTRY
 ARTIFACT_DIR="$ROOT_DIR/artifacts/e2e/$RUN_ID"
 mkdir -p "$ARTIFACT_DIR"
 readonly ARTIFACT_DIR
@@ -402,12 +734,11 @@ SECOND_MATCH_ID=""
 RECOVERY_SERIAL=""
 PREVIOUS_BOARD_HASH=""
 VISUAL_METRICS="$TEMP_DIR/visual-metrics.tsv"
-
-adb_for() {
-  local serial="$1"
-  shift
-  adb -s "$serial" "$@"
-}
+REMOTE_UI_PATH="/data/local/tmp/gamebox-e2e-$RUN_ID.xml"
+SECRET_INPUT_COUNTER=0
+SECRET_INPUT_FILES_A=()
+SECRET_INPUT_FILES_B=()
+readonly REMOTE_UI_PATH
 
 owned_process_matches() {
   local pid="$1"
@@ -433,36 +764,72 @@ stop_owned_process() {
 
 bounded_helper_uninstall() {
   local serial="$1"
-  local pid deadline
-  adb -s "$serial" uninstall "$TEST_PACKAGE" >/dev/null 2>&1 &
-  pid=$!
-  deadline=$((SECONDS + 5))
-  while ((SECONDS < deadline)) && kill -0 "$pid" 2>/dev/null; do
-    sleep 1
+  adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" uninstall "$TEST_PACKAGE" >/dev/null 2>&1 || true
+}
+
+pid_descends_from_harness() {
+  local current="$1"
+  local _
+  [[ "$current" =~ ^[0-9]+$ ]] || return 1
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    [[ "$current" == "$HARNESS_PID" ]] && return 0
+    current="$(ps -p "$current" -o ppid= 2>/dev/null | tr -d ' ')"
+    [[ "$current" =~ ^[0-9]+$ && "$current" != "0" ]] || return 1
   done
-  if kill -0 "$pid" 2>/dev/null \
-    && owned_process_matches "$pid" "adb -s $serial uninstall $TEST_PACKAGE"; then
-    kill -TERM "$pid" 2>/dev/null || true
-    deadline=$((SECONDS + 3))
-    while ((SECONDS < deadline)) && kill -0 "$pid" 2>/dev/null; do
-      sleep 1
-    done
-    if kill -0 "$pid" 2>/dev/null \
-      && owned_process_matches "$pid" "adb -s $serial uninstall $TEST_PACKAGE"; then
-      kill -KILL "$pid" 2>/dev/null || true
+  return 1
+}
+
+terminate_registered_bounded_children() {
+  local marker pid
+  [[ -d "$BOUND_CHILD_REGISTRY" ]] || return 0
+  for marker in "$BOUND_CHILD_REGISTRY"/*; do
+    [[ -f "$marker" ]] || continue
+    pid="${marker##*/}"
+    if pid_descends_from_harness "$pid"; then
+      terminate_exact_child "$pid" "$TIMEOUT_KILL_GRACE_SECONDS"
     fi
+    rm -f -- "$marker"
+  done
+}
+
+helper_package_installed() {
+  local serial="$1"
+  adb_for "$serial" shell pm path "$TEST_PACKAGE" 2>/dev/null | grep -q '^package:'
+}
+
+cleanup_serial_private_state() {
+  local serial="$1"
+  local label="$2"
+  [[ -n "$serial" ]] || return 0
+  cleanup_remote_ui_dump "$serial" "$REMOTE_UI_PATH" || true
+  local input_name
+  if [[ "$label" == "A" ]]; then
+    for input_name in "${SECRET_INPUT_FILES_A[@]-}"; do
+      [[ -n "$input_name" ]] || continue
+      remove_private_input "$serial" "$input_name" || true
+    done
+  else
+    for input_name in "${SECRET_INPUT_FILES_B[@]-}"; do
+      [[ -n "$input_name" ]] || continue
+      remove_private_input "$serial" "$input_name" || true
+    done
   fi
-  wait "$pid" 2>/dev/null || true
+  if helper_package_installed "$serial"; then
+    clear_helper_clipboard "$serial" || true
+  fi
 }
 
 cleanup() {
   local exit_code=$?
   trap - EXIT INT TERM ERR
   set +e
+  terminate_registered_bounded_children
   if [[ -n "$SERIAL_A" ]]; then
+    cleanup_serial_private_state "$SERIAL_A" A
     bounded_helper_uninstall "$SERIAL_A"
   fi
   if [[ -n "$SERIAL_B" ]]; then
+    cleanup_serial_private_state "$SERIAL_B" B
     bounded_helper_uninstall "$SERIAL_B"
   fi
   stop_owned_process "$SERVER_PID" "$SERVER_BIN" 10
@@ -647,7 +1014,7 @@ assert_managed_avd_not_running() {
     if [[ "$(adb_for "$serial" shell getprop ro.boot.qemu.avd_name 2>/dev/null | tr -d '\r')" == "$avd_name" ]]; then
       fail "$avd_name is already running as $serial; refusing to reuse or stop it"
     fi
-  done < <(adb devices | tail -n +2)
+  done < <(run_with_timeout "$ADB_TIMEOUT_SECONDS" "$ADB_BIN" devices | tail -n +2)
 }
 
 start_managed_emulator() {
@@ -681,7 +1048,8 @@ if [[ -n "$provided_a" || -n "$provided_b" ]]; then
   SERIAL_A="$provided_a"
   SERIAL_B="$provided_b"
 else
-  bash "$ROOT_DIR/tool/ensure_test_avds.sh"
+  run_with_timeout "$AVD_SETUP_TIMEOUT_SECONDS" bash "$ROOT_DIR/tool/ensure_test_avds.sh" \
+    || fail "managed AVD validation exceeded its ${AVD_SETUP_TIMEOUT_SECONDS}s bound or failed"
   STARTED_A=1
   start_managed_emulator A "$MANAGED_AVD_A" "$MANAGED_PORT_A" EMULATOR_PID_A SERIAL_A
   STARTED_B=1
@@ -714,7 +1082,8 @@ readonly SEMANTICS_LOG
 printf 'Running semantics integration test on selected device %s...\n' "$SERIAL_A"
 if ! (
   cd "$ROOT_DIR/app"
-  flutter test -d "$SERIAL_A" integration_test/semantics_test.dart
+  run_with_timeout "$SEMANTICS_TIMEOUT_SECONDS" \
+    flutter test -d "$SERIAL_A" integration_test/semantics_test.dart
 ) >"$SEMANTICS_LOG" 2>&1; then
   sanitize_stream <"$SEMANTICS_LOG" >"$ARTIFACT_DIR/semantics-test.log" || true
   fail "selected-device semantics integration test failed on $SERIAL_A"
@@ -738,16 +1107,20 @@ printf 'Building single-ABI debug APK and server tools...\n'
 # installed app retains this run's isolated API base URL.
 (
   cd "$ROOT_DIR/app/android"
-  ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a ./gradlew :app:assembleDebugAndroidTest
+  run_with_timeout "$BUILD_TIMEOUT_SECONDS" env \
+    ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
+    ./gradlew :app:assembleDebugAndroidTest
 )
 TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 readonly TEST_APK
 [[ -f "$TEST_APK" ]] || fail "E2E-owned UI Automator helper APK was not produced"
 (
   cd "$ROOT_DIR/app"
-  ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a flutter build apk \
-    --debug --target-platform=android-arm64 \
-    --dart-define="GAMEBOX_API_BASE_URL=$api_base"
+  run_with_timeout "$BUILD_TIMEOUT_SECONDS" env \
+    ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
+    flutter build apk \
+      --debug --target-platform=android-arm64 \
+      --dart-define="GAMEBOX_API_BASE_URL=$api_base"
 )
 APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
 readonly APK
@@ -757,10 +1130,15 @@ packaged_abis="$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u 
 for required_asset in assets/games/gomoku/gomoku_scene.tscn assets/games/gomoku/gomoku_board.gd; do
   unzip -Z1 "$APK" | grep -Fx "$required_asset" >/dev/null || fail "APK is missing $required_asset"
 done
+APK_SHA256="$(shasum -a 256 "$APK" | awk '{print $1}')"
+TEST_APK_SHA256="$(shasum -a 256 "$TEST_APK" | awk '{print $1}')"
+[[ "$APK_SHA256" =~ ^[0-9a-f]{64}$ && "$TEST_APK_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+  || fail "built APK SHA-256 provenance was invalid"
+readonly APK_SHA256 TEST_APK_SHA256
 (
   cd "$ROOT_DIR/server"
-  go build -o "$SERVER_BIN" ./cmd/gameboxd
-  go build -o "$CTL_BIN" ./cmd/gameboxctl
+  run_with_timeout "$BUILD_TIMEOUT_SECONDS" go build -o "$SERVER_BIN" ./cmd/gameboxd
+  run_with_timeout "$BUILD_TIMEOUT_SECONDS" go build -o "$CTL_BIN" ./cmd/gameboxctl
 )
 
 install_app() {
@@ -778,6 +1156,34 @@ install_app() {
 }
 install_app "$SERIAL_A"
 install_app "$SERIAL_B"
+
+installed_package_sha256() {
+  local serial="$1"
+  local package_name="$2"
+  local paths remote
+  paths="$(adb_for "$serial" shell pm path "$package_name" | tr -d '\r')" || return 1
+  [[ "$(wc -l <<<"$paths" | tr -d ' ')" == "1" && "$paths" == package:* ]] || return 1
+  remote="${paths#package:}"
+  valid_installed_apk_path "$remote" || return 1
+  adb_for "$serial" exec-out cat "$remote" \
+    | shasum -a 256 \
+    | awk '{print $1}'
+}
+
+INSTALLED_APK_SHA_A="$(installed_package_sha256 "$SERIAL_A" "$PACKAGE")" \
+  || fail "could not hash the installed main APK on $SERIAL_A"
+INSTALLED_APK_SHA_B="$(installed_package_sha256 "$SERIAL_B" "$PACKAGE")" \
+  || fail "could not hash the installed main APK on $SERIAL_B"
+INSTALLED_TEST_APK_SHA_A="$(installed_package_sha256 "$SERIAL_A" "$TEST_PACKAGE")" \
+  || fail "could not hash the installed helper APK on $SERIAL_A"
+INSTALLED_TEST_APK_SHA_B="$(installed_package_sha256 "$SERIAL_B" "$TEST_PACKAGE")" \
+  || fail "could not hash the installed helper APK on $SERIAL_B"
+[[ "$INSTALLED_APK_SHA_A" == "$APK_SHA256" && "$INSTALLED_APK_SHA_B" == "$APK_SHA256" ]] \
+  || fail "installed main APK bytes did not match the built APK SHA-256"
+[[ "$INSTALLED_TEST_APK_SHA_A" == "$TEST_APK_SHA256" \
+  && "$INSTALLED_TEST_APK_SHA_B" == "$TEST_APK_SHA256" ]] \
+  || fail "installed helper APK bytes did not match the built APK SHA-256"
+readonly INSTALLED_APK_SHA_A INSTALLED_APK_SHA_B INSTALLED_TEST_APK_SHA_A INSTALLED_TEST_APK_SHA_B
 
 LOG_BOUNDARY_A="GAMEBOX_E2E_A_$RUN_ID"
 LOG_BOUNDARY_B="GAMEBOX_E2E_B_$RUN_ID"
@@ -805,11 +1211,7 @@ game_logs_after_boundary() {
 dump_ui() {
   local serial="$1"
   local local_path="$2"
-  local remote="/data/local/tmp/gamebox-e2e-$RUN_ID.xml"
-  adb_for "$serial" shell uiautomator dump --compressed "$remote" >/dev/null 2>&1 || return 1
-  adb_for "$serial" pull "$remote" "$local_path" >/dev/null 2>&1 || return 1
-  adb_for "$serial" shell rm -f "$remote" >/dev/null 2>&1 || true
-  [[ -s "$local_path" ]]
+  dump_ui_remote "$serial" "$local_path" "$REMOTE_UI_PATH"
 }
 
 wait_for_identifier() {
@@ -862,22 +1264,23 @@ input_text_by_identifier() {
   local serial="$1"
   local identifier="$2"
   local value="$3"
-  local encoded output
-  encoded="$(printf '%s' "$value" | openssl base64 -A)"
-  output="$(
-    adb_for "$serial" shell am instrument -w -r \
-      -e class "$SET_TEXT_TEST" \
-      -e gameboxTextTarget "$identifier" \
-      -e gameboxTextValueBase64 "$encoded" \
-      "$TEST_RUNNER" 2>&1
-  )" || {
-    printf '%s\n' "$output" | sanitize_stream >&2
-    fail "UI Automator helper could not set resource-id $identifier on $serial"
-  }
-  if ! grep -F 'OK (1 test)' <<<"$output" >/dev/null \
-    || grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' <<<"$output" >/dev/null; then
-    printf '%s\n' "$output" | sanitize_stream >&2
-    fail "UI Automator helper did not confirm resource-id $identifier on $serial"
+  SECRET_INPUT_COUNTER=$((SECRET_INPUT_COUNTER + 1))
+  local input_name
+  input_name="gamebox-e2e-input-$RUN_ID-$(printf '%04d' "$SECRET_INPUT_COUNTER")"
+  if [[ "$serial" == "$SERIAL_A" ]]; then
+    SECRET_INPUT_FILES_A+=("$input_name")
+  elif [[ "$serial" == "$SERIAL_B" ]]; then
+    SECRET_INPUT_FILES_B+=("$input_name")
+  else
+    fail "private input target was not one of the selected devices"
+  fi
+
+  if ! printf '%s' "$value" | stage_private_input "$serial" "$input_name"; then
+    remove_private_input "$serial" "$input_name" || true
+    fail "could not stage a private UI input on $serial"
+  fi
+  if ! set_text_from_private_input "$serial" "$identifier" "$input_name"; then
+    fail "UI Automator helper could not consume private input for resource-id $identifier on $serial"
   fi
 }
 
@@ -1333,15 +1736,26 @@ tap_design_back "$SERIAL_A" || fail "could not leave the cancelled second match"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after second cancellation"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after second cancellation"
 
+SOURCE_REVISION_END="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+SOURCE_STATUS_END="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)"
+provenance_contract \
+  "$SOURCE_REVISION_START" "$SOURCE_STATUS_START" "$SOURCE_REVISION_END" "$SOURCE_STATUS_END" \
+  || fail "source HEAD or worktree cleanliness changed after build"
+
 printf '%s\n' "$final_snapshot" | jq -S . >"$ARTIFACT_DIR/final-match.json"
 cp "$VISUAL_METRICS" "$ARTIFACT_DIR/visual-metrics.tsv"
 sanitize_stream <"$SERVER_LOG" >"$ARTIFACT_DIR/server-sanitized.log"
 sanitize_stream <"$SEMANTICS_LOG" >"$ARTIFACT_DIR/semantics-test.log"
-source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 devices_json="$(device_summary_json "$SERIAL_A" "$SERIAL_B" "$API_LEVEL_A" "$API_LEVEL_B" "$api_base")"
 jq -n \
   --arg status passed \
-  --arg sourceRevision "$source_revision" \
+  --arg sourceRevision "$SOURCE_REVISION_START" \
+  --arg apkSha256 "$APK_SHA256" \
+  --arg testApkSha256 "$TEST_APK_SHA256" \
+  --arg installedApkSha256A "$INSTALLED_APK_SHA_A" \
+  --arg installedApkSha256B "$INSTALLED_APK_SHA_B" \
+  --arg installedTestApkSha256A "$INSTALLED_TEST_APK_SHA_A" \
+  --arg installedTestApkSha256B "$INSTALLED_TEST_APK_SHA_B" \
   --argjson devices "$devices_json" \
   --arg matchId "$MATCH_ID" \
   --arg secondMatchId "$SECOND_MATCH_ID" \
@@ -1351,6 +1765,10 @@ jq -n \
   '{
     status:$status,
     sourceRevision:$sourceRevision,
+    apkSha256:$apkSha256,
+    testApkSha256:$testApkSha256,
+    installedApkSha256:{serialA:$installedApkSha256A,serialB:$installedApkSha256B},
+    installedTestApkSha256:{serialA:$installedTestApkSha256A,serialB:$installedTestApkSha256B},
     devices:$devices,
     firstMatch:{id:$matchId,revisions:[0,1,2,3,4,5,6,7,8,9],status:"finished",result:"five"},
     recovery:{serial:$recoverySerial,beforeRevision:$recoveryBefore,afterRevision:$recoveryAfter,eventLoss:false},
@@ -1360,7 +1778,8 @@ jq -n \
       "revision-and-board-after-each-move","two-authoritative-board-crops-with-ssim",
       "force-stop-auto-login-resume","shared-five-result","lobby-idle",
       "second-match-created","zero-step-cancelled","slots-released",
-      "selected-device-semantics-integration"
+      "selected-device-semantics-integration","clean-build-provenance",
+      "installed-apk-sha256-equality"
     ]
   }' >"$ARTIFACT_DIR/summary.json"
 

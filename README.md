@@ -94,6 +94,15 @@ environment, replace `emulator-5560` with the selected Gamebox-owned serial;
 `tool/e2e_android.sh` runs the equivalent command explicitly on its selected A
 device and preserves the sanitized result in the run artifacts.
 
+The Android E2E starts only from a clean Git worktree and records the starting
+HEAD plus built and installed APK SHA-256 values. Every adb/UI command has a
+30-second process watchdog; private text-input helpers use 20 seconds, AVD
+validation 120 seconds, device semantics 300 seconds, and builds 600 seconds.
+The matching `GAMEBOX_E2E_*_TIMEOUT_SECONDS` variables may shorten these bounds
+for fault injection. Invite input crosses the host/device boundary only over
+stdin into a helper-private `0600` one-shot file; argv and artifacts contain
+only its opaque filename.
+
 Cloudflare Tunnel, machine boot auto-start, production log rotation, and SQLite
 backup/restore belong to the documented follow-up specification **F2 公网部署与
 可靠运行**. They are intentionally outside this local playable-loop phase.
