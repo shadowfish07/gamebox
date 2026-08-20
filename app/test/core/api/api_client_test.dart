@@ -216,6 +216,85 @@ void main() {
     expect(refreshCalls, 1);
   });
 
+  test('bodyless DELETE sends no body and accepts exact 204', () async {
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        expect(request.method, 'DELETE');
+        expect(request.url.path, '/v1/matches/one');
+        expect(request.body, isEmpty);
+        expect(request.headers['authorization'], 'Bearer access-token');
+        return http.Response('', 204);
+      }),
+      baseUri: Uri.parse('https://gamebox.test'),
+    );
+
+    await client.deleteEmpty(
+      '/v1/matches/one',
+      accessToken: () => 'access-token',
+    );
+  });
+
+  test(
+    'DELETE 401 rotates credentials but never replays the mutation',
+    () async {
+      var calls = 0;
+      var refreshCalls = 0;
+      final client = ApiClient(
+        httpClient: MockClient((request) async {
+          calls += 1;
+          return _jsonResponse(
+            '{"error":{"code":"unauthorized","message":"身份验证失败","details":{}}}',
+            401,
+          );
+        }),
+        baseUri: Uri.parse('https://gamebox.test'),
+      );
+
+      await expectLater(
+        client.deleteEmpty(
+          '/v1/matches/one',
+          accessToken: () => 'access-old',
+          onUnauthorized: (failedToken) async {
+            expect(failedToken, 'access-old');
+            refreshCalls += 1;
+            return true;
+          },
+        ),
+        throwsA(
+          isA<ApiError>().having((error) => error.code, 'code', 'unauthorized'),
+        ),
+      );
+      expect(calls, 1);
+      expect(refreshCalls, 1);
+    },
+  );
+
+  test('DELETE rejects a 204 carrying any representation metadata', () async {
+    for (final response in [
+      http.Response('unexpected', 204),
+      http.Response(
+        '',
+        204,
+        headers: const {'content-type': 'application/json'},
+      ),
+    ]) {
+      final client = ApiClient(
+        httpClient: MockClient((_) async => response),
+        baseUri: Uri.parse('https://gamebox.test'),
+      );
+      await expectLater(
+        client.deleteEmpty('/v1/matches/one'),
+        throwsA(
+          isA<ApiError>().having(
+            (error) => error.code,
+            'code',
+            'invalid_response',
+          ),
+        ),
+      );
+    }
+  });
+
   test(
     'strict JSON rejects malformed UTF-8 and adversarial lexical forms',
     () async {

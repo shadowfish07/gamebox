@@ -75,6 +75,56 @@ final class ApiClient {
     );
   }
 
+  /// Sends an authenticated mutation whose only successful representation is
+  /// a bodyless response. Like POST, it may rotate a rejected credential for
+  /// future requests but is never replayed automatically.
+  Future<void> deleteEmpty(
+    String path, {
+    AccessTokenProvider? accessToken,
+    UnauthorizedHandler? onUnauthorized,
+  }) async {
+    final uri = _resolvePath(path);
+    try {
+      final failedAccessToken = accessToken?.call();
+      final response = await _send(
+        method: 'DELETE',
+        uri: uri,
+        encodedBody: null,
+        accessToken: failedAccessToken,
+      );
+      if (response.statusCode == 401 &&
+          onUnauthorized != null &&
+          failedAccessToken != null &&
+          failedAccessToken.isNotEmpty) {
+        await onUnauthorized(failedAccessToken);
+      }
+      if (response.statusCode == 204) {
+        if (response.bodyBytes.isNotEmpty ||
+            response.headers.containsKey('content-type')) {
+          throw const ApiError(code: 'invalid_response', message: '服务器响应无效');
+        }
+        return;
+      }
+      _decodeResponse(response, const <int>{});
+      throw const ApiError(code: 'invalid_response', message: '服务器响应无效');
+    } on ApiError {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiError(code: 'timeout', message: '请求超时，请稍后重试');
+    } on http.RequestAbortedException {
+      throw const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试');
+    } on http.ClientException {
+      throw const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试');
+    } on FormatException {
+      throw const ApiError(code: 'invalid_response', message: '服务器响应无效');
+    } catch (error) {
+      if (isNetworkFailure(error)) {
+        throw const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试');
+      }
+      rethrow;
+    }
+  }
+
   void close() => _httpClient.close();
 
   Future<Map<String, Object?>> _requestJson({

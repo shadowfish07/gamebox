@@ -10,12 +10,17 @@ import 'core/platform/game_launcher.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
+import 'features/gomoku/gomoku_repository.dart';
+import 'features/home/home_api.dart';
+import 'features/home/home_controller.dart';
+import 'features/home/home_page.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
     super.key,
     required this.gameLauncher,
     this.sessionController,
+    this.homeController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
   }) : hostSmokeEnabled =
@@ -26,6 +31,7 @@ class GameboxApp extends StatefulWidget {
 
   final GameLauncher gameLauncher;
   final SessionController? sessionController;
+  final HomeController? homeController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
 
@@ -38,7 +44,9 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   var _hostSmokeError = false;
   SessionController? _sessionController;
   ApiClient? _ownedApiClient;
+  HomeController? _homeController;
   var _ownsSessionController = false;
+  var _ownsHomeController = false;
 
   @override
   void initState() {
@@ -63,23 +71,66 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     }
     _sessionController!.addListener(_sessionChanged);
     WidgetsBinding.instance.addObserver(this);
+    _syncHomeController();
     unawaited(_sessionController!.restore());
   }
 
   void _sessionChanged() {
+    _syncHomeController();
     if (mounted) {
       setState(() {});
     }
   }
 
+  void _syncHomeController() {
+    final sessionController = _sessionController;
+    if (sessionController == null ||
+        sessionController.status != SessionStatus.authenticated ||
+        sessionController.session == null) {
+      if (_ownsHomeController) {
+        _homeController?.dispose();
+        _homeController = null;
+        _ownsHomeController = false;
+      } else {
+        _homeController?.pauseForeground();
+      }
+      return;
+    }
+    if (_homeController != null) return;
+    final injected = widget.homeController;
+    if (injected != null) {
+      _homeController = injected;
+      return;
+    }
+    final apiClient = _ownedApiClient ??= ApiClient(httpClient: http.Client());
+    _homeController = HomeController(
+      repository: GomokuRepository(
+        api: HttpHomeApi(apiClient, sessionController),
+        gameLauncher: widget.gameLauncher,
+        apiBaseUri: Uri.parse(apiBaseUrl),
+      ),
+    );
+    _ownsHomeController = true;
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      final controller = _sessionController;
-      if (controller != null) {
-        unawaited(controller.handleAppResumed());
-      }
+      unawaited(_handleAppResumed());
+    } else {
+      _homeController?.pauseForeground();
     }
+  }
+
+  Future<void> _handleAppResumed() async {
+    final sessionController = _sessionController;
+    if (sessionController == null) return;
+    await sessionController.handleAppResumed();
+    if (!mounted || sessionController.status != SessionStatus.authenticated) {
+      return;
+    }
+    _syncHomeController();
+    _homeController?.resumeForeground();
   }
 
   @override
@@ -92,6 +143,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         controller.dispose();
       }
     }
+    _homeController?.pauseForeground();
+    if (_ownsHomeController) {
+      _homeController?.dispose();
+    }
+    _homeController = null;
     _ownedApiClient?.close();
     super.dispose();
   }
@@ -200,10 +256,14 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         ),
       );
     }
-    return Scaffold(
-      key: const Key('home-shell'),
-      appBar: AppBar(title: const Text('Gamebox')),
-      body: Center(child: Text('你好，${session.user.nickname}')),
+    final homeController = _homeController;
+    if (homeController == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return HomePage(
+      controller: homeController,
+      currentUserId: session.user.id,
+      nickname: session.user.nickname,
     );
   }
 
