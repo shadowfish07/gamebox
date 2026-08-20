@@ -19,9 +19,22 @@ const SAFE_ERROR_COPY := {
 	"connection_failed": "连接失败，请返回大厅",
 }
 
+var ready_marker_emitted: bool:
+	get:
+		return _ready_marker_emitted
+	set(_value):
+		pass
+
+var ready_marker_text: String:
+	get:
+		return _ready_marker_text
+	set(_value):
+		pass
+
 var _launch_config := {}
 var _match_client_factory := Callable()
 var _quit_callback := Callable()
+var _frame_ready_gate: Variant
 var _state: Variant
 var _client: Variant
 var _match_id := ""
@@ -32,9 +45,13 @@ var _disposed := false
 var _returning := false
 var _started := false
 var _force_return := false
-var _awaiting_snapshot := false
+var _awaiting_snapshot := true
 var _last_log_signature := ""
 var _reported_terminal_signature := ""
+var _ready_marker_generation := 0
+var _ready_marker_callback := Callable()
+var _ready_marker_emitted := false
+var _ready_marker_text := ""
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -55,6 +72,13 @@ func set_quit_callback(callback: Callable) -> bool:
 	if is_inside_tree() or not callback.is_valid():
 		return false
 	_quit_callback = callback
+	return true
+
+
+func set_frame_ready_gate(gate: Variant) -> bool:
+	if is_inside_tree() or gate == null or not gate.has_method("schedule") or not gate.has_method("cancel"):
+		return false
+	_frame_ready_gate = gate
 	return true
 
 
@@ -87,8 +111,8 @@ func _ready() -> void:
 	_started = true
 	_connection_state = _client.connection_state
 	set_process(true)
-	print("GAMEBOX_GODOT_READY game=gomoku match=%s" % _match_id)
 	_refresh_ui()
+	_schedule_ready_marker()
 
 
 func _process(_delta: float) -> void:
@@ -139,6 +163,8 @@ func _on_connection_state_changed(next_state: String) -> void:
 	if next_state not in ["connecting", "connected", "reconnecting", "failed", "closed"]:
 		return
 	_connection_state = next_state
+	if next_state in ["connecting", "reconnecting", "failed", "closed"]:
+		_awaiting_snapshot = true
 	_refresh_ui()
 
 
@@ -230,7 +256,7 @@ func _status_text(local_user_id: String) -> String:
 	if _connection_state != "connected":
 		return _connection_text()
 	if _awaiting_snapshot:
-		return "正在同步棋盘"
+		return "正在同步对局…"
 	if not _state.pending_action.is_empty():
 		return "等待服务器确认"
 	return "轮到我" if _local_color(local_user_id) == _state.next_color else "等待对手"
@@ -238,6 +264,8 @@ func _status_text(local_user_id: String) -> String:
 
 func _connection_text() -> String:
 	match _connection_state:
+		"connected":
+			return "正在同步对局…" if _awaiting_snapshot else "连接中"
 		"reconnecting":
 			return "重连中"
 		"failed", "closed":
@@ -249,7 +277,7 @@ func _connection_text() -> String:
 func _connection_detail() -> String:
 	match _connection_state:
 		"connected":
-			return "已连接"
+			return "正在同步对局…" if _awaiting_snapshot else "已连接"
 		"reconnecting":
 			return "正在恢复连接…"
 		"failed", "closed":
@@ -310,6 +338,7 @@ func _dispose_client() -> void:
 	if _disposed:
 		return
 	_disposed = true
+	_cancel_ready_marker()
 	set_process(false)
 	if _client != null and _client.has_method("dispose"):
 		_client.dispose()
@@ -322,6 +351,42 @@ func _show_start_failure() -> void:
 	_force_return = true
 	set_process(false)
 	_refresh_ui()
+
+
+func _schedule_ready_marker() -> void:
+	if _disposed or _ready_marker_emitted or _ready_marker_callback.is_valid():
+		return
+	_ready_marker_generation += 1
+	var generation := _ready_marker_generation
+	_ready_marker_callback = _on_first_frame_drawn.bind(generation)
+	if _frame_ready_gate != null:
+		if not _frame_ready_gate.schedule(_ready_marker_callback):
+			_ready_marker_callback = Callable()
+		return
+	var connect_error := RenderingServer.frame_post_draw.connect(_ready_marker_callback, CONNECT_ONE_SHOT)
+	if connect_error != OK:
+		_ready_marker_callback = Callable()
+
+
+func _on_first_frame_drawn(generation: int) -> void:
+	_ready_marker_callback = Callable()
+	if generation != _ready_marker_generation or _disposed or _returning \
+		or _ready_marker_emitted or not is_inside_tree():
+		return
+	_ready_marker_text = "GAMEBOX_GODOT_READY game=gomoku match=%s" % _match_id
+	_ready_marker_emitted = true
+	print(_ready_marker_text)
+
+
+func _cancel_ready_marker() -> void:
+	_ready_marker_generation += 1
+	if not _ready_marker_callback.is_valid():
+		return
+	if _frame_ready_gate != null:
+		_frame_ready_gate.cancel(_ready_marker_callback)
+	elif RenderingServer.frame_post_draw.is_connected(_ready_marker_callback):
+		RenderingServer.frame_post_draw.disconnect(_ready_marker_callback)
+	_ready_marker_callback = Callable()
 
 
 func _log_safe_state(has_state: bool) -> void:

@@ -14,9 +14,11 @@ static func cases() -> Array:
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
+		{"name": "gomoku scene keeps reconnect locked until authoritative snapshot", "run": _keeps_reconnect_locked},
 		{"name": "gomoku scene gates resign and keeps back non-destructive", "run": _gates_resign_and_back},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
+		{"name": "gomoku ready marker waits for one drawn frame and cancels safely", "run": _waits_for_drawn_frame_marker},
 		{"name": "gomoku scene disposes client and callbacks once", "run": _disposes_once},
 	]
 
@@ -26,6 +28,9 @@ static func _renders_live_states() -> bool:
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	if not _check(_status(scene) == "连接中", "initial connecting copy changed"):
+		return _cleanup(scene)
+	client.set_connection("connected")
+	if not _check(_status(scene) == "正在同步对局…", "platform connected exposed a turn before initial snapshot"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
 	if not _check(_status(scene) == "重连中", "reconnecting copy changed"):
@@ -73,6 +78,52 @@ static func _blocks_stale_actions() -> bool:
 	client.accept_snapshot(_snapshot(0))
 	scene._on_cell_pressed(7, 7)
 	return _cleanup(scene, _check(client.move_requests == [Vector2i(7, 7)], "fresh snapshot did not restore move input"))
+
+
+static func _keeps_reconnect_locked() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var two_stones := _empty_board()
+	two_stones[0] = 1
+	two_stones[1] = 2
+	var active := _snapshot(2, two_stones, "active", "black")
+	client.accept_snapshot(active)
+	if not (_check(_status(scene) == "轮到我", "pre-reconnect local turn missing") \
+		and _check(scene.get_node("ResignButton").visible and not scene.get_node("ResignButton").disabled, "pre-reconnect resign should be enabled")):
+		return _cleanup(scene)
+
+	client.set_connection("reconnecting")
+	scene._on_cell_pressed(7, 7)
+	if not (_check(_status(scene) == "重连中", "reconnecting copy changed") \
+		and _check(client.move_requests.is_empty(), "reconnecting state accepted a move") \
+		and _check(scene.get_node("ResignButton").disabled, "reconnecting state enabled resign")):
+		return _cleanup(scene)
+
+	client.set_connection("connected")
+	client.set_connection("connected")
+	scene._on_cell_pressed(7, 7)
+	if not (_check(_status(scene) == "正在同步对局…", "connected-before-snapshot exposed a turn") \
+		and _check(client.move_requests.is_empty(), "connected-before-snapshot accepted a move") \
+		and _check(scene.get_node("ResignButton").disabled, "connected-before-snapshot enabled resign")):
+		return _cleanup(scene)
+
+	client.accept_snapshot(active)
+	if not (_check(_status(scene) == "轮到我", "authoritative snapshot did not unlock turn") \
+		and _check(not scene.get_node("ResignButton").disabled, "authoritative snapshot did not unlock resign")):
+		return _cleanup(scene)
+	scene._on_cell_pressed(7, 7)
+	if not _check(client.move_requests == [Vector2i(7, 7)], "unlocked scene did not send move"):
+		return _cleanup(scene)
+
+	client.accept_snapshot(_snapshot(9, _five_board(), "finished", "white", "five", BLACK_ID))
+	client.set_connection("reconnecting")
+	client.set_connection("connected")
+	scene._on_cell_pressed(8, 8)
+	var result := _check(_status(scene) == "你赢了", "terminal copy was hidden by reconnect sync") \
+		and _check(not scene.get_node("ResignButton").visible, "terminal reconnect showed resign") \
+		and _check(client.move_requests == [Vector2i(7, 7)], "terminal reconnect accepted another move")
+	return _cleanup(scene, result)
 
 
 static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expected_status: String) -> bool:
@@ -142,6 +193,47 @@ static func _keeps_portrait_touch_layout() -> bool:
 		and _check(resign.size.x >= 372.0 and resign.size.y >= 104.0, "resign touch target too small") \
 		and _check(back.position.x >= 48.0 and back.position.y >= 72.0, "back button left portrait safe margin")
 	return _cleanup(scene, result)
+
+
+static func _waits_for_drawn_frame_marker() -> bool:
+	var first := await _scene_with_frame_gate()
+	var scene: Control = first["scene"]
+	var gate: FakeFrameGate = first["gate"]
+	if not (_check(not scene.ready_marker_emitted, "ready marker emitted from _ready or the same frame") \
+		and _check(gate.pending_count() == 1, "ready marker did not schedule one frame callback")):
+		return _cleanup(scene)
+	gate.fire()
+	gate.fire()
+	if not (_check(scene.ready_marker_emitted, "drawn frame did not emit ready marker") \
+		and _check(scene.ready_marker_text == "GAMEBOX_GODOT_READY game=gomoku match=%s" % MATCH_ID, "ready marker format changed") \
+		and _check(not scene.ready_marker_text.contains("opaque-test-ticket"), "ready marker exposed launch ticket") \
+		and _check(gate.fired_callbacks == 1, "ready marker callback fired more than once")):
+		return _cleanup(scene)
+	_cleanup(scene, true)
+
+	var cancelled := await _scene_with_frame_gate()
+	var cancelled_scene: Control = cancelled["scene"]
+	var cancelled_gate: FakeFrameGate = cancelled["gate"]
+	cancelled_scene._exit_tree()
+	cancelled_gate.fire()
+	var result := _check(not cancelled_scene.ready_marker_emitted, "disposed scene emitted a late ready marker") \
+		and _check(cancelled_gate.cancel_calls == 1, "disposed scene did not cancel frame callback")
+	return _cleanup(cancelled_scene, result)
+
+
+static func _scene_with_frame_gate() -> Dictionary:
+	var tree := Engine.get_main_loop() as SceneTree
+	var fake := FakeMatchClient.new()
+	fake.local_user_id = BLACK_ID
+	var gate := FakeFrameGate.new()
+	var scene := GomokuScene.instantiate()
+	scene.configure_launch(_launch_config())
+	scene.set_match_client_factory(func() -> Variant: return fake)
+	scene.set_frame_ready_gate(gate)
+	scene.set_quit_callback(func() -> void: pass)
+	tree.root.add_child(scene)
+	await tree.process_frame
+	return {"scene": scene, "client": fake, "gate": gate}
 
 
 static func _disposes_once() -> bool:
@@ -308,3 +400,29 @@ class FakeMatchClient:
 			push_error("fake event invalid")
 			return
 		event_received.emit(envelope)
+
+
+class FakeFrameGate:
+	extends RefCounted
+
+	var callbacks: Array[Callable] = []
+	var cancel_calls := 0
+	var fired_callbacks := 0
+
+	func schedule(callback: Callable) -> bool:
+		callbacks.append(callback)
+		return true
+
+	func cancel(callback: Callable) -> void:
+		cancel_calls += 1
+		callbacks.erase(callback)
+
+	func pending_count() -> int:
+		return callbacks.size()
+
+	func fire() -> void:
+		var pending := callbacks.duplicate()
+		callbacks.clear()
+		for callback in pending:
+			fired_callbacks += 1
+			callback.call()
