@@ -373,6 +373,17 @@ adb_for() {
   adb_for_timeout "$ADB_TIMEOUT_SECONDS" "$serial" "$@"
 }
 
+refresh_game_log_boundaries() {
+  local suffix="$1"
+  [[ "$suffix" =~ ^[A-Za-z0-9_-]{1,48}$ ]] || return 2
+  local boundary_a="GAMEBOX_E2E_A_${suffix}_$RUN_ID"
+  local boundary_b="GAMEBOX_E2E_B_${suffix}_$RUN_ID"
+  adb_for "$SERIAL_A" shell log -p i -t GameboxE2E "$boundary_a" >/dev/null || return 1
+  adb_for "$SERIAL_B" shell log -p i -t GameboxE2E "$boundary_b" >/dev/null || return 1
+  LOG_BOUNDARY_A="$boundary_a"
+  LOG_BOUNDARY_B="$boundary_b"
+}
+
 capture_adb_devices() {
   local output_variable="$1"
   local captured_listing
@@ -1017,6 +1028,27 @@ self_test() {
   managed_avd_start_preflight "$MANAGED_AVD_B" \
     || { printf 'absent managed AVD fixture was not startable\n' >&2; return 1; }
 
+  SERIAL_A="fixture-A"
+  SERIAL_B="fixture-B"
+  RUN_ID="fixture-run"
+  LOG_BOUNDARY_A="old-A"
+  LOG_BOUNDARY_B="old-B"
+  refresh_game_log_boundaries revision-8 \
+    || { printf 'dual-device log boundary fixture failed\n' >&2; return 1; }
+  [[ "$LOG_BOUNDARY_A" == "GAMEBOX_E2E_A_revision-8_fixture-run" \
+    && "$LOG_BOUNDARY_B" == "GAMEBOX_E2E_B_revision-8_fixture-run" ]] \
+    || { printf 'dual-device log boundary fixture was not committed atomically\n' >&2; return 1; }
+  LOG_BOUNDARY_A="old-A"
+  LOG_BOUNDARY_B="old-B"
+  export FAKE_ADB_MODE=log-b-fail
+  if refresh_game_log_boundaries revision-9; then
+    printf 'partial dual-device log boundary fixture was accepted\n' >&2
+    return 1
+  fi
+  unset FAKE_ADB_MODE
+  [[ "$LOG_BOUNDARY_A" == "old-A" && "$LOG_BOUNDARY_B" == "old-B" ]] \
+    || { printf 'failed dual-device log boundary was partially committed\n' >&2; return 1; }
+
   local private_secret='FixtureInvite_1234567890'
   local private_secret_base64
   private_secret_base64="$(printf '%s' "$private_secret" | openssl base64 -A)"
@@ -1098,6 +1130,8 @@ self_test() {
   fi
   grep -F 'run_with_timeout' <<<"$runtime_source" >/dev/null \
     || { printf 'process-level command watchdog is missing\n' >&2; return 1; }
+  grep -F 'refresh_game_log_boundaries' <<<"$runtime_source" >/dev/null \
+    || { printf 'per-revision dual-device log boundary is missing\n' >&2; return 1; }
   if grep -F 'done < <(run_with_timeout' <<<"$runtime_source" >/dev/null; then
     printf 'adb devices status is still swallowed by process substitution\n' >&2
     return 1
@@ -2064,6 +2098,8 @@ perform_move() {
   local revision="$4"
   local color="$5"
   local evidence="$6"
+  refresh_game_log_boundaries "revision-$revision" \
+    || fail "could not establish dual-device log boundary for revision $revision"
   tap_board_cell "$serial" "$x" "$y"
   wait_match_revision "$revision" "$x" "$y" "$color" \
     || fail "move ($x,$y) did not commit as revision $revision"

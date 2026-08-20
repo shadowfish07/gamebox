@@ -44,6 +44,11 @@ if [ "$serial" = "emulator-5554" ] \
   printf 'Unrelated_API_36\n'
   exit 0
 fi
+if [ "${FAKE_ADB_MODE:-}" = "log-b-fail" ] && [ "$serial" = "fixture-B" ]; then
+  case " $* " in
+    *' shell log '*) exit 9 ;;
+  esac
+fi
 
 last_argument=""
 for argument in "$@"; do
