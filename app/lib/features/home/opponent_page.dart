@@ -22,7 +22,9 @@ final class _OpponentPageState extends State<OpponentPage> {
   List<GomokuOpponent>? _opponents;
   String? _creatingOpponentId;
   String? _errorMessage;
+  Future<void>? _loadInFlight;
   var _generation = 0;
+  var _loading = false;
 
   @override
   void initState() {
@@ -30,19 +32,39 @@ final class _OpponentPageState extends State<OpponentPage> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load() {
+    final existing = _loadInFlight;
+    if (existing != null) return existing;
+    late final Future<void> operation;
+    operation = _performLoad().whenComplete(() {
+      if (identical(_loadInFlight, operation)) _loadInFlight = null;
+    });
+    _loadInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _performLoad() async {
     final generation = ++_generation;
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
     try {
       final opponents = await widget.controller.fetchOpponents();
       if (!mounted || generation != _generation) return;
       setState(() {
+        _loading = false;
+        _errorMessage = null;
         _opponents = opponents
             .where((opponent) => opponent.id != widget.currentUserId)
             .toList(growable: false);
       });
     } catch (caught) {
       if (!mounted || generation != _generation) return;
-      setState(() => _errorMessage = _loadError(caught));
+      setState(() {
+        _loading = false;
+        _errorMessage = _loadError(caught);
+      });
     }
   }
 
@@ -88,23 +110,33 @@ final class _OpponentPageState extends State<OpponentPage> {
   Widget _buildBody(BuildContext context) {
     final opponents = _opponents;
     if (opponents == null) {
+      if (_loading) {
+        return const Center(
+          child: CircularProgressIndicator(key: Key('opponent-loading')),
+        );
+      }
       if (_errorMessage != null) {
         return _ErrorView(message: _errorMessage!, onRetry: _load);
       }
-      return const Center(child: CircularProgressIndicator());
+      return const SizedBox.shrink();
     }
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
+        if (_loading)
+          const LinearProgressIndicator(key: Key('opponent-loading')),
         if (_errorMessage != null)
-          Semantics(
-            label: 'opponent-error',
-            liveRegion: true,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-              child: Text(
-                _errorMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+          MergeSemantics(
+            key: const Key('opponent-error'),
+            child: Semantics(
+              identifier: 'opponent-error',
+              liveRegion: true,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                child: Text(
+                  _errorMessage!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
             ),
           ),
@@ -122,27 +154,26 @@ final class _OpponentPageState extends State<OpponentPage> {
   Widget _opponentRow(GomokuOpponent opponent) {
     final creating = _creatingOpponentId == opponent.id;
     final enabled =
+        !_loading &&
         _creatingOpponentId == null &&
         opponent.availability == OpponentAvailability.idle;
-    return Semantics(
+    return MergeSemantics(
       key: Key('opponent-${opponent.id}'),
-      label: 'opponent-${opponent.id}',
-      container: true,
-      button: true,
-      enabled: enabled,
-      onTap: enabled ? () => _choose(opponent) : null,
-      excludeSemantics: true,
-      child: ListTile(
-        enabled: enabled,
-        title: Text(opponent.nickname),
-        subtitle: Text(_availabilityText(opponent)),
-        trailing: creating
-            ? const SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : null,
-        onTap: enabled ? () => _choose(opponent) : null,
+      child: Semantics(
+        identifier: 'opponent-${opponent.id}',
+        button: true,
+        child: ListTile(
+          enabled: enabled,
+          title: Text(opponent.nickname),
+          subtitle: Text(_availabilityText(opponent)),
+          trailing: creating
+              ? const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : null,
+          onTap: enabled ? () => _choose(opponent) : null,
+        ),
       ),
     );
   }

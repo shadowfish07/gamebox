@@ -53,9 +53,7 @@ final class HomeController extends ChangeNotifier {
   ApiError? _lastError;
   DateTime? _lastUpdatedAt;
   HomeScheduledCall? _polling;
-  Future<ApiError?>? _createInFlight;
-  Future<ApiError?>? _launchInFlight;
-  Future<ApiError?>? _cancelInFlight;
+  Future<ApiError?>? _mutationInFlight;
   var _generation = 0;
   var _started = false;
   var _foreground = false;
@@ -72,10 +70,11 @@ final class HomeController extends ChangeNotifier {
   bool get isCreating => _creating;
   bool get isLaunching => _launching;
   bool get isCancelling => _cancelling;
+  bool get isMutating => _creating || _launching || _cancelling;
   bool get canCancel =>
       _status is GomokuActiveStatus &&
       (_status as GomokuActiveStatus).match.revision == 0 &&
-      !_cancelling;
+      !isMutating;
 
   void start() {
     if (_disposed || _started) return;
@@ -112,7 +111,8 @@ final class HomeController extends ChangeNotifier {
   Future<List<GomokuOpponent>> fetchOpponents() => _repository.fetchOpponents();
 
   Future<ApiError?> openActiveMatch() {
-    final existing = _launchInFlight;
+    if (_disposed) return Future<ApiError?>.value(_invalidState);
+    final existing = _mutationInFlight;
     if (existing != null) return existing;
     final current = _status;
     if (current is! GomokuActiveStatus) {
@@ -120,25 +120,27 @@ final class HomeController extends ChangeNotifier {
     }
     late final Future<ApiError?> operation;
     operation = _performOpen(current.match.id).whenComplete(() {
-      if (identical(_launchInFlight, operation)) _launchInFlight = null;
+      if (identical(_mutationInFlight, operation)) _mutationInFlight = null;
     });
-    _launchInFlight = operation;
+    _mutationInFlight = operation;
     return operation;
   }
 
   Future<ApiError?> createAndOpen(String opponentId) {
-    final existing = _createInFlight;
+    if (_disposed) return Future<ApiError?>.value(_invalidState);
+    final existing = _mutationInFlight;
     if (existing != null) return existing;
     late final Future<ApiError?> operation;
     operation = _performCreate(opponentId).whenComplete(() {
-      if (identical(_createInFlight, operation)) _createInFlight = null;
+      if (identical(_mutationInFlight, operation)) _mutationInFlight = null;
     });
-    _createInFlight = operation;
+    _mutationInFlight = operation;
     return operation;
   }
 
   Future<ApiError?> cancelActiveMatch() {
-    final existing = _cancelInFlight;
+    if (_disposed) return Future<ApiError?>.value(_invalidState);
+    final existing = _mutationInFlight;
     if (existing != null) return existing;
     final current = _status;
     if (current is! GomokuActiveStatus || current.match.revision != 0) {
@@ -146,14 +148,14 @@ final class HomeController extends ChangeNotifier {
     }
     late final Future<ApiError?> operation;
     operation = _performCancel(current.match.id).whenComplete(() {
-      if (identical(_cancelInFlight, operation)) _cancelInFlight = null;
+      if (identical(_mutationInFlight, operation)) _mutationInFlight = null;
     });
-    _cancelInFlight = operation;
+    _mutationInFlight = operation;
     return operation;
   }
 
   Future<ApiError?> _performOpen(String matchId) async {
-    final generation = ++_generation;
+    _generation += 1;
     _launching = true;
     _lastError = null;
     _notify();
@@ -163,7 +165,7 @@ final class HomeController extends ChangeNotifier {
     } catch (caught) {
       error = _safeActionError(caught);
     }
-    await _refreshForGeneration(generation);
+    await _refreshAfterAction();
     if (!_disposed) {
       _launching = false;
       _notify();
@@ -172,7 +174,7 @@ final class HomeController extends ChangeNotifier {
   }
 
   Future<ApiError?> _performCreate(String opponentId) async {
-    final generation = ++_generation;
+    _generation += 1;
     _creating = true;
     _lastError = null;
     _notify();
@@ -182,7 +184,7 @@ final class HomeController extends ChangeNotifier {
     } catch (caught) {
       error = _safeActionError(caught);
     }
-    await _refreshForGeneration(generation);
+    await _refreshAfterAction();
     if (!_disposed) {
       _creating = false;
       _notify();
@@ -191,22 +193,29 @@ final class HomeController extends ChangeNotifier {
   }
 
   Future<ApiError?> _performCancel(String matchId) async {
-    final generation = ++_generation;
+    _generation += 1;
     _cancelling = true;
     _lastError = null;
     _notify();
     ApiError? error;
     try {
       await _repository.cancelMatch(matchId);
-      await _refreshForGeneration(generation);
     } catch (caught) {
       error = _safeActionError(caught);
     }
+    await _refreshAfterAction();
     if (!_disposed) {
       _cancelling = false;
       _notify();
     }
     return error;
+  }
+
+  Future<void> _refreshAfterAction() async {
+    if (_disposed) return;
+    final generation = ++_generation;
+    _loading = _status == null;
+    await _refreshForGeneration(generation);
   }
 
   Future<void> _refreshForGeneration(int generation) async {
@@ -229,7 +238,7 @@ final class HomeController extends ChangeNotifier {
   void _restartPolling() {
     _polling?.cancel();
     _polling = _scheduler.schedulePeriodic(pollInterval, () {
-      if (_disposed || !_foreground || _creating || _launching || _cancelling) {
+      if (_disposed || !_foreground || isMutating) {
         return;
       }
       unawaited(refresh());
@@ -267,9 +276,7 @@ final class HomeController extends ChangeNotifier {
     _generation += 1;
     _polling?.cancel();
     _polling = null;
-    _createInFlight = null;
-    _launchInFlight = null;
-    _cancelInFlight = null;
+    _mutationInFlight = null;
     super.dispose();
   }
 

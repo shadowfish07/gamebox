@@ -47,6 +47,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   HomeController? _homeController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
+  var _homeControllerAuthenticated = false;
 
   @override
   void initState() {
@@ -91,26 +92,33 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _homeController?.dispose();
         _homeController = null;
         _ownsHomeController = false;
-      } else {
+      } else if (_homeControllerAuthenticated) {
         _homeController?.pauseForeground();
       }
+      _homeControllerAuthenticated = false;
       return;
     }
-    if (_homeController != null) return;
-    final injected = widget.homeController;
-    if (injected != null) {
-      _homeController = injected;
-      return;
+    if (_homeController == null) {
+      final injected = widget.homeController;
+      if (injected != null) {
+        _homeController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _homeController = HomeController(
+          repository: GomokuRepository(
+            api: HttpHomeApi(apiClient, sessionController),
+            gameLauncher: widget.gameLauncher,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsHomeController = true;
+      }
     }
-    final apiClient = _ownedApiClient ??= ApiClient(httpClient: http.Client());
-    _homeController = HomeController(
-      repository: GomokuRepository(
-        api: HttpHomeApi(apiClient, sessionController),
-        gameLauncher: widget.gameLauncher,
-        apiBaseUri: Uri.parse(apiBaseUrl),
-      ),
-    );
-    _ownsHomeController = true;
+    if (_homeControllerAuthenticated) return;
+    _homeControllerAuthenticated = true;
+    _homeController?.resumeForeground();
   }
 
   @override
@@ -148,6 +156,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _homeController?.dispose();
     }
     _homeController = null;
+    _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     super.dispose();
   }

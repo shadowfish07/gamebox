@@ -51,8 +51,9 @@ void main() {
     expect(find.text('离线 · 可邀请'), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('opponent-$bobId'))),
-      matchesSemantics(
-        label: 'opponent-$bobId',
+      containsSemantics(
+        identifier: 'opponent-$bobId',
+        label: '小猫\n游戏中',
         isButton: true,
         isEnabled: false,
         hasEnabledState: true,
@@ -60,8 +61,9 @@ void main() {
     );
     expect(
       tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
-      matchesSemantics(
-        label: 'opponent-$carolId',
+      containsSemantics(
+        identifier: 'opponent-$carolId',
+        label: '小鸟\n离线 · 可邀请',
         isButton: true,
         isEnabled: true,
         hasEnabledState: true,
@@ -100,10 +102,15 @@ void main() {
       ),
       findsOneWidget,
     );
+    final loadingSemantics = tester.getSemantics(
+      find.byKey(const Key('opponent-$carolId')),
+    );
+    expect(loadingSemantics.label, contains('小鸟'));
+    expect(loadingSemantics.label, contains('离线 · 可邀请'));
     expect(
-      tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
-      matchesSemantics(
-        label: 'opponent-$carolId',
+      loadingSemantics,
+      containsSemantics(
+        identifier: 'opponent-$carolId',
         isButton: true,
         isEnabled: false,
         hasEnabledState: true,
@@ -157,9 +164,18 @@ void main() {
       expect(find.text('对手已进入其他对局'), findsOneWidget);
       expect(find.text('游戏中'), findsOneWidget);
       expect(
+        tester.getSemantics(find.byKey(const Key('opponent-error'))),
+        containsSemantics(
+          identifier: 'opponent-error',
+          label: '对手已进入其他对局',
+          isLiveRegion: true,
+        ),
+      );
+      expect(
         tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
-        matchesSemantics(
-          label: 'opponent-$carolId',
+        containsSemantics(
+          identifier: 'opponent-$carolId',
+          label: '小鸟\n游戏中',
           isButton: true,
           isEnabled: false,
           hasEnabledState: true,
@@ -184,6 +200,52 @@ void main() {
     expect(tester.takeException(), isNull);
     fixture.dispose();
   });
+
+  testWidgets(
+    'retry clears the old error, shows progress, and is single flight',
+    (tester) async {
+      final retry = Completer<List<GomokuOpponent>>();
+      var request = 0;
+      final fixture = _Fixture(now)
+        ..api.onOpponents = () {
+          request += 1;
+          if (request == 1) {
+            return Future<List<GomokuOpponent>>.error(
+              const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试'),
+            );
+          }
+          return retry.future;
+        };
+      await tester.pumpWidget(_app(fixture.controller, aliceId));
+      await _flushWidget(tester);
+
+      expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
+      final retryButton = find.text('重试');
+      await tester.tap(retryButton);
+      await tester.tap(retryButton);
+      await tester.pump();
+
+      expect(fixture.api.opponentCalls, 2);
+      expect(find.text('网络连接失败，请稍后重试'), findsNothing);
+      expect(find.byKey(const Key('opponent-loading')), findsOneWidget);
+      expect(find.text('重试'), findsNothing);
+
+      retry.complete(const [
+        GomokuOpponent(
+          id: carolId,
+          nickname: '小鸟',
+          availability: OpponentAvailability.idle,
+          presence: OpponentPresence.online,
+        ),
+      ]);
+      await _flushWidget(tester);
+
+      expect(find.byKey(const Key('opponent-loading')), findsNothing);
+      expect(find.text('网络连接失败，请稍后重试'), findsNothing);
+      expect(find.text('小鸟'), findsOneWidget);
+      fixture.dispose();
+    },
+  );
 
   testWidgets(
     'successful create leaves the opponent route even if refetch fails',

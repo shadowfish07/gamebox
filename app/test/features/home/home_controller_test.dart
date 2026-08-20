@@ -125,6 +125,81 @@ void main() {
   });
 
   test(
+    'a pending launch blocks cancellation through the shared mutation',
+    () async {
+      final launched = Completer<void>();
+      final api = _FakeHomeApi()
+        ..onStatus = () async {
+          return _active(revision: 0);
+        }
+        ..onTicket = (id) async {
+          return _ticket(id, now);
+        }
+        ..onCancel = (_) => Future<void>.error(
+          StateError('cancel must not run while launch is pending'),
+        );
+      final launcher = _FakeLauncher(<String>[])
+        ..onLaunch = (_) => launched.future;
+      final controller = _controller(api, launcher: launcher, now: () => now);
+      await controller.refresh();
+
+      final opening = controller.openActiveMatch();
+      await _flush();
+      final blockedCancel = controller.cancelActiveMatch();
+
+      expect(identical(opening, blockedCancel), isTrue);
+      expect(controller.isLaunching, isTrue);
+      expect(controller.isCancelling, isFalse);
+      expect(controller.canCancel, isFalse);
+      expect(api.cancelCalls, 0);
+
+      launched.complete();
+      expect(await opening, isNull);
+      expect(await blockedCancel, isNull);
+      expect(api.cancelCalls, 0);
+    },
+  );
+
+  test(
+    'a pending cancel blocks launch and deduplicates cancellation',
+    () async {
+      final cancelled = Completer<void>();
+      var didCancel = false;
+      final api = _FakeHomeApi()
+        ..onStatus = () async {
+          return didCancel ? const GomokuIdleStatus() : _active(revision: 0);
+        }
+        ..onTicket = (id) {
+          return Future<GomokuLaunchTicket>.error(
+            StateError('ticket must not be requested while cancel is pending'),
+          );
+        }
+        ..onCancel = (_) async {
+          await cancelled.future;
+          didCancel = true;
+        };
+      final controller = _controller(api, now: () => now);
+      await controller.refresh();
+
+      final cancelling = controller.cancelActiveMatch();
+      final duplicate = controller.cancelActiveMatch();
+      final blockedOpen = controller.openActiveMatch();
+
+      expect(identical(cancelling, duplicate), isTrue);
+      expect(identical(cancelling, blockedOpen), isTrue);
+      expect(controller.isCancelling, isTrue);
+      expect(controller.isLaunching, isFalse);
+      expect(api.ticketCalls, 0);
+
+      cancelled.complete();
+      expect(await cancelling, isNull);
+      expect(await blockedOpen, isNull);
+      expect(api.cancelCalls, 1);
+      expect(controller.status, isA<GomokuIdleStatus>());
+    },
+  );
+
+  test(
     'concurrent create taps share one mutation and the unified openMatch',
     () async {
       final create = Completer<CreatedGomokuMatch>();
@@ -239,6 +314,161 @@ void main() {
       expect(controller.status, isA<GomokuIdleStatus>());
       expect(api.cancelCalls, 1);
       expect(api.statusCalls, 2);
+    },
+  );
+
+  test(
+    'cancel completion owns a newer refresh than intervening work',
+    () async {
+      final cancelBarrier = Completer<void>();
+      final intervening = Completer<GomokuStatus>();
+      final authoritative = Completer<GomokuStatus>();
+      var statusCall = 0;
+      final api = _FakeHomeApi()
+        ..onStatus = () {
+          return switch (++statusCall) {
+            1 => Future.value(_active(revision: 0)),
+            2 => intervening.future,
+            3 => authoritative.future,
+            _ => Future.error(StateError('unexpected status call')),
+          };
+        }
+        ..onCancel = (_) => cancelBarrier.future;
+      final controller = _controller(api, now: () => now);
+      await controller.refresh();
+
+      final cancelling = controller.cancelActiveMatch();
+      final olderRefresh = controller.refresh();
+      cancelBarrier.complete();
+      await _flush();
+      expect(api.statusCalls, 3);
+
+      authoritative.complete(const GomokuIdleStatus());
+      expect(await cancelling, isNull);
+      intervening.complete(_active(revision: 99));
+      await olderRefresh;
+
+      expect(controller.status, isA<GomokuIdleStatus>());
+    },
+  );
+
+  test(
+    'launch completion owns a newer refresh than intervening work',
+    () async {
+      final launchBarrier = Completer<void>();
+      final intervening = Completer<GomokuStatus>();
+      final authoritative = Completer<GomokuStatus>();
+      var statusCall = 0;
+      final api = _FakeHomeApi()
+        ..onStatus = () {
+          return switch (++statusCall) {
+            1 => Future.value(_active(revision: 0)),
+            2 => intervening.future,
+            3 => authoritative.future,
+            _ => Future.error(StateError('unexpected status call')),
+          };
+        }
+        ..onTicket = (id) async {
+          return _ticket(id, now);
+        };
+      final launcher = _FakeLauncher(<String>[])
+        ..onLaunch = (_) => launchBarrier.future;
+      final controller = _controller(api, launcher: launcher, now: () => now);
+      await controller.refresh();
+
+      final opening = controller.openActiveMatch();
+      await _flush();
+      final olderRefresh = controller.refresh();
+      launchBarrier.complete();
+      await _flush();
+      expect(api.statusCalls, 3);
+
+      authoritative.complete(_active(revision: 2));
+      expect(await opening, isNull);
+      intervening.complete(_active(revision: 99));
+      await olderRefresh;
+
+      expect((controller.status as GomokuActiveStatus).match.revision, 2);
+    },
+  );
+
+  test(
+    'create completion owns a newer refresh than intervening work',
+    () async {
+      final createBarrier = Completer<CreatedGomokuMatch>();
+      final launchReached = Completer<void>();
+      final intervening = Completer<GomokuStatus>();
+      final authoritative = Completer<GomokuStatus>();
+      var statusCall = 0;
+      final api = _FakeHomeApi()
+        ..onStatus = () {
+          return switch (++statusCall) {
+            1 => Future.value(const GomokuIdleStatus()),
+            2 => intervening.future,
+            3 => authoritative.future,
+            _ => Future.error(StateError('unexpected status call')),
+          };
+        }
+        ..onCreate = (_) {
+          return createBarrier.future;
+        }
+        ..onTicket = (id) async {
+          return _ticket(id, now);
+        };
+      final launcher = _FakeLauncher(<String>[])
+        ..onLaunch = (_) async {
+          launchReached.complete();
+        };
+      final controller = _controller(api, launcher: launcher, now: () => now);
+      await controller.refresh();
+
+      final creating = controller.createAndOpen(opponentId);
+      final olderRefresh = controller.refresh();
+      createBarrier.complete(
+        const CreatedGomokuMatch(id: matchId, gameId: 'gomoku'),
+      );
+      await launchReached.future;
+      await _flush();
+      expect(api.statusCalls, 3);
+
+      authoritative.complete(_active(revision: 0));
+      expect(await creating, isNull);
+      intervening.complete(const GomokuIdleStatus());
+      await olderRefresh;
+
+      expect(controller.status, isA<GomokuActiveStatus>());
+    },
+  );
+
+  test(
+    'disposing a pending mutation prevents sync and later mutations',
+    () async {
+      final launchBarrier = Completer<void>();
+      final api = _FakeHomeApi()
+        ..onStatus = () async {
+          return _active(revision: 0);
+        }
+        ..onTicket = (id) async {
+          return _ticket(id, now);
+        };
+      final launcher = _FakeLauncher(<String>[])
+        ..onLaunch = (_) => launchBarrier.future;
+      final controller = _controller(api, launcher: launcher, now: () => now);
+      await controller.refresh();
+      var notifications = 0;
+      controller.addListener(() => notifications += 1);
+
+      final opening = controller.openActiveMatch();
+      await _flush();
+      final beforeDispose = notifications;
+      controller.dispose();
+      launchBarrier.complete();
+
+      expect(await opening, isNull);
+      expect(notifications, beforeDispose);
+      expect(api.statusCalls, 1);
+      expect((await controller.cancelActiveMatch())?.code, 'invalid_state');
+      expect(api.cancelCalls, 0);
     },
   );
 
@@ -398,6 +628,8 @@ final class _FakeHomeApi implements HomeApi {
   Future<void> Function(String id)? onCancel;
   int statusCalls = 0;
   int cancelCalls = 0;
+  int createCalls = 0;
+  int ticketCalls = 0;
 
   @override
   Future<GomokuStatus> fetchStatus() {
@@ -407,14 +639,18 @@ final class _FakeHomeApi implements HomeApi {
   }
 
   @override
-  Future<CreatedGomokuMatch> createMatch(String opponentId) =>
-      onCreate?.call(opponentId) ??
-      Future<CreatedGomokuMatch>.error(StateError('unexpected create'));
+  Future<CreatedGomokuMatch> createMatch(String opponentId) {
+    createCalls += 1;
+    return onCreate?.call(opponentId) ??
+        Future<CreatedGomokuMatch>.error(StateError('unexpected create'));
+  }
 
   @override
-  Future<GomokuLaunchTicket> createLaunchTicket(String matchId) =>
-      onTicket?.call(matchId) ??
-      Future<GomokuLaunchTicket>.error(StateError('unexpected ticket'));
+  Future<GomokuLaunchTicket> createLaunchTicket(String matchId) {
+    ticketCalls += 1;
+    return onTicket?.call(matchId) ??
+        Future<GomokuLaunchTicket>.error(StateError('unexpected ticket'));
+  }
 
   @override
   Future<void> cancelMatch(String matchId) {

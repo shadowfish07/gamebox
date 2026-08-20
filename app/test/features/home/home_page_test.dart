@@ -28,10 +28,22 @@ void main() {
     expect(find.text('五子棋'), findsOneWidget);
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
     expect(find.byKey(const Key('continue-match')), findsNothing);
+    final gameSemantics = tester.getSemantics(
+      find.byKey(const Key('game-gomoku')),
+    );
+    expect(
+      gameSemantics,
+      containsSemantics(
+        identifier: 'game-gomoku',
+        label: '五子棋\n2 人对战',
+        isHeader: true,
+      ),
+    );
     expect(
       tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      matchesSemantics(
-        label: 'choose-opponent',
+      containsSemantics(
+        identifier: 'choose-opponent',
+        label: '选择对手',
         isButton: true,
         isEnabled: true,
         hasEnabledState: true,
@@ -57,8 +69,9 @@ void main() {
     expect(find.byKey(const Key('cancel-match')), findsNothing);
     expect(
       tester.getSemantics(find.byKey(const Key('continue-match'))),
-      matchesSemantics(
-        label: 'continue-match',
+      containsSemantics(
+        identifier: 'continue-match',
+        label: '继续对局',
         isButton: true,
         isEnabled: true,
         hasEnabledState: true,
@@ -80,8 +93,9 @@ void main() {
     expect(find.text('取消未开始对局'), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      matchesSemantics(
-        label: 'cancel-match',
+      containsSemantics(
+        identifier: 'cancel-match',
+        label: '取消未开始对局',
         isButton: true,
         isEnabled: true,
         hasEnabledState: true,
@@ -109,6 +123,94 @@ void main() {
     expect(fixture.api.ticketCalls, 1);
     expect(fixture.launcher.calls, 1);
     launched.complete();
+    await _flushWidget(tester);
+    fixture.dispose();
+  });
+
+  testWidgets('launch pending disables both active match actions', (
+    tester,
+  ) async {
+    final launched = Completer<void>();
+    final fixture = _Fixture(now)
+      ..api.status = _active(revision: 0)
+      ..launcher.onLaunch = (_) => launched.future;
+    await tester.pumpWidget(_app(fixture.controller, aliceId));
+    await _flushWidget(tester);
+
+    await tester.tap(find.byKey(const Key('continue-match')));
+    await tester.pump();
+
+    expect(
+      tester.getSemantics(find.byKey(const Key('continue-match'))),
+      containsSemantics(
+        identifier: 'continue-match',
+        isButton: true,
+        isEnabled: false,
+        hasEnabledState: true,
+      ),
+    );
+    expect(
+      tester.getSemantics(find.byKey(const Key('cancel-match'))),
+      containsSemantics(
+        identifier: 'cancel-match',
+        label: '取消未开始对局',
+        isButton: true,
+        isEnabled: false,
+        hasEnabledState: true,
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('cancel-match')),
+      warnIfMissed: false,
+    );
+    expect(fixture.api.cancelCalls, 0);
+
+    launched.complete();
+    await _flushWidget(tester);
+    fixture.dispose();
+  });
+
+  testWidgets('cancel pending disables both active match actions', (
+    tester,
+  ) async {
+    final cancelled = Completer<void>();
+    final fixture = _Fixture(now)..api.status = _active(revision: 0);
+    fixture.api.onCancel = (_) async {
+      await cancelled.future;
+      fixture.api.status = const GomokuIdleStatus();
+    };
+    await tester.pumpWidget(_app(fixture.controller, aliceId));
+    await _flushWidget(tester);
+
+    await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pump();
+
+    expect(
+      tester.getSemantics(find.byKey(const Key('continue-match'))),
+      containsSemantics(
+        identifier: 'continue-match',
+        label: '继续对局',
+        isButton: true,
+        isEnabled: false,
+        hasEnabledState: true,
+      ),
+    );
+    expect(
+      tester.getSemantics(find.byKey(const Key('cancel-match'))),
+      containsSemantics(
+        identifier: 'cancel-match',
+        isButton: true,
+        isEnabled: false,
+        hasEnabledState: true,
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('continue-match')),
+      warnIfMissed: false,
+    );
+    expect(fixture.api.ticketCalls, 0);
+
+    cancelled.complete();
     await _flushWidget(tester);
     fixture.dispose();
   });
@@ -162,6 +264,17 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
+    expect(
+      tester.getSemantics(find.byKey(const Key('retry-home'))),
+      containsSemantics(
+        identifier: 'retry-home',
+        label: '重试',
+        isButton: true,
+        isEnabled: true,
+        hasEnabledState: true,
+        hasTapAction: true,
+      ),
+    );
 
     fixture.api.statusError = null;
     await tester.tap(find.byKey(const Key('retry-home')));
@@ -247,8 +360,10 @@ final class _FakeHomeApi implements HomeApi {
   GomokuStatus status = const GomokuIdleStatus();
   ApiError? statusError;
   ApiError? cancelError;
+  Future<void> Function(String matchId)? onCancel;
   int ticketCalls = 0;
   int opponentCalls = 0;
+  int cancelCalls = 0;
 
   @override
   Future<GomokuStatus> fetchStatus() async {
@@ -276,6 +391,12 @@ final class _FakeHomeApi implements HomeApi {
 
   @override
   Future<void> cancelMatch(String matchId) async {
+    cancelCalls += 1;
+    final custom = onCancel;
+    if (custom != null) {
+      await custom(matchId);
+      return;
+    }
     final error = cancelError;
     if (error != null) throw error;
     status = const GomokuIdleStatus();

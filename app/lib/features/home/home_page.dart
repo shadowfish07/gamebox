@@ -106,7 +106,7 @@ final class _HomePageState extends State<HomePage> {
               _GomokuCard(
                 status: controller.status!,
                 isLaunching: controller.isLaunching,
-                isCancelling: controller.isCancelling,
+                isMutating: controller.isMutating,
                 onChoose: _chooseOpponent,
                 onContinue: _continueMatch,
                 onCancel: _cancelMatch,
@@ -130,14 +130,11 @@ final class _HomeError extends StatelessWidget {
       children: [
         Text(message, textAlign: TextAlign.center),
         const SizedBox(height: 16),
-        Semantics(
-          key: const Key('retry-home'),
-          label: 'retry-home',
-          container: true,
-          button: true,
-          onTap: onRetry,
-          excludeSemantics: true,
-          child: FilledButton(onPressed: onRetry, child: const Text('重试')),
+        _ActionButton(
+          semanticKey: const Key('retry-home'),
+          semanticLabel: 'retry-home',
+          onPressed: onRetry,
+          child: const Text('重试'),
         ),
       ],
     );
@@ -148,7 +145,7 @@ final class _GomokuCard extends StatelessWidget {
   const _GomokuCard({
     required this.status,
     required this.isLaunching,
-    required this.isCancelling,
+    required this.isMutating,
     required this.onChoose,
     required this.onContinue,
     required this.onCancel,
@@ -156,7 +153,7 @@ final class _GomokuCard extends StatelessWidget {
 
   final GomokuStatus status;
   final bool isLaunching;
-  final bool isCancelling;
+  final bool isMutating;
   final VoidCallback onChoose;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
@@ -164,41 +161,47 @@ final class _GomokuCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final descriptor = gameCatalog.single;
-    return Semantics(
-      key: const Key('game-gomoku'),
-      label: 'game-gomoku',
-      container: true,
-      explicitChildNodes: true,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                descriptor.title,
-                style: Theme.of(context).textTheme.headlineSmall,
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MergeSemantics(
+              key: const Key('game-gomoku'),
+              child: Semantics(
+                identifier: 'game-gomoku',
+                header: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      descriptor.title,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text('${descriptor.playerCount} 人对战'),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
-              Text('${descriptor.playerCount} 人对战'),
-              const SizedBox(height: 16),
-              switch (status) {
-                GomokuIdleStatus _ => _ActionButton(
-                  semanticKey: const Key('choose-opponent'),
-                  semanticLabel: 'choose-opponent',
-                  onPressed: onChoose,
-                  child: const Text('选择对手'),
-                ),
-                GomokuActiveStatus active => _ActiveMatchActions(
-                  active: active,
-                  isLaunching: isLaunching,
-                  isCancelling: isCancelling,
-                  onContinue: onContinue,
-                  onCancel: onCancel,
-                ),
-              },
-            ],
-          ),
+            ),
+            const SizedBox(height: 16),
+            switch (status) {
+              GomokuIdleStatus _ => _ActionButton(
+                semanticKey: const Key('choose-opponent'),
+                semanticLabel: 'choose-opponent',
+                onPressed: onChoose,
+                child: const Text('选择对手'),
+              ),
+              GomokuActiveStatus active => _ActiveMatchActions(
+                active: active,
+                isLaunching: isLaunching,
+                isMutating: isMutating,
+                onContinue: onContinue,
+                onCancel: onCancel,
+              ),
+            },
+          ],
         ),
       ),
     );
@@ -209,14 +212,14 @@ final class _ActiveMatchActions extends StatelessWidget {
   const _ActiveMatchActions({
     required this.active,
     required this.isLaunching,
-    required this.isCancelling,
+    required this.isMutating,
     required this.onContinue,
     required this.onCancel,
   });
 
   final GomokuActiveStatus active;
   final bool isLaunching;
-  final bool isCancelling;
+  final bool isMutating;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
 
@@ -233,27 +236,28 @@ final class _ActiveMatchActions extends StatelessWidget {
         _ActionButton(
           semanticKey: const Key('continue-match'),
           semanticLabel: 'continue-match',
-          onPressed: isLaunching ? null : onContinue,
+          onPressed: isMutating ? null : onContinue,
           child: isLaunching
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? Semantics(
+                  label: '正在启动对局',
+                  liveRegion: true,
+                  child: const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 )
               : const Text('继续对局'),
         ),
         if (match.revision == 0) ...[
           const SizedBox(height: 8),
-          Semantics(
+          MergeSemantics(
             key: const Key('cancel-match'),
-            label: 'cancel-match',
-            container: true,
-            button: true,
-            enabled: !isCancelling,
-            onTap: isCancelling ? null : onCancel,
-            excludeSemantics: true,
-            child: TextButton(
-              onPressed: isCancelling ? null : onCancel,
-              child: const Text('取消未开始对局'),
+            child: Semantics(
+              identifier: 'cancel-match',
+              child: TextButton(
+                onPressed: isMutating ? null : onCancel,
+                child: const Text('取消未开始对局'),
+              ),
             ),
           ),
         ],
@@ -277,15 +281,12 @@ final class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
+    return MergeSemantics(
       key: semanticKey,
-      label: semanticLabel,
-      container: true,
-      button: true,
-      enabled: onPressed != null,
-      onTap: onPressed,
-      excludeSemantics: true,
-      child: FilledButton(onPressed: onPressed, child: child),
+      child: Semantics(
+        identifier: semanticLabel,
+        child: FilledButton(onPressed: onPressed, child: child),
+      ),
     );
   }
 }

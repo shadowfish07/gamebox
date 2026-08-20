@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
@@ -68,6 +69,48 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     fixture.dispose();
   });
+
+  testWidgets(
+    'injected Home pauses on logout and resumes once on each reauthentication',
+    (tester) async {
+      final fixture = await _Fixture.create(now);
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: fixture.launcher,
+          sessionController: fixture.session,
+          homeController: fixture.home,
+        ),
+      );
+      await _flush(tester);
+      expect(fixture.api.statusCalls, 1);
+      expect(fixture.scheduler.activeCount, 1);
+
+      for (var cycle = 0; cycle < 2; cycle += 1) {
+        fixture.authApi.rejectRefresh = true;
+        expect(await fixture.session.refresh(), isFalse);
+        await _flush(tester);
+
+        expect(find.byKey(const Key('home-shell')), findsNothing);
+        expect(fixture.scheduler.activeCount, 0);
+        final callsWhileLoggedOut = fixture.api.statusCalls;
+        fixture.scheduler.fireAllIncludingCancelled();
+        await _flush(tester);
+        expect(fixture.api.statusCalls, callsWhileLoggedOut);
+
+        fixture.authApi.rejectRefresh = false;
+        expect(await fixture.session.register('invite', '自己'), isNull);
+        await _flush(tester);
+
+        expect(find.byKey(const Key('home-shell')), findsOneWidget);
+        expect(fixture.api.statusCalls, callsWhileLoggedOut + 1);
+        expect(fixture.scheduler.activeCount, 1);
+      }
+
+      expect(fixture.scheduler.calls.length, 3);
+      await tester.pumpWidget(const SizedBox.shrink());
+      fixture.dispose();
+    },
+  );
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -82,11 +125,13 @@ final class _Fixture {
     required this.api,
     required this.scheduler,
     required this.launcher,
+    required this.authApi,
   });
 
   static Future<_Fixture> create(DateTime now) async {
+    final authApi = _FakeAuthApi(now);
     final session = SessionController(
-      authApi: _FakeAuthApi(now),
+      authApi: authApi,
       tokenStore: _MemoryTokenStore('refresh-zero'),
       now: () => now,
     );
@@ -110,6 +155,7 @@ final class _Fixture {
       api: api,
       scheduler: scheduler,
       launcher: launcher,
+      authApi: authApi,
     );
   }
 
@@ -118,6 +164,7 @@ final class _Fixture {
   final _FakeHomeApi api;
   final _FakeScheduler scheduler;
   final _FakeLauncher launcher;
+  final _FakeAuthApi authApi;
 
   void dispose() {
     home.dispose();
@@ -129,6 +176,7 @@ final class _FakeScheduler implements HomePollScheduler {
   final List<_FakeCall> calls = [];
 
   bool get active => calls.any((call) => !call.cancelled);
+  int get activeCount => calls.where((call) => !call.cancelled).length;
 
   @override
   HomeScheduledCall schedulePeriodic(
@@ -193,9 +241,21 @@ final class _FakeAuthApi implements AuthApi {
   _FakeAuthApi(this.now);
 
   final DateTime now;
+  bool rejectRefresh = false;
 
   @override
-  Future<Session> refresh(String refreshToken) async => Session(
+  Future<Session> refresh(String refreshToken) async {
+    if (rejectRefresh) {
+      throw const ApiError(code: 'unauthorized', message: '登录已失效');
+    }
+    return _session();
+  }
+
+  @override
+  Future<Session> register(String inviteCode, String nickname) async =>
+      _session();
+
+  Session _session() => Session(
     user: const SessionUser(
       id: '11111111-1111-4111-8111-111111111111',
       nickname: '自己',
@@ -205,10 +265,6 @@ final class _FakeAuthApi implements AuthApi {
     refreshToken: 'refresh-token',
     refreshExpiresAt: now.add(const Duration(days: 30)),
   );
-
-  @override
-  Future<Session> register(String inviteCode, String nickname) =>
-      Future<Session>.error(StateError('unexpected register'));
 }
 
 final class _MemoryTokenStore implements TokenStore {
