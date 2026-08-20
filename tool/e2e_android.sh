@@ -32,10 +32,17 @@ SEMANTICS_TIMEOUT_SECONDS="${GAMEBOX_E2E_SEMANTICS_TIMEOUT_SECONDS:-300}"
 AVD_SETUP_TIMEOUT_SECONDS="${GAMEBOX_E2E_AVD_SETUP_TIMEOUT_SECONDS:-120}"
 TIMEOUT_KILL_GRACE_SECONDS="${GAMEBOX_E2E_TIMEOUT_KILL_GRACE_SECONDS:-2}"
 BOUND_CHILD_REGISTRY=""
+BOUND_SESSION_STATE_DIR=""
 readonly HARNESS_PID=$$
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
+HARNESS_PGID="$(ps -p "$HARNESS_PID" -o pgid= | tr -d ' ')"
+readonly HARNESS_PGID
+[[ "$HARNESS_PGID" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'Gamebox E2E failed: could not establish the harness process group\n' >&2
+  exit 2
+}
 
 if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   export JAVA_HOME
@@ -66,30 +73,222 @@ terminate_exact_child() {
   kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
 }
 
+process_session_id() {
+  local pid="$1"
+  ruby "$ROOT_DIR/tool/run_in_session.rb" --session-id "$pid" 2>/dev/null
+}
+
+session_group_state() {
+  local process_group="$1"
+  local expected_session="$2"
+  [[ "$process_group" =~ ^[1-9][0-9]*$ && "$expected_session" =~ ^[1-9][0-9]*$ ]] || return 2
+  local status
+  if ruby "$ROOT_DIR/tool/run_in_session.rb" --validate-session \
+    "$process_group" "$expected_session" >/dev/null 2>&1; then
+    return 0
+  else
+    status=$?
+    [[ "$status" == "1" ]] && return 1
+    return 2
+  fi
+}
+
+session_numbers_are_safe() {
+  local leader_pid="$1"
+  local process_group="$2"
+  local session_id="$3"
+  [[ "$leader_pid" =~ ^[1-9][0-9]*$ \
+    && "$leader_pid" == "$process_group" \
+    && "$leader_pid" == "$session_id" \
+    && "$leader_pid" != "$HARNESS_PID" \
+    && "$process_group" != "$HARNESS_PGID" ]]
+}
+
+session_identity_is_safe() {
+  local leader_pid="$1"
+  local process_group="$2"
+  local session_id="$3"
+  session_numbers_are_safe "$leader_pid" "$process_group" "$session_id" || return 1
+
+  local actual_group actual_session
+  actual_group="$(ps -p "$leader_pid" -o pgid= 2>/dev/null | tr -d ' ')"
+  actual_session="$(process_session_id "$leader_pid")" || return 1
+  [[ "$actual_group" == "$process_group" && "$actual_session" == "$session_id" ]]
+}
+
+terminate_owned_session_group() {
+  local leader_pid="$1"
+  local process_group="$2"
+  local session_id="$3"
+  local grace_seconds="$4"
+  session_numbers_are_safe "$leader_pid" "$process_group" "$session_id" || return 1
+
+  local state
+  if session_group_state "$process_group" "$session_id"; then
+    state=0
+  else
+    state=$?
+    [[ "$state" == "1" ]] && return 0
+    return 1
+  fi
+
+  kill -TERM -- "-$process_group" 2>/dev/null || true
+  local deadline=$((SECONDS + grace_seconds))
+  while ((SECONDS < deadline)); do
+    if session_group_state "$process_group" "$session_id"; then
+      sleep 0.1
+    else
+      state=$?
+      [[ "$state" == "1" ]] && return 0
+      return 1
+    fi
+  done
+
+  if session_group_state "$process_group" "$session_id"; then
+    state=0
+  else
+    state=$?
+    [[ "$state" == "1" ]] && return 0
+    return 1
+  fi
+  kill -KILL -- "-$process_group" 2>/dev/null || true
+  deadline=$((SECONDS + grace_seconds))
+  while ((SECONDS < deadline)); do
+    if session_group_state "$process_group" "$session_id"; then
+      sleep 0.1
+    else
+      state=$?
+      [[ "$state" == "1" ]] && return 0
+      return 1
+    fi
+  done
+  if session_group_state "$process_group" "$session_id" >/dev/null 2>&1; then
+    return 1
+  else
+    state=$?
+    [[ "$state" == "1" ]]
+  fi
+}
+
+valid_session_ready_path() {
+  local ready_path="$1"
+  [[ -n "$BOUND_SESSION_STATE_DIR" \
+    && "$ready_path" == "$BOUND_SESSION_STATE_DIR"/session-*.ready \
+    && "${ready_path##*/}" =~ ^session-[0-9]+-[0-9]+\.ready$ ]]
+}
+
+cleanup_bounded_session() {
+  local leader_pid="$1"
+  local process_group="$2"
+  local session_id="$3"
+  local marker="$4"
+  local ready_path="$5"
+  if [[ -n "$process_group" ]]; then
+    terminate_owned_session_group "$leader_pid" "$process_group" "$session_id" \
+      "$TIMEOUT_KILL_GRACE_SECONDS" || true
+  else
+    terminate_exact_child "$leader_pid" "$TIMEOUT_KILL_GRACE_SECONDS"
+  fi
+  wait "$leader_pid" 2>/dev/null || true
+  [[ -z "$marker" ]] || rm -f -- "$marker"
+  valid_session_ready_path "$ready_path" && rm -f -- "$ready_path"
+}
+
 run_with_timeout() (
   local timeout_seconds="$1"
   shift
   [[ "$timeout_seconds" =~ ^[0-9]+$ ]] && ((timeout_seconds > 0)) || return 2
   (($# > 0)) || return 2
+  [[ -x "$ROOT_DIR/tool/run_in_session.rb" \
+    && -n "$BOUND_SESSION_STATE_DIR" && -d "$BOUND_SESSION_STATE_DIR" ]] || return 125
 
-  "$@" <&0 &
+  local ready_path="$BOUND_SESSION_STATE_DIR/session-${BASHPID:-$$}-$RANDOM.ready"
+  ruby "$ROOT_DIR/tool/run_in_session.rb" "$ready_path" -- "$@" <&0 &
   local child_pid=$!
   local child_marker=""
   if [[ -n "$BOUND_CHILD_REGISTRY" ]]; then
     child_marker="$BOUND_CHILD_REGISTRY/$child_pid"
-    : >"$child_marker"
+    printf 'pending %s\n' "$ready_path" >"$child_marker"
   fi
-  trap 'terminate_exact_child "$child_pid" "$TIMEOUT_KILL_GRACE_SECONDS"; [[ -z "$child_marker" ]] || rm -f -- "$child_marker"' EXIT
+  local process_group=""
+  local session_id=""
+  trap 'cleanup_bounded_session "$child_pid" "$process_group" "$session_id" "$child_marker" "$ready_path"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
+  local handshake_deadline=$((SECONDS + 2))
+  while [[ ! -s "$ready_path" ]] && kill -0 "$child_pid" 2>/dev/null; do
+    ((SECONDS < handshake_deadline)) || break
+    sleep 0.05
+  done
+  local handshake_pid extra=""
+  if [[ ! -s "$ready_path" ]] \
+    || ! read -r handshake_pid process_group session_id extra <"$ready_path" \
+    || [[ -n "$extra" || "$handshake_pid" != "$child_pid" ]] \
+    || ! session_numbers_are_safe "$child_pid" "$process_group" "$session_id"; then
+    cleanup_bounded_session "$child_pid" "" "" "$child_marker" "$ready_path"
+    child_pid=""
+    child_marker=""
+    ready_path=""
+    trap - EXIT INT TERM
+    return 125
+  fi
+  local handshake_state=0
+  if session_identity_is_safe "$child_pid" "$process_group" "$session_id"; then
+    handshake_state=0
+  elif session_group_state "$process_group" "$session_id"; then
+    handshake_state=0
+  else
+    handshake_state=$?
+    if [[ "$handshake_state" == "1" ]]; then
+      local fast_status
+      if wait "$child_pid"; then
+        fast_status=0
+      else
+        fast_status=$?
+      fi
+      child_pid=""
+      [[ -z "$child_marker" ]] || rm -f -- "$child_marker"
+      child_marker=""
+      valid_session_ready_path "$ready_path" && rm -f -- "$ready_path"
+      ready_path=""
+      trap - EXIT INT TERM
+      return "$fast_status"
+    fi
+    cleanup_bounded_session "$child_pid" "" "" "$child_marker" "$ready_path"
+    child_pid=""
+    child_marker=""
+    ready_path=""
+    trap - EXIT INT TERM
+    return 125
+  fi
+  [[ -z "$child_marker" ]] \
+    || printf 'session %s %s %s %s\n' "$child_pid" "$process_group" "$session_id" "$ready_path" >"$child_marker"
+
   local deadline=$((SECONDS + timeout_seconds))
-  while kill -0 "$child_pid" 2>/dev/null; do
+  local state
+  while true; do
+    if session_group_state "$process_group" "$session_id"; then
+      state=0
+    else
+      state=$?
+      [[ "$state" == "1" ]] && break
+      cleanup_bounded_session "$child_pid" "$process_group" "$session_id" "$child_marker" "$ready_path"
+      child_pid=""
+      child_marker=""
+      ready_path=""
+      trap - EXIT INT TERM
+      return 125
+    fi
     if ((SECONDS >= deadline)); then
-      terminate_exact_child "$child_pid" "$TIMEOUT_KILL_GRACE_SECONDS"
+      terminate_owned_session_group "$child_pid" "$process_group" "$session_id" \
+        "$TIMEOUT_KILL_GRACE_SECONDS" || return 125
       wait "$child_pid" 2>/dev/null || true
       child_pid=""
       [[ -z "$child_marker" ]] || rm -f -- "$child_marker"
+      child_marker=""
+      valid_session_ready_path "$ready_path" && rm -f -- "$ready_path"
+      ready_path=""
       trap - EXIT INT TERM
       return 124
     fi
@@ -104,9 +303,62 @@ run_with_timeout() (
   fi
   child_pid=""
   [[ -z "$child_marker" ]] || rm -f -- "$child_marker"
+  child_marker=""
+  valid_session_ready_path "$ready_path" && rm -f -- "$ready_path"
+  ready_path=""
   trap - EXIT INT TERM
   return "$status"
 )
+
+pid_descends_from_harness() {
+  local current="$1"
+  local _
+  [[ "$current" =~ ^[0-9]+$ ]] || return 1
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    [[ "$current" == "$HARNESS_PID" ]] && return 0
+    current="$(ps -p "$current" -o ppid= 2>/dev/null | tr -d ' ')"
+    [[ "$current" =~ ^[0-9]+$ && "$current" != "0" ]] || return 1
+  done
+  return 1
+}
+
+terminate_registered_bounded_children() {
+  local marker pid kind marker_pid process_group session_id ready_path extra
+  [[ -d "$BOUND_CHILD_REGISTRY" ]] || return 0
+  for marker in "$BOUND_CHILD_REGISTRY"/*; do
+    [[ -f "$marker" ]] || continue
+    pid="${marker##*/}"
+    kind=""
+    marker_pid=""
+    process_group=""
+    session_id=""
+    ready_path=""
+    extra=""
+    read -r kind marker_pid process_group session_id ready_path extra <"$marker" || true
+    if [[ "$kind" == "session" && -z "$extra" && "$marker_pid" == "$pid" \
+      && -n "$ready_path" ]] \
+      && valid_session_ready_path "$ready_path" \
+      && session_numbers_are_safe "$pid" "$process_group" "$session_id"; then
+      terminate_owned_session_group "$pid" "$process_group" "$session_id" \
+        "$TIMEOUT_KILL_GRACE_SECONDS" || true
+    elif [[ "$kind" == "pending" ]]; then
+      ready_path="$marker_pid"
+      if valid_session_ready_path "$ready_path" && [[ -s "$ready_path" ]] \
+        && read -r marker_pid process_group session_id extra <"$ready_path" \
+        && [[ -z "$extra" && "$marker_pid" == "$pid" ]] \
+        && session_numbers_are_safe "$pid" "$process_group" "$session_id"; then
+        terminate_owned_session_group "$pid" "$process_group" "$session_id" \
+          "$TIMEOUT_KILL_GRACE_SECONDS" || true
+      elif pid_descends_from_harness "$pid"; then
+        terminate_exact_child "$pid" "$TIMEOUT_KILL_GRACE_SECONDS"
+      fi
+    elif pid_descends_from_harness "$pid"; then
+      terminate_exact_child "$pid" "$TIMEOUT_KILL_GRACE_SECONDS"
+    fi
+    valid_session_ready_path "$ready_path" && rm -f -- "$ready_path"
+    rm -f -- "$marker"
+  done
+}
 
 adb_for_timeout() {
   local timeout_seconds="$1"
@@ -119,6 +371,51 @@ adb_for() {
   local serial="$1"
   shift
   adb_for_timeout "$ADB_TIMEOUT_SECONDS" "$serial" "$@"
+}
+
+capture_adb_devices() {
+  local output_variable="$1"
+  local captured_listing
+  if ! captured_listing="$(run_with_timeout "$ADB_TIMEOUT_SECONDS" "$ADB_BIN" devices 2>&1)"; then
+    return 2
+  fi
+  local saw_header=0 line
+  while IFS= read -r line; do
+    [[ "$line" == "List of devices attached" ]] && saw_header=1
+  done <<<"$captured_listing"
+  ((saw_header == 1)) || return 2
+  printf -v "$output_variable" '%s' "$captured_listing"
+}
+
+find_managed_avd_serial() {
+  local avd_name="$1"
+  local devices_result="$2"
+  local serial state _ running_name found=""
+  while read -r serial state _; do
+    [[ "$serial" == emulator-* && "$state" == "device" ]] || continue
+    if ! running_name="$(adb_for "$serial" shell getprop ro.boot.qemu.avd_name 2>/dev/null | tr -d '\r')"; then
+      return 2
+    fi
+    if [[ "$running_name" == "$avd_name" ]]; then
+      [[ -z "$found" ]] || return 2
+      found="$serial"
+    fi
+  done <<<"$devices_result"
+  [[ -n "$found" ]] || return 1
+  printf '%s\n' "$found"
+}
+
+managed_avd_start_preflight() {
+  local avd_name="$1"
+  local devices_listing existing_serial status
+  capture_adb_devices devices_listing || return 2
+  if existing_serial="$(find_managed_avd_serial "$avd_name" "$devices_listing")"; then
+    return 1
+  else
+    status=$?
+    [[ "$status" == "1" ]] || return 2
+  fi
+  return 0
 }
 
 provenance_contract() {
@@ -450,7 +747,14 @@ dump_ui_remote() {
 self_test() {
   local fixture_dir
   fixture_dir="$(mktemp -d)"
-  trap 'rm -rf "$fixture_dir"' RETURN
+  BOUND_CHILD_REGISTRY="$fixture_dir/bounded-children"
+  BOUND_SESSION_STATE_DIR="$fixture_dir/bounded-sessions"
+  mkdir "$BOUND_CHILD_REGISTRY" "$BOUND_SESSION_STATE_DIR"
+  local session_fixture_direct_pid=""
+  local session_fixture_grandchild_pid=""
+  local session_fixture_unrelated_pid=""
+  local session_fixture_wrapper_pid=""
+  trap 'terminate_exact_child "$session_fixture_wrapper_pid" 1; terminate_exact_child "$session_fixture_direct_pid" 1; terminate_exact_child "$session_fixture_grandchild_pid" 1; terminate_exact_child "$session_fixture_unrelated_pid" 1; rm -rf "$fixture_dir"' RETURN
   local fixture="$fixture_dir/ui.xml"
   local opponent_id="opponent-22222222-2222-4222-8222-222222222222"
   printf '%s\n' \
@@ -573,8 +877,145 @@ self_test() {
   export FAKE_DEVICE_ROOT="$fake_device_root"
   export FAKE_ADB_PID_FILE="$fake_pid_file"
   ADB_BIN="$fake_adb"
+  ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
+
+  local session_tree="$ROOT_DIR/tool/fixtures/e2e_session_tree.sh"
+  local tree_pid_file="$fixture_dir/session-tree.pid"
+  local timeout_status=0
+  export GAMEBOX_E2E_TREE_PID_FILE="$tree_pid_file"
+  export GAMEBOX_E2E_TREE_MODE=ignore-term
+  local timeout_output
+  local timeout_started=$SECONDS
+  if timeout_output="$(run_with_timeout 1 "$session_tree" 2>/dev/null)"; then
+    printf 'descendant watchdog fixture unexpectedly succeeded\n' >&2
+    return 1
+  else
+    timeout_status=$?
+  fi
+  [[ "$timeout_status" == "124" && -s "$tree_pid_file" ]] \
+    || { printf 'descendant watchdog fixture did not time out deterministically\n' >&2; return 1; }
+  [[ -z "$timeout_output" ]] \
+    || { printf 'descendant watchdog fixture emitted unexpected output\n' >&2; return 1; }
+  ((SECONDS - timeout_started <= 5)) \
+    || { printf 'descendant watchdog held command-substitution stdout open\n' >&2; return 1; }
+  read -r session_fixture_direct_pid session_fixture_grandchild_pid <"$tree_pid_file"
+  if kill -0 "$session_fixture_direct_pid" 2>/dev/null \
+    || kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+    printf 'descendant survived process watchdog\n' >&2
+    return 1
+  fi
+  session_fixture_direct_pid=""
+  session_fixture_grandchild_pid=""
+
+  ruby -e 'Signal.trap("TERM") { exit 0 }; sleep 30' >/dev/null 2>&1 &
+  session_fixture_unrelated_pid=$!
+  local descendant_fixture_count="${GAMEBOX_E2E_DESCENDANT_FIXTURE_COUNT:-3}"
+  [[ "$descendant_fixture_count" =~ ^[1-9][0-9]*$ && "$descendant_fixture_count" -le 50 ]] \
+    || { printf 'descendant watchdog count fixture is invalid\n' >&2; return 1; }
+  local descendant_index
+  for ((descendant_index = 1; descendant_index <= descendant_fixture_count; descendant_index++)); do
+    tree_pid_file="$fixture_dir/session-tree-$descendant_index.pid"
+    export GAMEBOX_E2E_TREE_PID_FILE="$tree_pid_file"
+    if ((descendant_index % 2 == 0)); then
+      export GAMEBOX_E2E_TREE_MODE=ignore-term
+    else
+      export GAMEBOX_E2E_TREE_MODE=normal
+    fi
+    timeout_status=0
+    if timeout_output="$(run_with_timeout 1 "$session_tree" 2>/dev/null)"; then
+      printf 'high-count descendant watchdog unexpectedly succeeded\n' >&2
+      return 1
+    else
+      timeout_status=$?
+    fi
+    [[ "$timeout_status" == "124" && -s "$tree_pid_file" ]] \
+      || { printf 'high-count descendant watchdog was not deterministic\n' >&2; return 1; }
+    read -r session_fixture_direct_pid session_fixture_grandchild_pid <"$tree_pid_file"
+    if kill -0 "$session_fixture_direct_pid" 2>/dev/null \
+      || kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+      printf 'high-count descendant survived process watchdog\n' >&2
+      return 1
+    fi
+    session_fixture_direct_pid=""
+    session_fixture_grandchild_pid=""
+  done
+  kill -0 "$session_fixture_unrelated_pid" 2>/dev/null \
+    || { printf 'watchdog killed an unrelated process\n' >&2; return 1; }
+
+  tree_pid_file="$fixture_dir/session-tree-exit-cleanup.pid"
+  export GAMEBOX_E2E_TREE_PID_FILE="$tree_pid_file"
+  export GAMEBOX_E2E_TREE_MODE=ignore-term
+  run_with_timeout 30 "$session_tree" >/dev/null 2>&1 &
+  session_fixture_wrapper_pid=$!
+  local fixture_ready=0 fixture_wait_index
+  for fixture_wait_index in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [[ -s "$tree_pid_file" ]]; then
+      fixture_ready=1
+      break
+    fi
+    sleep 0.05
+  done
+  ((fixture_ready == 1)) \
+    || { printf 'EXIT cleanup descendant fixture did not start\n' >&2; return 1; }
+  read -r session_fixture_direct_pid session_fixture_grandchild_pid <"$tree_pid_file"
+  timeout_started=$SECONDS
+  kill -TERM "$session_fixture_wrapper_pid"
+  wait "$session_fixture_wrapper_pid" 2>/dev/null || true
+  session_fixture_wrapper_pid=""
+  terminate_registered_bounded_children
+  for ((fixture_wait_index = 1; fixture_wait_index <= 50; fixture_wait_index++)); do
+    if ! kill -0 "$session_fixture_direct_pid" 2>/dev/null \
+      && ! kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  ((SECONDS - timeout_started <= 5)) \
+    || { printf 'EXIT cleanup exceeded its bounded grace\n' >&2; return 1; }
+  if kill -0 "$session_fixture_direct_pid" 2>/dev/null \
+    || kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+    printf 'EXIT cleanup left a session descendant alive\n' >&2
+    return 1
+  fi
+  session_fixture_direct_pid=""
+  session_fixture_grandchild_pid=""
+
+  terminate_exact_child "$session_fixture_unrelated_pid" 1
+  wait "$session_fixture_unrelated_pid" 2>/dev/null || true
+  session_fixture_unrelated_pid=""
+  unset GAMEBOX_E2E_TREE_PID_FILE GAMEBOX_E2E_TREE_MODE
+
+  local captured_devices=""
+  export FAKE_ADB_MODE=devices-fail
+  if managed_avd_start_preflight "$MANAGED_AVD_B"; then
+    printf 'nonzero adb devices fixture allowed an AVD start\n' >&2
+    return 1
+  fi
+  export FAKE_ADB_MODE=devices-hang
+  timeout_started=$SECONDS
+  if managed_avd_start_preflight "$MANAGED_AVD_B"; then
+    printf 'blocking adb devices fixture allowed an AVD start\n' >&2
+    return 1
+  fi
+  ((SECONDS - timeout_started <= 5)) \
+    || { printf 'adb devices watchdog exceeded its injected bound\n' >&2; return 1; }
+  if [[ -s "$fake_pid_file" ]] && kill -0 "$(<"$fake_pid_file")" 2>/dev/null; then
+    printf 'blocking adb devices process survived watchdog\n' >&2
+    return 1
+  fi
+  unset FAKE_ADB_MODE
+  capture_adb_devices captured_devices \
+    || { printf 'normal adb devices fixture was rejected\n' >&2; return 1; }
+  [[ "$(find_managed_avd_serial "$MANAGED_AVD_A" "$captured_devices")" == "emulator-5560" ]] \
+    || { printf 'owned AVD serial fixture was not recognized\n' >&2; return 1; }
+  if managed_avd_start_preflight "$MANAGED_AVD_A"; then
+    printf 'already-running owned AVD fixture allowed a second start\n' >&2
+    return 1
+  fi
+  managed_avd_start_preflight "$MANAGED_AVD_B" \
+    || { printf 'absent managed AVD fixture was not startable\n' >&2; return 1; }
 
   local private_secret='FixtureInvite_1234567890'
   local private_secret_base64
@@ -657,6 +1098,10 @@ self_test() {
   fi
   grep -F 'run_with_timeout' <<<"$runtime_source" >/dev/null \
     || { printf 'process-level command watchdog is missing\n' >&2; return 1; }
+  if grep -F 'done < <(run_with_timeout' <<<"$runtime_source" >/dev/null; then
+    printf 'adb devices status is still swallowed by process substitution\n' >&2
+    return 1
+  fi
   grep -F 'cleanup_remote_ui_dump' <<<"$runtime_source" >/dev/null \
     || { printf 'remote UI dump cleanup contract is missing\n' >&2; return 1; }
   grep -F 'apkSha256' <<<"$runtime_source" >/dev/null \
@@ -700,8 +1145,10 @@ readonly RUN_ID
 TEMP_DIR="$(mktemp -d)"
 readonly TEMP_DIR
 BOUND_CHILD_REGISTRY="$TEMP_DIR/bounded-children"
-mkdir "$BOUND_CHILD_REGISTRY"
+BOUND_SESSION_STATE_DIR="$TEMP_DIR/bounded-sessions"
+mkdir "$BOUND_CHILD_REGISTRY" "$BOUND_SESSION_STATE_DIR"
 readonly BOUND_CHILD_REGISTRY
+readonly BOUND_SESSION_STATE_DIR
 ARTIFACT_DIR="$ROOT_DIR/artifacts/e2e/$RUN_ID"
 mkdir -p "$ARTIFACT_DIR"
 readonly ARTIFACT_DIR
@@ -765,31 +1212,6 @@ stop_owned_process() {
 bounded_helper_uninstall() {
   local serial="$1"
   adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" uninstall "$TEST_PACKAGE" >/dev/null 2>&1 || true
-}
-
-pid_descends_from_harness() {
-  local current="$1"
-  local _
-  [[ "$current" =~ ^[0-9]+$ ]] || return 1
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-    [[ "$current" == "$HARNESS_PID" ]] && return 0
-    current="$(ps -p "$current" -o ppid= 2>/dev/null | tr -d ' ')"
-    [[ "$current" =~ ^[0-9]+$ && "$current" != "0" ]] || return 1
-  done
-  return 1
-}
-
-terminate_registered_bounded_children() {
-  local marker pid
-  [[ -d "$BOUND_CHILD_REGISTRY" ]] || return 0
-  for marker in "$BOUND_CHILD_REGISTRY"/*; do
-    [[ -f "$marker" ]] || continue
-    pid="${marker##*/}"
-    if pid_descends_from_harness "$pid"; then
-      terminate_exact_child "$pid" "$TIMEOUT_KILL_GRACE_SECONDS"
-    fi
-    rm -f -- "$marker"
-  done
 }
 
 helper_package_installed() {
@@ -1008,13 +1430,16 @@ wait_for_boot() {
 
 assert_managed_avd_not_running() {
   local avd_name="$1"
-  local serial
-  while read -r serial _; do
-    [[ "$serial" == emulator-* ]] || continue
-    if [[ "$(adb_for "$serial" shell getprop ro.boot.qemu.avd_name 2>/dev/null | tr -d '\r')" == "$avd_name" ]]; then
-      fail "$avd_name is already running as $serial; refusing to reuse or stop it"
-    fi
-  done < <(run_with_timeout "$ADB_TIMEOUT_SECONDS" "$ADB_BIN" devices | tail -n +2)
+  local devices_listing existing_serial status
+  capture_adb_devices devices_listing \
+    || fail "adb devices failed or exceeded its ${ADB_TIMEOUT_SECONDS}s bound; refusing to start $avd_name"
+  if existing_serial="$(find_managed_avd_serial "$avd_name" "$devices_listing")"; then
+    fail "$avd_name is already running as $existing_serial; refusing to reuse or stop it"
+  else
+    status=$?
+    [[ "$status" == "1" ]] \
+      || fail "managed AVD inspection failed; refusing to start $avd_name"
+  fi
 }
 
 start_managed_emulator() {

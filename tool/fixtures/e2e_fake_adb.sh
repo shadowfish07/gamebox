@@ -8,6 +8,43 @@ for argument in "$@"; do
   printf 'arg=%s\n' "$argument" >>"$FAKE_ADB_LOG"
 done
 
+serial=""
+if [ "${1:-}" = "-s" ] && [ "$#" -ge 2 ]; then
+  serial="$2"
+fi
+
+if [ "$*" = "devices" ]; then
+  case "${FAKE_ADB_MODE:-}" in
+    devices-fail)
+      exit 7
+      ;;
+    devices-hang)
+      printf '%s\n' "$$" >"${FAKE_ADB_PID_FILE:?}"
+      trap '' TERM
+      while :; do sleep 1; done
+      ;;
+    *)
+      printf '%s\n' \
+        'List of devices attached' \
+        'emulator-5560 device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64' \
+        'emulator-5554 device product:sdk_gphone64_arm64 model:unrelated' \
+        ''
+      exit 0
+      ;;
+  esac
+fi
+
+if [ "$serial" = "emulator-5560" ] \
+  && [ "$*" = "-s emulator-5560 shell getprop ro.boot.qemu.avd_name" ]; then
+  printf 'Gamebox_A_API_36\n'
+  exit 0
+fi
+if [ "$serial" = "emulator-5554" ] \
+  && [ "$*" = "-s emulator-5554 shell getprop ro.boot.qemu.avd_name" ]; then
+  printf 'Unrelated_API_36\n'
+  exit 0
+fi
+
 last_argument=""
 for argument in "$@"; do
   last_argument="$argument"
