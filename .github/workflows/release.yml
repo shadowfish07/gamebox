@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to publish, for example v1.0.0
+        description: Version to build, for example v1.0.2
         required: true
         type: string
+      publish:
+        description: Upload the tested assets to the existing version tag
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -32,10 +37,17 @@ jobs:
         id: release
         env:
           DISPATCH_TAG: ${{ inputs.tag }}
+          DISPATCH_PUBLISH: ${{ inputs.publish }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          source_ref="${tag}"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             tag="${DISPATCH_TAG}"
+            if [[ "${DISPATCH_PUBLISH}" != "true" ]]; then
+              source_ref="${GITHUB_SHA}"
+            else
+              source_ref="${tag}"
+            fi
           fi
           if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release tag: ${tag}" >&2
@@ -43,10 +55,11 @@ jobs:
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${source_ref}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
         with:
-          ref: ${{ steps.release.outputs.tag }}
+          ref: ${{ steps.release.outputs.source_ref }}
           fetch-depth: 0
 
       - uses: actions/setup-go@v6
@@ -85,8 +98,10 @@ jobs:
             exit 1
           fi
 
-      - name: Verify repository
-        run: bash tool/verify.sh
+      - name: Run source tests
+        run: |
+          bash tool/verify_fast.sh
+          (cd app/android && ./gradlew :app:testDebugUnitTest)
 
       - name: Configure release signing
         env:
@@ -139,12 +154,36 @@ jobs:
             verify --verbose --print-certs "${apk}"
           (cd release-assets && sha256sum "$(basename "${apk}")" "$(basename "${bundle}")" > checksums.txt)
 
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Smoke-test exact signed release APK
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          avd-name: Gamebox_Release_CI_API_35
+          disk-size: 6000M
+          disable-animations: true
+          script: >-
+            GAMEBOX_ANDROID_SERIAL=emulator-5554
+            bash tool/smoke_android_release_apk.sh
+            "release-assets/gamebox-v${{ steps.release.outputs.version }}-android.apk"
+
       - name: Publish GitHub Release
+        if: github.event_name == 'push' || inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
+          (cd release-assets && sha256sum --check checksums.txt)
           prerelease=()
           if [[ "${RELEASE_VERSION}" == *-* ]]; then
             prerelease=(--prerelease)
