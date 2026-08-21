@@ -171,6 +171,7 @@ jobs:
           avd-name: Gamebox_Release_CI_API_35
           disk-size: 6000M
           disable-animations: true
+          emulator-options: -no-window -gpu host -no-snapshot -noaudio -no-boot-anim
           script: >-
             GAMEBOX_ANDROID_SERIAL=emulator-5554
             bash tool/smoke_android_release_apk.sh
