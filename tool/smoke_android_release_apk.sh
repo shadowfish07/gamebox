@@ -67,7 +67,9 @@ fi
 
 (
   cd "$ROOT_DIR/app/android"
-  ./gradlew :release-smoke:assembleRelease
+  # Signing material is intentionally created after source tests in release CI.
+  # Never restore a helper APK that was cached earlier with the debug signer.
+  ./gradlew --no-build-cache --rerun-tasks :release-smoke:assembleRelease
 )
 readonly TEST_APK="$ROOT_DIR/app/build/release-smoke/outputs/apk/release/release-smoke-release.apk"
 [[ -f "$TEST_APK" ]] || {
@@ -83,7 +85,9 @@ signer_digest() {
 main_signer="$(signer_digest "$APK")"
 test_signer="$(signer_digest "$TEST_APK")"
 [[ -n "$main_signer" && "$main_signer" == "$test_signer" ]] || {
-  echo "Release APK and instrumentation APK are not signed by the same certificate." >&2
+  echo "Release APK and instrumentation APK are not signed by the same certificate:" >&2
+  echo "  main=$main_signer" >&2
+  echo "  test=$test_signer" >&2
   exit 1
 }
 
