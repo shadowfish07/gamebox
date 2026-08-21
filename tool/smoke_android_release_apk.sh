@@ -6,6 +6,7 @@ readonly GAME_PROCESS="$PACKAGE:game"
 readonly TEST_PACKAGE="$PACKAGE.release_smoke"
 readonly TEST_RUNNER="$TEST_PACKAGE/androidx.test.runner.AndroidJUnitRunner"
 readonly TEST_METHOD="me.zqydev.gamebox.release_smoke.ReleaseGodotSmokeTest#launchPackagedGodotHostSmoke"
+readonly MAIN_LOOP_MARKER="GAMEBOX_GODOT_MAIN_LOOP_STARTED"
 readonly READY_MARKER="GAMEBOX_GODOT_READY"
 readonly EXITING_MARKER="GAMEBOX_GODOT_EXITING"
 readonly LOG_TAG="GameboxSmoke"
@@ -25,6 +26,13 @@ if [[ ! -f "$APK" ]]; then
 fi
 APK="$(cd "$(dirname "$APK")" && pwd)/$(basename "$APK")"
 readonly APK
+
+RENDERER_LIMITED_SMOKE="${GAMEBOX_ALLOW_RENDERER_LIMITED_SMOKE:-false}"
+if [[ "$RENDERER_LIMITED_SMOKE" != "true" && "$RENDERER_LIMITED_SMOKE" != "false" ]]; then
+  echo "GAMEBOX_ALLOW_RENDERER_LIMITED_SMOKE must be true or false." >&2
+  exit 2
+fi
+readonly RENDERER_LIMITED_SMOKE
 
 SERIAL="${GAMEBOX_ANDROID_SERIAL:-}"
 if [[ -z "$SERIAL" || ! "$SERIAL" =~ ^[A-Za-z0-9._:-]+$ ]]; then
@@ -179,9 +187,8 @@ for cycle in 1 2; do
 
   logs="$(read_all_logcat | gamebox_logs_after_marker "$boundary")"
   # Android force-stops every process in the instrumentation target package when
-  # a target-attached test finishes. READY -> EXITING below proves Godot reached
-  # its own controlled shutdown first, so that specific package-manager cleanup
-  # is not a low-memory or application crash signal.
+  # a target-attached test finishes, so that specific package-manager cleanup is
+  # not a low-memory or application crash signal.
   crash_candidate_logs="$(grep -v 'due to finished inst' <<<"$logs" || true)"
   bad_logs="$(gamebox_find_crash_evidence \
     "$PACKAGE" "$GAME_PROCESS" "$TEST_PACKAGE" "__no_observed_pid__" \
@@ -191,16 +198,34 @@ for cycle in 1 2; do
     echo "Release APK crashed or ANRed in cycle $cycle." >&2
     exit 1
   fi
-  gamebox_assert_markers_in_order "$READY_MARKER" "$EXITING_MARKER" <<<"$logs" || {
+  grep -F "$MAIN_LOOP_MARKER" <<<"$logs" >/dev/null || {
     printf '%s\n' "$logs" | grep -E "$PACKAGE|Godot|godot|Fatal signal|FATAL EXCEPTION|ANR" >&2 || true
-    echo "Release APK did not initialize and exit Godot cleanly in cycle $cycle." >&2
+    echo "Release APK did not reach the Godot native main loop in cycle $cycle." >&2
     exit 1
   }
+  if [[ "$RENDERER_LIMITED_SMOKE" == "false" ]]; then
+    # READY -> EXITING proves the packaged scene rendered and reached its own
+    # controlled shutdown before instrumentation cleanup.
+    gamebox_assert_markers_in_order "$READY_MARKER" "$EXITING_MARKER" <<<"$logs" || {
+      printf '%s\n' "$logs" | grep -E "$PACKAGE|Godot|godot|Fatal signal|FATAL EXCEPTION|ANR" >&2 || true
+      echo "Release APK did not initialize and exit Godot cleanly in cycle $cycle." >&2
+      exit 1
+    }
+  fi
   [[ -z "$("${ADB[@]}" shell pidof "$GAME_PROCESS" 2>/dev/null | tr -d '\r')" ]] || {
     echo "Release APK left $GAME_PROCESS running after cycle $cycle." >&2
     exit 1
   }
-  echo "release APK cycle $cycle passed: Godot initialized and exited cleanly"
+  if [[ "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
+    echo "release APK cycle $cycle passed: Godot native main loop started without crash or ANR"
+  else
+    echo "release APK cycle $cycle passed: Godot scene initialized and exited cleanly"
+  fi
 done
 
-echo "Exact signed release APK smoke passed twice on $SERIAL: $APK"
+if [[ "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
+  echo "Exact signed release APK native-startup smoke passed twice on $SERIAL: $APK"
+  echo "Renderer-limited mode does not claim that the packaged Godot scene reached READY."
+else
+  echo "Exact signed release APK scene smoke passed twice on $SERIAL: $APK"
+fi

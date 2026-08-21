@@ -209,8 +209,12 @@ once, stages the final assets and checksums, then starts an API 35 x86_64
 emulator. `tool/smoke_android_release_apk.sh` installs the staged APK, signs a
 release-targeting instrumentation helper with the same certificate, and starts
 the packaged non-exported `GameActivity` twice with Godot's self-terminating
-host-smoke arguments. Both runs must log `GAMEBOX_GODOT_READY` followed by
-`GAMEBOX_GODOT_EXITING` without a Java/native crash or ANR. The checksum is
+host-smoke arguments. On an ARM64 device, both runs must log
+`GAMEBOX_GODOT_MAIN_LOOP_STARTED`, `GAMEBOX_GODOT_READY`, then
+`GAMEBOX_GODOT_EXITING` without a Java/native crash or ANR. GitHub's x86_64
+emulator runs the same APK twice in explicitly renderer-limited mode: it must
+reach `GAMEBOX_GODOT_MAIN_LOOP_STARTED` without a crash or ANR, but does not
+claim that SwiftShader rendered the packaged scene. The checksum is
 checked again immediately before those exact staged files are uploaded.
 Manual workflow runs default to a non-publishing dry run against the current
 default-branch commit; publishing an existing tag requires explicitly enabling

@@ -2,6 +2,7 @@ package me.zqydev.gamebox
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import org.godotengine.godot.GodotActivity
 
 class GameActivity : GodotActivity() {
@@ -30,6 +31,7 @@ class GameActivity : GodotActivity() {
     }
 
     override fun onGodotMainLoopStarted() {
+        Log.i(LOG_TAG, MAIN_LOOP_STARTED_MARKER)
         privateCommandLineArgs.clear()
     }
 
@@ -44,6 +46,8 @@ class GameActivity : GodotActivity() {
     }
 
     private companion object {
+        const val LOG_TAG = "GameboxGodot"
+        const val MAIN_LOOP_STARTED_MARKER = "GAMEBOX_GODOT_MAIN_LOOP_STARTED"
         const val NEW_INSTANCE_UNSUPPORTED = -1
     }
 }
