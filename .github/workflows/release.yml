@@ -22,6 +22,7 @@ env:
   FLUTTER_VERSION: "3.35.1"
   JAVA_VERSION: "17"
   GODOT_VERSION: "4.7.0"
+  GAMEBOX_API_BASE_URL: "https://gamebox.zqydev.me"
 
 jobs:
   build-and-release:
@@ -116,10 +117,12 @@ jobs:
         run: |
           flutter build apk --release \
             --build-name="${RELEASE_VERSION}" \
-            --build-number="${GITHUB_RUN_NUMBER}"
+            --build-number="${GITHUB_RUN_NUMBER}" \
+            --dart-define="GAMEBOX_API_BASE_URL=${GAMEBOX_API_BASE_URL}"
           flutter build appbundle --release \
             --build-name="${RELEASE_VERSION}" \
-            --build-number="${GITHUB_RUN_NUMBER}"
+            --build-number="${GITHUB_RUN_NUMBER}" \
+            --dart-define="GAMEBOX_API_BASE_URL=${GAMEBOX_API_BASE_URL}"
 
       - name: Verify and prepare release assets
         env:

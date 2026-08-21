@@ -1,0 +1,12 @@
+tunnel: 498bfaa8-584d-4111-a4fa-13e7deec223c
+credentials-file: __GAMEBOX_TUNNEL_CREDENTIALS__
+protocol: quic
+no-autoupdate: true
+
+ingress:
+  - hostname: gamebox.zqydev.me
+    service: http://127.0.0.1:18080
+    originRequest:
+      connectTimeout: 10s
+      httpHostHeader: gamebox.zqydev.me
+  - service: http_status:404

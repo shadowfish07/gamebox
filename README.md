@@ -142,12 +142,16 @@ Back up the keystore and passwords outside the repository. Every published APK
 must use the same release key. Losing or replacing it prevents installed copies
 from accepting future in-app updates.
 
+Release builds use `https://gamebox.zqydev.me` as their API origin. Debug builds
+retain the emulator-friendly `http://10.0.2.2:8080` default unless overridden
+with `GAMEBOX_API_BASE_URL`.
+
 For a stable release, update `app/pubspec.yaml` to the intended version, commit
 and push it, then create and push the matching tag:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 The workflow checks that the tag and pubspec versions match, runs the complete
@@ -156,6 +160,24 @@ signature, generates `checksums.txt`, and publishes all three files to GitHub
 Releases. A manually dispatched run requires an already-existing matching tag.
 GitHub's `releases/latest` endpoint excludes drafts and prereleases, so only a
 stable published release is offered automatically to normal installations.
+
+## macOS backend deployment
+
+`deploy/macos/install.sh` builds and installs `gameboxd` and `gameboxctl` under
+`~/.local/libexec/gamebox`, stores the JWT secret and token pepper in the login
+Keychain, and keeps the SQLite database under
+`~/Library/Application Support/Gamebox/server`. It installs LaunchAgents for
+the server, five-minute local/public health checks, and daily verified SQLite
+backups retained for 14 days.
+
+```bash
+zsh deploy/macos/install.sh
+curl --fail --silent http://127.0.0.1:18080/healthz
+```
+
+The Cloudflare Tunnel public hostname `gamebox.zqydev.me` must route to
+`http://127.0.0.1:18080`. The installer manages a dedicated Gamebox Tunnel
+LaunchAgent so failures or configuration changes do not affect other hostnames.
 
 ## Verification
 
