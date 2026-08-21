@@ -30,20 +30,22 @@ chat, spectating, push notifications, public deployment, or account migration.
 - Go 1.25
 - Godot 4.7 (set `GODOT_BIN` when it is not installed as the macOS app)
 - JDK 17 or newer
-- Android SDK platform 36, `adb`, `emulator`, and accepted Android licenses
+- Android SDK platform 36 and accepted Android licenses
 
-The complete local E2E additionally uses Bash, curl, ffmpeg, Git, jq, lsof,
-OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. It requires the installed
+The complete local E2E additionally requires `adb`, `emulator`, Bash, curl,
+ffmpeg, Git, jq, lsof, OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. It requires the installed
 `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` image. Check
-the toolchain without modifying it:
+the build/CI toolchain or the complete E2E toolchain without modifying it:
 
 ```bash
+bash tool/bootstrap.sh --build-only
 bash tool/bootstrap.sh
 ```
 
 `bootstrap.sh` is deliberately non-destructive: it reports missing versions,
 SDK components, or licenses and exits nonzero; it does not install or accept
-anything.
+anything. `--build-only` omits only the E2E-specific `adb` and emulator checks;
+the no-argument form retains them.
 
 ## Local server
 
@@ -76,7 +78,10 @@ build time when required:
 ```
 
 `GET /healthz` returns exactly `{"status":"ok"}`. The daemon emits JSON-line
-operational logs to stderr and supports graceful `SIGINT`/`SIGTERM` shutdown.
+operational logs to stderr. On the first `SIGINT` or `SIGTERM` it stops accepting
+new HTTP work, allows a 10-second HTTP grace period, then stops workers,
+WebSockets, and SQLite. Once graceful shutdown begins, normal signal handling
+is restored, so a second termination signal force-stops a stuck process.
 
 ## One-time invites and read-only inspection
 
@@ -105,6 +110,9 @@ implementation. It opens a closed database read-only without creating sidecar
 files. For an active WAL database it reads through verified read-only handles
 into a private temporary snapshot, then removes that snapshot. It never
 migrates or repairs the source and does not change source bytes or metadata.
+For both management commands, exit status 0 means success (including help), 1
+means an operational failure, and 2 means invalid syntax; unknown flags and
+extra positional arguments are rejected.
 
 Keep invite output, JWT/pepper values, access and refresh tokens, launch and
 resume tickets, databases, and private input outside logs, shell history,
@@ -123,10 +131,17 @@ bash tool/verify.sh
 
 `verify_fast.sh` runs Go, Flutter, and Godot tests, Flutter analysis, and the
 Android smoke-log parser fixture. `verify.sh` first runs the non-destructive
-bootstrap check, then the fast gate, Kotlin unit tests, a Flutter debug APK
-build, and assertions that the APK includes the Godot runtime while excluding
-Godot tests/editor caches and secret-named or server-secret assets. CI runs
-only `bash tool/verify.sh`; it does not start an emulator.
+build-only bootstrap check, then the fast gate, Kotlin unit tests, a Flutter
+debug APK build, and APK assertions. The APK must contain a non-empty
+`libgodot_android.so` for exactly `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
+It may contain generated Godot imports only as the exact safe
+`assets/.godot/imported/*.ctex` shape; other `.godot` paths and Godot test/editor
+cache paths are rejected. A component-local path classifier rejects suspicious
+secret/token/credential/private-key and test names, while a separate content
+scan rejects the two fixed server-only configuration identifiers
+`GAMEBOX_JWT_SECRET` and `GAMEBOX_TOKEN_PEPPER`. This is not a claim that every
+possible secret value can be recognized. CI runs only `bash tool/verify.sh` and
+does not install or start emulator tooling.
 
 The two-emulator local release gate is:
 

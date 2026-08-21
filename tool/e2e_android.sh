@@ -920,7 +920,7 @@ self_test() {
   session_fixture_direct_pid=""
   session_fixture_grandchild_pid=""
 
-  ruby -e 'Signal.trap("TERM") { exit 0 }; sleep 30' >/dev/null 2>&1 &
+  ruby -e 'Signal.trap("TERM") { exit 0 }; loop { sleep 3600 }' >/dev/null 2>&1 &
   session_fixture_unrelated_pid=$!
   local descendant_fixture_count="${GAMEBOX_E2E_DESCENDANT_FIXTURE_COUNT:-3}"
   [[ "$descendant_fixture_count" =~ ^[1-9][0-9]*$ && "$descendant_fixture_count" -le 50 ]] \
