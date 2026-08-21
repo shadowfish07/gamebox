@@ -79,8 +79,7 @@ readonly TEST_APK="$ROOT_DIR/app/build/release-smoke/outputs/apk/release/release
 
 signer_digest() {
   "$APKSIGNER" verify --print-certs "$1" \
-    | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-    | head -n 1
+    | awk -F': ' '/certificate SHA-256 digest:/ { print $NF; exit }'
 }
 main_signer="$(signer_digest "$APK")"
 test_signer="$(signer_digest "$TEST_APK")"
