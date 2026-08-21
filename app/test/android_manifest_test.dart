@@ -30,4 +30,17 @@ void main() {
       expect(manifest, contains('@xml/godot_provider_paths'));
     },
   );
+
+  test('Android release keeps the Godot JNI bridge names intact', () {
+    final buildScript = File('android/app/build.gradle.kts').readAsStringSync();
+    final proguardRules = File(
+      'android/app/proguard-rules.pro',
+    ).readAsStringSync();
+
+    expect(buildScript, contains('"proguard-rules.pro"'));
+    expect(
+      proguardRules,
+      contains('-keep class org.godotengine.godot.** { *; }'),
+    );
+  });
 }

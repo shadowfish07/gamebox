@@ -123,6 +123,8 @@ jobs:
             --build-name="${RELEASE_VERSION}" \
             --build-number="${GITHUB_RUN_NUMBER}" \
             --dart-define="GAMEBOX_API_BASE_URL=${GAMEBOX_API_BASE_URL}"
+          bash ../tool/verify_release_godot_bridge.sh \
+            build/app/outputs/mapping/release/mapping.txt
 
       - name: Verify and prepare release assets
         env:

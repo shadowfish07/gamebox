@@ -2,7 +2,15 @@
 set -euo pipefail
 
 readonly PACKAGE="me.zqydev.gamebox"
-readonly SMOKE_BUILD_TYPE="profile"
+SMOKE_BUILD_TYPE="${GAMEBOX_ANDROID_BUILD_MODE:-profile}"
+case "$SMOKE_BUILD_TYPE" in
+  profile|release) ;;
+  *)
+    echo "GAMEBOX_ANDROID_BUILD_MODE must be 'profile' or 'release'." >&2
+    exit 2
+    ;;
+esac
+readonly SMOKE_BUILD_TYPE
 readonly MAIN_ACTIVITY="$PACKAGE/.MainActivity"
 readonly GAME_PROCESS="$PACKAGE:game"
 readonly SELECTOR="host-smoke.launch"
@@ -134,15 +142,15 @@ device_abi="$("${ADB[@]}" shell getprop ro.product.cpu.abi | tr -d '\r')"
 case "$device_abi" in
   arm64-v8a)
     flutter_target="android-arm64"
-    apk_name="app-arm64-v8a-profile.apk"
+    apk_name="app-arm64-v8a-$SMOKE_BUILD_TYPE.apk"
     ;;
   armeabi-v7a)
     flutter_target="android-arm"
-    apk_name="app-armeabi-v7a-profile.apk"
+    apk_name="app-armeabi-v7a-$SMOKE_BUILD_TYPE.apk"
     ;;
   x86_64)
     flutter_target="android-x64"
-    apk_name="app-x86_64-profile.apk"
+    apk_name="app-x86_64-$SMOKE_BUILD_TYPE.apk"
     ;;
   *)
     fail "unsupported device ABI '$device_abi'"
@@ -153,7 +161,7 @@ readonly APK="$APK_DIR/$apk_name"
 (
   cd "$ROOT_DIR/app"
   ORG_GRADLE_PROJECT_gameboxAndroidAbi="$device_abi" flutter build apk \
-    --profile \
+    "--$SMOKE_BUILD_TYPE" \
     --split-per-abi \
     --target-platform="$flutter_target" \
     --dart-define=GAMEBOX_HOST_SMOKE=true \
@@ -260,10 +268,12 @@ run_instrumentation() {
   [[ -z "$("${ADB[@]}" shell pidof "$TEST_PACKAGE" 2>/dev/null | tr -d '\r')" ]]
 }
 
-run_instrumentation \
-  "me.zqydev.gamebox.PrivateCommandLineArgsTest" \
-  "$STANDARD_TEST_RUNNER" \
-  || fail "private command-line instrumentation regression failed"
+if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
+  run_instrumentation \
+    "me.zqydev.gamebox.PrivateCommandLineArgsTest" \
+    "$STANDARD_TEST_RUNNER" \
+    || fail "private command-line instrumentation regression failed"
+fi
 
 "${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
   || fail "could not start $MAIN_ACTIVITY"
@@ -410,31 +420,35 @@ if grep -F "$CANARY_TICKET" <<<"$canary_logs" >/dev/null; then
 fi
 assert_no_crash_or_anr "$canary_logs" "$canary_game_pid"
 
-# Kill only the main process while the game stays alive, then verify the kernel-held
-# lease reconstructs the launch gate in the new main process.
-old_main_pid="$initial_pid"
-"${ADB[@]}" shell run-as "$PACKAGE" kill -9 "$old_main_pid" >/dev/null \
-  || fail "could not kill only Flutter main PID $old_main_pid for recreation verification"
-wait_for_old_main_exit "$old_main_pid" \
-  || fail "old Flutter main PID $old_main_pid remained after targeted kill"
-[[ "$(game_pid)" == "$canary_game_pid" ]] \
-  || fail "targeted main-process kill changed the active game PID"
-"${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
-  || fail "could not recreate MainActivity while the game stayed active"
-wait_for_main_resume || fail "MainActivity did not resume for overlap verification"
-recreated_main_pid="$(main_pid)"
-[[ -n "$recreated_main_pid" && "$recreated_main_pid" != "$old_main_pid" ]] \
-  || fail "Flutter main process was not recreated with a new PID"
-[[ "$(game_pid)" == "$canary_game_pid" ]] || fail "canary game PID changed before overlap attempt"
-run_instrumentation "$EXPECT_OVERLAP_TEST" \
-  || fail "recreated main process did not return the deterministic overlap rejection"
-[[ "$(game_pid)" == "$canary_game_pid" ]] || fail "overlap attempt created or replaced the game process"
-canary_logs="$(logs_since_boundary "$canary_boundary")"
-normal_ready_count="$(grep -F -c "$NORMAL_READY_MARKER" <<<"$canary_logs" || true)"
-[[ "$normal_ready_count" -eq 1 ]] || fail "overlap produced $normal_ready_count normal Godot ready markers"
+recreated_main_pid="$initial_pid"
+if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
+  # Kill only the main process while the game stays alive, then verify the kernel-held
+  # lease reconstructs the launch gate in the new main process. Release builds are
+  # intentionally not debuggable, so Android rejects the run-as step there.
+  old_main_pid="$initial_pid"
+  "${ADB[@]}" shell run-as "$PACKAGE" kill -9 "$old_main_pid" >/dev/null \
+    || fail "could not kill only Flutter main PID $old_main_pid for recreation verification"
+  wait_for_old_main_exit "$old_main_pid" \
+    || fail "old Flutter main PID $old_main_pid remained after targeted kill"
+  [[ "$(game_pid)" == "$canary_game_pid" ]] \
+    || fail "targeted main-process kill changed the active game PID"
+  "${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
+    || fail "could not recreate MainActivity while the game stayed active"
+  wait_for_main_resume || fail "MainActivity did not resume for overlap verification"
+  recreated_main_pid="$(main_pid)"
+  [[ -n "$recreated_main_pid" && "$recreated_main_pid" != "$old_main_pid" ]] \
+    || fail "Flutter main process was not recreated with a new PID"
+  [[ "$(game_pid)" == "$canary_game_pid" ]] || fail "canary game PID changed before overlap attempt"
+  run_instrumentation "$EXPECT_OVERLAP_TEST" \
+    || fail "recreated main process did not return the deterministic overlap rejection"
+  [[ "$(game_pid)" == "$canary_game_pid" ]] || fail "overlap attempt created or replaced the game process"
+  canary_logs="$(logs_since_boundary "$canary_boundary")"
+  normal_ready_count="$(grep -F -c "$NORMAL_READY_MARKER" <<<"$canary_logs" || true)"
+  [[ "$normal_ready_count" -eq 1 ]] || fail "overlap produced $normal_ready_count normal Godot ready markers"
+  run_instrumentation "$PRESS_BACK_TEST" || fail "could not return from overlap UI to the active game"
+fi
 
 # UI Automator back navigation closes only the Gamebox canary and returns to the existing Flutter host.
-run_instrumentation "$PRESS_BACK_TEST" || fail "could not return from overlap UI to the active game"
 run_instrumentation "$PRESS_BACK_TEST" || fail "could not request normal canary exit"
 wait_for_log_marker "$canary_boundary" "$GODOT_TERMINATING_MARKER" \
   || fail "normal canary did not enter Godot's controlled termination path"
@@ -449,7 +463,11 @@ if grep -F "$CANARY_TICKET" <<<"$canary_logs" >/dev/null; then
 fi
 assert_no_crash_or_anr "$canary_logs" "$canary_game_pid"
 initial_pid="$recreated_main_pid"
-echo "normal canary passed: ticket absent from all-buffer logs, game PID $canary_game_pid survived main PID $old_main_pid -> $recreated_main_pid recreation, overlap rejected, clean marked exit"
+if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
+  echo "normal canary passed: ticket absent from all-buffer logs, game PID $canary_game_pid survived main PID $old_main_pid -> $recreated_main_pid recreation, overlap rejected, clean marked exit"
+else
+  echo "normal canary passed: release Godot JNI initialized, ticket absent from all-buffer logs, and the game exited cleanly"
+fi
 
 # A key-shaped gameId must never redirect ticket privatization to the wrong slot.
 collision_boundary="GAMEBOX_COLLISION_BOUNDARY_$RUN_NONCE"
