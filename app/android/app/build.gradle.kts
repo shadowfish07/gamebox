@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -11,6 +13,17 @@ require(selectedGameboxAbi == null || selectedGameboxAbi in supportedGameboxAbis
     "Unsupported gameboxAndroidAbi"
 }
 val standaloneAndroidTestRuntime by configurations.creating
+val signingPropertiesFile = rootProject.file("key.properties")
+val signingProperties = Properties().apply {
+    if (signingPropertiesFile.isFile) {
+        signingPropertiesFile.inputStream().use(::load)
+    }
+}
+val requireReleaseSigning = providers.environmentVariable("GAMEBOX_REQUIRE_RELEASE_SIGNING")
+    .orNull == "true"
+require(!requireReleaseSigning || signingPropertiesFile.isFile) {
+    "GAMEBOX_REQUIRE_RELEASE_SIGNING requires android/key.properties"
+}
 val gameRuntimeSource = rootProject.file("../../game_runtime")
 val stagedGameRuntimeAssets = layout.buildDirectory.dir("generated/gameboxRuntimeAssets")
 val stageGameRuntimeAssets by tasks.registering(Sync::class) {
@@ -65,11 +78,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (signingPropertiesFile.isFile) {
+            create("release") {
+                storeFile = file(signingProperties.getProperty("storeFile"))
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -104,6 +127,7 @@ flutter {
 
 dependencies {
     implementation("org.godotengine:godot:4.7.0.stable")
+    implementation("androidx.core:core-ktx:1.15.0")
     add(standaloneAndroidTestRuntime.name, "androidx.test.ext:junit:1.2.1")
     add(standaloneAndroidTestRuntime.name, "androidx.test:runner:1.6.2")
     add(standaloneAndroidTestRuntime.name, "androidx.test.uiautomator:uiautomator:2.3.0")

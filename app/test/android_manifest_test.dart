@@ -17,4 +17,17 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'Android application declares its constrained APK installer surface',
+    () {
+      final manifest = File(
+        'android/app/src/main/AndroidManifest.xml',
+      ).readAsStringSync();
+      expect(manifest, contains('android.permission.REQUEST_INSTALL_PACKAGES'));
+      expect(manifest, contains('androidx.core.content.FileProvider'));
+      expect(manifest, contains(r'${applicationId}.fileprovider'));
+      expect(manifest, contains('@xml/godot_provider_paths'));
+    },
+  );
 }

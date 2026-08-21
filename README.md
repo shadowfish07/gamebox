@@ -119,6 +119,44 @@ resume tickets, databases, and private input outside logs, shell history,
 commits, and shared artifacts. Server logs use request/connection/match IDs,
 never credential plaintext.
 
+## Android releases and in-app updates
+
+The Android app checks the latest stable GitHub Release at startup, with a
+six-hour local cache. The update button in the app bar can bypass that cache.
+When a newer semantic version is available, Gamebox downloads the release APK
+into app-private storage, verifies its SHA-256 checksum, verifies the package
+name, signing certificate, and increasing Android version code, then opens the
+Android package installer. Android always requires a system confirmation; on
+Android 8 and newer the user may first need to allow Gamebox to install unknown
+apps. Network or update failures do not block registration or gameplay.
+
+The release workflow is `.github/workflows/release.yml`. Configure these
+repository Actions secrets before the first release:
+
+- `ANDROID_KEYSTORE_BASE64`: the release JKS encoded as one base64 string
+- `ANDROID_STORE_PASSWORD`: the keystore password
+- `ANDROID_KEY_ALIAS`: the signing key alias
+- `ANDROID_KEY_PASSWORD`: the signing key password
+
+Back up the keystore and passwords outside the repository. Every published APK
+must use the same release key. Losing or replacing it prevents installed copies
+from accepting future in-app updates.
+
+For a stable release, update `app/pubspec.yaml` to the intended version, commit
+and push it, then create and push the matching tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow checks that the tag and pubspec versions match, runs the complete
+repository verification gate, builds signed APK and AAB files, verifies the APK
+signature, generates `checksums.txt`, and publishes all three files to GitHub
+Releases. A manually dispatched run requires an already-existing matching tag.
+GitHub's `releases/latest` endpoint excludes drafts and prereleases, so only a
+stable published release is offered automatically to normal installations.
+
 ## Verification
 
 Run the fast source gate while iterating, or the unified CI-equivalent gate

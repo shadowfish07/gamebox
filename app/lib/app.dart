@@ -14,6 +14,7 @@ import 'features/gomoku/gomoku_repository.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
+import 'features/update/update_controller.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
@@ -21,6 +22,7 @@ class GameboxApp extends StatefulWidget {
     required this.gameLauncher,
     this.sessionController,
     this.homeController,
+    this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
   }) : hostSmokeEnabled =
@@ -32,6 +34,7 @@ class GameboxApp extends StatefulWidget {
   final GameLauncher gameLauncher;
   final SessionController? sessionController;
   final HomeController? homeController;
+  final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
 
@@ -54,6 +57,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     super.initState();
     if (!widget.hostSmokeEnabled) {
       _configureAuthentication();
+      unawaited(widget.updateController?.start());
     }
   }
 
@@ -158,6 +162,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _homeController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
+    widget.updateController?.dispose();
     super.dispose();
   }
 
@@ -259,7 +264,10 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         ),
       ),
       SessionStatus.unauthenticated ||
-      SessionStatus.submitting => RegistrationPage(controller: controller),
+      SessionStatus.submitting => RegistrationPage(
+        controller: controller,
+        updateController: widget.updateController,
+      ),
       SessionStatus.authenticated => _buildAuthenticatedHome(controller),
     };
   }
@@ -284,6 +292,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       controller: homeController,
       currentUserId: session.user.id,
       nickname: session.user.nickname,
+      updateController: widget.updateController,
     );
   }
 

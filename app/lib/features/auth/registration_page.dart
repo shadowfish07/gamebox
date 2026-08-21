@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/api_error.dart';
+import '../update/update_action.dart';
+import '../update/update_controller.dart';
 import 'session_controller.dart';
 
 final class RegistrationPage extends StatefulWidget {
-  const RegistrationPage({super.key, required this.controller});
+  const RegistrationPage({
+    super.key,
+    required this.controller,
+    this.updateController,
+  });
 
   final SessionController controller;
+  final UpdateController? updateController;
 
   @override
   State<RegistrationPage> createState() => _RegistrationPageState();
@@ -101,7 +108,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
     final submitting = widget.controller.status == SessionStatus.submitting;
     final canSubmit = widget.controller.canRegister;
     return Scaffold(
-      appBar: AppBar(title: const Text('Gamebox')),
+      appBar: _appBar(),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -195,7 +202,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
 
   Widget _buildRetry(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Gamebox')),
+      appBar: _appBar(),
       body: SafeArea(
         child: Center(
           child: Padding(
@@ -231,7 +238,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
   Widget _buildCredentialCleanup(BuildContext context) {
     final pending = widget.controller.credentialCleanupPending;
     return Scaffold(
-      appBar: AppBar(title: const Text('Gamebox')),
+      appBar: _appBar(),
       body: SafeArea(
         child: Center(
           child: Padding(
@@ -270,4 +277,12 @@ final class _RegistrationPageState extends State<RegistrationPage> {
       ),
     );
   }
+
+  AppBar _appBar() => AppBar(
+    title: const Text('Gamebox'),
+    actions: [
+      if (widget.updateController case final controller?)
+        UpdateActionButton(controller: controller),
+    ],
+  );
 }

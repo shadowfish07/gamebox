@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/api_error.dart';
 import '../gomoku/gomoku_models.dart';
+import '../update/update_action.dart';
+import '../update/update_controller.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
 import 'opponent_page.dart';
@@ -12,11 +14,13 @@ final class HomePage extends StatefulWidget {
     required this.controller,
     required this.currentUserId,
     required this.nickname,
+    this.updateController,
   });
 
   final HomeController controller;
   final String currentUserId;
   final String nickname;
+  final UpdateController? updateController;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -83,7 +87,13 @@ final class _HomePageState extends State<HomePage> {
     final controller = widget.controller;
     return Scaffold(
       key: const Key('home-shell'),
-      appBar: AppBar(title: const Text('Gamebox')),
+      appBar: AppBar(
+        title: const Text('Gamebox'),
+        actions: [
+          if (widget.updateController case final controller?)
+            UpdateActionButton(controller: controller),
+        ],
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(24),

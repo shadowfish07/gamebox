@@ -1,0 +1,158 @@
+name: Release Android App
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish, for example v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.35.1"
+  JAVA_VERSION: "17"
+  GODOT_VERSION: "4.7.0"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release tag
+        id: release
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${DISPATCH_TAG}"
+          fi
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: ${tag}" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+
+      - name: Accept Android SDK licenses
+        run: yes | flutter doctor --android-licenses
+
+      - name: Verify tag matches pubspec version
+        working-directory: app
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)"
+          if [[ "${pubspec_version}" != "${RELEASE_VERSION}" ]]; then
+            echo "Tag version ${RELEASE_VERSION} does not match pubspec ${pubspec_version}" >&2
+            exit 1
+          fi
+
+      - name: Verify repository
+        run: bash tool/verify.sh
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required GitHub secret: ${name}" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > app/android/app/release-key.jks
+          {
+            echo "storeFile=release-key.jks"
+            echo "storePassword=${STORE_PASSWORD}"
+            echo "keyAlias=${KEY_ALIAS}"
+            echo "keyPassword=${KEY_PASSWORD}"
+          } > app/android/key.properties
+
+      - name: Build signed APK and app bundle
+        working-directory: app
+        env:
+          GAMEBOX_REQUIRE_RELEASE_SIGNING: "true"
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          flutter build apk --release \
+            --build-name="${RELEASE_VERSION}" \
+            --build-number="${GITHUB_RUN_NUMBER}"
+          flutter build appbundle --release \
+            --build-name="${RELEASE_VERSION}" \
+            --build-number="${GITHUB_RUN_NUMBER}"
+
+      - name: Verify and prepare release assets
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          mkdir -p release-assets
+          apk="release-assets/gamebox-v${RELEASE_VERSION}-android.apk"
+          bundle="release-assets/gamebox-v${RELEASE_VERSION}-android.aab"
+          cp app/build/app/outputs/flutter-apk/app-release.apk "${apk}"
+          cp app/build/app/outputs/bundle/release/app-release.aab "${bundle}"
+          "${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -1)/apksigner" \
+            verify --verbose --print-certs "${apk}"
+          (cd release-assets && sha256sum "$(basename "${apk}")" "$(basename "${bundle}")" > checksums.txt)
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          prerelease=()
+          if [[ "${RELEASE_VERSION}" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" \
+              --verify-tag \
+              --generate-notes \
+              --title "Gamebox ${RELEASE_TAG}" \
+              "${prerelease[@]}"
+          fi
+          gh release upload "${RELEASE_TAG}" release-assets/* --clobber
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f app/android/app/release-key.jks app/android/key.properties
