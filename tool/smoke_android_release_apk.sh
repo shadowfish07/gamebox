@@ -6,6 +6,8 @@ readonly GAME_PROCESS="$PACKAGE:game"
 readonly TEST_PACKAGE="$PACKAGE.release_smoke"
 readonly TEST_RUNNER="$TEST_PACKAGE/androidx.test.runner.AndroidJUnitRunner"
 readonly TEST_METHOD="me.zqydev.gamebox.release_smoke.ReleaseGodotSmokeTest#launchPackagedGodotHostSmoke"
+readonly NATIVE_INITIALIZED_MARKER="Godot native layer initialization completed: true"
+readonly NATIVE_SETUP_MARKER="Godot native layer setup completed"
 readonly MAIN_LOOP_MARKER="GAMEBOX_GODOT_MAIN_LOOP_STARTED"
 readonly READY_MARKER="GAMEBOX_GODOT_READY"
 readonly EXITING_MARKER="GAMEBOX_GODOT_EXITING"
@@ -198,12 +200,17 @@ for cycle in 1 2; do
     echo "Release APK crashed or ANRed in cycle $cycle." >&2
     exit 1
   fi
-  grep -F "$MAIN_LOOP_MARKER" <<<"$logs" >/dev/null || {
+  gamebox_assert_markers_in_order "$NATIVE_INITIALIZED_MARKER" "$NATIVE_SETUP_MARKER" <<<"$logs" || {
     printf '%s\n' "$logs" | grep -E "$PACKAGE|Godot|godot|Fatal signal|FATAL EXCEPTION|ANR" >&2 || true
-    echo "Release APK did not reach the Godot native main loop in cycle $cycle." >&2
+    echo "Release APK did not initialize and set up the Godot native layer in cycle $cycle." >&2
     exit 1
   }
   if [[ "$RENDERER_LIMITED_SMOKE" == "false" ]]; then
+    grep -F "$MAIN_LOOP_MARKER" <<<"$logs" >/dev/null || {
+      printf '%s\n' "$logs" | grep -E "$PACKAGE|Godot|godot|Fatal signal|FATAL EXCEPTION|ANR" >&2 || true
+      echo "Release APK did not reach the Godot main loop in cycle $cycle." >&2
+      exit 1
+    }
     # READY -> EXITING proves the packaged scene rendered and reached its own
     # controlled shutdown before instrumentation cleanup.
     gamebox_assert_markers_in_order "$READY_MARKER" "$EXITING_MARKER" <<<"$logs" || {
@@ -217,7 +224,7 @@ for cycle in 1 2; do
     exit 1
   }
   if [[ "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
-    echo "release APK cycle $cycle passed: Godot native main loop started without crash or ANR"
+    echo "release APK cycle $cycle passed: Godot native layer initialized and set up without crash or ANR"
   else
     echo "release APK cycle $cycle passed: Godot scene initialized and exited cleanly"
   fi
@@ -225,7 +232,7 @@ done
 
 if [[ "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
   echo "Exact signed release APK native-startup smoke passed twice on $SERIAL: $APK"
-  echo "Renderer-limited mode does not claim that the packaged Godot scene reached READY."
+  echo "Renderer-limited mode does not claim that the Godot main loop or packaged scene reached READY."
 else
   echo "Exact signed release APK scene smoke passed twice on $SERIAL: $APK"
 fi

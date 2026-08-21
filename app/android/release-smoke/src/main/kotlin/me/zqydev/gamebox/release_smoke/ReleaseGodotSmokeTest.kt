@@ -26,7 +26,7 @@ class ReleaseGodotSmokeTest {
         // The host smoke exits itself after 800 ms. Keep the target instrumentation
         // alive long enough for the shell-side gate to observe initialization, clean
         // termination, and any release-only native crash in logcat.
-        Thread.sleep(3_000)
+        Thread.sleep(5_000)
     }
 
     private companion object {
