@@ -234,11 +234,12 @@ func (service *Service) IssueLaunch(ctx context.Context, playerID, resumeToken s
 	if err := service.commandContext(ctx); err != nil {
 		return LaunchTicket{}, err
 	}
-	if !canonicalID(playerID) || !validCredential(resumeToken) || !service.state.hasPlayer(playerID) {
+	if !canonicalID(playerID) || !validCredential(resumeToken) {
 		return LaunchTicket{}, ErrInvalidRequest
 	}
 	digest := credentialDigest(service.tokenPepper, resumeDigestDomain, resumeToken)
-	if !digestEqual(service.state.resumeDigests[playerID], digest) {
+	matchedPlayerID, found, collision := lookupResumeDigest(service.state.resumeDigests, digest)
+	if !found || collision || matchedPlayerID != playerID {
 		return LaunchTicket{}, ErrResumeInvalid
 	}
 	return service.issueLaunchLocked(ctx, playerID, digest)

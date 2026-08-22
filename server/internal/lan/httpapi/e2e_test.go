@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +17,25 @@ import (
 	"me.zqydev/gamebox/server/internal/lan/room"
 	"me.zqydev/gamebox/server/internal/protocol"
 )
+
+type applyBarrierService struct {
+	RoomService
+	committed   chan struct{}
+	release     chan struct{}
+	commitOnce  sync.Once
+	releaseOnce sync.Once
+}
+
+func (service *applyBarrierService) Apply(ctx context.Context, request room.ActionRequest) (room.Event, room.Snapshot, *room.GameResult, error) {
+	event, snapshot, result, err := service.RoomService.Apply(ctx, request)
+	service.commitOnce.Do(func() { close(service.committed) })
+	<-service.release
+	return event, snapshot, result, err
+}
+
+func (service *applyBarrierService) releaseApply() {
+	service.releaseOnce.Do(func() { close(service.release) })
+}
 
 func TestWebSocketHandshakeValidatesPairBeforeConsumptionAndOrdersSnapshot(t *testing.T) {
 	service := newTestRoom(t, 1_000, 100_000)
@@ -29,7 +50,7 @@ func TestWebSocketHandshakeValidatesPairBeforeConsumptionAndOrdersSnapshot(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/lan/v1/ws"
@@ -85,7 +106,7 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/lan/v1/ws"
@@ -160,6 +181,67 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 		t.Fatal("terminal reconnect sent an unapproved third frame")
 	}
 	_ = reconnected.CloseNow()
+}
+
+func TestWebSocketRegistrationSnapshotCannotSkipPendingBroadcast(t *testing.T) {
+	service := newTestRoom(t, 1_000, 100_000)
+	guest, err := service.Join(context.Background(), room.JoinRequest{
+		RoomID: testRoomID, Nickname: "Guest", JoinAttemptID: testAttemptID,
+		CandidateResumeToken: testGuestResume, RoomKey: testRoomKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostTicket, err := service.IssueLaunch(context.Background(), testHostID, testHostResume)
+	if err != nil {
+		t.Fatal(err)
+	}
+	barrier := &applyBarrierService{RoomService: service, committed: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(barrier.releaseApply)
+	router, err := NewRouter(barrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeTestRouter(t, router) })
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/lan/v1/ws"
+
+	host := connectAndReadInitial(t, wsURL, hostTicket.Token, testHostResume)
+	defer host.connection.CloseNow()
+	guestConnection := connectAndReadInitial(t, wsURL, guest.LaunchTicket.Token, testGuestResume)
+	defer guestConnection.connection.CloseNow()
+	actor, observer := host, guestConnection
+	actorResume := testHostResume
+	if playerByColor(t, service.Snapshot(), room.ColorBlack).PlayerID == guest.Player.PlayerID {
+		actor, observer = guestConnection, host
+		actorResume = testGuestResume
+	}
+	writeEnvelope(t, actor.connection, protocol.Envelope{
+		ProtocolVersion: protocol.Version1, GameID: gomoku.GameID, MatchID: testRoomID,
+		ExpectedRevision: int64Pointer(0), Type: protocol.TypeGomokuMoveRequested,
+		ActionID: testMoveID, Payload: json.RawMessage(`{"x":1,"y":1}`),
+	})
+	select {
+	case <-barrier.committed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("action did not commit before barrier")
+	}
+
+	newActor := connectAndReadInitial(t, wsURL, "", actorResume)
+	defer newActor.connection.CloseNow()
+	if newActor.snapshot.Revision == nil || *newActor.snapshot.Revision != 1 {
+		t.Fatal("new connection did not receive committed revision snapshot")
+	}
+	barrier.releaseApply()
+
+	oldEvent, err := readEnvelopeWithin(observer.connection, 500*time.Millisecond)
+	if err != nil || oldEvent.Type != protocol.TypeGomokuMoveAccepted || oldEvent.Revision == nil || *oldEvent.Revision != 1 {
+		t.Fatalf("old connection missed committed revision 1 event: type=%q revision=%v err=%v", oldEvent.Type, oldEvent.Revision, err)
+	}
+	if duplicate, err := readEnvelopeWithin(newActor.connection, 150*time.Millisecond); err == nil {
+		t.Fatalf("new connection received event already covered by snapshot: type=%q revision=%v", duplicate.Type, duplicate.Revision)
+	}
 }
 
 func TestWebSocketHeartbeatUsesBoundedProtocolPingAndAcceptsPong(t *testing.T) {
@@ -277,6 +359,19 @@ func readEnvelope(t *testing.T, connection *websocket.Conn) protocol.Envelope {
 		t.Fatalf("decode frame: %v", err)
 	}
 	return envelope
+}
+
+func readEnvelopeWithin(connection *websocket.Conn, timeout time.Duration) (protocol.Envelope, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	messageType, data, err := connection.Read(ctx)
+	if err != nil {
+		return protocol.Envelope{}, err
+	}
+	if messageType != websocket.MessageText {
+		return protocol.Envelope{}, errors.New("non-text WebSocket message")
+	}
+	return protocol.Decode(data)
 }
 
 func errorCode(t *testing.T, envelope protocol.Envelope) string {

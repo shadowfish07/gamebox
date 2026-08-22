@@ -34,7 +34,7 @@ func TestJoinResumeAndResultHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 
 	joinBody := `{"roomId":"` + testRoomID + `","nickname":" Guest ","joinAttemptId":"` + testAttemptID + `","candidateResumeToken":"` + testGuestResume + `","roomKey":"` + testRoomKey + `"}`
 	wrongKeyBody := strings.Replace(joinBody, testRoomKey, testRoomKey+"-wrong", 1)
@@ -104,13 +104,73 @@ func TestJoinResumeAndResultHTTPContracts(t *testing.T) {
 	assertAPIError(t, performJSON(t, router, http.MethodPost, "/lan/v1/rooms/"+testRoomID+"/result-ack", badHash), http.StatusConflict, "result_hash_mismatch")
 }
 
+func TestResumeTicketBindsAuthoritativeRoomAndHidesAuthenticationOracle(t *testing.T) {
+	service := newTestRoom(t, 1_000, 100_000)
+	joined, err := service.Join(context.Background(), room.JoinRequest{
+		RoomID: testRoomID, Nickname: "Guest", JoinAttemptID: testAttemptID,
+		CandidateResumeToken: testGuestResume, RoomKey: testRoomKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewRouter(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeTestRouter(t, router) })
+
+	otherRoomID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	wrongRoomBody := `{"roomId":"` + otherRoomID + `","playerId":"` + joined.Player.PlayerID + `","resumeToken":"` + testGuestResume + `"}`
+	wrongRoom := performJSON(t, router, http.MethodPost, "/lan/v1/rooms/"+otherRoomID+"/resume-ticket", wrongRoomBody)
+	if wrongRoom.Code != http.StatusBadRequest {
+		t.Errorf("wrong authoritative room status = %d, want 400", wrongRoom.Code)
+	} else {
+		assertAPIError(t, wrongRoom, http.StatusBadRequest, "invalid_request")
+	}
+	if connected, connectErr := service.ConnectLAN(context.Background(), room.ConnectCredential{
+		LaunchTicket: joined.LaunchTicket.Token, ResumeToken: testGuestResume,
+	}); connectErr != nil || connected.PlayerID != joined.Player.PlayerID {
+		t.Error("wrong-room resume request issued or superseded a launch credential")
+	}
+
+	authenticationFailures := []struct {
+		name, playerID, resumeToken string
+	}{
+		{name: "unknown player", playerID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", resumeToken: testHostResume},
+		{name: "wrong token", playerID: testHostID, resumeToken: testHostResume + "-wrong"},
+		{name: "other player token", playerID: testHostID, resumeToken: testGuestResume},
+	}
+	var firstErrorBody string
+	for _, test := range authenticationFailures {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"roomId":"` + testRoomID + `","playerId":"` + test.playerID + `","resumeToken":"` + test.resumeToken + `"}`
+			response := performJSON(t, router, http.MethodPost, "/lan/v1/rooms/"+testRoomID+"/resume-ticket", body)
+			assertAPIError(t, response, http.StatusUnauthorized, "resume_invalid")
+			if firstErrorBody == "" {
+				firstErrorBody = response.Body.String()
+			} else if response.Body.String() != firstErrorBody {
+				t.Fatal("resume authentication failures returned distinguishable error envelopes")
+			}
+		})
+	}
+
+	for name, body := range map[string]string{
+		"malformed player": `{"roomId":"` + testRoomID + `","playerId":"not-a-uuid","resumeToken":"` + testHostResume + `"}`,
+		"malformed token":  `{"roomId":"` + testRoomID + `","playerId":"` + testHostID + `","resumeToken":""}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertAPIError(t, performJSON(t, router, http.MethodPost, "/lan/v1/rooms/"+testRoomID+"/resume-ticket", body), http.StatusBadRequest, "invalid_request")
+		})
+	}
+}
+
 func TestWebSocketRouteRejectsCredentialHeadersBeforeUpgrade(t *testing.T) {
 	service := newTestRoom(t, 1_000, 100_000)
 	router, err := NewRouter(service)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 	request := httptest.NewRequest(http.MethodGet, "/lan/v1/ws", nil)
 	request.Header.Set("Authorization", "Bearer "+testGuestResume)
 	response := httptest.NewRecorder()
@@ -127,7 +187,7 @@ func TestHTTPBodiesAreExactBoundedSingleJSONDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 	path := "/lan/v1/rooms/" + testRoomID + "/join"
 	valid := `{"roomId":"` + testRoomID + `","nickname":"Guest","joinAttemptId":"` + testAttemptID + `","candidateResumeToken":"` + testGuestResume + `","roomKey":"` + testRoomKey + `"}`
 	tests := map[string]string{
@@ -160,7 +220,7 @@ func TestRoutesRejectUnknownMethodsQueriesAndRedirectShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 	tests := []struct {
 		method, path, allow string
 	}{
@@ -200,7 +260,7 @@ func TestExpiredJoinAndRoomKeyErrorsNeverReflectSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = router.Close(context.Background()) })
+	t.Cleanup(func() { closeTestRouter(t, router) })
 	body := `{"roomId":"` + testRoomID + `","nickname":"Guest","joinAttemptId":"` + testAttemptID + `","candidateResumeToken":"` + testGuestResume + `","roomKey":"` + testRoomKey + `"}`
 	response := performJSON(t, router, http.MethodPost, "/lan/v1/rooms/"+testRoomID+"/join", body)
 	assertAPIError(t, response, http.StatusGone, "join_expired")
@@ -255,6 +315,15 @@ func performJSON(t *testing.T, handler http.Handler, method, path, body string) 
 	return response
 }
 
+func closeTestRouter(t *testing.T, router *Router) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := router.Close(ctx); err != nil {
+		t.Errorf("Router.Close: %v", err)
+	}
+}
+
 func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, target any) {
 	t.Helper()
 	decoder := json.NewDecoder(response.Body)
@@ -269,7 +338,7 @@ func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, target an
 func assertStatusAndType(t *testing.T, response *httptest.ResponseRecorder, status int) {
 	t.Helper()
 	if response.Code != status {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		t.Fatalf("status = %d, want %d (%d-byte body)", response.Code, status, response.Body.Len())
 	}
 	if response.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 		t.Fatalf("Content-Type = %q", response.Header().Get("Content-Type"))

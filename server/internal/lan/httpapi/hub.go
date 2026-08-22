@@ -37,6 +37,7 @@ type Hub struct {
 	mu                  sync.Mutex
 	service             RoomService
 	connections         map[*hubConnection]struct{}
+	pendingTransports   map[*websocket.Conn]struct{}
 	pending             map[int64]room.Event
 	publishedRevision   int64
 	firstMessageTimeout time.Duration
@@ -138,7 +139,7 @@ func NewHubWithConfig(service RoomService, config HubConfig) (*Hub, error) {
 		config.ActivityTimeout = defaultActivityTimeout
 	}
 	return &Hub{
-		service: service, connections: make(map[*hubConnection]struct{}), pending: make(map[int64]room.Event),
+		service: service, connections: make(map[*hubConnection]struct{}), pendingTransports: make(map[*websocket.Conn]struct{}), pending: make(map[int64]room.Event),
 		publishedRevision: service.Snapshot().Revision, firstMessageTimeout: config.FirstMessageTimeout,
 		heartbeatInterval: config.HeartbeatInterval, activityTimeout: config.ActivityTimeout,
 	}, nil
@@ -154,6 +155,11 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		return
 	}
+	if !hub.trackPendingTransport(transport) {
+		_ = transport.CloseNow()
+		return
+	}
+	defer hub.untrackPendingTransport(transport)
 	transport.SetReadLimit(protocol.MaxMessageBytes)
 	firstContext, cancelFirst := context.WithTimeout(context.Background(), hub.firstMessageTimeout)
 	messageType, data, readErr := transport.Read(firstContext)
@@ -237,15 +243,8 @@ func (hub *Hub) registerWithInitial(connection *hubConnection) bool {
 		}
 	}
 	hub.wait.Add(2)
+	delete(hub.pendingTransports, connection.transport)
 	hub.connections[connection] = struct{}{}
-	if snapshot.Revision > hub.publishedRevision {
-		hub.publishedRevision = snapshot.Revision
-	}
-	for revision := range hub.pending {
-		if revision <= hub.publishedRevision {
-			delete(hub.pending, revision)
-		}
-	}
 	hub.mu.Unlock()
 	for _, old := range previous {
 		old.close()
@@ -280,7 +279,7 @@ func (hub *Hub) publish(event room.Event) {
 		delete(hub.pending, next)
 		hub.publishedRevision = next
 		for connection := range hub.connections {
-			if !connection.enqueueRevision(data, next) {
+			if !connection.enqueueCommittedEvent(data, next) {
 				slow = append(slow, connection)
 			}
 		}
@@ -304,7 +303,14 @@ func (hub *Hub) Close(ctx context.Context) error {
 	for connection := range hub.connections {
 		connections = append(connections, connection)
 	}
+	pendingTransports := make([]*websocket.Conn, 0, len(hub.pendingTransports))
+	for transport := range hub.pendingTransports {
+		pendingTransports = append(pendingTransports, transport)
+	}
 	hub.mu.Unlock()
+	for _, transport := range pendingTransports {
+		_ = transport.CloseNow()
+	}
 	for _, connection := range connections {
 		connection.close()
 	}
@@ -316,6 +322,22 @@ func (hub *Hub) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (hub *Hub) trackPendingTransport(transport *websocket.Conn) bool {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if hub.closed {
+		return false
+	}
+	hub.pendingTransports[transport] = struct{}{}
+	return true
+}
+
+func (hub *Hub) untrackPendingTransport(transport *websocket.Conn) {
+	hub.mu.Lock()
+	delete(hub.pendingTransports, transport)
+	hub.mu.Unlock()
 }
 
 func (hub *Hub) beginServe() bool {
@@ -463,6 +485,19 @@ func (connection *hubConnection) enqueueRevision(data []byte, revision int64) bo
 	if revision > current {
 		connection.revision.Store(revision)
 	}
+	return true
+}
+
+func (connection *hubConnection) enqueueCommittedEvent(data []byte, revision int64) bool {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	if revision <= connection.revision.Load() {
+		return true
+	}
+	if !connection.enqueue(data) {
+		return false
+	}
+	connection.revision.Store(revision)
 	return true
 }
 

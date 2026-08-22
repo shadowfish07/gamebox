@@ -15,7 +15,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -381,8 +380,8 @@ func reserveRandomHighPort() (net.Listener, int, error) {
 }
 
 func readManifestPort(root, roomID string) (int, bool) {
-	data, err := os.ReadFile(filepath.Join(root, "manifest.json"))
-	if err != nil || len(data) > maximumJSONBytes {
+	data, err := readManifestFile(filepath.Join(root, "manifest.json"))
+	if err != nil {
 		return 0, false
 	}
 	fields, err := exactObject(data, []string{"schemaVersion", "roomId", "gameId", "createdAt", "endpoint", "journalFormatVersion", "journalSequence"})

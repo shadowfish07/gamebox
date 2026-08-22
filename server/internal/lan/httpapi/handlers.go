@@ -128,7 +128,8 @@ func (router *Router) resumeTicket(writer http.ResponseWriter, request *http.Req
 		writeAPIError(writer, status, "invalid_request")
 		return
 	}
-	if body.RoomID != request.PathValue("roomId") {
+	snapshot := router.service.Snapshot()
+	if body.RoomID != request.PathValue("roomId") || body.RoomID != snapshot.RoomID {
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -138,7 +139,7 @@ func (router *Router) resumeTicket(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writeJSON(writer, http.StatusOK, launchResponse{
-		SchemaVersion: 1, MatchID: body.RoomID, GameID: gomoku.GameID, PlayerID: body.PlayerID,
+		SchemaVersion: 1, MatchID: snapshot.RoomID, GameID: gomoku.GameID, PlayerID: body.PlayerID,
 		LaunchTicket: ticket.Token, ExpiresAt: ticket.ExpiresAt,
 	})
 }

@@ -1,6 +1,7 @@
 package lanengine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/sys/unix"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -104,7 +106,7 @@ func TestEngineRealSocketMoveStopReopenAndResume(t *testing.T) {
 	}
 	hostLaunch := decodeLaunch(t, launchJSON)
 	if hostLaunch.SchemaVersion != 1 || hostLaunch.MatchID != engineRoomID || hostLaunch.GameID != gomoku.GameID || hostLaunch.WSURL != "ws://127.0.0.1:"+strconv.Itoa(created.Port)+"/lan/v1/ws" || hostLaunch.LaunchTicket == "" {
-		t.Fatalf("host launch = %#v", hostLaunch)
+		t.Fatalf("host launch semantics = schema=%d match=%q game=%q ws=%q ticketPresent=%v expires=%d", hostLaunch.SchemaVersion, hostLaunch.MatchID, hostLaunch.GameID, hostLaunch.WSURL, hostLaunch.LaunchTicket != "", hostLaunch.ExpiresAt)
 	}
 
 	join := postJoin(t, created.Port)
@@ -151,6 +153,76 @@ func TestEngineRealSocketMoveStopReopenAndResume(t *testing.T) {
 	afterRestart := readEngineEnvelope(t, resumed)
 	if afterRestart.Type != protocol.TypePlatformSnapshot || string(afterRestart.Payload) != string(beforeRestart.Payload) || *afterRestart.Revision != 1 {
 		t.Fatalf("recovered snapshot differs")
+	}
+	if err := reopened.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEngineStopClosesUnauthenticatedWebSocketWithoutConsumingTicket(t *testing.T) {
+	root := t.TempDir()
+	engine, err := NewEngine(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdJSON, err := engine.CreateRoom(createJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := decodeStatus(t, createdJSON)
+	launchJSON, err := engine.IssueHostLaunch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch := decodeLaunch(t, launchJSON)
+
+	pending := dialPendingEngineWS(t, launch.WSURL)
+	stopped := make(chan error, 1)
+	go func() { stopped <- engine.Stop() }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(750 * time.Millisecond):
+		_ = pending.CloseNow()
+		<-stopped
+		t.Fatal("Stop blocked on an upgraded WebSocket awaiting its first credential frame")
+	}
+
+	readContext, cancelRead := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_, _, readErr := pending.Read(readContext)
+	cancelRead()
+	if readErr == nil {
+		t.Fatal("pending WebSocket peer remained open after Stop")
+	}
+	lateContext, cancelLate := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_ = pending.Write(lateContext, websocket.MessageText, mustEngineJSON(t, map[string]any{
+		"protocolVersion": 1,
+		"type":            protocol.TypePlatformConnect,
+		"payload": map[string]string{
+			"launchTicket": launch.LaunchTicket,
+			"resumeToken":  engineHostResume,
+		},
+	}))
+	cancelLate()
+
+	reopened, err := NewEngine(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedJSON, err := reopened.Start(startJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := decodeStatus(t, startedJSON)
+	if started.RoomID != engineRoomID || started.GameRevision != 0 || started.Port != created.Port {
+		t.Fatal("reopened Engine did not recover the unchanged room endpoint")
+	}
+	connected := connectEngineWS(t, launch.WSURL, launch.LaunchTicket, engineHostResume)
+	defer connected.CloseNow()
+	if snapshot := readEngineEnvelope(t, connected); snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 0 {
+		t.Fatal("ticket was consumed by the unauthenticated connection")
 	}
 	if err := reopened.Stop(); err != nil {
 		t.Fatal(err)
@@ -285,6 +357,167 @@ func TestEngineManifestIsOnlyPortHintAndCorruptJournalNeverListens(t *testing.T)
 	})
 }
 
+func TestReadManifestFileRejectsOversizedRegularFile(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(manifestPath, bytes.Repeat([]byte{'x'}, maximumJSONBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readManifestFile(manifestPath)
+	if err == nil || len(data) != 0 {
+		t.Fatalf("oversized manifest read = (%d bytes, error=%v), want bounded rejection", len(data), err)
+	}
+}
+
+func TestEngineHostileManifestHintsFallbackPromptly(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		install func(*testing.T, string, []byte)
+	}{
+		{
+			name: "oversized regular file",
+			install: func(t *testing.T, path string, _ []byte) {
+				t.Helper()
+				if err := os.WriteFile(path, bytes.Repeat([]byte{'x'}, maximumJSONBytes+1), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "symlink",
+			install: func(t *testing.T, path string, valid []byte) {
+				t.Helper()
+				target := filepath.Join(filepath.Dir(filepath.Dir(path)), "manifest-target.json")
+				if err := os.WriteFile(target, valid, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "fifo",
+			install: func(t *testing.T, path string, _ []byte) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := unix.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			engine, _ := NewEngine(root)
+			createdJSON, err := engine.CreateRoom(createJSON())
+			if err != nil {
+				t.Fatal(err)
+			}
+			created := decodeStatus(t, createdJSON)
+			if err := engine.Stop(); err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(root, "active_room", "manifest.json")
+			validManifest, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.install(t, manifestPath, validManifest)
+
+			reopened, _ := NewEngine(root)
+			startedJSON, err := startEnginePromptly(t, reopened, manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			started := decodeStatus(t, startedJSON)
+			if started.RoomID != engineRoomID || started.GameRevision != 0 || !started.EndpointChanged || started.Port < minimumLANPort || started.Port > maximumLANPort {
+				t.Fatalf("hostile manifest fallback status = state=%q room=%q revision=%d changed=%v port=%d", started.State, started.RoomID, started.GameRevision, started.EndpointChanged, started.Port)
+			}
+			if test.name == "symlink" && started.Port == created.Port {
+				t.Fatal("symlink manifest was followed as a preferred endpoint")
+			}
+			_ = reopened.Stop()
+		})
+	}
+}
+
+func TestEngineCorruptJournalWithFIFOManifestNeverListens(t *testing.T) {
+	root := t.TempDir()
+	engine, _ := NewEngine(root)
+	createdJSON, err := engine.CreateRoom(createJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := decodeStatus(t, createdJSON)
+	if err := engine.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(root, "active_room", "0000000000000001.json")
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recordPath, append(data, byte('x')), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(root, "active_room", "manifest.json")
+	if err := os.Remove(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(manifestPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := NewEngine(root)
+	statusJSON, err := startEnginePromptly(t, reopened, manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := decodeStatus(t, statusJSON)
+	if status.State != "corrupt" || status.RoomID != engineRoomID || status.Port != 0 {
+		t.Fatalf("corrupt hostile-manifest status = state=%q room=%q port=%d", status.State, status.RoomID, status.Port)
+	}
+	connection, dialErr := net.DialTimeout("tcp4", "127.0.0.1:"+strconv.Itoa(created.Port), 100*time.Millisecond)
+	if dialErr == nil {
+		_ = connection.Close()
+		t.Fatal("corrupt recovery with hostile manifest started a listener")
+	}
+	_ = reopened.Stop()
+}
+
+func startEnginePromptly(t *testing.T, engine *Engine, fifoPath string) (string, error) {
+	t.Helper()
+	type result struct {
+		status string
+		err    error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		status, err := engine.Start(startJSON())
+		completed <- result{status: status, err: err}
+	}()
+	select {
+	case value := <-completed:
+		return value.status, value.err
+	case <-time.After(500 * time.Millisecond):
+		if info, err := os.Lstat(fifoPath); err == nil && info.Mode()&os.ModeNamedPipe != 0 {
+			if descriptor, openErr := unix.Open(fifoPath, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0); openErr == nil {
+				_ = unix.Close(descriptor)
+			}
+		}
+		select {
+		case <-completed:
+		case <-time.After(2 * time.Second):
+		}
+		t.Fatal("Engine.Start blocked while reading an untrusted manifest hint")
+		return "", nil
+	}
+}
+
 func TestEngineSecretBearingValuesAndStatusFormattingAreRedacted(t *testing.T) {
 	engine, _ := NewEngine(t.TempDir())
 	secrets := roomSecrets{RoomID: engineRoomID, HostPlayerID: engineHostID, TokenPepper: enginePepper, HostResumeToken: engineHostResume}
@@ -344,7 +577,7 @@ func decodeLaunch(t *testing.T, data string) engineLaunch {
 	t.Helper()
 	var launch engineLaunch
 	if err := json.Unmarshal([]byte(data), &launch); err != nil {
-		t.Fatalf("decode launch %q: %v", data, err)
+		t.Fatalf("decode launch response: %v", err)
 	}
 	return launch
 }
@@ -366,11 +599,11 @@ func postJoin(t *testing.T, port int) engineJoin {
 	defer response.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("join status %d: %s", response.StatusCode, data)
+		t.Fatalf("join status %d with %d-byte body", response.StatusCode, len(data))
 	}
 	var joined engineJoin
 	if json.Unmarshal(data, &joined) != nil || joined.PlayerID == "" || joined.LaunchTicket == "" {
-		t.Fatalf("join response = %s", data)
+		t.Fatalf("join response semantics = playerPresent=%v ticketPresent=%v bodyBytes=%d", joined.PlayerID != "", joined.LaunchTicket != "", len(data))
 	}
 	return joined
 }
@@ -389,9 +622,27 @@ func connectEngineWS(t *testing.T, wsURL, launchTicket, resumeToken string) *web
 	}
 	writeEngineEnvelope(t, connection, protocol.Envelope{ProtocolVersion: 1, Type: protocol.TypePlatformConnect, Payload: mustEngineJSON(t, payload)})
 	if connected := readEngineEnvelope(t, connection); connected.Type != protocol.TypePlatformConnected {
-		t.Fatalf("connected frame = %#v", connected)
+		t.Fatalf("connected frame type=%q revision=%v", connected.Type, connected.Revision)
 	}
 	return connection
+}
+
+func dialPendingEngineWS(t *testing.T, wsURL string) *websocket.Conn {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		connection, _, err := websocket.Dial(ctx, wsURL, nil)
+		cancel()
+		if err == nil {
+			return connection
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pending WebSocket endpoint did not become ready before deadline")
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		<-timer.C
+	}
 }
 
 func readCommittedSnapshot(t *testing.T, host, guest *websocket.Conn) protocol.Envelope {
