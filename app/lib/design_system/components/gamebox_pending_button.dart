@@ -19,23 +19,25 @@ class GameboxPendingButton extends StatelessWidget {
   final VoidCallback? onPressed;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    identifier: identifier,
-    child: FilledButton(
-      onPressed: isPending ? null : onPressed,
-      child: isPending
-          ? Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox.square(
-                  dimension: GameboxTokens.components.smallProgressSize,
-                  child: const CircularProgressIndicator(),
-                ),
-                SizedBox(width: GameboxTokens.spacing.compact),
-                Text(pendingLabel),
-              ],
-            )
-          : Text(label),
+  Widget build(BuildContext context) => MergeSemantics(
+    child: Semantics(
+      identifier: identifier,
+      child: FilledButton(
+        onPressed: isPending ? null : onPressed,
+        child: isPending
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox.square(
+                    dimension: GameboxTokens.components.smallProgressSize,
+                    child: const CircularProgressIndicator(),
+                  ),
+                  SizedBox(width: GameboxTokens.spacing.compact),
+                  Text(pendingLabel),
+                ],
+              )
+            : Text(label),
+      ),
     ),
   );
 }

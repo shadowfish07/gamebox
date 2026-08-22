@@ -38,6 +38,14 @@ void main() {
         isA<GameboxPendingButton>(),
       );
       expect(find.bySemanticsIdentifier('choose-opponent'), findsOneWidget);
+      expect(
+        tester.getSemantics(find.bySemanticsIdentifier('choose-opponent')),
+        containsSemantics(
+          identifier: 'choose-opponent',
+          isButton: true,
+          hasTapAction: true,
+        ),
+      );
       final gameSemantics = tester.getSemantics(
         find.byKey(const Key('game-gomoku')),
       );
@@ -83,6 +91,14 @@ void main() {
       isA<GameboxPendingButton>(),
     );
     expect(find.bySemanticsIdentifier('continue-match'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.bySemanticsIdentifier('continue-match')),
+      containsSemantics(
+        identifier: 'continue-match',
+        isButton: true,
+        hasTapAction: true,
+      ),
+    );
     expect(
       tester
           .widget<FilledButton>(
