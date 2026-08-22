@@ -1,7 +1,7 @@
 # Gamebox Material 3 UX 规范设计
 
 - 日期：2026-08-22
-- 状态：范围修订完成，等待书面规格复核
+- 状态：Gamebox UX skill 已交付并验证，等待现有 Flutter App 与 Godot 五子棋改造
 - 适用范围：Gamebox Flutter App、Android 宿主边界、所有 Godot 游戏
 - 设计基线：稳定 Material 3，选择性采用可跨 Flutter/Godot 可靠复现的 Material 3 Expressive 能力
 
@@ -109,6 +109,8 @@ gamebox/
 路径表达职责边界，实施计划可以在不改变边界的前提下微调具体文件名。
 
 skill 内的 `references/ux-standard.md` 是交互规范文字的权威来源；`gamebox.tokens.json` 是可生成数值的权威来源；本文保留设计依据、范围与架构决策，不再平行复制一份可执行规范。`SKILL.md` 只负责触发条件、工作流和按需加载相应参考文件，避免把全部规则堆入入口文件。
+
+已交付入口：[`gamebox-material-3-ux`](../../../.agents/skills/gamebox-material-3-ux/SKILL.md)。行为验证记录见 [`gamebox-material-3-ux-skill-evaluation.md`](../../design/gamebox-material-3-ux-skill-evaluation.md)。
 
 该 skill 必须自包含 Gamebox 已确认的决策，不直接依赖开发者机器上的通用 `material-3` skill。通用 skill 和官方 Material 文档可用于编写与更新它，但不能成为执行时的隐式前置条件。
 

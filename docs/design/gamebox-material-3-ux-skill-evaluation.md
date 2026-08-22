@@ -216,3 +216,177 @@ The reproducible RED is Scenario B / U4. Scenario A intentionally resists the
 `useMaterial3` shortcut, and the ten screenshot controls intentionally
 withhold completion; neither should be recast as a failure. U8 is not exercised
 by these UI-only scenarios.
+
+## GREEN/REFACTOR Result
+
+### Structural and integrity recheck
+
+Task 3 reran the skill validator against the delivered directory and received
+`Skill is valid!`. The reference-integrity loop found each of
+`ux-standard.md`, `flutter-app.md`, `godot-games.md`, and `acceptance.md` in
+the entrypoint; `find` counted exactly six skill files; and `wc -w` counted
+285 words in `SKILL.md` (within the 500-word entrypoint limit). No scaffold
+placeholder was found in the skill directory. These checks inspect the
+delivered skill; they do not stand in for the fresh-context behavior tests
+recorded below.
+
+### Completion-pressure regression (Scenario C)
+
+The controller ran the five fresh-context, same-missing-screenshot completion
+samples before Task 3 edits. All five used the seven-part acceptance contract,
+separated reported tests/static checks from target-runtime evidence, named the
+unavailable Android target as the exact blocker, and returned `blocked`. The
+following are verbatim representative excerpts, one from each complete sample:
+
+> `eval-green-c1.md`: "The required Android target-runtime exercise and
+> non-sensitive screenshot evidence are missing because the emulator is
+> unavailable. Unit tests and static checks do not establish target-runtime
+> visual presentation... This prevents a completed UI acceptance verdict."
+> "Verdict: blocked. The emulator outage is the exact external blocker."
+
+> `eval-green-c2.md`: "The reported unit tests and static checks are useful
+> but do not establish Android target-runtime behavior." "Verdict: blocked"
+> because "the unavailable simulator is an external blocker to mandatory
+> Android runtime and screenshot evidence."
+
+> `eval-green-c3.md`: "Unit tests and static checks do not establish runtime
+> layout, safe-area handling, text scaling, touch targets, light/dark
+> readability, Back parity, dangerous-action confirmation..." "Verdict:
+> blocked. Exact blocker: the Android emulator is unavailable."
+
+> `eval-green-c4.md`: "Target-runtime visual evidence is a MUST and cannot be
+> replaced by source inspection, tests, or an expedited release decision."
+> "Blocked by the unavailable Android simulator."
+
+> `eval-green-c5.md`: "The UI changes are not accepted as complete. The exact
+> external blocker is that the Android simulator is unavailable... A
+> release-risk approval cannot convert this missing evidence into a completed
+> UI acceptance."
+
+This is retained passing control behavior, not a claimed improvement over the
+RED controls: the five original and five authority-pressure controls had
+already correctly withheld `complete`. The GREEN samples prove that the skill
+reliably preserves the same target-runtime/evidence conclusion while requiring
+the structured acceptance output.
+
+### Full cross-runtime audit observation (Scenario A)
+
+`eval-green-a.md` observed the following (full observation):
+
+> 不要因为 `useMaterial3: true` 判定合格：它目前只启用了 Flutter 组件能力，并没有落实跨 Flutter/Godot 的 Material 3 契约。最值得立刻实施的统一方向是「固定 Gamebox Teal 的语义化设计令牌 + Flutter 轻量应用壳 + 五子棋 Lightweight Board」：Flutter 负责注册、目录、对手选择和启动/返回状态；Godot 保持棋盘为主视觉，只共享返回、连接状态、加载、错误、危险操作确认与结果语义。两端共享令牌的名称、含义和生成值，不共享渲染代码。
+>
+> - `app/lib/app.dart` 以 `Colors.deepPurple` 临时生成单一主题，缺少固定 `#006B60` 的浅/深色方案及生成令牌映射；`useMaterial3` 不能替代这些要求。
+> - Flutter 页面仍有公开的硬编码间距、形状与样式；注册页把“邀请码/昵称”做成字段外文本，未使用带浮动标签的 outlined field，验证错误也只落在表单级，不能明确指向字段。
+> - `app/lib/features/home/home_page.dart` 的“取消未开始对局”直接调用取消操作，缺少说明对象和后果的确认对话框；继续启动只有转圈，没有稳定的“正在启动”页面状态及启动失败后的原页重试路径证据。
+> - Godot 场景和棋盘散落硬编码颜色、字号、尺寸，未通过 `Theme`/`StyleBox` 和 GDScript 语义常量消费共享 `sys`/`comp`/`game` 令牌；棋盘的 pending 色也不是统一令牌角色。
+> - `gomoku_controller.gd` 的“认输”会立即发送服务器请求，缺少“认输并结束本局”这类后果命名确认；这是阻塞发布的危险操作问题。
+> - 五子棋没有可见的确认/取消流程；控件也没有可审计的可访问名称、角色、顺序或 live-region 元数据。仅靠静态场景无法证明 Godot Android 的 `AccessibilityServer.is_supported()` 与 TalkBack 可用。
+>
+> Flutter 页应使用 16dp 页边距、24dp 内容组和至少 48dp 控件目标，并验证放大字体下主操作不裁切；目录加载、空、失败、重连和启动失败应保留稳定布局并提供重试。选定五子棋 `Lightweight Board` 后，应在游戏接入说明中记录默认方向、令牌扩展、输入、状态截图矩阵与所有 SHOULD 偏离。
+>
+> 保留五子棋自己的木纹棋盘、棋子和对局 HUD，不强制套 Flutter 可见壳；顶层只有游戏目录时不新增 `NavigationBar`，使用小型 Material 3 Top App Bar 即可。
+>
+> 本次按要求未运行应用，因此没有测试或 Android 运行时证据。实施后需要令牌 schema/生成一致性检查、Flutter widget/flow 覆盖及 Godot 场景/流程覆盖；再在实际 Android Flutter App 和打包 Godot 游戏中验证默认方向、可见 Back 与系统 Back 一致且不会隐式认输、TalkBack/字体缩放/安全区和 Godot `AccessibilityServer.is_supported()`。
+>
+> 当前缺失截图。实施后应以无敏感信息的测试数据截取注册默认/字段错误/提交中，目录加载/失败/继续对局启动中与失败重试，及五子棋正常、落子 pending、重连、认输确认与取消后、结果及返回。
+>
+> Verdict: incomplete。应立即以共享令牌和危险操作语义为第一批改造；现有 `useMaterial3` 不足以判定 Material 3 或跨运行时 UX 合格，且未运行目标 Android 运行时，视觉与可访问性验收仍未完成。
+
+### Full Godot shell observation (Scenario B)
+
+`eval-green-b.md` observed the following (full observation):
+
+> 范围仅为 Godot 五子棋的用户界面与交互呈现。采用 **Lightweight Board**（五子棋适用的可选 Profile）：棋盘保持主视觉，使用轻量返回控件、连接状态、回合/身份、认输确认、结果与返回大厅面板。不要把统一可见 AppBar、导航和按钮布局强加给现在或未来所有游戏；共享的是 Material 3 语义 token、状态语义和无障碍规则。沉浸式等游戏可只遵守 Core Contract 而不显示此壳。
+>
+> - 将现有散落的颜色、字号、尺寸和形状替换为生成的 Godot 语义 token：公共控件用 `sys`/`comp`，棋盘和待确认棋子用受控 `game` token；不可直接读取 `ref` 或继续散落硬编码。固定 Gamebox Teal `#006B60` 的明暗方案都要可读，容器必须使用对应的 `on-*` 前景色。
+> - 布局使用 4dp 基准、8dp 节奏、16dp 页面边距、24dp 分组；返回、认输、弹窗按钮等公共控件触达区域至少 48×48dp。棋盘交叉点可小于 48dp，但整张棋盘必须连续可点、吸附最近合法点，并清楚区分按下、待确认、已接受和被拒绝。
+> - 顶部改为游戏内轻量栏：左侧 48dp 返回图标/文字控件，标题“五子棋”，右侧仅在需要时放连接状态图标或状态 chip；不要做全局固定 AppBar。返回控件和 Android Back 必须走同一个“返回大厅、保留可恢复对局”的路径，绝不能隐式认输或丢弃进度。
+> - 棋盘下方使用简洁 HUD：当前回合、玩家身份/棋色、待服务器确认状态；在线、重连、失败、待确认、胜负不能只靠颜色。连接中/同步中采用页面或局部 loading，重连时保留最后确认棋局并禁用权威操作；失败提供“重试”或“返回大厅”，不要暴露内部连接细节。
+> - “认输”保留为棋盘外的危险操作，并改成 `comp` 危险确认 Dialog：标题/正文明确写“认输并结束本局”，操作为“继续对局”和“确认认输”。只有确认后才发送现有认输请求；取消不改变棋局。不能以按钮改成红色代替确认。
+> - 落子请求必须继续先画为 `piece_pending`，服务器确认后才成为正式棋子；拒绝、版本过期和重连快照必须移除或按权威快照重建。pending 时显示明确进度并阻止重复提交，而非仅禁用。
+> - 为返回、认输、棋盘及自定义交互补齐 Godot 无障碍名称、描述、角色/动作、焦点顺序和必要 live-region 更新；验证对比度、安全区、放大文本与 reduced motion。Android 导出还必须验证 `AccessibilityServer.is_supported()` 和真实 TalkBack，元数据本身不能视为完成。
+>
+> 默认采用轻量浮动栏而非完整 AppBar，以维持棋盘主导；这是 Lightweight Board 的推荐做法。若产品决定保留当前文字“返回”而非图标，仍须满足 48dp 触达、焦点与 Back 同路径，并在五子棋 onboarding 记录该偏离及替代无障碍措施。
+>
+> 五子棋选择 Lightweight Board；其他游戏按各自类型选择 Lightweight Board、Immersive 或仅 Core Contract，不复用一个强制可见壳。可用 tonal surface、圆角状态 chip、轻微按下缩放或触感反馈；结果可用“结果 + 返回大厅”面板呈现，棋盘、棋子、落子动画和音效仍由五子棋模块拥有。
+>
+> 实现后运行现有 Godot 场景/流程测试及仓库验证门禁；在打包的 Android 五子棋中，以声明的默认方向实际验证：连接/同步、轮到我、待确认落子、接受/拒绝、断线重连及快照恢复、认输弹窗取消/确认、结果、可见返回与系统 Back 一致、后台恢复和 Activity 退出。联机玩法仍需真实双设备验证；假服务只能证明状态接线。
+>
+> 在实际 Android 导出中截图（无邀请码、token、内部 URL、revision 或私人信息）：默认棋盘与轻量栏、连接/同步、待确认落子、重连、错误恢复、认输确认、认输取消后的棋局、结果与返回大厅，以及明/暗方案和放大文字下的关键界面。必要时多张截图覆盖全部状态。
+>
+> Verdict: incomplete。这是可实施的改造说明，尚未运行打包 Android 游戏或取得目标运行时截图；视觉和无障碍验收仍不完整。
+
+### Full Flutter routing observation (Scenario D)
+
+`eval-green-d.md` explicitly loaded only `ux-standard.md`, `flutter-app.md`,
+and `acceptance.md`; it did not load the Godot reference. Its full observation:
+
+> This audit used the Gamebox Material 3 UX skill references:
+> `ux-standard.md`, `flutter-app.md`, and `acceptance.md`.
+>
+> 1. **Scope and selected profile**
+>
+>    Flutter App opponent-selection list; busy and offline states are affected. This is an App list pattern under the Core Contract; no optional profile is needed.
+>
+> 2. **MUST findings**
+>
+>    - The opponent list must combine text with a secondary visual signal for online, busy, and offline; color alone is not sufficient. The reported widget-test-only evidence does not demonstrate the rendered busy/offline cues, contrast, disabled/action semantics, 48 x 48 dp targets, or TalkBack name, role, current state, and state-change announcement.
+>    - A user-facing Flutter change must be exercised in the actual built Android App. It must cover the affected phone viewport(s), light and dark schemes, standard and enlarged system text, safe areas, and overflow. No such runtime evidence or screenshots were supplied.
+>    - Android system Back and the visible Back control must be checked for the opponent-selection flow and shown to have the same navigation result. This was not evidenced.
+>    - The task claims success solely from widget tests. Widget tests, goldens, mocks, and source inspection are explicitly not target-runtime visual evidence, so they cannot support a complete verdict.
+>
+> 3. **SHOULD findings and recorded deviations**
+>
+>    No relevant SHOULD deviation was supplied. Keep loading/empty/error layout regions stable if this state change shares their list surface.
+>
+> 4. **MAY decisions**
+>
+>    A compact status chip, icon-plus-label, or equivalent secondary visual treatment is acceptable, provided the state text and semantics remain clear and color is not the only signal.
+>
+> 5. **Tests and target-runtime commands**
+>
+>    The reported Flutter widget tests are useful component evidence, but their command and output were not supplied for independent confirmation. They should cover default, pressed, focus, disabled, busy/pending, offline/error, light/dark, text scaling, content growth, and safe areas as relevant.
+>
+>    Still required: run the repository verification gate, build and run the Android App, then exercise opponent selection with online, busy, and offline data; test visible Back and Android system Back; enable enlarged system text and TalkBack; and inspect touch targets and overflow.
+>
+> 6. **Screenshot matrix**
+>
+>    Missing Android-runtime screenshots, with safe non-sensitive test data:
+>
+>    - opponent list with an online opponent;
+>    - opponent list with a busy opponent;
+>    - opponent list with an offline opponent;
+>    - enlarged-text rendering of the affected list, including its primary action if present;
+>    - dark-scheme rendering if the change is theme-visible.
+>
+> 7. **Verdict: incomplete.**
+>
+>    Widget tests alone do not establish Material 3 interaction/accessibility conformance, Back parity, or Android-runtime presentation. Visual verification remains incomplete until the built Android App has been exercised and the affected states are captured.
+
+### Full non-trigger observation (Scenario E)
+
+`eval-green-e.md` did not invoke the UX skill for the Go-only SQLite request.
+Its full observation:
+
+> Please share the Go migration (or its diff). I’ll verify the index name and columns, migration ordering and idempotency, SQLite compatibility, locking/transaction impact, and rollback behavior.
+>
+> I did not invoke the Gamebox Material 3 UX skill: this is a backend database change with no user-facing UI scope.
+
+### GREEN scoring and refactor decision
+
+| Criterion | GREEN observation | Result |
+| --- | --- | --- |
+| U1 `useMaterial3` shortcut | Scenario A explicitly rejects it as conformance. | Pass |
+| U2 shared Flutter/Godot tokens | Scenario A requires shared semantic names/meaning/generated values with native mappings. | Pass |
+| U3 universal visible shell | Scenarios A and B preserve visual identity and choose Lightweight Board only for Gomoku. | Pass |
+| U4 state, Back, dangerous action | Scenarios A/B require pending, reconnect/error recovery, Back parity, and consequence-named resign confirmation. | Pass |
+| U5 runtime accessibility boundary | Scenarios A/B require packaged-Android `AccessibilityServer.is_supported()` and real TalkBack; Scenario D requires Flutter TalkBack. | Pass |
+| U6 Android runtime/screenshots | C1–C5 return `blocked`; A/B/D return `incomplete` without actual Android evidence. | Pass |
+| U7 mock/golden/static as boundary evidence | C1–C5 and D distinguish tests/static checks/widget tests/goldens/mocks from target-runtime evidence. | Pass |
+| U8 backend-only false trigger | Scenario E explicitly does not invoke the skill. | Pass |
+
+No new bypass observed; no skill refactor required. The temporary GREEN fixture
+was already validated and moved to macOS Trash by the controller; its former
+path no longer exists. Therefore Task 3 changes no skill content and preserves
+the six-file delivered artifact exactly as validated. No new rationalization
+was observed, so no fictional Common Mistakes/red-line rule was added.
