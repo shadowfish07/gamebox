@@ -231,6 +231,55 @@ func TestAppendCanonicalizesEquivalentNestedNumericSpellings(t *testing.T) {
 	}
 }
 
+func TestAppendRejectsCumulativeCanonicalExpansionBeforeFileOperation(t *testing.T) {
+	raw := manySmallExponentArray(10_500)
+	if len(raw) >= maxPayloadBytes {
+		t.Fatalf("test payload raw bytes = %d, want below %d", len(raw), maxPayloadBytes)
+	}
+	root := t.TempDir()
+	ops := &recordingFileOps{root: root}
+	store, _, err := Open(root, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: raw}); !errors.Is(err, ErrInvalidDraft) {
+		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
+	}
+	if len(ops.calls) != 0 || len(store.Records()) != 0 {
+		t.Fatalf("cumulative expansion reached durability boundary: calls=%v records=%v", ops.calls, store.Records())
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	output := newCappedJSONBuffer(maxPayloadBytes)
+	if err := writeCanonicalJSON(&output, value); err == nil {
+		t.Fatal("writeCanonicalJSON() error = nil, want cumulative output limit")
+	}
+	if got := output.Len(); got > maxPayloadBytes {
+		t.Fatalf("canonical emission retained %d bytes, want at most %d", got, maxPayloadBytes)
+	}
+}
+
+func TestAppendRejectsWhitespaceExpandedRawPayloadBeforeDecoding(t *testing.T) {
+	raw := append(json.RawMessage(strings.Repeat(" ", maxPayloadBytes)), '{', '}')
+	root := t.TempDir()
+	ops := &recordingFileOps{root: root}
+	store, _, err := Open(root, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: raw}); !errors.Is(err, ErrInvalidDraft) {
+		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
+	}
+	if len(ops.calls) != 0 || len(store.Records()) != 0 {
+		t.Fatalf("oversized raw payload reached durability boundary: calls=%v records=%v", ops.calls, store.Records())
+	}
+}
+
 func TestReplayRejectsAlternateNestedNumericSpellingsBeforeHashVerification(t *testing.T) {
 	root := t.TempDir()
 	store, _, err := Open(root, nil)
@@ -309,6 +358,7 @@ func TestManifestProjectionRequiresPositiveCanonicalIntegerCreatedAt(t *testing.
 		"null":     json.RawMessage(`{"createdAt":null}`),
 		"zero":     json.RawMessage(`{"createdAt":0}`),
 		"negative": json.RawMessage(`{"createdAt":-1}`),
+		"overflow": json.RawMessage(`{"createdAt":9223372036854775808}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			store, _, err := Open(t.TempDir(), nil)
@@ -356,6 +406,20 @@ func stringPtr(value string) *string { return &value }
 
 func validJSONStringOfLength(length int) json.RawMessage {
 	return append(append(json.RawMessage(`"`), bytes.Repeat([]byte{'a'}, length-2)...), '"')
+}
+
+func manySmallExponentArray(count int) json.RawMessage {
+	var payload strings.Builder
+	payload.Grow(count*6 + 2)
+	payload.WriteByte('[')
+	for index := 0; index < count; index++ {
+		if index > 0 {
+			payload.WriteByte(',')
+		}
+		payload.WriteString("1e100")
+	}
+	payload.WriteByte(']')
+	return json.RawMessage(payload.String())
 }
 
 func isLowerSHA256(value string) bool {

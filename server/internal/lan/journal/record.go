@@ -106,7 +106,10 @@ func canonicalRecordWithoutHash(record Record) ([]byte, error) {
 }
 
 func canonicalPayload(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 || !utf8.Valid(raw) {
+	if len(raw) == 0 || len(raw) > maxPayloadBytes {
+		return nil, fmt.Errorf("exceeds %d byte limit", maxPayloadBytes)
+	}
+	if !utf8.Valid(raw) {
 		return nil, errors.New("must be one UTF-8 JSON value")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -122,9 +125,6 @@ func canonicalPayload(raw json.RawMessage) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(canonical) > maxPayloadBytes {
-		return nil, fmt.Errorf("exceeds %d byte limit", maxPayloadBytes)
-	}
 	return json.RawMessage(canonical), nil
 }
 
@@ -132,62 +132,110 @@ func canonicalPayload(raw json.RawMessage) (json.RawMessage, error) {
 // exponent, no leading plus/zeroes, no fractional trailing zeroes, and zero is
 // always "0". This keeps numerically equal payloads on one hash-chain byte form.
 func encodeCanonicalJSON(value any) ([]byte, error) {
+	encoded := newCappedJSONBuffer(maxPayloadBytes)
+	if err := writeCanonicalJSON(&encoded, value); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
+}
+
+func writeCanonicalJSON(encoded *cappedJSONBuffer, value any) error {
 	switch value := value.(type) {
 	case nil:
-		return []byte("null"), nil
+		return encoded.WriteString("null")
 	case bool:
 		if value {
-			return []byte("true"), nil
+			return encoded.WriteString("true")
 		}
-		return []byte("false"), nil
+		return encoded.WriteString("false")
 	case string:
-		return json.Marshal(value)
+		stringValue, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		return encoded.Write(stringValue)
 	case json.Number:
-		return canonicalNumber(string(value))
+		number, err := canonicalNumber(string(value))
+		if err != nil {
+			return err
+		}
+		return encoded.Write(number)
 	case []any:
-		var encoded bytes.Buffer
-		encoded.WriteByte('[')
+		if err := encoded.WriteByte('['); err != nil {
+			return err
+		}
 		for index, item := range value {
 			if index > 0 {
-				encoded.WriteByte(',')
+				if err := encoded.WriteByte(','); err != nil {
+					return err
+				}
 			}
-			child, err := encodeCanonicalJSON(item)
-			if err != nil {
-				return nil, err
+			if err := writeCanonicalJSON(encoded, item); err != nil {
+				return err
 			}
-			encoded.Write(child)
 		}
-		encoded.WriteByte(']')
-		return encoded.Bytes(), nil
+		return encoded.WriteByte(']')
 	case map[string]any:
 		keys := make([]string, 0, len(value))
 		for key := range value {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		var encoded bytes.Buffer
-		encoded.WriteByte('{')
+		if err := encoded.WriteByte('{'); err != nil {
+			return err
+		}
 		for index, key := range keys {
 			if index > 0 {
-				encoded.WriteByte(',')
+				if err := encoded.WriteByte(','); err != nil {
+					return err
+				}
 			}
 			encodedKey, err := json.Marshal(key)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			encoded.Write(encodedKey)
-			encoded.WriteByte(':')
-			child, err := encodeCanonicalJSON(value[key])
-			if err != nil {
-				return nil, err
+			if err := encoded.Write(encodedKey); err != nil {
+				return err
 			}
-			encoded.Write(child)
+			if err := encoded.WriteByte(':'); err != nil {
+				return err
+			}
+			if err := writeCanonicalJSON(encoded, value[key]); err != nil {
+				return err
+			}
 		}
-		encoded.WriteByte('}')
-		return encoded.Bytes(), nil
+		return encoded.WriteByte('}')
 	default:
-		return nil, fmt.Errorf("unsupported decoded JSON type %T", value)
+		return fmt.Errorf("unsupported decoded JSON type %T", value)
 	}
+}
+
+type cappedJSONBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func newCappedJSONBuffer(limit int) cappedJSONBuffer {
+	return cappedJSONBuffer{limit: limit}
+}
+
+func (buffer *cappedJSONBuffer) Write(data []byte) error {
+	if len(data) > buffer.limit-buffer.Len() {
+		return fmt.Errorf("exceeds %d byte limit", buffer.limit)
+	}
+	_, err := buffer.Buffer.Write(data)
+	return err
+}
+
+func (buffer *cappedJSONBuffer) WriteString(value string) error {
+	return buffer.Write([]byte(value))
+}
+
+func (buffer *cappedJSONBuffer) WriteByte(value byte) error {
+	if buffer.Len() == buffer.limit {
+		return fmt.Errorf("exceeds %d byte limit", buffer.limit)
+	}
+	return buffer.Buffer.WriteByte(value)
 }
 
 func canonicalNumber(raw string) ([]byte, error) {
