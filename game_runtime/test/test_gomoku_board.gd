@@ -1,6 +1,7 @@
 extends RefCounted
 
 const GomokuBoard = preload("res://games/gomoku/gomoku_board.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const DESIGN_SIZE := Vector2(1080.0, 1920.0)
 const BOARD_RECT := Rect2(60.0, 360.0, 960.0, 960.0)
@@ -12,7 +13,9 @@ static func cases() -> Array:
 		{"name": "gomoku board rejects points beyond half a cell", "run": _rejects_outside_tap_margin},
 		{"name": "gomoku board mapping survives expanded viewport stretch", "run": _maps_expanded_viewports},
 		{"name": "gomoku board submits one safe single-finger release", "run": _submits_only_safe_release},
+		{"name": "gomoku board advances pressed pending and authoritative states", "run": _advances_interaction_states},
 		{"name": "gomoku board keeps authoritative stones separate from pending", "run": _keeps_pending_separate},
+		{"name": "gomoku board maps every rendered state to game tokens", "run": _maps_game_tokens},
 	]
 
 
@@ -110,6 +113,83 @@ static func _keeps_pending_separate() -> bool:
 		and _check(board.last_move_cell == Vector2i(7, 7), "last move marker missing")
 	board.free()
 	return result
+
+
+static func _advances_interaction_states() -> bool:
+	var board := GomokuBoard.new()
+	board.size = Vector2(960.0, 960.0)
+	var cells: Array = []
+	cells.resize(225)
+	cells.fill(0)
+	var requests: Array[Vector2i] = []
+	board.cell_pressed.connect(func(x: int, y: int) -> void:
+		var requested := Vector2i(x, y)
+		requests.append(requested)
+		board.present(cells, Vector2i(-1, -1), requested)
+	)
+	var target := Vector2i(7, 7)
+	var center: Vector2 = GomokuBoard.cell_to_pixel(target, board.board_rect())
+
+	board._gui_input(_touch(0, true, center))
+	if not _check(_pressed_cell(board) == target, "touch-down did not expose an immediate pressed cell") \
+		or not _check(board.pending_cell == Vector2i(-1, -1), "touch-down became pending before release"):
+		board.free()
+		return false
+	board._gui_input(_drag(0, center + Vector2(40.0, 0.0)))
+	if not _check(_pressed_cell(board) == Vector2i(-1, -1), "drag did not clear the pressed cell"):
+		board.free()
+		return false
+	board._gui_input(_touch(0, false, center))
+
+	board._gui_input(_touch(0, true, center))
+	board._gui_input(_touch(0, false, center, true))
+	if not _check(_pressed_cell(board) == Vector2i(-1, -1), "cancel did not clear the pressed cell") \
+		or not _check(requests.is_empty(), "drag or cancel submitted a request"):
+		board.free()
+		return false
+
+	board._gui_input(_touch(0, true, center))
+	if not _check(_pressed_cell(board) == target, "second touch-down did not restore pressed feedback"):
+		board.free()
+		return false
+	board._gui_input(_touch(0, false, center))
+	if not _check(_pressed_cell(board) == Vector2i(-1, -1), "safe release kept pressed feedback") \
+		or not _check(requests == [target], "safe release did not request exactly one move") \
+		or not _check(board.pending_cell == target, "safe release did not become server-authoritative pending") \
+		or not _check(board.stone_at(target.x, target.y) == 0, "pending feedback became an authoritative stone"):
+		board.free()
+		return false
+
+	cells[target.y * 15 + target.x] = 1
+	board.present(cells, target, Vector2i(-1, -1))
+	var result := _check(board.stone_at(target.x, target.y) == 1, "authoritative acceptance did not create a stone") \
+		and _check(board.pending_cell == Vector2i(-1, -1), "authoritative acceptance did not clear pending") \
+		and _check(board.last_move_cell == target, "authoritative acceptance did not mark the last move")
+	board.free()
+	return result
+
+
+static func _maps_game_tokens() -> bool:
+	var board := GomokuBoard.new()
+	var constants: Dictionary = board.get_script().get_script_constant_map()
+	var result := _check(constants.get("BOARD_COLOR") == GameboxTokens.GAME["board"], "board surface stopped using the game token") \
+		and _check(constants.get("GRID_COLOR") == GameboxTokens.GAME["grid"], "grid stopped using the game token") \
+		and _check(constants.get("BLACK_STONE_COLOR") == GameboxTokens.GAME["black_piece"], "black stone stopped using the game token") \
+		and _check(constants.get("WHITE_STONE_COLOR") == GameboxTokens.GAME["white_piece"], "white stone stopped using the game token") \
+		and _check(constants.get("WHITE_STONE_OUTLINE") == GameboxTokens.GAME["white_piece_outline"], "white outline stopped using the game token") \
+		and _check(constants.get("LAST_MOVE_COLOR") == GameboxTokens.GAME["last_move"], "last move stopped using the game token") \
+		and _check(constants.get("PRESSED_COLOR") == GameboxTokens.GAME["pressed_move"], "pressed move stopped using the game token") \
+		and _check(constants.get("PENDING_COLOR") == GameboxTokens.GAME["pending_move"], "pending move stopped using the game token") \
+		and _check(constants.get("PENDING_OVERLAY_ALPHA") == GameboxTokens.GAME["pending_overlay_alpha"], "pending opacity stopped using the game token")
+	board.free()
+	return result
+
+
+static func _pressed_cell(board: Control) -> Variant:
+	for property in board.get_property_list():
+		if property.get("name") == "pressed_cell":
+			return board.get("pressed_cell")
+	return null
 
 
 static func _touch(index: int, pressed: bool, position: Vector2, cancelled: bool = false) -> InputEventScreenTouch:

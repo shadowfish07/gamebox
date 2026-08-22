@@ -3,6 +3,7 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 
 const INVALID_CELL := Vector2i(-1, -1)
 const TERMINAL_STATUSES := ["finished", "cancelled", "abandoned"]
@@ -52,6 +53,7 @@ var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
 var _ready_marker_emitted := false
 var _ready_marker_text := ""
+var _resign_submitted := false
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -83,9 +85,12 @@ func set_frame_ready_gate(gate: Variant) -> bool:
 
 
 func _ready() -> void:
+	theme = GameboxTheme.create(GameboxTheme.system_prefers_dark())
 	$Board.cell_pressed.connect(_on_cell_pressed)
 	$BackButton.pressed.connect(_on_back_pressed)
 	$ResignButton.pressed.connect(_on_resign_pressed)
+	$ResignDialog.confirmed.connect(_on_resign_confirmed)
+	$ResultPanel.return_requested.connect(_on_back_pressed)
 	_refresh_ui()
 
 	var resolved := _resolve_launch_config()
@@ -134,15 +139,26 @@ func _on_cell_pressed(x: int, y: int) -> void:
 
 
 func _on_resign_pressed() -> void:
-	if not _started or _disposed or _awaiting_snapshot or _state == null \
-		or not _state.can_request_resign(_client.local_user_id):
+	if not _can_offer_resign():
 		return
+	$ResignDialog.popup_centered()
+
+
+func _on_resign_confirmed() -> void:
+	if not _can_offer_resign() or _resign_submitted:
+		return
+	_resign_submitted = true
 	if not _client.request_resign().is_empty():
 		_error_text = ""
 		_refresh_ui()
+	else:
+		_resign_submitted = false
 
 
 func _on_back_pressed() -> void:
+	if $ResignDialog.visible:
+		$ResignDialog.hide()
+		return
 	if _returning:
 		return
 	_returning = true
@@ -156,7 +172,10 @@ func _on_back_pressed() -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and not event.is_echo():
 		get_viewport().set_input_as_handled()
-		_on_back_pressed()
+		if $ResignDialog.visible:
+			$ResignDialog.hide()
+		else:
+			_on_back_pressed()
 
 
 func _on_connection_state_changed(next_state: String) -> void:
@@ -182,6 +201,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_force_return = true
 	elif applied.get("status") == "applied":
 		_error_text = ""
+		_resign_submitted = false
 		_awaiting_snapshot = false
 		_last_move = INVALID_CELL
 	_refresh_ui()
@@ -203,6 +223,7 @@ func _on_event_received(envelope: Dictionary) -> void:
 
 func _on_match_error(code: String) -> void:
 	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
+	_resign_submitted = false
 	if code == "stale_revision":
 		_awaiting_snapshot = true
 	_refresh_ui()
@@ -229,22 +250,38 @@ func _refresh_ui() -> void:
 		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
 
 	$StatusLabel.text = _status_text(local_user_id) if has_state else _connection_text()
-	$ConnectionLabel.text = _connection_detail()
+	$ConnectionLabel.present(_connection_state, _connection_detail())
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
-	$ErrorLabel.text = _error_text
-	$ErrorLabel.visible = not _error_text.is_empty()
+	$ErrorLabel.present(_error_text, "error")
+	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
 
 	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
-	$BackButton.text = "返回大厅" if terminal or _force_return else "返回"
 	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
-	$ResignButton.visible = can_resign
+	$ResignButton.visible = can_resign and not terminal and not _resign_submitted
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot
+	if terminal:
+		$ResignDialog.hide()
+		$ResultPanel.present(_result_panel_status(), _state.winner_user_id == local_user_id)
+	else:
+		$ResultPanel.present("", false)
 	var can_move: bool = has_state and _connection_state == "connected" \
 		and not _awaiting_snapshot \
 		and _state.status == "active" and _state.pending_action.is_empty() \
 		and _local_color(local_user_id) == _state.next_color
 	board.set_interactable(can_move)
 	_log_safe_state(has_state)
+
+
+func _can_offer_resign() -> bool:
+	return _started and not _disposed and not _awaiting_snapshot and not _resign_submitted \
+		and _connection_state == "connected" and _state != null \
+		and _state.can_request_resign(_client.local_user_id)
+
+
+func _result_panel_status() -> String:
+	if _state.status != "finished":
+		return _state.status
+	return "draw" if _state.result == "draw" else "finished"
 
 
 func _status_text(local_user_id: String) -> String:
