@@ -112,11 +112,50 @@ func TestOpenRejectsCorruptAndNonContiguousCommittedRecords(t *testing.T) {
 		t.Run(testCase.fixture, func(t *testing.T) {
 			root := t.TempDir()
 			copyFixtureTree(t, testCase.fixture, root)
-			if _, _, err := Open(root, nil); !errors.Is(err, testCase.want) || !strings.Contains(err.Error(), testCase.contains) {
-				t.Fatalf("Open() error = %v, want %v containing %q", err, testCase.want, testCase.contains)
+			if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) || !errors.Is(err, testCase.want) || !strings.Contains(err.Error(), testCase.contains) {
+				t.Fatalf("Open() error = %v, want ErrJournalCorrupt and %v containing %q", err, testCase.want, testCase.contains)
 			}
 		})
 	}
+}
+
+func TestOpenClassifiesCommittedContentFailuresButNotOperationalFailures(t *testing.T) {
+	t.Run("invalid committed filename", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "1.json"), []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) {
+			t.Fatalf("Open() error = %v, want ErrJournalCorrupt", err)
+		}
+	})
+
+	t.Run("decode and record semantics", func(t *testing.T) {
+		for name, contents := range map[string][]byte{
+			"decode":   []byte(`{`),
+			"semantic": []byte(`{"schemaVersion":2,"journalSequence":1,"gameRevision":null,"type":"room.created","actionId":null,"payload":{"createdAt":1},"previousHash":"","hash":"0000000000000000000000000000000000000000000000000000000000000000"}`),
+		} {
+			t.Run(name, func(t *testing.T) {
+				root := t.TempDir()
+				if err := os.WriteFile(filepath.Join(root, "0000000000000001.json"), contents, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) {
+					t.Fatalf("Open() error = %v, want ErrJournalCorrupt", err)
+				}
+			})
+		}
+	})
+
+	t.Run("operational root error", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(root, []byte("file"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Open(root, nil); err == nil || errors.Is(err, ErrJournalCorrupt) {
+			t.Fatalf("Open() error = %v, want non-corruption operational error", err)
+		}
+	})
 }
 
 func TestSequenceGapFixturesContainCanonicalChainRecords(t *testing.T) {
@@ -170,8 +209,8 @@ func TestOpenRejectsReorderedDuplicateMalformedAndUnverifiableRecords(t *testing
 		if err := os.WriteFile(filepath.Join(root, "0000000000000002.json"), records[0], 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := Open(root, nil); err == nil {
-			t.Fatal("Open() error = nil, want reordered chain rejection")
+		if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) {
+			t.Fatalf("Open() error = %v, want ErrJournalCorrupt for reordered chain", err)
 		}
 	})
 	t.Run("duplicate sequence filename", func(t *testing.T) {
@@ -179,8 +218,8 @@ func TestOpenRejectsReorderedDuplicateMalformedAndUnverifiableRecords(t *testing
 		if err := os.WriteFile(filepath.Join(root, "00000000000000001.json"), records[0], 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := Open(root, nil); err == nil {
-			t.Fatal("Open() error = nil, want duplicate sequence filename rejection")
+		if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) {
+			t.Fatalf("Open() error = %v, want ErrJournalCorrupt for duplicate sequence filename", err)
 		}
 	})
 	t.Run("wrong previous hash", func(t *testing.T) {
@@ -204,8 +243,8 @@ func TestOpenRejectsReorderedDuplicateMalformedAndUnverifiableRecords(t *testing
 		if err := os.WriteFile(filepath.Join(rootA, "0000000000000002.json"), otherSecond, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := Open(rootA, nil); err == nil {
-			t.Fatal("Open() error = nil, want valid-but-wrong previous hash rejection")
+		if _, _, err := Open(rootA, nil); !errors.Is(err, ErrJournalCorrupt) {
+			t.Fatalf("Open() error = %v, want ErrJournalCorrupt for wrong previous hash", err)
 		}
 	})
 	for name, mutate := range map[string]func([]byte) []byte{
@@ -232,8 +271,8 @@ func TestOpenRejectsReorderedDuplicateMalformedAndUnverifiableRecords(t *testing
 			if err := os.WriteFile(filepath.Join(root, "0000000000000001.json"), mutated, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := Open(root, nil); err == nil {
-				t.Fatal("Open() error = nil, want rejection")
+			if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) {
+				t.Fatalf("Open() error = %v, want ErrJournalCorrupt", err)
 			}
 		})
 	}
@@ -356,8 +395,8 @@ func TestOpenRejectsOversizedCommittedRecordWithBoundedRead(t *testing.T) {
 	if len(data) > maxRecordBytes+1 {
 		t.Fatalf("bounded read retained %d bytes, want at most %d", len(data), maxRecordBytes+1)
 	}
-	if _, _, err := Open(root, nil); err == nil {
-		t.Fatal("Open() error = nil, want oversized committed record rejection")
+	if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) {
+		t.Fatalf("Open() error = %v, want ErrJournalCorrupt", err)
 	}
 }
 
@@ -476,8 +515,8 @@ func TestReplayRejectsAlternateNestedNumericSpellingsBeforeHashVerification(t *t
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Open(root, nil); err == nil || !strings.Contains(err.Error(), "payload is not canonical") {
-		t.Fatalf("Open() error = %v, want noncanonical numeric payload rejection before hash verification", err)
+	if _, _, err := Open(root, nil); !errors.Is(err, ErrJournalCorrupt) || !strings.Contains(err.Error(), "payload is not canonical") {
+		t.Fatalf("Open() error = %v, want ErrJournalCorrupt for noncanonical numeric payload", err)
 	}
 }
 

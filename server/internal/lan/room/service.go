@@ -70,7 +70,7 @@ func Open(config Config) (*Service, error) {
 	}
 	store, records, err := journal.Open(config.Root, config.FileOps)
 	if err != nil {
-		if recoveryJournalError(err) {
+		if errors.Is(err, journal.ErrJournalCorrupt) {
 			return nil, errors.Join(ErrRecoveryCorrupt, err)
 		}
 		return nil, err
@@ -81,13 +81,6 @@ func Open(config Config) (*Service, error) {
 		return nil, replayErr
 	}
 	return &Service{store: store, state: state, clock: config.Clock, colorRandom: config.ColorRandom, playerRandom: config.PlayerRandom, credentialRandom: config.CredentialRandom, tokenPepper: config.TokenPepper}, nil
-}
-
-func recoveryJournalError(err error) bool {
-	message := err.Error()
-	return errors.Is(err, journal.ErrJournalSequenceGap) || errors.Is(err, journal.ErrInvalidRecord) ||
-		strings.Contains(message, "invalid committed journal filename") || strings.Contains(message, "previous hash does not chain") ||
-		strings.Contains(message, " sequence = ")
 }
 
 // Close releases the journal lifetime lock. It is idempotent.
@@ -125,7 +118,7 @@ func (service *Service) Create(ctx context.Context, request CreateRequest) (Crea
 	if err != nil {
 		return CreatedRoom{}, ErrInvalidRequest
 	}
-	if service.tokenPepper != "" && service.tokenPepper != request.TokenPepper {
+	if service.tokenPepper != "" && !secretEqual(service.tokenPepper, request.TokenPepper) {
 		return CreatedRoom{}, ErrInvalidConfiguration
 	}
 	color, err := service.randomHostColor()
@@ -198,7 +191,7 @@ func (service *Service) Join(ctx context.Context, request JoinRequest) (JoinedPl
 	if err != nil {
 		return JoinedPlayer{}, ErrInternal
 	}
-	if now > service.state.snapshot.JoinExpiresAt {
+	if !validJoinTimestamp(service.state.createdAt, now, service.state.snapshot.JoinExpiresAt) {
 		return JoinedPlayer{}, ErrJoinExpired
 	}
 	display, _, err := nickname.Normalize(request.Nickname)
@@ -261,7 +254,8 @@ func (service *Service) issueLaunchLocked(ctx context.Context, playerID, validat
 		return LaunchTicket{}, ErrResumeInvalid
 	}
 	now, err := service.nowMillis()
-	if err != nil || now > math.MaxInt64-launchTicketLifetimeMS {
+	expiresAt, validLifetime := launchTicketExpiry(now)
+	if err != nil || !validLifetime {
 		return LaunchTicket{}, ErrInternal
 	}
 	for attempt := 0; attempt < 8; attempt++ {
@@ -271,10 +265,9 @@ func (service *Service) issueLaunchLocked(ctx context.Context, playerID, validat
 		}
 		plaintext := base64.RawURLEncoding.EncodeToString(plaintextBytes)
 		digest := credentialDigest(service.tokenPepper, launchDigestDomain, plaintext)
-		if _, exists := service.state.issued[digest]; exists {
+		if _, _, exists := findIssuedCredential(service.state.issued, digest); exists {
 			continue
 		}
-		expiresAt := now + launchTicketLifetimeMS
 		payload := credentialIssuedPayload{RoomID: service.state.snapshot.RoomID, PlayerID: playerID, CredentialDigest: digest, IssuedAt: now, ExpiresAt: expiresAt}
 		draft, err := makeDraft(recordCredentialIssued, nil, nil, payload)
 		if err != nil {
@@ -314,15 +307,15 @@ func (service *Service) Connect(ctx context.Context, credential ConnectCredentia
 			return ConnectionCredential{}, ErrTicketInvalid
 		}
 		digest := credentialDigest(service.tokenPepper, launchDigestDomain, credential.LaunchTicket)
-		issued, ok := service.state.issued[digest]
+		storedDigest, issued, ok := findIssuedCredential(service.state.issued, digest)
 		now, err := service.nowMillis()
 		if err != nil {
 			return ConnectionCredential{}, ErrInternal
 		}
-		if !ok || issued.consumed || service.state.activeTicket[issued.playerID] != digest || now > issued.expiresAt {
+		if !ok || issued.consumed || !activeDigestMatches(service.state.activeTicket, issued.playerID, digest) || now > issued.expiresAt {
 			return ConnectionCredential{}, ErrTicketInvalid
 		}
-		payload := credentialConsumedPayload{RoomID: service.state.snapshot.RoomID, PlayerID: issued.playerID, CredentialDigest: digest, ConsumedAt: now}
+		payload := credentialConsumedPayload{RoomID: service.state.snapshot.RoomID, PlayerID: issued.playerID, CredentialDigest: storedDigest, ConsumedAt: now}
 		draft, err := makeDraft(recordCredentialConsumed, nil, nil, payload)
 		if err != nil {
 			return ConnectionCredential{}, ErrInternal

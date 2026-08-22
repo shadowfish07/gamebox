@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -174,6 +175,43 @@ func TestLaunchTicketsAreSingleUseAndResumeTokensStayPlayerBound(t *testing.T) {
 	if _, err := service.Connect(context.Background(), ConnectCredential{LaunchTicket: hostTicket.Token, ResumeToken: testHostResume}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("two credentials error = %v", err)
 	}
+	if _, err := service.Connect(context.Background(), ConnectCredential{LaunchTicket: hostTicket.Token + "-wrong"}); !errors.Is(err, ErrTicketInvalid) {
+		t.Fatalf("wrong launch ticket error = %v", err)
+	}
+}
+
+func TestDigestLookupMatchesOnlyFixedLengthCredentialDigests(t *testing.T) {
+	credentials := map[string]issuedCredential{
+		strings64("a"): {playerID: testHostID},
+		strings64("b"): {playerID: "22222222-2222-4222-8222-222222222222"},
+	}
+	stored, issued, ok := findIssuedCredential(credentials, string([]byte(strings64("b"))))
+	if !ok || stored != strings64("b") || issued.playerID != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("findIssuedCredential() = (%q, %#v, %v)", stored, issued, ok)
+	}
+	for _, candidate := range []string{strings64("c"), strings64("a")[:63], strings64("a") + "0"} {
+		if _, _, ok := findIssuedCredential(credentials, candidate); ok {
+			t.Fatalf("findIssuedCredential(%q) matched", candidate)
+		}
+	}
+	if !activeDigestMatches(map[string]string{testHostID: strings64("a")}, testHostID, string([]byte(strings64("a")))) {
+		t.Fatal("activeDigestMatches() rejected equal fixed-length digest")
+	}
+	if activeDigestMatches(map[string]string{testHostID: strings64("a")}, testHostID, strings64("b")) {
+		t.Fatal("activeDigestMatches() accepted different digest")
+	}
+	if digestEqual("short", "short") {
+		t.Fatal("digestEqual() accepted a non-SHA-256 digest")
+	}
+
+	comparisons := 0
+	_, _, ok = findIssuedCredentialWithComparator(credentials, strings64("a"), func(stored, candidate string) bool {
+		comparisons++
+		return true
+	})
+	if !ok || comparisons != len(credentials) {
+		t.Fatalf("constant-work lookup = (found %v, comparisons %d), want true and %d", ok, comparisons, len(credentials))
+	}
 }
 
 func TestJoinRejectsWrongRoomKeyExpiredInviteAndResumeDigestCollision(t *testing.T) {
@@ -212,6 +250,56 @@ func TestJoinRejectsWrongRoomKeyExpiredInviteAndResumeDigestCollision(t *testing
 		request.CandidateResumeToken = testHostResume
 		if _, err := service.Join(context.Background(), request); !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("Join colliding resume error = %v", err)
+		}
+	})
+}
+
+func TestWriterLifecycleMatchesRecoveryWindowAndTicketLifetime(t *testing.T) {
+	t.Run("join before room creation time", func(t *testing.T) {
+		now := time.UnixMilli(1_000)
+		service, err := Open(Config{
+			Root: t.TempDir(), Clock: func() time.Time { return now }, TokenPepper: testPepper,
+			ColorRandom: bytes.NewReader([]byte{0}), PlayerRandom: bytes.NewReader(bytes.Repeat([]byte{3}, 32)),
+			CredentialRandom: bytes.NewReader(bytes.Repeat([]byte{4}, 64)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = service.Close() })
+		createTestRoom(t, service)
+		now = time.UnixMilli(999)
+		if _, err := service.Join(context.Background(), testJoinRequest()); !errors.Is(err, ErrJoinExpired) {
+			t.Fatalf("Join() error = %v, want ErrJoinExpired", err)
+		}
+		if got := len(service.store.Records()); got != 1 {
+			t.Fatalf("journal records = %d, want only room.created", got)
+		}
+	})
+
+	t.Run("exact and overflow-safe ticket expiry", func(t *testing.T) {
+		now := time.UnixMilli(1_000)
+		service, err := Open(Config{
+			Root: t.TempDir(), Clock: func() time.Time { return now }, TokenPepper: testPepper,
+			ColorRandom: bytes.NewReader([]byte{0}), PlayerRandom: bytes.NewReader(bytes.Repeat([]byte{3}, 32)),
+			CredentialRandom: bytes.NewReader(bytes.Repeat([]byte{4}, 96)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = service.Close() })
+		createTestRoom(t, service)
+		now = time.UnixMilli(2_000)
+		ticket, err := service.IssueLaunch(context.Background(), testHostID, testHostResume)
+		if err != nil || ticket.ExpiresAt != 62_000 {
+			t.Fatalf("IssueLaunch() = (%#v, %v), want expiresAt 62000", ticket, err)
+		}
+		before := len(service.store.Records())
+		now = time.UnixMilli(math.MaxInt64 - launchTicketLifetimeMS + 1)
+		if _, err := service.IssueLaunch(context.Background(), testHostID, testHostResume); !errors.Is(err, ErrInternal) {
+			t.Fatalf("overflow IssueLaunch() error = %v, want ErrInternal", err)
+		}
+		if got := len(service.store.Records()); got != before {
+			t.Fatalf("overflow issue appended record: before=%d after=%d", before, got)
 		}
 	})
 }

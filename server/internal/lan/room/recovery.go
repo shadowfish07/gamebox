@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"sort"
 
@@ -117,6 +117,7 @@ type committedAction struct {
 type projection struct {
 	snapshot      Snapshot
 	created       bool
+	createdAt     int64
 	roomKeyDigest string
 	pepperCheck   string
 	joinAttemptID string
@@ -186,6 +187,7 @@ func (state *projection) applyCreated(record journal.Record, tokenPepper string)
 		return ErrRecoveryCorrupt
 	}
 	state.created = true
+	state.createdAt = payload.CreatedAt
 	state.roomKeyDigest = payload.RoomKeyDigest
 	state.pepperCheck = payload.PepperCheck
 	state.resumeDigests[payload.Host.PlayerID] = payload.HostResumeDigest
@@ -200,7 +202,8 @@ func (state *projection) applyJoined(record journal.Record) error {
 	var payload playerJoinedPayload
 	if decodeStrict(record.Payload, &payload) != nil || payload.RoomID != state.snapshot.RoomID || !validPlayer(payload.Player, 1) ||
 		payload.Player.PlayerID == state.snapshot.Players[0].PlayerID || payload.Player.Color == state.snapshot.Players[0].Color ||
-		!canonicalID(payload.JoinAttemptID) || !canonicalDigest.MatchString(payload.ResumeDigest) || payload.JoinedAt <= 0 {
+		!canonicalID(payload.JoinAttemptID) || !canonicalDigest.MatchString(payload.ResumeDigest) ||
+		!validJoinTimestamp(state.createdAt, payload.JoinedAt, state.snapshot.JoinExpiresAt) {
 		return ErrRecoveryCorrupt
 	}
 	for _, existingDigest := range state.resumeDigests {
@@ -235,11 +238,15 @@ func (state *projection) applyCredentialIssued(record journal.Record) error {
 		return ErrRecoveryCorrupt
 	}
 	var payload credentialIssuedPayload
-	if decodeStrict(record.Payload, &payload) != nil || payload.RoomID != state.snapshot.RoomID || !state.hasPlayer(payload.PlayerID) ||
-		!canonicalDigest.MatchString(payload.CredentialDigest) || payload.IssuedAt <= 0 || payload.ExpiresAt <= payload.IssuedAt {
+	if decodeStrict(record.Payload, &payload) != nil {
 		return ErrRecoveryCorrupt
 	}
-	if _, exists := state.issued[payload.CredentialDigest]; exists {
+	expiresAt, validLifetime := launchTicketExpiry(payload.IssuedAt)
+	if payload.RoomID != state.snapshot.RoomID || !state.hasPlayer(payload.PlayerID) ||
+		!canonicalDigest.MatchString(payload.CredentialDigest) || !validLifetime || payload.ExpiresAt != expiresAt {
+		return ErrRecoveryCorrupt
+	}
+	if _, _, exists := findIssuedCredential(state.issued, payload.CredentialDigest); exists {
 		return ErrRecoveryCorrupt
 	}
 	state.issued[payload.CredentialDigest] = issuedCredential{playerID: payload.PlayerID, issuedAt: payload.IssuedAt, expiresAt: payload.ExpiresAt}
@@ -255,13 +262,13 @@ func (state *projection) applyCredentialConsumed(record journal.Record) error {
 	if decodeStrict(record.Payload, &payload) != nil || payload.RoomID != state.snapshot.RoomID || !canonicalDigest.MatchString(payload.CredentialDigest) {
 		return ErrRecoveryCorrupt
 	}
-	issued, ok := state.issued[payload.CredentialDigest]
-	if !ok || issued.consumed || issued.playerID != payload.PlayerID || state.activeTicket[payload.PlayerID] != payload.CredentialDigest ||
+	storedDigest, issued, ok := findIssuedCredential(state.issued, payload.CredentialDigest)
+	if !ok || issued.consumed || issued.playerID != payload.PlayerID || !activeDigestMatches(state.activeTicket, payload.PlayerID, payload.CredentialDigest) ||
 		payload.ConsumedAt < issued.issuedAt || payload.ConsumedAt > issued.expiresAt {
 		return ErrRecoveryCorrupt
 	}
 	issued.consumed = true
-	state.issued[payload.CredentialDigest] = issued
+	state.issued[storedDigest] = issued
 	delete(state.activeTicket, payload.PlayerID)
 	return nil
 }
@@ -398,10 +405,54 @@ func credentialDigest(pepper, domain, plaintext string) string {
 }
 
 func digestEqual(left, right string) bool {
-	if len(left) != len(right) {
+	if len(left) != sha256.Size*2 || len(right) != sha256.Size*2 {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
+	return hmac.Equal([]byte(left), []byte(right))
+}
+
+func secretEqual(left, right string) bool {
+	leftDigest := sha256.Sum256([]byte(left))
+	rightDigest := sha256.Sum256([]byte(right))
+	return hmac.Equal(leftDigest[:], rightDigest[:])
+}
+
+func findIssuedCredential(credentials map[string]issuedCredential, candidate string) (string, issuedCredential, bool) {
+	return findIssuedCredentialWithComparator(credentials, candidate, digestEqual)
+}
+
+func findIssuedCredentialWithComparator(credentials map[string]issuedCredential, candidate string, compare func(string, string) bool) (string, issuedCredential, bool) {
+	var matchedDigest string
+	var matched issuedCredential
+	found := false
+	for storedDigest, credential := range credentials {
+		if compare(storedDigest, candidate) {
+			matchedDigest = storedDigest
+			matched = credential
+			found = true
+		}
+	}
+	return matchedDigest, matched, found
+}
+
+func activeDigestMatches(activeTickets map[string]string, playerID, candidate string) bool {
+	activeDigest, exists := activeTickets[playerID]
+	if !exists {
+		activeDigest = "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+	matches := digestEqual(activeDigest, candidate)
+	return exists && matches
+}
+
+func validJoinTimestamp(createdAt, joinedAt, joinExpiresAt int64) bool {
+	return createdAt > 0 && joinedAt >= createdAt && joinedAt <= joinExpiresAt
+}
+
+func launchTicketExpiry(issuedAt int64) (int64, bool) {
+	if issuedAt <= 0 || issuedAt > math.MaxInt64-launchTicketLifetimeMS {
+		return 0, false
+	}
+	return issuedAt + launchTicketLifetimeMS, true
 }
 
 func actionFingerprint(playerID, actionType string, canonicalPayload json.RawMessage) string {

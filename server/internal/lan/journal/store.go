@@ -20,6 +20,7 @@ var (
 	ErrJournalLocked         = errors.New("journal root is already locked")
 	ErrJournalClosed         = errors.New("journal store is closed")
 	ErrJournalSequenceGap    = errors.New("journal sequence gap")
+	ErrJournalCorrupt        = errors.New("journal content is corrupt")
 	recordFileName           = regexp.MustCompile(`^[0-9]{16}\.json$`)
 	temporaryFileName        = regexp.MustCompile(`^[0-9]{16}\.json\.tmp$`)
 	positiveCanonicalInteger = regexp.MustCompile(`^[1-9][0-9]*$`)
@@ -89,7 +90,7 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		}
 		if filepath.Ext(name) == ".json" {
 			if !recordFileName.MatchString(name) {
-				return nil, nil, fmt.Errorf("invalid committed journal filename %q", name)
+				return nil, nil, fmt.Errorf("%w: invalid committed journal filename %q", ErrJournalCorrupt, name)
 			}
 			fileNames = append(fileNames, name)
 		}
@@ -100,7 +101,7 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		expectedSequence := int64(index + 1)
 		fileSequence, _ := strconv.ParseInt(name[:16], 10, 64)
 		if fileSequence != expectedSequence {
-			return nil, nil, fmt.Errorf("%w or reorder at %q: got %d, want %d", ErrJournalSequenceGap, name, fileSequence, expectedSequence)
+			return nil, nil, fmt.Errorf("%w: %w or reorder at %q: got %d, want %d", ErrJournalCorrupt, ErrJournalSequenceGap, name, fileSequence, expectedSequence)
 		}
 		data, err := readFileBounded(filepath.Join(root, name), maxRecordBytes)
 		if err != nil {
@@ -108,13 +109,13 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		}
 		record, err := decodeRecord(data)
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode record %q: %w", name, err)
+			return nil, nil, fmt.Errorf("%w: decode record %q: %w", ErrJournalCorrupt, name, err)
 		}
 		if record.JournalSequence != expectedSequence {
-			return nil, nil, fmt.Errorf("record %q sequence = %d, want %d", name, record.JournalSequence, expectedSequence)
+			return nil, nil, fmt.Errorf("%w: record %q sequence = %d, want %d", ErrJournalCorrupt, name, record.JournalSequence, expectedSequence)
 		}
 		if expectedSequence > 1 && record.PreviousHash != records[len(records)-1].Hash {
-			return nil, nil, fmt.Errorf("record %q previous hash does not chain", name)
+			return nil, nil, fmt.Errorf("%w: record %q previous hash does not chain", ErrJournalCorrupt, name)
 		}
 		records = append(records, record)
 	}
@@ -286,7 +287,7 @@ func readFileBounded(path string, limit int) ([]byte, error) {
 		return data, err
 	}
 	if len(data) > limit {
-		return data, fmt.Errorf("exceeds %d byte limit", limit)
+		return data, fmt.Errorf("%w: exceeds %d byte limit", ErrJournalCorrupt, limit)
 	}
 	return data, nil
 }

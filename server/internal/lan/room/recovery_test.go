@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -238,6 +239,120 @@ func TestRecoveryRejectsConsistentHashChainWithInvalidRoomSemanticsWithoutEditin
 	}
 }
 
+func TestRecoveryRejectsJoinOutsideCreatedRoomWindow(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		joinedAt int64
+	}{
+		{name: "before room creation", joinedAt: 999},
+		{name: "after join deadline", joinedAt: 100_001},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			service := openTestService(t, root, nil, 0)
+			created := createTestRoom(t, service)
+			host := created.Snapshot.Players[0]
+			guestColor := ColorBlack
+			if host.Color == ColorBlack {
+				guestColor = ColorWhite
+			}
+			payload := playerJoinedPayload{
+				RoomID:        testRoomID,
+				Player:        Player{PlayerID: "22222222-2222-4222-8222-222222222222", Nickname: "Guest", Seat: 1, Color: guestColor},
+				JoinAttemptID: testJoinAttempt,
+				ResumeDigest:  credentialDigest(testPepper, resumeDigestDomain, testGuestResume),
+				JoinedAt:      test.joinedAt,
+			}
+			draft, err := makeDraft(recordPlayerJoined, nil, nil, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.store.Append(context.Background(), draft); err != nil {
+				t.Fatal(err)
+			}
+			assertRecoveryCorruptWithoutEdits(t, service, root)
+		})
+	}
+}
+
+func TestRecoveryRequiresExactOverflowSafeLaunchTicketLifetime(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		issuedAt  int64
+		expiresAt int64
+	}{
+		{name: "shortened", issuedAt: 2_000, expiresAt: 61_999},
+		{name: "extended", issuedAt: 2_000, expiresAt: 62_001},
+		{name: "overflow", issuedAt: math.MaxInt64 - launchTicketLifetimeMS + 1, expiresAt: math.MaxInt64},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			service := openTestService(t, root, nil, 0)
+			createTestRoom(t, service)
+			payload := credentialIssuedPayload{
+				RoomID: testRoomID, PlayerID: testHostID, CredentialDigest: strings64("c"),
+				IssuedAt: test.issuedAt, ExpiresAt: test.expiresAt,
+			}
+			draft, err := makeDraft(recordCredentialIssued, nil, nil, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.store.Append(context.Background(), draft); err != nil {
+				t.Fatal(err)
+			}
+			assertRecoveryCorruptWithoutEdits(t, service, root)
+		})
+	}
+}
+
+func TestRecoveryCredentialProofsAndOversizedRecordClassification(t *testing.T) {
+	t.Run("token pepper proof", func(t *testing.T) {
+		root := t.TempDir()
+		service := openTestService(t, root, nil, 0)
+		createTestRoom(t, service)
+		if err := service.Close(); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotFiles(t, root)
+		if opened, err := Open(Config{Root: root, TokenPepper: "different-token-pepper-at-least-thirty-two-bytes"}); opened != nil || !errors.Is(err, ErrRecoveryCorrupt) {
+			t.Fatalf("Open() = (%v, %v), want ErrRecoveryCorrupt", opened, err)
+		}
+		if after := snapshotFiles(t, root); !reflect.DeepEqual(after, before) {
+			t.Fatalf("pepper recovery edited sources: before=%v after=%v", before, after)
+		}
+		recovered := openTestService(t, root, nil, 0)
+		if recovered.Snapshot().RoomID != testRoomID {
+			t.Fatalf("recovered room = %#v", recovered.Snapshot())
+		}
+	})
+
+	t.Run("oversized committed record", func(t *testing.T) {
+		root := t.TempDir()
+		store, _, err := journal.Open(root, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "0000000000000001.json"), bytes.Repeat([]byte{'x'}, 2<<20), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertOpenCorruptWithoutEdits(t, root)
+	})
+
+	t.Run("operational root error stays operational", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(root, []byte("file"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		opened, err := Open(Config{Root: root, TokenPepper: testPepper})
+		if opened != nil || err == nil || errors.Is(err, ErrRecoveryCorrupt) {
+			t.Fatalf("Open() = (%v, %v), want non-corruption operational error", opened, err)
+		}
+	})
+}
+
 func TestRecoveryRejectsDuplicateActionsRuleMismatchAndInvalidResultAck(t *testing.T) {
 	t.Run("duplicate action id", func(t *testing.T) {
 		root := t.TempDir()
@@ -463,16 +578,18 @@ func assertRecoveryCorruptWithoutEdits(t *testing.T, service *Service, root stri
 func assertOpenCorruptWithoutEdits(t *testing.T, root string) {
 	t.Helper()
 	before := snapshotFiles(t, root)
-	opened, err := Open(Config{Root: root, TokenPepper: testPepper})
-	if opened != nil {
-		_ = opened.Close()
-	}
-	if !errors.Is(err, ErrRecoveryCorrupt) {
-		t.Fatalf("Open error = %v, want recovery corrupt", err)
+	for attempt := 1; attempt <= 2; attempt++ {
+		opened, err := Open(Config{Root: root, TokenPepper: testPepper})
+		if opened != nil {
+			_ = opened.Close()
+		}
+		if !errors.Is(err, ErrRecoveryCorrupt) {
+			t.Fatalf("Open attempt %d error = %v, want recovery corrupt (and released root lock)", attempt, err)
+		}
 	}
 	after := snapshotFiles(t, root)
 	if !reflect.DeepEqual(after, before) {
-		t.Fatalf("recovery edited sources: before=%v after=%v", before, after)
+		t.Fatal("recovery edited committed source files")
 	}
 }
 
