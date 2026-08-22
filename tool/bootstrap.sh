@@ -16,7 +16,7 @@ run_self_test() {
 	SELF_TEST_FIXTURE_ROOT="$fixture_root"
 	fake_bin="$fixture_root/bin"
 	fake_sdk="$fixture_root/android-sdk"
-	mkdir -p "$fake_bin" "$fake_sdk/platforms/android-36"
+	mkdir -p "$fake_bin" "$fake_sdk/platforms/android-36" "$fake_sdk/ndk/fixture/toolchains/llvm/prebuilt"
 	fake_tool="$fake_bin/fake-tool"
 	# shellcheck disable=SC2016 # The fixture script expands these at execution time.
 	printf '%s\n' \
@@ -27,7 +27,14 @@ run_self_test() {
 		'    if [[ "${1:-}" == "--version" ]]; then printf "Waiting for another flutter command to release the startup lock...\\nFlutter 3.47.1 fixture\\n"; else printf "All Android licenses accepted.\\n"; fi' \
 		'    ;;' \
 		'  dart) printf "Dart SDK version: 3.13.1 (stable)\\n" ;;' \
-		'  go) printf "go version go1.25.0 fixture/amd64\\n" ;;' \
+		'  go)' \
+		'    case "${1:-} ${2:-} ${3:-}" in' \
+		'      "version  ") printf "go version go1.25.0 fixture/amd64\\n" ;;' \
+		'      "tool gomobile help") printf "gomobile bind fixture\\n" ;;' \
+		'      "tool gobind -h") printf "gobind fixture\\n" >&2 ;;' \
+		'      *) exit 99 ;;' \
+		'    esac' \
+		'    ;;' \
 		'  java) printf "openjdk version \\x2217.0.1\\x22 fixture\\n" >&2 ;;' \
 		'  godot) printf "4.7.stable.fixture\\n" ;;' \
 		'  *) exit 99 ;;' \
@@ -68,7 +75,17 @@ run_self_test() {
 		rm -f "$fake_bin/$tool_name"
 	done
 	rm -f "$fake_tool"
-	rmdir "$fake_sdk/platforms/android-36" "$fake_sdk/platforms" "$fake_sdk" "$fake_bin" "$fixture_root"
+	rmdir \
+		"$fake_sdk/ndk/fixture/toolchains/llvm/prebuilt" \
+		"$fake_sdk/ndk/fixture/toolchains/llvm" \
+		"$fake_sdk/ndk/fixture/toolchains" \
+		"$fake_sdk/ndk/fixture" \
+		"$fake_sdk/ndk" \
+		"$fake_sdk/platforms/android-36" \
+		"$fake_sdk/platforms" \
+		"$fake_sdk" \
+		"$fake_bin" \
+		"$fixture_root"
 	SELF_TEST_FIXTURE_ROOT=""
 	printf 'Bootstrap build-only/default fixtures passed.\n'
 }
@@ -176,6 +193,18 @@ else
 	missing "Go 1.25" "Install Go 1.25 and put go on PATH."
 fi
 
+if gomobile_output="$(cd "$ROOT_DIR/server" && go tool gomobile help bind 2>&1)"; then
+	ok "gomobile (server/go.mod tool)"
+else
+	missing "gomobile (server/go.mod tool)" "Run: cd server && go get -tool golang.org/x/mobile/cmd/gomobile"
+fi
+
+if gobind_output="$(cd "$ROOT_DIR/server" && go tool gobind -h 2>&1)"; then
+	ok "gobind (server/go.mod tool)"
+else
+	missing "gobind (server/go.mod tool)" "Run: cd server && go get -tool golang.org/x/mobile/cmd/gobind"
+fi
+
 godot_bin="${GODOT_BIN:-/Applications/Godot.app/Contents/MacOS/Godot}"
 if [[ -x "$godot_bin" ]]; then
 	if godot_output="$("$godot_bin" --version 2>&1)"; then
@@ -216,6 +245,21 @@ if [[ -d "$sdk_root/platforms/android-36" ]]; then
 	ok "Android SDK platform 36 ($sdk_root)"
 else
 	missing "Android SDK platform 36" "Install platform 36 with: sdkmanager --install 'platforms;android-36' (SDK: $sdk_root)."
+fi
+
+ndk_root="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+if [[ -z "$ndk_root" ]]; then
+	for ndk_candidate in "$sdk_root"/ndk/*; do
+		if [[ -d "$ndk_candidate/toolchains/llvm/prebuilt" ]]; then
+			ndk_root="$ndk_candidate"
+			break
+		fi
+	done
+fi
+if [[ -n "$ndk_root" && -d "$ndk_root/toolchains/llvm/prebuilt" ]]; then
+	ok "Android NDK ($ndk_root)"
+else
+	missing "Android NDK" "Install an NDK with: sdkmanager --install 'ndk;27.0.12077973' (SDK: $sdk_root)."
 fi
 
 if [[ "$mode" == full ]]; then

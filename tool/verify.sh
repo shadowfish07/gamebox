@@ -168,7 +168,7 @@ verify_asset_path_fixtures() {
 validate_apk_native_runtime() {
   local listing_text="$1"
   local source_name="$2"
-  local packaged_abis expected_abis abi target
+  local packaged_abis expected_abis abi library target
   expected_abis='arm64-v8a armeabi-v7a x86_64'
   packaged_abis="$(awk '$NF ~ /^lib\/[^\/]+\// { split($NF, parts, "/"); print parts[2] }' <<<"$listing_text" | LC_ALL=C sort -u | paste -sd ' ' -)"
   if [[ "$packaged_abis" != "$expected_abis" ]]; then
@@ -176,38 +176,45 @@ validate_apk_native_runtime() {
     return 1
   fi
   for abi in arm64-v8a armeabi-v7a x86_64; do
-    target="lib/$abi/libgodot_android.so"
-    if ! awk -v target="$target" '
-      $NF == target {
-        count++
-        if ($1 ~ /^[0-9]+$/ && $1 > 0) valid++
-      }
-      END { exit !(count == 1 && valid == 1) }
-    ' <<<"$listing_text"; then
-      printf '%s must contain one non-empty %s.\n' "$source_name" "$target" >&2
-      return 1
-    fi
+    for library in libgodot_android.so libgojni.so; do
+      target="lib/$abi/$library"
+      if ! awk -v target="$target" '
+        $NF == target {
+          count++
+          if ($1 ~ /^[0-9]+$/ && $1 > 0) valid++
+        }
+        END { exit !(count == 1 && valid == 1) }
+      ' <<<"$listing_text"; then
+        printf '%s must contain one non-empty %s.\n' "$source_name" "$target" >&2
+        return 1
+      fi
+    done
   done
 }
 
 verify_native_runtime_fixtures() {
   local good_listing bad_listing
-  good_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so'
+  good_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n71148032  01-01-1980 00:00 lib/arm64-v8a/libgojni.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgojni.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so\n74034072  01-01-1980 00:00 lib/x86_64/libgojni.so'
   validate_apk_native_runtime "$good_listing" 'valid native fixture' || return 1
 
-  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so'
-  if validate_apk_native_runtime "$bad_listing" 'missing ABI fixture' >/dev/null 2>&1; then
-    printf 'Native runtime fixture accepted a missing ABI.\n' >&2
+  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n71148032  01-01-1980 00:00 lib/arm64-v8a/libgojni.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgojni.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so'
+  if validate_apk_native_runtime "$bad_listing" 'missing Go JNI fixture' >/dev/null 2>&1; then
+    printf 'Native runtime fixture accepted a missing Go JNI library.\n' >&2
     return 1
   fi
-  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n0  01-01-1980 00:00 lib/x86_64/libgodot_android.so'
-  if validate_apk_native_runtime "$bad_listing" 'empty library fixture' >/dev/null 2>&1; then
-    printf 'Native runtime fixture accepted an empty Godot library.\n' >&2
+  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n71148032  01-01-1980 00:00 lib/arm64-v8a/libgojni.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgojni.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so\n0  01-01-1980 00:00 lib/x86_64/libgojni.so'
+  if validate_apk_native_runtime "$bad_listing" 'empty Go JNI fixture' >/dev/null 2>&1; then
+    printf 'Native runtime fixture accepted an empty Go JNI library.\n' >&2
     return 1
   fi
   bad_listing="$good_listing"$'\n1  01-01-1980 00:00 lib/riscv64/libfixture.so'
   if validate_apk_native_runtime "$bad_listing" 'extra ABI fixture' >/dev/null 2>&1; then
     printf 'Native runtime fixture accepted an unexpected ABI.\n' >&2
+    return 1
+  fi
+  bad_listing="$good_listing"$'\n1  01-01-1980 00:00 lib/x86_64/libgojni.so'
+  if validate_apk_native_runtime "$bad_listing" 'duplicate Go JNI fixture' >/dev/null 2>&1; then
+    printf 'Native runtime fixture accepted a duplicate Go JNI library.\n' >&2
     return 1
   fi
   printf 'APK native runtime fixtures passed.\n'

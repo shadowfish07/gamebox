@@ -1,6 +1,11 @@
 import java.util.Properties
 import javax.inject.Inject
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.InputFile
+import org.gradle.process.ExecOperations
 
 plugins {
     id("com.android.application")
@@ -49,6 +54,42 @@ abstract class StageGameRuntimeAssets : DefaultTask() {
     }
 }
 
+@CacheableTask
+abstract class BuildLanAar : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val buildScript: RegularFileProperty
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val engineSource: DirectoryProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val goModule: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val goSum: RegularFileProperty
+
+    @get:OutputFile
+    abstract val outputAar: RegularFileProperty
+
+    @TaskAction
+    fun build() {
+        execOperations.exec {
+            commandLine(
+                "bash",
+                buildScript.get().asFile.absolutePath,
+                outputAar.get().asFile.absolutePath,
+            )
+        }
+    }
+}
+
 val supportedGameboxAbis = setOf("armeabi-v7a", "arm64-v8a", "x86_64")
 val selectedGameboxAbi = providers.gradleProperty("gameboxAndroidAbi").orNull
 require(selectedGameboxAbi == null || selectedGameboxAbi in supportedGameboxAbis) {
@@ -70,6 +111,16 @@ val gameRuntimeSource = rootProject.file("../../game_runtime")
 val stageGameRuntimeAssets = tasks.register<StageGameRuntimeAssets>("stageGameRuntimeAssets") {
     sourceDirectory.set(gameRuntimeSource)
     outputDirectory.set(layout.buildDirectory.dir("generated/gameboxRuntimeAssets"))
+}
+val buildLanAar = tasks.register<BuildLanAar>("buildLanAar") {
+    buildScript.set(rootProject.file("../../tool/build_lan_aar.sh"))
+    engineSource.set(rootProject.file("../../server/mobile/lanengine"))
+    goModule.set(rootProject.file("../../server/go.mod"))
+    goSum.set(rootProject.file("../../server/go.sum"))
+    outputAar.set(layout.buildDirectory.file("generated/gameboxLan/gamebox-lan.aar"))
+}
+tasks.named("preBuild").configure {
+    dependsOn(buildLanAar)
 }
 
 android {
@@ -153,6 +204,7 @@ flutter {
 }
 
 dependencies {
+    implementation(files(buildLanAar.flatMap { it.outputAar }))
     implementation("org.godotengine:godot:4.7.0.stable")
     // 1.19.0 requires compileSdk 37; 1.18.0 is the latest API 36-compatible release.
     implementation("androidx.core:core-ktx:1.18.0")
