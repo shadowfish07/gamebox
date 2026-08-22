@@ -9,12 +9,92 @@ import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
+import 'package:gamebox/design_system/gamebox_theme.dart';
+import 'package:gamebox/design_system/generated/gamebox_tokens.g.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/registration_page.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
+
+  testWidgets('GameboxApp follows system dark mode with the fixed scheme', (
+    tester,
+  ) async {
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    final fixture = await _RegistrationFixture.create(now);
+
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: _NoopGameLauncher(),
+        sessionController: fixture.controller,
+      ),
+    );
+    await tester.pump();
+
+    final context = tester.element(find.byType(RegistrationPage));
+    expect(Theme.of(context).brightness, Brightness.dark);
+    expect(Theme.of(context).colorScheme, GameboxTokens.darkColorScheme);
+  });
+
+  for (final size in const [Size(360, 800), Size(412, 915)]) {
+    testWidgets('uses the branded field-owned form at $size', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+      final fixture = await _RegistrationFixture.create(now);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GameboxTheme.dark(),
+          home: RegistrationPage(controller: fixture.controller),
+        ),
+      );
+
+      expect(find.text('加入 Gamebox'), findsOneWidget);
+      expect(find.text('输入邀请码，和朋友开始一局游戏'), findsOneWidget);
+      expect(find.byIcon(Icons.sports_esports_outlined), findsOneWidget);
+      expect(find.byType(GameboxPendingButton), findsOneWidget);
+      expect(
+        Theme.of(tester.element(find.byType(RegistrationPage))).brightness,
+        Brightness.dark,
+      );
+
+      await tester.tap(find.byKey(const Key('register')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(
+                of: find.byKey(const Key('invite-code')),
+                matching: find.byType(TextField),
+              ),
+            )
+            .decoration
+            ?.errorText,
+        '请输入邀请码',
+      );
+
+      await _enter(tester, const Key('invite-code'), 'invite-one');
+      await _enter(tester, const Key('nickname'), '鱼');
+      await tester.tap(find.byKey(const Key('register')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(
+                of: find.byKey(const Key('nickname')),
+                matching: find.byType(TextField),
+              ),
+            )
+            .decoration
+            ?.errorText,
+        '昵称至少需要 2 个字符',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('registration controls expose stable semantics labels', (
     tester,
@@ -94,6 +174,8 @@ void main() {
     await tester.pump();
 
     expect(fixture.controller.status, SessionStatus.submitting);
+    expect(find.byType(GameboxPendingButton), findsOneWidget);
+    expect(find.text('正在注册'), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('register'))),
       matchesSemantics(

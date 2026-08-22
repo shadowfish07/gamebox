@@ -5,6 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/design_system/components/gamebox_async_panel.dart';
+import 'package:gamebox/design_system/components/gamebox_page_body.dart';
+import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
+import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/home/home_api.dart';
@@ -36,7 +40,7 @@ void main() {
       gameSemantics,
       containsSemantics(
         identifier: 'game-gomoku',
-        label: '五子棋\n2 人对战',
+        label: '五子棋\n2 人 · 回合制',
         isHeader: true,
       ),
     );
@@ -103,6 +107,26 @@ void main() {
         hasTapAction: true,
       ),
     );
+
+    await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('取消这局尚未开始的对局？'), findsOneWidget);
+    expect(find.text('取消后，双方将返回空闲状态。'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('dismiss-cancel-match'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('confirm-cancel-match'), findsOneWidget);
+    expect(fixture.api.cancelCalls, 0);
+
+    await tester.tap(find.bySemanticsIdentifier('dismiss-cancel-match'));
+    await tester.pumpAndSettle();
+    expect(find.text('取消这局尚未开始的对局？'), findsNothing);
+    expect(fixture.api.cancelCalls, 0);
+
+    await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
+    await _flushWidget(tester);
+    expect(fixture.api.cancelCalls, 1);
 
     fixture.dispose();
   });
@@ -175,6 +199,9 @@ void main() {
     tester,
   ) async {
     final cancelled = Completer<void>();
+    addTearDown(() {
+      if (!cancelled.isCompleted) cancelled.complete();
+    });
     final fixture = _Fixture(now)..api.status = _active(revision: 0);
     fixture.api.onCancel = (_) async {
       await cancelled.future;
@@ -184,6 +211,8 @@ void main() {
     await _flushWidget(tester);
 
     await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
     await tester.pump();
 
     expect(
@@ -229,6 +258,8 @@ void main() {
     await _flushWidget(tester);
 
     await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
     await _flushWidget(tester);
 
     expect(find.text('对局无法取消'), findsOneWidget);
@@ -276,14 +307,15 @@ void main() {
     expect(fixture.api.createCalls, 1);
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('choose-opponent'))),
       containsSemantics(
         identifier: 'choose-opponent',
-        label: '选择对手',
+        label: '正在创建对局',
         isButton: true,
         isEnabled: false,
         hasEnabledState: true,
@@ -319,6 +351,7 @@ void main() {
     await _flushWidget(tester);
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(GameboxAsyncPanel), findsOneWidget);
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
     expect(
@@ -339,11 +372,57 @@ void main() {
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
     fixture.dispose();
   });
+
+  for (final configuration in const [
+    (size: Size(360, 800), status: 'idle', nickname: '一位名字很长但仍需要正常换行的玩家'),
+    (size: Size(412, 915), status: 'active', nickname: '另一位名字很长的玩家'),
+  ]) {
+    testWidgets('lays out dark ${configuration.status} Home at '
+        '${configuration.size}', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = configuration.size;
+      addTearDown(tester.view.reset);
+      final fixture = _Fixture(now)
+        ..api.status = configuration.status == 'idle'
+            ? const GomokuIdleStatus()
+            : _active(revision: 0);
+
+      await tester.pumpWidget(
+        _app(
+          fixture.controller,
+          aliceId,
+          nickname: configuration.nickname,
+          dark: true,
+        ),
+      );
+      await _flushWidget(tester);
+
+      final home = find.byType(HomePage);
+      expect(find.byType(GameboxPageBody), findsOneWidget);
+      expect(find.text('五子棋'), findsOneWidget);
+      expect(find.text('2 人 · 回合制'), findsOneWidget);
+      expect(find.byType(GameboxPendingButton), findsOneWidget);
+      expect(Theme.of(tester.element(home)).brightness, Brightness.dark);
+      expect(tester.takeException(), isNull);
+      fixture.dispose();
+    });
+  }
 }
 
-Widget _app(HomeController controller, String userId) => MaterialApp(
-  theme: ThemeData(useMaterial3: true),
-  home: HomePage(controller: controller, currentUserId: userId, nickname: '自己'),
+Widget _app(
+  HomeController controller,
+  String userId, {
+  String nickname = '自己',
+  bool dark = false,
+}) => MaterialApp(
+  theme: GameboxTheme.light(),
+  darkTheme: GameboxTheme.dark(),
+  themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+  home: HomePage(
+    controller: controller,
+    currentUserId: userId,
+    nickname: nickname,
+  ),
 );
 
 Future<void> _flushWidget(WidgetTester tester) async {

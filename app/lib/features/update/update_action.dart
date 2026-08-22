@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'app_update.dart';
 import 'update_controller.dart';
 
@@ -24,9 +27,9 @@ final class UpdateActionButton extends StatelessWidget {
             icon: Badge(
               isLabelVisible: hasUpdate,
               child: controller.isBusy
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                  ? SizedBox.square(
+                      dimension: GameboxTokens.components.smallProgressSize,
+                      child: const CircularProgressIndicator(),
                     )
                   : const Icon(Icons.system_update_alt),
             ),
@@ -42,8 +45,7 @@ Future<void> showUpdateDialog(
   UpdateController controller,
 ) async {
   if (controller.status == UpdateStatus.idle) {
-    await controller.checkNow();
-    if (!context.mounted) return;
+    unawaited(controller.checkNow());
   }
   await showDialog<void>(
     context: context,
@@ -64,33 +66,39 @@ final class _UpdateDialog extends StatelessWidget {
         final update = controller.availableUpdate;
         return AlertDialog(
           title: const Text('应用更新'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('当前版本 v${controller.installedVersion}'),
-                  const SizedBox(height: 16),
-                  if (update != null) ...[
-                    Text(
-                      '新版本 v${update.version}',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (update.title.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(update.title),
-                    ],
-                    if (update.releaseNotes.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(update.releaseNotes),
-                    ],
-                    const SizedBox(height: 16),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('当前版本 v${controller.installedVersion}'),
+                SizedBox(height: GameboxTokens.spacing.page),
+                if (update != null) ...[
+                  Text(
+                    '新版本 v${update.version}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (update.title.isNotEmpty) ...[
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    Text(update.title),
                   ],
-                  _UpdateState(controller: controller),
+                  if (update.releaseNotes.isNotEmpty) ...[
+                    SizedBox(height: GameboxTokens.spacing.compact),
+                    Text(update.releaseNotes),
+                  ],
+                  SizedBox(height: GameboxTokens.spacing.page),
                 ],
-              ),
+                ConstrainedBox(
+                  key: const Key('update-state-region'),
+                  constraints: BoxConstraints(
+                    minHeight: GameboxTokens.components.minimumTouchTarget,
+                  ),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: _UpdateState(controller: controller),
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [
@@ -160,11 +168,11 @@ final class _ProgressMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const SizedBox.square(
-          dimension: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
+        SizedBox.square(
+          dimension: GameboxTokens.components.smallProgressSize,
+          child: const CircularProgressIndicator(),
         ),
-        const SizedBox(width: 10),
+        SizedBox(width: GameboxTokens.spacing.compact),
         Expanded(child: Text(message)),
       ],
     );
@@ -183,7 +191,7 @@ final class _DownloadProgress extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(value == null ? '正在下载 APK...' : '正在下载 ${(value * 100).round()}%'),
-        const SizedBox(height: 8),
+        SizedBox(height: GameboxTokens.spacing.layout),
         LinearProgressIndicator(value: value),
       ],
     );

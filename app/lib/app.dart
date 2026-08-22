@@ -7,6 +7,7 @@ import 'core/api/api_client.dart';
 import 'core/auth/token_store.dart';
 import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
+import 'design_system/gamebox_theme.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
@@ -234,10 +235,9 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     return MaterialApp(
       key: ValueKey<String>(_navigationBoundary),
       title: 'Gamebox',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: GameboxTheme.light(),
+      darkTheme: GameboxTheme.dark(),
+      themeMode: ThemeMode.system,
       home: widget.hostSmokeEnabled ? _buildHostSmoke() : _buildAuthFlow(),
     );
   }

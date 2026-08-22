@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/design_system/components/gamebox_async_panel.dart';
+import 'package:gamebox/design_system/components/gamebox_page_body.dart';
+import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/home/home_api.dart';
@@ -49,6 +52,7 @@ void main() {
     expect(find.text('小猫'), findsOneWidget);
     expect(find.text('游戏中'), findsOneWidget);
     expect(find.text('离线 · 可邀请'), findsOneWidget);
+    expect(find.byType(CircleAvatar), findsNWidgets(2));
     expect(
       tester.getSemantics(find.byKey(const Key('opponent-$bobId'))),
       containsSemantics(
@@ -77,6 +81,16 @@ void main() {
     tester,
   ) async {
     final pending = Completer<CreatedGomokuMatch>();
+    addTearDown(() {
+      if (!pending.isCompleted) {
+        pending.complete(
+          const CreatedGomokuMatch(
+            id: '33333333-3333-4333-8333-333333333333',
+            gameId: 'gomoku',
+          ),
+        );
+      }
+    });
     final fixture = _Fixture(now)
       ..api.opponents = const [
         GomokuOpponent(
@@ -95,6 +109,7 @@ void main() {
     await tester.pump();
 
     expect(fixture.api.createCalls, 1);
+    expect(find.text('正在创建对局'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('opponent-$carolId')),
@@ -220,6 +235,7 @@ void main() {
       await _flushWidget(tester);
 
       expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
+      expect(find.byType(GameboxAsyncPanel), findsOneWidget);
       final retryButton = find.text('重试');
       await tester.tap(retryButton);
       await tester.tap(retryButton);
@@ -294,6 +310,16 @@ void main() {
     'a different pending create stays on page with operation busy feedback',
     (tester) async {
       final firstCreate = Completer<CreatedGomokuMatch>();
+      addTearDown(() {
+        if (!firstCreate.isCompleted) {
+          firstCreate.complete(
+            const CreatedGomokuMatch(
+              id: '33333333-3333-4333-8333-333333333333',
+              gameId: 'gomoku',
+            ),
+          );
+        }
+      });
       final fixture = _Fixture(now)
         ..api.status = _activeStatus()
         ..api.opponents = const [
@@ -343,6 +369,41 @@ void main() {
       fixture.dispose();
     },
   );
+
+  for (final size in const [Size(360, 800), Size(412, 915)]) {
+    testWidgets('lays out dark long opponent states at $size', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+      final fixture = _Fixture(now)
+        ..api.opponents = const [
+          GomokuOpponent(
+            id: bobId,
+            nickname: '名字很长仍需要正常换行的对手一',
+            availability: OpponentAvailability.busy,
+            presence: OpponentPresence.online,
+          ),
+          GomokuOpponent(
+            id: carolId,
+            nickname: '另一位名字很长的离线对手',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.offline,
+          ),
+        ];
+
+      await tester.pumpWidget(_app(fixture.controller, aliceId, dark: true));
+      await _flushWidget(tester);
+
+      final page = find.byType(OpponentPage);
+      expect(find.byType(GameboxPageBody), findsOneWidget);
+      expect(find.text('游戏中'), findsOneWidget);
+      expect(find.text('离线 · 可邀请'), findsOneWidget);
+      expect(find.byType(CircleAvatar), findsNWidgets(2));
+      expect(Theme.of(tester.element(page)).brightness, Brightness.dark);
+      expect(tester.takeException(), isNull);
+      fixture.dispose();
+    });
+  }
 }
 
 GomokuActiveStatus _activeStatus() => const GomokuActiveStatus(
@@ -357,13 +418,16 @@ GomokuActiveStatus _activeStatus() => const GomokuActiveStatus(
   ),
 );
 
-Widget _app(HomeController controller, String userId) => MaterialApp(
-  theme: ThemeData(useMaterial3: true),
-  home: OpponentPage(controller: controller, currentUserId: userId),
-);
+Widget _app(HomeController controller, String userId, {bool dark = false}) =>
+    MaterialApp(
+      theme: GameboxTheme.light(),
+      darkTheme: GameboxTheme.dark(),
+      themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+      home: OpponentPage(controller: controller, currentUserId: userId),
+    );
 
 Widget _navigatorApp(HomeController controller, String userId) => MaterialApp(
-  theme: ThemeData(useMaterial3: true),
+  theme: GameboxTheme.light(),
   home: Builder(
     builder: (context) => Scaffold(
       body: FilledButton(

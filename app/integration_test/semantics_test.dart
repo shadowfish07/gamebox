@@ -142,6 +142,18 @@ void main() {
 
       await tester.tap(find.bySemanticsIdentifier('cancel-match'));
       await _flush(tester);
+      expect(
+        find.bySemanticsIdentifier('dismiss-cancel-match'),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsIdentifier('confirm-cancel-match'),
+        findsOneWidget,
+      );
+      expect(fixture.homeApi.cancelCalls, 0);
+
+      await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
+      await _flush(tester);
       expect(fixture.homeApi.cancelCalls, 1);
     },
   );
