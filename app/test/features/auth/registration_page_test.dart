@@ -96,6 +96,58 @@ void main() {
     });
   }
 
+  for (final size in const [Size(360, 800), Size(412, 915)]) {
+    testWidgets(
+      'retains long valid input after a safe service failure at $size',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.reset);
+        const invite = 'invite-code-with-long-safe-value-20260822';
+        const nickname = 'LongNickname1234';
+        const rawServerMessage = 'private-storage-provider-detail';
+        const safeMessage = '无法安全保存登录信息，请申请新的邀请码';
+        final fixture = await _RegistrationFixture.create(now)
+          ..api.onRegister = (_, _) => Future<Session>.error(
+            const ApiError(code: 'storage_error', message: rawServerMessage),
+          );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GameboxTheme.light(),
+            home: RegistrationPage(controller: fixture.controller),
+          ),
+        );
+        await _enter(tester, const Key('invite-code'), invite);
+        await _enter(tester, const Key('nickname'), nickname);
+
+        await tester.tap(find.byKey(const Key('register')));
+        await tester.pump();
+
+        final errorText = find.text(safeMessage);
+        final errorRegion = find.ancestor(
+          of: errorText,
+          matching: find.byType(SizedBox),
+        );
+        expect(errorText, findsOneWidget);
+        expect(find.textContaining(rawServerMessage), findsNothing);
+        expect(errorRegion, findsOneWidget);
+        expect(
+          tester.getSize(errorRegion).height,
+          GameboxTokens.components.minimumTouchTarget,
+        );
+        expect(
+          _field(tester, const Key('invite-code')).controller?.text,
+          invite,
+        );
+        expect(
+          _field(tester, const Key('nickname')).controller?.text,
+          nickname,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('registration controls expose stable semantics labels', (
     tester,
   ) async {
@@ -409,6 +461,14 @@ Future<void> _enter(WidgetTester tester, Key semanticsKey, String value) async {
   );
   await tester.enterText(field, value);
 }
+
+TextField _field(WidgetTester tester, Key semanticsKey) =>
+    tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(semanticsKey),
+        matching: find.byType(TextField),
+      ),
+    );
 
 Session _session(DateTime now) => Session(
   user: const SessionUser(

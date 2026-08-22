@@ -334,24 +334,13 @@ final class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MergeSemantics(
+    return GameboxPendingButton(
       key: semanticKey,
-      child: Semantics(
-        identifier: semanticLabel,
-        label: isPending ? pendingLabel : label,
-        button: true,
-        enabled: onPressed != null && !isPending,
-        onTap: onPressed != null && !isPending ? onPressed : null,
-        liveRegion: semanticLabel == 'continue-match' && isPending,
-        excludeSemantics: true,
-        child: GameboxPendingButton(
-          identifier: semanticLabel,
-          label: label,
-          pendingLabel: pendingLabel,
-          isPending: isPending,
-          onPressed: onPressed,
-        ),
-      ),
+      identifier: semanticLabel,
+      label: label,
+      pendingLabel: pendingLabel,
+      isPending: isPending,
+      onPressed: onPressed,
     );
   }
 }

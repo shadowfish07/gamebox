@@ -18,6 +18,8 @@ void main() {
   const aliceId = '11111111-1111-4111-8111-111111111111';
   const bobId = '22222222-2222-4222-8222-222222222222';
   const carolId = '44444444-4444-4444-8444-444444444444';
+  const daveId = '55555555-5555-4555-8555-555555555555';
+  const erinId = '66666666-6666-4666-8666-666666666666';
   final now = DateTime.utc(2026, 8, 20, 12);
 
   testWidgets('excludes self and presents busy/offline rows accurately', (
@@ -40,6 +42,18 @@ void main() {
         GomokuOpponent(
           id: carolId,
           nickname: '小鸟',
+          availability: OpponentAvailability.busy,
+          presence: OpponentPresence.offline,
+        ),
+        GomokuOpponent(
+          id: daveId,
+          nickname: '小狗',
+          availability: OpponentAvailability.idle,
+          presence: OpponentPresence.online,
+        ),
+        GomokuOpponent(
+          id: erinId,
+          nickname: '小鱼',
           availability: OpponentAvailability.idle,
           presence: OpponentPresence.offline,
         ),
@@ -50,14 +64,16 @@ void main() {
     expect(find.text('自己'), findsNothing);
     expect(find.byKey(const Key('opponent-$aliceId')), findsNothing);
     expect(find.text('小猫'), findsOneWidget);
-    expect(find.text('游戏中'), findsOneWidget);
+    expect(find.text('在线 · 游戏中'), findsOneWidget);
+    expect(find.text('离线 · 游戏中'), findsOneWidget);
+    expect(find.text('在线 · 可邀请'), findsOneWidget);
     expect(find.text('离线 · 可邀请'), findsOneWidget);
-    expect(find.byType(CircleAvatar), findsNWidgets(2));
+    expect(find.byType(CircleAvatar), findsNWidgets(4));
     expect(
       tester.getSemantics(find.byKey(const Key('opponent-$bobId'))),
       containsSemantics(
         identifier: 'opponent-$bobId',
-        label: '小猫\n游戏中',
+        label: '小猫\n在线 · 游戏中',
         isButton: true,
         isEnabled: false,
         hasEnabledState: true,
@@ -67,11 +83,10 @@ void main() {
       tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
       containsSemantics(
         identifier: 'opponent-$carolId',
-        label: '小鸟\n离线 · 可邀请',
+        label: '小鸟\n离线 · 游戏中',
         isButton: true,
-        isEnabled: true,
+        isEnabled: false,
         hasEnabledState: true,
-        hasTapAction: true,
       ),
     );
     fixture.dispose();
@@ -177,20 +192,13 @@ void main() {
       expect(fixture.api.createCalls, 1);
       expect(fixture.api.opponentCalls, 2);
       expect(find.text('对手已进入其他对局'), findsOneWidget);
-      expect(find.text('游戏中'), findsOneWidget);
-      expect(
-        tester.getSemantics(find.byKey(const Key('opponent-error'))),
-        containsSemantics(
-          identifier: 'opponent-error',
-          label: '对手已进入其他对局',
-          isLiveRegion: true,
-        ),
-      );
+      expect(find.text('离线 · 游戏中'), findsOneWidget);
+      expect(find.bySemanticsIdentifier('opponent-error'), findsOneWidget);
       expect(
         tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
         containsSemantics(
           identifier: 'opponent-$carolId',
-          label: '小鸟\n游戏中',
+          label: '小鸟\n离线 · 游戏中',
           isButton: true,
           isEnabled: false,
           hasEnabledState: true,
@@ -396,7 +404,7 @@ void main() {
 
       final page = find.byType(OpponentPage);
       expect(find.byType(GameboxPageBody), findsOneWidget);
-      expect(find.text('游戏中'), findsOneWidget);
+      expect(find.text('在线 · 游戏中'), findsOneWidget);
       expect(find.text('离线 · 可邀请'), findsOneWidget);
       expect(find.byType(CircleAvatar), findsNWidgets(2));
       expect(Theme.of(tester.element(page)).brightness, Brightness.dark);

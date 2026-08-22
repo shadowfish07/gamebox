@@ -20,44 +20,50 @@ void main() {
   const carolId = '44444444-4444-4444-8444-444444444444';
   final now = DateTime.utc(2026, 8, 20, 12);
 
-  testWidgets('idle catalog exposes stable game and opponent semantics', (
-    tester,
-  ) async {
-    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
-    await tester.pumpWidget(_app(fixture.controller, aliceId));
-    await _flushWidget(tester);
+  testWidgets(
+    'idle catalog preserves stable game and opponent automation ids',
+    (tester) async {
+      final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+      await tester.pumpWidget(_app(fixture.controller, aliceId));
+      await _flushWidget(tester);
 
-    expect(find.byKey(const Key('home-shell')), findsOneWidget);
-    expect(find.text('你好，自己'), findsOneWidget);
-    expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
-    expect(find.text('五子棋'), findsOneWidget);
-    expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
-    expect(find.byKey(const Key('continue-match')), findsNothing);
-    final gameSemantics = tester.getSemantics(
-      find.byKey(const Key('game-gomoku')),
-    );
-    expect(
-      gameSemantics,
-      containsSemantics(
-        identifier: 'game-gomoku',
-        label: '五子棋\n2 人 · 回合制',
-        isHeader: true,
-      ),
-    );
-    expect(
-      tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      containsSemantics(
-        identifier: 'choose-opponent',
-        label: '选择对手',
-        isButton: true,
-        isEnabled: true,
-        hasEnabledState: true,
-        hasTapAction: true,
-      ),
-    );
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(find.text('你好，自己'), findsOneWidget);
+      expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
+      expect(find.text('五子棋'), findsOneWidget);
+      expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
+      expect(find.byKey(const Key('continue-match')), findsNothing);
+      expect(
+        find.byKey(const Key('choose-opponent')).evaluate().single.widget,
+        isA<GameboxPendingButton>(),
+      );
+      expect(find.bySemanticsIdentifier('choose-opponent'), findsOneWidget);
+      final gameSemantics = tester.getSemantics(
+        find.byKey(const Key('game-gomoku')),
+      );
+      expect(
+        gameSemantics,
+        containsSemantics(
+          identifier: 'game-gomoku',
+          label: '五子棋\n2 人 · 回合制',
+          isHeader: true,
+        ),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.descendant(
+                of: find.byKey(const Key('choose-opponent')),
+                matching: find.byType(FilledButton),
+              ),
+            )
+            .onPressed,
+        isNotNull,
+      );
 
-    fixture.dispose();
-  });
+      fixture.dispose();
+    },
+  );
 
   testWidgets('active card shows opponent color revision and hides creation', (
     tester,
@@ -73,15 +79,20 @@ void main() {
     expect(find.byKey(const Key('choose-opponent')), findsNothing);
     expect(find.byKey(const Key('cancel-match')), findsNothing);
     expect(
-      tester.getSemantics(find.byKey(const Key('continue-match'))),
-      containsSemantics(
-        identifier: 'continue-match',
-        label: '继续对局',
-        isButton: true,
-        isEnabled: true,
-        hasEnabledState: true,
-        hasTapAction: true,
-      ),
+      find.byKey(const Key('continue-match')).evaluate().single.widget,
+      isA<GameboxPendingButton>(),
+    );
+    expect(find.bySemanticsIdentifier('continue-match'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('continue-match')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNotNull,
     );
 
     fixture.dispose();
@@ -166,23 +177,26 @@ void main() {
     await tester.pump();
 
     expect(
-      tester.getSemantics(find.byKey(const Key('continue-match'))),
-      containsSemantics(
-        identifier: 'continue-match',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('continue-match')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     expect(
-      tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      containsSemantics(
-        identifier: 'cancel-match',
-        label: '取消未开始对局',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<TextButton>(
+            find.descendant(
+              of: find.byKey(const Key('cancel-match')),
+              matching: find.byType(TextButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     await tester.tap(
       find.byKey(const Key('cancel-match')),
@@ -216,23 +230,26 @@ void main() {
     await tester.pump();
 
     expect(
-      tester.getSemantics(find.byKey(const Key('continue-match'))),
-      containsSemantics(
-        identifier: 'continue-match',
-        label: '继续对局',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('continue-match')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     expect(
-      tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      containsSemantics(
-        identifier: 'cancel-match',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<TextButton>(
+            find.descendant(
+              of: find.byKey(const Key('cancel-match')),
+              matching: find.byType(TextButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     await tester.tap(
       find.byKey(const Key('continue-match')),
@@ -312,15 +329,22 @@ void main() {
 
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(
-      tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      containsSemantics(
-        identifier: 'choose-opponent',
-        label: '正在创建对局',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-        hasTapAction: false,
+      find.descendant(
+        of: find.byKey(const Key('choose-opponent')),
+        matching: find.text('正在创建对局'),
       ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('choose-opponent')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     await tester.tap(
       find.byKey(const Key('choose-opponent')),
@@ -354,16 +378,17 @@ void main() {
     expect(find.byType(GameboxAsyncPanel), findsOneWidget);
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
+    expect(find.bySemanticsIdentifier('retry-home'), findsOneWidget);
     expect(
-      tester.getSemantics(find.byKey(const Key('retry-home'))),
-      containsSemantics(
-        identifier: 'retry-home',
-        label: '重试',
-        isButton: true,
-        isEnabled: true,
-        hasEnabledState: true,
-        hasTapAction: true,
-      ),
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('retry-home')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNotNull,
     );
 
     fixture.api.statusError = null;

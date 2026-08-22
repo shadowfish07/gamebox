@@ -145,8 +145,6 @@ final class _OpponentPageState extends State<OpponentPage> {
             child: Semantics(
               identifier: 'opponent-error',
               liveRegion: true,
-              label: _errorMessage!,
-              excludeSemantics: true,
               child: GameboxAsyncPanel(
                 icon: Icons.error_outline,
                 title: '无法创建对局',
@@ -203,7 +201,11 @@ final class _OpponentPageState extends State<OpponentPage> {
   }
 
   static String _availabilityText(GomokuOpponent opponent) {
-    if (opponent.availability == OpponentAvailability.busy) return '游戏中';
+    if (opponent.availability == OpponentAvailability.busy) {
+      return opponent.presence == OpponentPresence.offline
+          ? '离线 · 游戏中'
+          : '在线 · 游戏中';
+    }
     return opponent.presence == OpponentPresence.offline
         ? '离线 · 可邀请'
         : '在线 · 可邀请';
