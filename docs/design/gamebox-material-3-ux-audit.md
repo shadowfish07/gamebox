@@ -45,6 +45,7 @@ The Godot project already requests portrait and expanded canvas stretching (`gam
 | M7 | **The dense board lacks a visible pressed state and Android assistive proof.** Touch capture, drag cancellation, and release submission exist (`game_runtime/games/gomoku/gomoku_board.gd:133–168`), but drawing covers only confirmed stones, last move, and pending move (`game_runtime/games/gomoku/gomoku_board.gd:171–203`). The headless test proves snapping and safe release only (`game_runtime/test/test_gomoku_board.gd:19–112`). | Keep the entire playfield continuously hittable, snap to the nearest intersection, show pressed → pending → accepted/rejected distinctly, and verify an equivalent coordinate interaction with the packaged Android accessibility capability. |
 | M8 | **Background recovery and Android Back parity are only partially evidenced.** Flutter refreshes session/Home after App resume (`app/lib/app.dart:128–146`) and Godot reconnect/snapshot logic is tested headlessly, but the inspected sources/tests do not prove a backgrounded packaged game synchronizes before re-enabling moves or that Android system Back matches visible Back in the actual Game Activity. | Exercise background/resume, authoritative synchronization, visible Back, system Back, and Game Activity exit on packaged Android. Back must never resign/cancel/discard progress, and returning to the lobby must leave the active match resumable. |
 | M9 | **Required state, accessibility, and visual acceptance evidence is missing.** Current Widget/headless tests cover useful wiring, but not the complete light/dark, enlarged-text, content-growth, safe-area, focus, TalkBack, confirmation, and screenshot gates. This documentation-only task intentionally captures no runtime screenshots. | Pass focused component/flow tests, the repository gate, real two-device linked flow, packaged Android/TalkBack checks, and every screenshot row below on the final clean HEAD. Fake services remain wiring evidence only. |
+| M10 | **Ordinary update feedback is incorrectly forced through one Dialog.** An idle tap awaits `checkNow()` and then unconditionally calls `showDialog` (`app/lib/features/update/update_action.dart:40–52`); the single `AlertDialog` hosts every state (`app/lib/features/update/update_action.dart:54–121`), including ordinary checking, up-to-date success, download progress, and failure (`app/lib/features/update/update_action.dart:127–150`). This conflicts with the skill's rule to use component/Snackbar/inline feedback for ordinary state and Dialog only for decisions or danger, never ordinary success (`.agents/skills/gamebox-material-3-ux/references/ux-standard.md:56–60`; `.agents/skills/gamebox-material-3-ux/references/flutter-app.md:29–33`). | In Task 5, keep the existing `UpdateController`, service/installer calls, state transitions, `app-update` identifier, and `downloadAndInstall` business behavior, but route checking/downloading to an inline or anchored non-blocking progress surface, up-to-date to quiet transient feedback, and recoverable failure to non-blocking feedback with retry. Reserve an App Dialog only for a real release/install decision; preserve Android's system permission/installer confirmation where the user must decide. |
 
 ## SHOULD Findings and Decisions
 
@@ -80,12 +81,17 @@ No other SHOULD deviation is approved. Token use, safe areas, dangerous confirma
 
 ## Test Plan
 
-All Flutter/Dart commands must use the locked SDK first:
+All Flutter/Dart commands inherit the retrofit plan's [Locked Execution Baseline](../superpowers/plans/2026-08-22-gamebox-material-3-ux-retrofit.md#locked-execution-baseline). This reusable audit does not duplicate a machine installation path. In every new shell, apply that baseline and verify tool ownership and versions before running any Flutter/Dart command:
 
 ```bash
-export GAMEBOX_FLUTTER_SDK_ROOT=/Users/shadowfish/flutter-backup-3.35.1-20260822-115538
-export PATH="$GAMEBOX_FLUTTER_SDK_ROOT/bin:$PATH"
+command -v flutter
+flutter --version
+command -v dart
+dart --version
+(cd app && flutter pub get --enforce-lockfile --dry-run)
 ```
+
+Expected: the selected executables are the plan-locked tools, `flutter --version` reports Flutter 3.35.1 with Dart 3.9.0, `dart --version` reports Dart 3.9.0, and the lockfile dry-run exits 0. If any check differs, stop rather than falling back to another SDK.
 
 Deterministic closure plan, in order:
 
@@ -93,8 +99,10 @@ Deterministic closure plan, in order:
 2. Run focused Flutter tests for registration, Home, opponents, update, confirmations, identifiers, pending/disabled states, launch failure/retry, light/dark schemes, 360×800 and 412×915 constraints, 1.0× and 1.3× text, content growth, and safe-area padding:
 
    ```bash
-   (cd app && flutter test test/features/auth/registration_page_test.dart test/features/home/home_page_test.dart test/features/home/opponent_page_test.dart)
+   (cd app && flutter test test/features/auth/registration_page_test.dart test/features/home/home_page_test.dart test/features/home/opponent_page_test.dart test/features/update/update_action_test.dart)
    ```
+
+   `app/test/features/update/update_action_test.dart` does not exist in the pre-change baseline; Task 5 creates it test-first before executing this command. It must cover non-blocking checking, up-to-date, downloading, and failure; the available-update install decision; permission/installer handoff; stable identifiers; retry; scrolling; and overflow across the required themes, viewports, and text scales without changing update business logic.
 
    Run `integration_test/semantics_test.dart` only through the leased Android path in `bash tool/e2e_android.sh`, which supplies the managed device with `-d "$SERIAL_A"`; do not start or address an unleased emulator.
 
