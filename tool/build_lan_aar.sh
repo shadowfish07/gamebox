@@ -92,5 +92,20 @@ if [[ "$actual_jni_entries" != "$expected_jni_entries" ]]; then
 	exit 1
 fi
 
+aar_listing="$(unzip -l "$temporary_output")"
+for abi in arm64-v8a armeabi-v7a x86_64; do
+	target="jni/$abi/libgojni.so"
+	if ! awk -v target="$target" '
+		$NF == target {
+			count++
+			if ($1 ~ /^[0-9]+$/ && $1 > 0) valid++
+		}
+		END { exit !(count == 1 && valid == 1) }
+	' <<<"$aar_listing"; then
+		printf 'AAR must contain one non-empty %s.\n' "$target" >&2
+		exit 1
+	fi
+done
+
 mv -f "$temporary_output" "$output_path"
 trap - EXIT

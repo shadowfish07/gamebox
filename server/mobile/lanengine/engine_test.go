@@ -8,8 +8,42 @@ import (
 )
 
 func TestEngineRejectsBlankRoot(t *testing.T) {
-	if _, err := NewEngine(""); !errors.Is(err, ErrInvalidConfiguration) {
-		t.Fatalf("NewEngine blank root error = %v", err)
+	for _, root := range []string{"", " \t\n "} {
+		if _, err := NewEngine(root); !errors.Is(err, ErrInvalidConfiguration) {
+			t.Fatalf("NewEngine(%q) error = %v", root, err)
+		}
+	}
+}
+
+func TestEngineHasStableEmptyStatusAndPendingErrors(t *testing.T) {
+	engine, err := NewEngine("/tmp/gamebox-lanengine")
+	if err != nil {
+		t.Fatalf("NewEngine valid root: %v", err)
+	}
+	if got := engine.Status(); got != `{"schemaVersion":1,"state":"empty"}` {
+		t.Fatalf("Status() = %q", got)
+	}
+
+	result, err := engine.Start(`{}`)
+	assertNotReady(t, "Start", result, err)
+	result, err = engine.CreateRoom(`{}`)
+	assertNotReady(t, "CreateRoom", result, err)
+	result, err = engine.IssueHostLaunch()
+	assertNotReady(t, "IssueHostLaunch", result, err)
+	assertStopNotReady(t, engine.Stop())
+}
+
+func assertNotReady(t *testing.T, method string, result string, err error) {
+	t.Helper()
+	if result != "" || err == nil || err.Error() != "not_ready" {
+		t.Fatalf("%s() = (%q, %v), want (empty, not_ready)", method, result, err)
+	}
+}
+
+func assertStopNotReady(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || err.Error() != "not_ready" {
+		t.Fatalf("Stop() error = %v, want not_ready", err)
 	}
 }
 

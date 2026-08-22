@@ -220,6 +220,60 @@ verify_native_runtime_fixtures() {
   printf 'APK native runtime fixtures passed.\n'
 }
 
+verify_lan_aar_fixtures() {
+  local fixture_root fake_bin fake_go fixture_output
+  fixture_root="$(mktemp -d "$ROOT_DIR/app/build/gamebox-lan-aar-fixture.XXXXXX")"
+  fake_bin="$fixture_root/bin"
+  fake_go="$fake_bin/go"
+  fixture_output="$fixture_root/empty-gojni.aar"
+  mkdir -p "$fake_bin"
+  # shellcheck disable=SC2016 # The fixture script expands these at execution time.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'case "${1:-} ${2:-} ${3:-}" in' \
+    '  "tool gomobile init") exit 0 ;;' \
+    '  "tool gomobile bind")' \
+    '    shift 3' \
+    '    output=""' \
+    '    while (( $# )); do' \
+    '      case "$1" in' \
+    '        -o) output="$2"; shift 2 ;;' \
+    '        *) shift ;;' \
+    '      esac' \
+    '    done' \
+    '    [[ -n "$output" ]]' \
+    '    archive_root="$(mktemp -d)"' \
+    '    content_root="$archive_root/content"' \
+    '    cleanup() { find "$archive_root" -depth -delete; }' \
+    '    trap cleanup EXIT' \
+    '    mkdir -p "$content_root/jni/arm64-v8a" "$content_root/jni/armeabi-v7a" "$content_root/jni/x86_64"' \
+    '    printf classes >"$content_root/classes.jar"' \
+    '    printf arm64 >"$content_root/jni/arm64-v8a/libgojni.so"' \
+    '    printf arm >"$content_root/jni/armeabi-v7a/libgojni.so"' \
+    '    : >"$content_root/jni/x86_64/libgojni.so"' \
+    '    (cd "$content_root" && zip -q -D -r "$archive_root/generated.aar" .)' \
+    '    mv -f "$archive_root/generated.aar" "$output"' \
+    '    ;;' \
+    '  *) exit 99 ;;' \
+    'esac' >"$fake_go"
+  chmod +x "$fake_go"
+
+  if PATH="$fake_bin:$PATH" bash "$ROOT_DIR/tool/build_lan_aar.sh" "$fixture_output" >"$fixture_root/build.log" 2>&1; then
+    printf 'AAR fixture accepted an empty Go JNI library.\n' >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  if ! grep -Fq 'must contain one non-empty jni/x86_64/libgojni.so' "$fixture_root/build.log"; then
+    printf 'AAR fixture did not report the empty Go JNI library:\n' >&2
+    cat "$fixture_root/build.log" >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  find "$fixture_root" -depth -delete
+  printf 'AAR Go JNI fixtures passed.\n'
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   [[ $# -eq 1 ]] || {
     printf 'usage: %s [--self-test]\n' "$0" >&2
@@ -227,6 +281,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   }
   verify_asset_path_fixtures
   verify_native_runtime_fixtures
+  verify_lan_aar_fixtures
   exit 0
 fi
 [[ $# -eq 0 ]] || {
@@ -235,6 +290,7 @@ fi
 }
 verify_asset_path_fixtures
 verify_native_runtime_fixtures
+verify_lan_aar_fixtures
 
 # setup-godot exposes the executable on PATH in CI, while the local bootstrap
 # retains its macOS application-bundle default.
