@@ -1,7 +1,7 @@
 # Gamebox Material 3 UX 规范设计
 
 - 日期：2026-08-22
-- 状态：对话设计已确认，等待书面规格审核
+- 状态：范围修订完成，等待书面规格复核
 - 适用范围：Gamebox Flutter App、Android 宿主边界、所有 Godot 游戏
 - 设计基线：稳定 Material 3，选择性采用可跨 Flutter/Godot 可靠复现的 Material 3 Expressive 能力
 
@@ -29,7 +29,16 @@ Gamebox 需要一套可执行、可验证、可长期演进的交互规范。它
 | 设备范围 | Android 手机；暂不承诺平板、折叠屏、ChromeOS 或桌面布局 |
 | 屏幕方向 | 每个游戏声明一个最合适的默认方向；不要求同时支持竖屏和横屏 |
 | 公共游戏壳层 | 非强制；五子棋等轻量游戏可选用轻量浮动壳层 |
-| 规范落地 | 规范文档、共享令牌、Flutter/Godot 原生组件库、自动检查和实际运行时截图共同构成完成标准 |
+| 规范落地 | 先交付仓库内自包含的 Gamebox UX skill，再由该 skill 驱动现有 Flutter App 与 Godot 五子棋改造；共享令牌、原生组件库、自动检查和实际运行时截图共同构成改造完成标准 |
+
+### 2.1 两项顺序交付
+
+本设计进入实现后拆成两项独立验收、顺序执行的工作：
+
+1. **提供 Gamebox Material 3 UX skill**：把 Gamebox 的规范内容、Flutter/Godot 应用方式、审计流程和验收清单封装为仓库内可发现、可版本化、可验证的 skill。
+2. **使用该 skill 改造现有产品**：先审计当前 Flutter App 与 Godot 五子棋，再完成令牌、公共组件、页面和游戏交互改造，并取得实际 Android 运行时与截图证据。
+
+第二项工作必须在第一项 skill 通过结构校验和真实任务场景验证后开始。skill 既是后续改造的执行约束，也是未来新增页面、组件和游戏时的默认评审入口；本轮不要求把所有未来游戏都提前改造成同一种 UI。
 
 ## 3. 规范等级与适用边界
 
@@ -57,10 +66,19 @@ Gamebox 需要一套可执行、可验证、可长期演进的交互规范。它
 
 ## 4. 设计系统架构
 
-设计系统分为规范层、令牌契约层和原生组件层。
+设计系统分为 skill 规范层、令牌契约层和原生组件层。
 
 ```text
 gamebox/
+├── .agents/skills/gamebox-material-3-ux/
+│   ├── SKILL.md
+│   ├── agents/
+│   │   └── openai.yaml
+│   └── references/
+│       ├── ux-standard.md
+│       ├── flutter-app.md
+│       ├── godot-games.md
+│       └── acceptance.md
 ├── design_system/
 │   ├── schema/
 │   │   └── tokens.schema.json
@@ -68,7 +86,6 @@ gamebox/
 │   │   └── gamebox.tokens.json
 │   └── README.md
 ├── docs/design/
-│   ├── ux-spec.md
 │   ├── game-onboarding.md
 │   └── profiles/
 │       ├── core-contract.md
@@ -90,6 +107,10 @@ gamebox/
 ```
 
 路径表达职责边界，实施计划可以在不改变边界的前提下微调具体文件名。
+
+skill 内的 `references/ux-standard.md` 是交互规范文字的权威来源；`gamebox.tokens.json` 是可生成数值的权威来源；本文保留设计依据、范围与架构决策，不再平行复制一份可执行规范。`SKILL.md` 只负责触发条件、工作流和按需加载相应参考文件，避免把全部规则堆入入口文件。
+
+该 skill 必须自包含 Gamebox 已确认的决策，不直接依赖开发者机器上的通用 `material-3` skill。通用 skill 和官方 Material 文档可用于编写与更新它，但不能成为执行时的隐式前置条件。
 
 ### 4.1 单一数据流
 
@@ -322,7 +343,14 @@ App 负责进入、发现、配置和恢复游戏，不承载游戏本身的玩�
 
 ## 14. 验证策略
 
-### 14.1 令牌验证
+### 14.1 Skill 验证
+
+- 在编写 skill 前，用真实的 Gamebox UI 审计、Flutter 改造、Godot 游戏接入和完成验收任务记录无 skill 基线，确认它实际遗漏或误判的规则。
+- 入口 metadata、目录结构、引用路径和渐进加载通过 skill 结构校验。
+- skill 必须在与基线相同的任务和至少一组新任务上完成正向验证，能按平台加载正确参考、识别 MUST/SHOULD/MAY、阻止未取得运行时证据的完成声明。
+- skill 内容发生修改时重新执行相关场景；只凭阅读文案不能视为验证通过。
+
+### 14.2 令牌验证
 
 - JSON schema 和必需角色完整性。
 - 颜色容器与 `on-*` 配对。
@@ -330,7 +358,7 @@ App 负责进入、发现、配置和恢复游戏，不承载游戏本身的玩�
 - Dart/GDScript 生成结果与 token 源无漂移。
 - 业务 UI 中新增硬编码公共颜色、字号、圆角和动效的定向检查。
 
-### 14.2 组件验证
+### 14.3 组件验证
 
 Flutter Widget Test 与 Godot 场景测试覆盖：
 
@@ -340,7 +368,7 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 - 标准字体与放大字体
 - 文案增长和安全区域
 
-### 14.3 流程验证
+### 14.4 流程验证
 
 关键流程至少包括：
 
@@ -354,7 +382,7 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 
 联机游戏必须继续使用实际双设备流程验证跨端状态。确定性伪服务可以证明 UI 状态布线，但不能替代真实联机边界。
 
-### 14.4 实际运行时视觉证据
+### 14.5 实际运行时视觉证据
 
 任何影响用户界面的改动，都必须运行实际构建后的 Android App 或 Godot 游戏并截图。Mock、Visual Companion、静态渲染、Golden Test 和源码检查都不能替代目标运行时截图。
 
@@ -363,7 +391,7 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 - 截图不得包含邀请码、访问令牌、用户私有信息或其他敏感数据。
 - 截图无法完成时必须报告精确阻塞，并明确视觉验证尚未完成。
 
-### 14.5 手机验收矩阵
+### 14.6 手机验收矩阵
 
 - App 页面覆盖典型窄屏和典型大屏手机。
 - 每个游戏只验证其声明的默认方向。
@@ -372,19 +400,27 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 
 ## 15. 迁移顺序
 
-### 阶段 1：基础令牌
+### 阶段 1：交付并验证 Skill
+
+建立 `.agents/skills/gamebox-material-3-ux/`，把本设计中可执行的规范拆入入口工作流与按需参考文件。先记录无 skill 基线，再进行结构校验和真实任务场景验证；以单独、可审查的提交完成第一项交付。该阶段不修改用户界面。
+
+### 阶段 2：使用 Skill 审计现状
+
+以已验证的 skill 审计 Flutter App 和 Godot 五子棋，输出按 MUST、SHOULD、MAY 分类的差距、受影响流程与截图清单。审计结果决定后续改造范围，不把尚未存在的游戏纳入本轮实现。
+
+### 阶段 3：基础令牌
 
 建立 token schema、协作青绿明暗主题、生成器、Flutter/Godot 适配器和漂移检查。该阶段不借机重写无关业务逻辑。
 
-### 阶段 2：Flutter App
+### 阶段 4：Flutter App
 
 建立 App 公共组件，依次迁移注册、游戏目录、对手选择和更新反馈。每迁移一个流程就完成组件测试、实际 Android 运行和截图。
 
-### 阶段 3：Godot 与五子棋
+### 阶段 5：Godot 与五子棋
 
 建立 Core Contract 组件和 Lightweight Board Profile，以五子棋作为首个接入样例。保留玩法逻辑、网络协议和服务端权威边界，只调整呈现、交互反馈与布局。
 
-### 阶段 4：验收门禁
+### 阶段 6：验收门禁
 
 将令牌同步、组件测试和设计系统检查接入现有验证脚本。实际运行时截图保留为可审查证据，不把截图文件本身当作唯一自动断言。
 
@@ -405,13 +441,25 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 - 平板、折叠屏、ChromeOS 或桌面布局
 - 强制所有游戏使用同一个可见壳层
 - 跨 Flutter/Godot 共享渲染代码
+- 直接复制或在运行时依赖开发者机器上的通用 Material 3 skill
 - 把全部游戏声明提前做成复杂运行时 DSL
 - 为尚未出现第二个使用方的玩法组件建立通用抽象
 - 全面追逐只在部分平台可用的 Material 3 Expressive API
 
 ## 18. 完成标准
 
-本设计进入实现后，只有同时满足以下条件，相关阶段才算完成：
+### 18.1 Skill 交付完成
+
+只有同时满足以下条件，第一项交付才算完成：
+
+1. 仓库内存在可发现、可版本化、自包含的 Gamebox Material 3 UX skill。
+2. skill 包含权威规范、Flutter/Godot 平台指导、审计流程和验收清单，且不与其他项目文档维护两份相互竞争的规范正文。
+3. skill 通过结构校验、无 skill 基线对比和真实任务正向验证。
+4. skill 以独立、可审查的任务范围提交；该提交不混入 UI 改造。
+
+### 18.2 现有改造完成
+
+只有同时满足以下条件，第二项交付才算完成：
 
 1. 令牌源、schema、两端生成结果和文档一致。
 2. Flutter 与 Godot 使用语义令牌，没有新增无理由的公共硬编码样式。
@@ -419,6 +467,7 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 4. 实际 Android App 或游戏完成目标运行时验证。
 5. 相关 UI 状态有无敏感信息的截图证据。
 6. 当前仓库统一验证门禁通过。
+7. 最终审查再次使用已交付的 skill，且审计中受本轮约束的 MUST 均已满足；未采用的 SHOULD 有记录理由和替代措施。
 
 ## 19. 规范依据
 
@@ -431,4 +480,4 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 - [Godot Control accessibility properties](https://docs.godotengine.org/en/stable/classes/class_control.html)
 - [Godot AccessibilityServer](https://docs.godotengine.org/en/stable/classes/class_accessibilityserver.html)
 
-外部 Material 文档用于定义设计语义；本文件中的 Gamebox 范围、Profile、验证和治理规则是本项目的规范性决策。
+外部 Material 文档用于定义设计语义；本文件记录 Gamebox 的范围、Profile、验证和治理决策。第一项交付完成后，执行任务以 skill 中的权威规范与令牌源为准。
