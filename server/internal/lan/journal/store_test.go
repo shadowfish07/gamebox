@@ -201,9 +201,14 @@ func TestAppendRejectsOversizedPayloadBeforeFileOperation(t *testing.T) {
 	} else if got := len(record.Payload); got != maxPayloadBytes {
 		t.Fatalf("accepted canonical payload bytes = %d, want %d", got, maxPayloadBytes)
 	}
-	if _, records, err := Open(root, nil); err != nil || len(records) != 1 || len(records[0].Payload) != maxPayloadBytes {
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, records, err := Open(root, ops)
+	if err != nil || len(records) != 1 || len(records[0].Payload) != maxPayloadBytes {
 		t.Fatalf("Open() exact payload = (%d records, %v), want one replayable %d-byte payload", len(records), err, maxPayloadBytes)
 	}
+	defer store.Close()
 	callsBeforeOversize := len(ops.calls)
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: validJSONStringOfLength(maxPayloadBytes + 1)}); !errors.Is(err, ErrInvalidDraft) {
 		t.Fatalf("Append() %d-byte canonical payload error = %v, want ErrInvalidDraft", maxPayloadBytes+1, err)
@@ -349,7 +354,7 @@ func TestAppendRejectsCumulativeCanonicalExpansionBeforeFileOperation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: raw}); !errors.Is(err, ErrInvalidDraft) {
+	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: raw}); !errors.Is(err, ErrInvalidDraft) {
 		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 	}
 	if len(ops.calls) != 0 || len(store.Records()) != 0 {
@@ -408,6 +413,9 @@ func TestReplayRejectsAlternateNestedNumericSpellingsBeforeHashVerification(t *t
 	if err := os.WriteFile(path, []byte(altered), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := Open(root, nil); err == nil || !strings.Contains(err.Error(), "payload is not canonical") {
 		t.Fatalf("Open() error = %v, want noncanonical numeric payload rejection before hash verification", err)
 	}
@@ -443,10 +451,14 @@ func TestManifestProjectionCanLagAuthoritativeJournal(t *testing.T) {
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
-	_, records, err := Open(root, nil)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, records, err := Open(root, nil)
 	if err != nil {
 		t.Fatalf("Open() rejected valid journal behind manifest: %v", err)
 	}
+	defer store.Close()
 	if len(records) != 2 {
 		t.Fatalf("Open() records = %d, want 2", len(records))
 	}
@@ -566,6 +578,9 @@ func journalWithTwoRecords(t *testing.T) (string, [][]byte) {
 		t.Fatal(err)
 	}
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	contents := make([][]byte, 2)

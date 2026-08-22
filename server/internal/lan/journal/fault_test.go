@@ -69,9 +69,17 @@ func TestFaultDirectorySyncPoisonsStoreBecauseRenameMayBeDurable(t *testing.T) {
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: json.RawMessage(`{}`)}); !errors.Is(err, ErrReopenRequired) {
 		t.Fatalf("Append() after directory sync failure = %v, want ErrReopenRequired", err)
 	}
-	if _, records, err := Open(root, nil); err != nil || len(records) != 1 {
+	if reopened, _, err := Open(root, nil); reopened != nil || !errors.Is(err, ErrJournalLocked) {
+		t.Fatalf("Open() before poisoned Store.Close = (%v, %v), want ErrJournalLocked", reopened, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, records, err := Open(root, nil)
+	if err != nil || len(records) != 1 {
 		t.Fatalf("reopen = (%d records, %v), want one replayable record", len(records), err)
 	}
+	defer reopened.Close()
 }
 
 func TestFaultManifestDirectorySyncAlsoRequiresReopen(t *testing.T) {

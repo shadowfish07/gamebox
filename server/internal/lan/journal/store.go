@@ -17,6 +17,8 @@ import (
 
 var (
 	ErrReopenRequired        = errors.New("journal must be reopened and replayed")
+	ErrJournalLocked         = errors.New("journal root is already locked")
+	ErrJournalClosed         = errors.New("journal store is closed")
 	recordFileName           = regexp.MustCompile(`^[0-9]{16}\.json$`)
 	temporaryFileName        = regexp.MustCompile(`^[0-9]{16}\.json\.tmp$`)
 	positiveCanonicalInteger = regexp.MustCompile(`^[1-9][0-9]*$`)
@@ -37,11 +39,14 @@ type Store struct {
 	ops      FileOps
 	records  []Record
 	poisoned bool
+	closed   bool
+	lockFile *os.File
 }
 
-// Open removes only uncommitted journal and manifest temporary files, then
-// replays the complete contiguous verified chain. The manifest is intentionally
-// ignored: callers must rebuild their state from the returned records.
+// Open acquires the lifetime root lock before removing only uncommitted journal
+// and manifest temporary files, then replays the complete contiguous verified
+// chain. The manifest is intentionally ignored: callers must rebuild their
+// state from the returned records.
 func Open(root string, ops FileOps) (*Store, []Record, error) {
 	if root == "" {
 		return nil, nil, errors.New("journal root is required")
@@ -49,6 +54,16 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create journal root: %w", err)
 	}
+	lockFile, err := acquireJournalRootLock(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			_ = releaseJournalRootLock(lockFile)
+		}
+	}()
 	if ops == nil {
 		ops = osFileOps{}
 	}
@@ -102,7 +117,8 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		}
 		records = append(records, record)
 	}
-	store := &Store{root: root, ops: ops, records: records}
+	store := &Store{root: root, ops: ops, records: records, lockFile: lockFile}
+	opened = true
 	return store, cloneRecords(records), nil
 }
 
@@ -110,11 +126,11 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 // rename, then directory sync. It exposes the record only after all boundaries
 // succeed. A post-rename directory-sync failure requires Open before retrying.
 func (store *Store) Append(ctx context.Context, draft Draft) (Record, error) {
-	if err := ctx.Err(); err != nil {
-		return Record{}, err
-	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if store.closed {
+		return Record{}, ErrJournalClosed
+	}
 	if store.poisoned {
 		return Record{}, ErrReopenRequired
 	}
@@ -166,12 +182,32 @@ func (store *Store) Records() []Record {
 	return cloneRecords(store.records)
 }
 
+// Close releases the lifetime advisory root lock. It is safe to call more than
+// once; once closed, the store remains readable but refuses further mutations.
+func (store *Store) Close() error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.closed {
+		return nil
+	}
+	store.closed = true
+	lockFile := store.lockFile
+	store.lockFile = nil
+	if lockFile == nil {
+		return nil
+	}
+	return releaseJournalRootLock(lockFile)
+}
+
 // WriteManifestProjection atomically persists non-authoritative room location
 // data. It always reflects the last verified journal sequence; callers replay
 // records from Open instead of trusting this projection during recovery.
 func (store *Store) WriteManifestProjection(roomID, gameID, endpoint string, formatVersion int) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if store.closed {
+		return ErrJournalClosed
+	}
 	if store.poisoned {
 		return ErrReopenRequired
 	}
