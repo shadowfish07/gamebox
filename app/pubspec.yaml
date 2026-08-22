@@ -34,14 +34,15 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  crypto: ^3.0.6
+  flutter_release_updater:
+    git:
+      url: https://github.com/shadowfish07/flutter_release_updater.git
+      ref: v0.1.2
   http: ^1.6.0
+  package_info_plus: ^10.2.1
   # 11.0.0 requires Android compileSdk 37, beyond Flutter 3.47.1's
   # currently validated AGP 9.1 / compileSdk 36 toolchain.
   flutter_secure_storage: ^10.3.1
-  package_info_plus: ^10.2.1
-  path_provider: ^2.1.6
-  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:

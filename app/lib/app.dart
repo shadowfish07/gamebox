@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 import 'package:http/http.dart' as http;
 
 import 'core/api/api_client.dart';
@@ -14,7 +15,6 @@ import 'features/gomoku/gomoku_repository.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
-import 'features/update/update_controller.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({

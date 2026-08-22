@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 
 import 'app.dart';
 import 'core/platform/method_channel_game_launcher.dart';
-import 'features/update/update_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   UpdateController? updateController;
   try {
-    updateController = await UpdateController.production();
+    updateController = await UpdateController.production(
+      repository: 'shadowfish07/gamebox',
+      userAgent: 'Gamebox-update-check',
+      cacheKeyPrefix: 'update',
+    );
   } on Object catch (error, stackTrace) {
     FlutterError.reportError(
       FlutterErrorDetails(
