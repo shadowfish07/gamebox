@@ -1,0 +1,7 @@
+[gd_scene format=3]
+
+[node name="GameboxConfirmationDialog" type="ConfirmationDialog"]
+title = "确认认输"
+dialog_text = "认输后本局立即结束，确认认输吗？"
+ok_button_text = "确认认输"
+cancel_button_text = "继续对局"
