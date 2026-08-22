@@ -1,17 +1,14 @@
 package me.zqydev.gamebox
 
-import android.content.ClipData
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.os.Process
-import android.os.PersistableBundle
 import android.system.Os
 import android.system.OsConstants
-import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,28 +39,16 @@ class E2eSetTextTest {
             Until.findObject(By.res(target)),
             SELECTOR_TIMEOUT_MS,
         ) ?: throw AssertionError("Approved E2E text field was not found")
-        val editable = field.children.singleOrNull()
-            ?.takeIf { child -> child.className == EDIT_TEXT_CLASS }
+        val editable = findEditable(field)
             ?: throw AssertionError("Approved E2E text field structure was invalid")
-        val clipboard = instrumentation.context.getSystemService(ClipboardManager::class.java)
-        val clip = ClipData.newPlainText("", decoded).also { sensitiveClip ->
-            sensitiveClip.description.extras = PersistableBundle().apply {
-                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-            }
-        }
-        try {
-            clipboard.setPrimaryClip(clip)
-            editable.click()
-            device.waitForIdle()
-            device.pressKeyCode(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON)
-            device.pressKeyCode(KeyEvent.KEYCODE_V, KeyEvent.META_CTRL_ON)
-            device.waitForIdle()
-        } finally {
-            clipboard.clearPrimaryClip()
-        }
+        editable.click()
+        device.waitForIdle()
+        // UiAutomator 2.4 injects text directly. Keeping the value inside this
+        // process avoids exposing it through adb arguments or clipboard state.
+        editable.text = decoded
+        device.waitForIdle()
         val refreshed = device.findObject(By.res(target))
-        val refreshedEditable = refreshed?.children?.singleOrNull()
-            ?.takeIf { child -> child.className == EDIT_TEXT_CLASS }
+        val refreshedEditable = refreshed?.let(::findEditable)
         if (refreshedEditable?.text != decoded) {
             throw AssertionError("E2E text field did not round-trip")
         }
@@ -118,6 +103,10 @@ class E2eSetTextTest {
     }
 
     private fun isApprovedByte(value: Byte): Boolean = isApprovedCharacter(value.toInt().toChar())
+
+    private fun findEditable(field: UiObject2): UiObject2? =
+        field.findObject(By.clazz(EDIT_TEXT_CLASS).clickable(true))
+            ?: field.takeIf { it.className == EDIT_TEXT_CLASS && it.isClickable }
 
     private fun isApprovedCharacter(character: Char): Boolean =
         character in 'A'..'Z' || character in 'a'..'z' || character in '0'..'9' ||
