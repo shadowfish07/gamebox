@@ -173,7 +173,11 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 	reconnected := dialWebSocket(t, wsURL)
 	writeConnect(t, reconnected, "", testGuestResume)
 	if first, second := readEnvelope(t, reconnected), readEnvelope(t, reconnected); first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot || *second.Revision != 2 {
-		t.Fatalf("terminal reconnect order = %#v then %#v", first, second)
+		t.Fatalf(
+			"terminal reconnect order = first(type=%q revision=%v payloadBytes=%d payloadPresent=%v) second(type=%q revision=%v payloadBytes=%d payloadPresent=%v)",
+			first.Type, first.Revision, len(first.Payload), len(first.Payload) != 0,
+			second.Type, second.Revision, len(second.Payload), len(second.Payload) != 0,
+		)
 	}
 	readContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
