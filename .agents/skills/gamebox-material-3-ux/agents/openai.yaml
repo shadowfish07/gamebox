@@ -1,0 +1,5 @@
+interface:
+  display_name: "Gamebox Material 3 UX"
+  short_description: "Review and shape Gamebox Flutter and Godot UX"
+  brand_color: "#006B60"
+  default_prompt: "Use $gamebox-material-3-ux to audit this Gamebox UI change and verify it in the target Android runtime."
