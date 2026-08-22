@@ -166,6 +166,43 @@ void main() {
     );
   });
 
+  test('schema validator requires an explicit dialect', () {
+    final missingDialect = _copy(schema)..remove(r'$schema');
+    expectThrows(
+      () => validateJsonSchema(missingDialect, canonicalFixture),
+      contains: r'$.$schema',
+    );
+  });
+
+  test('schema validator rejects an older dialect', () {
+    final wrongDialect = _copy(schema)
+      ..[r'$schema'] = 'http://json-schema.org/draft-07/schema#';
+    expectThrows(
+      () => validateJsonSchema(wrongDialect, canonicalFixture),
+      contains: r'$.$schema',
+    );
+  });
+
+  test('schema validator rejects a future dialect', () {
+    final futureDialect = _copy(schema)
+      ..[r'$schema'] = 'https://json-schema.org/draft/next/schema';
+    expectThrows(
+      () => validateJsonSchema(futureDialect, canonicalFixture),
+      contains: r'$.$schema',
+    );
+  });
+
+  test('schema validator rejects a nested dialect declaration', () {
+    final nestedDialect = _copy(schema);
+    final properties = nestedDialect['properties']! as Map<String, Object?>;
+    final version = properties['version']! as Map<String, Object?>;
+    version[r'$schema'] = 'https://json-schema.org/draft/2020-12/schema';
+    expectThrows(
+      () => validateJsonSchema(nestedDialect, canonicalFixture),
+      contains: r'$.properties.version.$schema',
+    );
+  });
+
   test('canonical loader rejects wrong absolute and traversal schema refs', () {
     final fixtureRoot = Directory.systemTemp.createTempSync(
       'gamebox-schema-ref-',
@@ -425,6 +462,45 @@ EdgeInsetsDirectional.only(start: 7)
     }
   });
 
+  test('production verifier masks complete Dart interpolated strings', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-flutter-interpolation-',
+    );
+    try {
+      const dollar = r'$';
+      final source = <String>[
+        "final exact = '$dollar{format('Colors.red')}';",
+        'final otherQuote = "$dollar{format(\'Colors.red\')}";',
+        "final differentQuote = '$dollar{format(\"Colors.red\")}';",
+        "final nestedBraces = '$dollar{format({'style': {'value': 'Colors.red'}})}';",
+        'final escaped = "' +
+            dollar +
+            r'''{format('escaped \' Colors.red')}";''',
+        'final triple = """$dollar{format(\'Colors.red\')}""";',
+        'final rawOuter = r"$dollar{format(\'Colors.red\')}";',
+        "final nestedRaw = '$dollar{format(r\"Colors.red\")}';",
+        "final nestedTriple = '" + dollar + r'''{format("""Colors.red""")}';''',
+      ].join('\n');
+      final fixture = _writeFixture(
+        fixtureRoot,
+        'app/lib/interpolated_strings.dart',
+        '$source\n',
+      );
+      verifyProductionDesignHardcodes(fixtureRoot);
+
+      fixture.writeAsStringSync('''
+final color = Colors.red;
+final style = TextStyle(fontSize: 13.5);
+''');
+      expectThrowsAll(
+        () => verifyProductionDesignHardcodes(fixtureRoot),
+        contains: const ['Colors.red', 'fontSize: 13.5'],
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
   test('production verifier rejects Godot color literals', () {
     final fixtureRoot = Directory.systemTemp.createTempSync(
       'gamebox-godot-hardcodes-',
@@ -577,6 +653,54 @@ var coordinate := Vector2(60, 360)
     verifyProductionDesignHardcodes(repositoryRoot);
   });
 
+  test('production verifier scans lookalike generated directories', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-generated-lookalike-',
+    );
+    try {
+      _writeFixture(
+        fixtureRoot,
+        'app/lib/foo/design_system/generated/hardcodes.dart',
+        'final color = Colors.red;\n',
+      );
+      _writeFixture(
+        fixtureRoot,
+        'game_runtime/games/design_system/generated/hardcodes.gd',
+        'const COLOR := Color.RED\n',
+      );
+      expectThrowsAll(
+        () => verifyProductionDesignHardcodes(fixtureRoot),
+        contains: const ['Colors.red', 'Color.RED'],
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test(
+    'production verifier exempts only the drift-checked generated files',
+    () {
+      final fixtureRoot = Directory.systemTemp.createTempSync(
+        'gamebox-exact-generated-',
+      );
+      try {
+        _writeFixture(
+          fixtureRoot,
+          'app/lib/design_system/generated/gamebox_tokens.g.dart',
+          'final color = Colors.red;\n',
+        );
+        _writeFixture(
+          fixtureRoot,
+          'game_runtime/design_system/generated/gamebox_tokens.gd',
+          'const COLOR := Color.RED\n',
+        );
+        verifyProductionDesignHardcodes(fixtureRoot);
+      } finally {
+        fixtureRoot.deleteSync(recursive: true);
+      }
+    },
+  );
+
   test('reconciles every registered normative numeric claim', () {
     verifyNormativeClaims(canonicalFixture, repositoryRoot);
   });
@@ -704,6 +828,45 @@ var coordinate := Vector2(60, 360)
     } finally {
       fixtureRoot.deleteSync(recursive: true);
     }
+  });
+
+  test('numeric exception reason must not be empty', () {
+    _verifyNumericExceptionReason(
+      repositoryRoot,
+      canonicalFixture,
+      id: 'round4-empty-reason',
+      reason: '',
+      expectedError: 'round4-empty-reason.reason',
+    );
+  });
+
+  test('numeric exception reason must be a string', () {
+    _verifyNumericExceptionReason(
+      repositoryRoot,
+      canonicalFixture,
+      id: 'round4-numeric-reason',
+      reason: 7,
+      expectedError: 'round4-numeric-reason.reason',
+    );
+  });
+
+  test('numeric exception reason must be a stable identifier', () {
+    _verifyNumericExceptionReason(
+      repositoryRoot,
+      canonicalFixture,
+      id: 'round4-invalid-reason',
+      reason: 'Temporary_reason',
+      expectedError: 'round4-invalid-reason.reason',
+    );
+  });
+
+  test('numeric exception accepts a stable reason identifier', () {
+    _verifyNumericExceptionReason(
+      repositoryRoot,
+      canonicalFixture,
+      id: 'round4-valid-reason',
+      reason: 'legacy-layout-constraint',
+    );
   });
 
   test('reconciliation rejects unsafe registered paths before reading', () {
@@ -953,4 +1116,48 @@ String _replaceRegisteredPath(
     throw StateError('Missing path terminator for numeric claim marker <$id>.');
   }
   return readme.replaceRange(valueStart, valueEnd, jsonEncode(path));
+}
+
+void _verifyNumericExceptionReason(
+  Directory repositoryRoot,
+  Map<String, Object?> canonical, {
+  required String id,
+  required Object reason,
+  String? expectedError,
+}) {
+  final fixtureRoot = _copyReconciliationFixture(repositoryRoot);
+  try {
+    const value = 99;
+    const unit = 'dp';
+    const markerPrefix = 'gamebox-numeric-';
+    const relativePath =
+        '.agents/skills/gamebox-material-3-ux/references/ux-standard.md';
+    final standard = File('${fixtureRoot.path}/$relativePath');
+    standard.writeAsStringSync(
+      '${standard.readAsStringSync()}\nRound four exception $value$unit.\n',
+    );
+    final marker = <String, Object>{
+      'id': id,
+      'path': relativePath,
+      'value': value,
+      'unit': unit,
+      'context': 'Round four exception {value}$unit.',
+      'reason': reason,
+    };
+    final readme = File('${fixtureRoot.path}/design_system/README.md');
+    readme.writeAsStringSync(
+      '${readme.readAsStringSync()}\n'
+      '<!-- ${markerPrefix}exception ${jsonEncode(marker)} -->\n',
+    );
+    if (expectedError == null) {
+      verifyNormativeClaims(canonical, fixtureRoot);
+    } else {
+      expectThrows(
+        () => verifyNormativeClaims(canonical, fixtureRoot),
+        contains: expectedError,
+      );
+    }
+  } finally {
+    fixtureRoot.deleteSync(recursive: true);
+  }
 }

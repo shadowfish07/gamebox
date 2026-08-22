@@ -371,9 +371,18 @@ String _join(String path, String key) =>
     path.isEmpty ? r'$.' + key : '$path.$key';
 
 void validateJsonSchema(Map<String, Object?> schema, Object? instance) {
-  _assertSupportedSchema(schema, r'$');
+  if (schema[r'$schema'] != _supportedJsonSchemaDialect) {
+    throw const DesignTokenFormatException(
+      r'$.$schema',
+      'must equal https://json-schema.org/draft/2020-12/schema.',
+    );
+  }
+  _assertSupportedSchema(schema, r'$', isRoot: true);
   _validateSchemaNode(schema, instance, r'$', schema, r'$');
 }
+
+const _supportedJsonSchemaDialect =
+    'https://json-schema.org/draft/2020-12/schema';
 
 const _supportedSchemaKeywords = {
   r'$schema',
@@ -393,8 +402,18 @@ const _supportedSchemaKeywords = {
   'properties',
 };
 
-void _assertSupportedSchema(Map<String, Object?> schema, String schemaPath) {
+void _assertSupportedSchema(
+  Map<String, Object?> schema,
+  String schemaPath, {
+  bool isRoot = false,
+}) {
   for (final entry in schema.entries) {
+    if (!isRoot && entry.key == r'$schema') {
+      throw DesignTokenFormatException(
+        '$schemaPath.\$schema',
+        r'$schema is only supported at the schema root.',
+      );
+    }
     if (!_supportedSchemaKeywords.contains(entry.key)) {
       throw DesignTokenFormatException(
         '$schemaPath.${entry.key}',
@@ -1035,7 +1054,7 @@ List<String> _collectStyleLiterals(
           .whereType<File>()
           .where((file) {
             final relativePath = _relativePath(repositoryRoot, file);
-            if (relativePath.contains('/design_system/generated/')) {
+            if (_generatedDesignTokenPaths.contains(relativePath)) {
               return false;
             }
             return extensions.any(file.path.endsWith);
@@ -1068,6 +1087,11 @@ List<String> _collectStyleLiterals(
   matches.sort();
   return matches;
 }
+
+const _generatedDesignTokenPaths = {
+  'app/lib/design_system/generated/gamebox_tokens.g.dart',
+  'game_runtime/design_system/generated/gamebox_tokens.gd',
+};
 
 enum _SourceDialect { dart, godot }
 
@@ -1116,6 +1140,7 @@ _MaskedSource _maskNonCode(String source, _SourceDialect dialect) {
         start: index,
         quoteIndex: quoteIndex,
         raw: raw,
+        dartInterpolation: dialect == _SourceDialect.dart,
       );
       continue;
     }
@@ -1163,6 +1188,25 @@ int _maskString(
   required int start,
   required int quoteIndex,
   required bool raw,
+  required bool dartInterpolation,
+}) {
+  final end = _stringEnd(
+    source,
+    units,
+    quoteIndex: quoteIndex,
+    raw: raw,
+    dartInterpolation: dartInterpolation,
+  );
+  _maskRange(units, codePositions, start, end);
+  return end;
+}
+
+int _stringEnd(
+  String source,
+  List<int> units, {
+  required int quoteIndex,
+  required bool raw,
+  required bool dartInterpolation,
 }) {
   final quote = units[quoteIndex];
   final delimiter = String.fromCharCodes([quote, quote, quote]);
@@ -1173,17 +1217,84 @@ int _maskString(
       end += end + 1 < units.length ? 2 : 1;
       continue;
     }
+    if (dartInterpolation && !raw && source.startsWith(r'${', end)) {
+      end = _dartInterpolationEnd(source, units, end + 2);
+      continue;
+    }
     if (triple && source.startsWith(delimiter, end)) {
       end += 3;
-      break;
+      return end;
     }
     if (!triple && units[end] == quote) {
       end += 1;
-      break;
+      return end;
     }
     end += 1;
   }
-  _maskRange(units, codePositions, start, end);
+  return end;
+}
+
+int _dartInterpolationEnd(String source, List<int> units, int start) {
+  var braceDepth = 1;
+  var index = start;
+  while (index < units.length) {
+    if (source.startsWith('//', index)) {
+      while (index < units.length && units[index] != _lineFeed) {
+        index += 1;
+      }
+      continue;
+    }
+    if (source.startsWith('/*', index)) {
+      index = _dartBlockCommentEnd(source, units, index);
+      continue;
+    }
+
+    var quoteIndex = index;
+    var raw = false;
+    if ((units[index] == _lowerR || units[index] == _upperR) &&
+        index + 1 < units.length &&
+        _isQuote(units[index + 1]) &&
+        (index == 0 || !_isIdentifierUnit(units[index - 1]))) {
+      raw = true;
+      quoteIndex += 1;
+    }
+    if (_isQuote(units[quoteIndex])) {
+      index = _stringEnd(
+        source,
+        units,
+        quoteIndex: quoteIndex,
+        raw: raw,
+        dartInterpolation: true,
+      );
+      continue;
+    }
+    if (units[index] == _openBrace) {
+      braceDepth += 1;
+    } else if (units[index] == _closeBrace) {
+      braceDepth -= 1;
+      if (braceDepth == 0) {
+        return index + 1;
+      }
+    }
+    index += 1;
+  }
+  return index;
+}
+
+int _dartBlockCommentEnd(String source, List<int> units, int start) {
+  var depth = 1;
+  var end = start + 2;
+  while (end < units.length && depth > 0) {
+    if (source.startsWith('/*', end)) {
+      depth += 1;
+      end += 2;
+    } else if (source.startsWith('*/', end)) {
+      depth -= 1;
+      end += 2;
+    } else {
+      end += 1;
+    }
+  }
   return end;
 }
 
@@ -1208,6 +1319,8 @@ const _lineFeed = 0x0A;
 const _carriageReturn = 0x0D;
 const _space = 0x20;
 const _hash = 0x23;
+const _openBrace = 0x7B;
+const _closeBrace = 0x7D;
 const _singleQuote = 0x27;
 const _doubleQuote = 0x22;
 const _backslash = 0x5C;
@@ -1542,6 +1655,19 @@ List<_NumericClaim> _parseNumericClaimRegistry(List<String> lines) {
     _expectKeys('numericClaim.$id', decoded, expectedKeys);
     if (!ids.add(id)) {
       throw DesignTokenFormatException(id, 'numeric claim id is duplicated.');
+    }
+    if (kind == 'exception') {
+      final reason = _string(decoded['reason'], '$id.reason');
+      if (reason.trim().isEmpty) {
+        throw DesignTokenFormatException('$id.reason', 'must not be empty.');
+      }
+      if (reason != reason.trim() ||
+          !RegExp(r'^[a-z0-9][a-z0-9-]*$').hasMatch(reason)) {
+        throw DesignTokenFormatException(
+          '$id.reason',
+          'must be a stable lowercase identifier.',
+        );
+      }
     }
     final unit = _string(decoded['unit'], '$id.unit');
     if (!const {'dp', 'sp', 'ms'}.contains(unit)) {
