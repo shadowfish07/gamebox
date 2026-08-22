@@ -924,6 +924,217 @@ List<String> _sortedKeys(Map<String, Object?> values) {
 
 String _singleTrailingNewline(String value) => '${value.trimRight()}\n';
 
+void verifyProductionDesignHardcodes(Directory repositoryRoot) {
+  final flutterMatches = _collectStyleLiterals(
+    repositoryRoot,
+    relativeRoot: 'app/lib',
+    extensions: const {'.dart'},
+    pattern: _flutterStyleLiteralPattern(),
+  );
+  final godotMatches = _collectStyleLiterals(
+    repositoryRoot,
+    relativeRoot: 'game_runtime',
+    extensions: const {'.gd', '.tscn'},
+    pattern: _godotStyleLiteralPattern(),
+  );
+  final newFlutter = _subtractExactMultiset(
+    flutterMatches,
+    _flutterStyleLiteralBaseline,
+  );
+  final newGodot = _subtractExactMultiset(
+    godotMatches,
+    _godotStyleLiteralBaseline,
+  );
+  if (newFlutter.isEmpty && newGodot.isEmpty) {
+    return;
+  }
+  final message = StringBuffer();
+  if (newFlutter.isNotEmpty) {
+    message.writeln('New Flutter production style literals are forbidden:');
+    for (final match in newFlutter) {
+      message.writeln('  $match');
+    }
+  }
+  if (newGodot.isNotEmpty) {
+    message.writeln('New Godot production style literals are forbidden:');
+    for (final match in newGodot) {
+      message.writeln('  $match');
+    }
+  }
+  throw DesignTokenFormatException(
+    'productionStyleLiterals',
+    message.toString().trimRight(),
+  );
+}
+
+RegExp _flutterStyleLiteralPattern() {
+  const number =
+      r'(?<![A-Za-z0-9_.])(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?![A-Za-z0-9_.])';
+  return RegExp(
+    '\\bColors\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*'
+    '|\\bColor\\s*\\(\\s*(?:0x[0-9A-Fa-f]+|$number)'
+    '|\\bColor\\s*\\.\\s*(?:fromARGB|fromRGBO)\\s*\\([^)]*?$number'
+    '|\\bfontSize\\s*:\\s*[^,\\n})]*?$number'
+    '|\\bBorderRadius\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*\\s*\\([^)]*?$number'
+    '|\\bDuration\\s*\\(\\s*milliseconds\\s*:\\s*[^,)\\n]*?$number'
+    '|\\bEdgeInsets(?:Directional)?\\s*\\.\\s*'
+    '(?:all|symmetric|only|fromLTRB|fromSTEB)\\s*\\([^)]*?$number'
+    '|\\bSizedBox(?:\\s*\\.\\s*square)?\\s*\\([^)]*?'
+    '(?:width|height|dimension)\\s*:\\s*$number'
+    '|\\b(?:spacing|runSpacing|mainAxisSpacing|crossAxisSpacing)'
+    '\\s*:\\s*[^,\\n})]*?$number',
+    multiLine: true,
+    dotAll: true,
+  );
+}
+
+RegExp _godotStyleLiteralPattern() {
+  const number =
+      r'(?<![A-Za-z0-9_.])(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?![A-Za-z0-9_.])';
+  return RegExp(
+    '\\bColor\\s*\\(\\s*[\"\\\']'
+    '(?:#?[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?|[A-Za-z][A-Za-z0-9_]*)'
+    '[\"\\\']\\s*\\)'
+    '|\\bColor\\s*\\.\\s*[A-Z][A-Z0-9_]*'
+    '|\\bColor\\s*\\(\\s*$number\\s*,'
+    '|\\bColor\\s*\\(\\s*[^,\\n]+,\\s*[^)]*?$number'
+    '|\\btheme_override_[A-Za-z0-9_/]+\\s*=\\s*$number',
+    multiLine: true,
+    dotAll: true,
+  );
+}
+
+List<String> _collectStyleLiterals(
+  Directory repositoryRoot, {
+  required String relativeRoot,
+  required Set<String> extensions,
+  required RegExp pattern,
+}) {
+  final sourceRoot = Directory('${repositoryRoot.path}/$relativeRoot');
+  if (!sourceRoot.existsSync()) {
+    return const [];
+  }
+  final files =
+      sourceRoot
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((file) {
+            final relativePath = _relativePath(repositoryRoot, file);
+            if (relativePath.contains('/design_system/generated/')) {
+              return false;
+            }
+            return extensions.any(file.path.endsWith);
+          })
+          .toList()
+        ..sort((left, right) => left.path.compareTo(right.path));
+  final matches = <String>[];
+  for (final file in files) {
+    final relativePath = _relativePath(repositoryRoot, file);
+    for (final match in pattern.allMatches(file.readAsStringSync())) {
+      matches.add('$relativePath:${_normalizeStyleLiteral(match.group(0)!)}');
+    }
+  }
+  matches.sort();
+  return matches;
+}
+
+String _normalizeStyleLiteral(String literal) =>
+    literal.replaceAll(RegExp(r'\s+'), ' ');
+
+List<String> _subtractExactMultiset(
+  List<String> actual,
+  List<String> baseline,
+) {
+  final available = <String, int>{};
+  for (final match in baseline) {
+    available.update(match, (count) => count + 1, ifAbsent: () => 1);
+  }
+  final additions = <String>[];
+  for (final match in actual) {
+    final count = available[match] ?? 0;
+    if (count == 0) {
+      additions.add(match);
+    } else {
+      available[match] = count - 1;
+    }
+  }
+  return additions;
+}
+
+const _flutterStyleLiteralBaseline = <String>[
+  'app/lib/app.dart:Colors.deepPurple',
+  'app/lib/app.dart:SizedBox(height: 12',
+  'app/lib/app.dart:SizedBox(height: 12',
+  'app/lib/app.dart:SizedBox(height: 16',
+  'app/lib/features/auth/registration_page.dart:EdgeInsets.all(24',
+  'app/lib/features/auth/registration_page.dart:EdgeInsets.all(24',
+  'app/lib/features/auth/registration_page.dart:EdgeInsets.all(24',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 16',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 16',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 24',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 24',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 24',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 24',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 8',
+  'app/lib/features/auth/registration_page.dart:SizedBox(height: 8',
+  'app/lib/features/auth/registration_page.dart:SizedBox.square( dimension: 20',
+  'app/lib/features/home/home_page.dart:EdgeInsets.all(20',
+  'app/lib/features/home/home_page.dart:EdgeInsets.all(24',
+  'app/lib/features/home/home_page.dart:SizedBox(height: 16',
+  'app/lib/features/home/home_page.dart:SizedBox(height: 16',
+  'app/lib/features/home/home_page.dart:SizedBox(height: 16',
+  'app/lib/features/home/home_page.dart:SizedBox(height: 20',
+  'app/lib/features/home/home_page.dart:SizedBox(height: 8',
+  'app/lib/features/home/home_page.dart:SizedBox(height: 8',
+  'app/lib/features/home/home_page.dart:SizedBox.square( dimension: 20',
+  'app/lib/features/home/opponent_page.dart:EdgeInsets.all(24',
+  'app/lib/features/home/opponent_page.dart:EdgeInsets.all(24',
+  'app/lib/features/home/opponent_page.dart:EdgeInsets.fromLTRB(20',
+  'app/lib/features/home/opponent_page.dart:EdgeInsets.symmetric(vertical: 12',
+  'app/lib/features/home/opponent_page.dart:SizedBox(height: 16',
+  'app/lib/features/home/opponent_page.dart:SizedBox.square( dimension: 20',
+  'app/lib/features/update/update_action.dart:SizedBox(height: 12',
+  'app/lib/features/update/update_action.dart:SizedBox(height: 16',
+  'app/lib/features/update/update_action.dart:SizedBox(height: 16',
+  'app/lib/features/update/update_action.dart:SizedBox(height: 6',
+  'app/lib/features/update/update_action.dart:SizedBox(height: 8',
+  'app/lib/features/update/update_action.dart:SizedBox(width: 10',
+  'app/lib/features/update/update_action.dart:SizedBox( width: 420',
+  'app/lib/features/update/update_action.dart:SizedBox.square( dimension: 18',
+  'app/lib/features/update/update_action.dart:SizedBox.square( dimension: 20',
+];
+
+const _godotStyleLiteralBaseline = <String>[
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("0072b2")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("151a24")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("493217")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("667085")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("d8a85f")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("f04438")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color("f8fafc")',
+  'game_runtime/games/gomoku/gomoku_board.gd:Color(PENDING_COLOR, 0.24',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:Color(0.105882,',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:Color(0.105882,',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:Color(0.105882,',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:Color(0.290196,',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:Color(0.705882,',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:Color(0.956863,',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 24',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 28',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 30',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 32',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 32',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 40',
+  'game_runtime/games/gomoku/gomoku_scene.tscn:'
+      'theme_override_font_sizes/font_size = 42',
+];
+
 void verifyNormativeClaims(
   Map<String, Object?> canonical,
   Directory repositoryRoot,
@@ -1031,9 +1242,12 @@ void verifyNormativeClaims(
     final lines = file.readAsLinesSync();
     for (var index = 0; index < lines.length; index += 1) {
       final line = lines[index];
-      if (line.contains('gamebox-numeric-claim') ||
-          line.contains('gamebox-numeric-exception')) {
-        continue;
+      if (relativePath != 'design_system/README.md' &&
+          _containsNumericMarkerText(line)) {
+        throw DesignTokenFormatException(
+          '$relativePath:${index + 1}',
+          'numeric claim marker is only allowed in design_system/README.md.',
+        );
       }
       for (final match in numericPattern.allMatches(line)) {
         final occurrenceKey = '$relativePath|$index|${match.start}';
@@ -1062,14 +1276,30 @@ void verifyNormativeClaims(
 List<_NumericClaim> _parseNumericClaimRegistry(List<String> lines) {
   final result = <_NumericClaim>[];
   final ids = <String>{};
-  final pattern = RegExp(r'gamebox-numeric-(claim|exception)\s+(\{.*\})\s+-->');
+  final pattern = RegExp(
+    r'^\s*<!--\s+gamebox-numeric-(claim|exception)\s+(\{.*\})\s+-->\s*$',
+  );
   for (final line in lines) {
     final match = pattern.firstMatch(line);
     if (match == null) {
+      if (_containsNumericMarkerSyntax(line)) {
+        throw const DesignTokenFormatException(
+          'design_system/README.md',
+          'malformed numeric claim marker.',
+        );
+      }
       continue;
     }
     final kind = match.group(1)!;
-    final decoded = jsonDecode(match.group(2)!);
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(match.group(2)!);
+    } on FormatException {
+      throw const DesignTokenFormatException(
+        'design_system/README.md',
+        'malformed numeric claim marker JSON.',
+      );
+    }
     if (decoded is! Map<String, Object?>) {
       throw const DesignTokenFormatException(
         'design_system/README.md',
@@ -1122,6 +1352,13 @@ List<_NumericClaim> _parseNumericClaimRegistry(List<String> lines) {
   }
   return result;
 }
+
+bool _containsNumericMarkerText(String line) =>
+    line.contains('gamebox-numeric-claim') ||
+    line.contains('gamebox-numeric-exception');
+
+bool _containsNumericMarkerSyntax(String line) =>
+    RegExp(r'<!--\s*gamebox-numeric-(?:claim|exception)\b').hasMatch(line);
 
 Object? _jsonPath(Map<String, Object?> root, String path) {
   Object? current = root;

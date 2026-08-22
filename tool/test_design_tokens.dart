@@ -254,6 +254,198 @@ void main() {
     );
   });
 
+  test('production verifier rejects Flutter style literals', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-flutter-hardcodes-',
+    );
+    try {
+      _writeFixture(fixtureRoot, 'app/lib/hardcodes.dart', '''
+const colorHex = Color ( 0xFF123456 );
+final materialColor = Colors.red;
+final argbColor = Color.fromARGB(255, 18, 52, 86);
+final rgboColor = Color.fromRGBO(18, 52, 86, 0.5);
+const text = TextStyle(fontSize: 13.5);
+final mixedText = TextStyle(
+  fontSize: GameboxTokens.typography.bodyLarge.fontSize + 1,
+);
+final radius = BorderRadius.circular(13.5);
+const delay = Duration ( milliseconds : 175 );
+final mixedDelay = Duration(
+  milliseconds: GameboxTokens.motion.standard.inMilliseconds + 1,
+);
+const all = EdgeInsets.all(7);
+const symmetric = EdgeInsets.symmetric(horizontal: 7);
+const only = EdgeInsets.only(top: 7);
+const sides = EdgeInsets.fromLTRB(1, 2, 3, 4);
+const directionalOnly = EdgeInsetsDirectional.only(start: 7);
+const directionalSides = EdgeInsetsDirectional.fromSTEB(1, 2, 3, 4);
+const box = SizedBox(width: 17.5);
+const squareBox = SizedBox.square(dimension: 19);
+final wrap = Wrap(spacing: 7);
+final mixedWrap = Wrap(spacing: GameboxTokens.spacing.layout + 1);
+final wrapped = Wrap(runSpacing: 9);
+final grid = GridView.count(mainAxisSpacing: 11);
+final gridWide = GridView.count(crossAxisSpacing: 13);
+''');
+      expectThrowsAll(
+        () => verifyProductionDesignHardcodes(fixtureRoot),
+        contains: const [
+          'Color ( 0xFF123456',
+          'Colors.red',
+          'Color.fromARGB(255',
+          'Color.fromRGBO(18',
+          'fontSize: 13.5',
+          'fontSize: GameboxTokens.typography.bodyLarge.fontSize + 1',
+          'BorderRadius.circular(13.5',
+          'Duration ( milliseconds : 175',
+          'milliseconds: GameboxTokens.motion.standard.inMilliseconds + 1',
+          'EdgeInsets.all(7',
+          'EdgeInsets.symmetric(horizontal: 7',
+          'EdgeInsets.only(top: 7',
+          'EdgeInsets.fromLTRB(1',
+          'EdgeInsetsDirectional.only(start: 7',
+          'EdgeInsetsDirectional.fromSTEB(1',
+          'SizedBox(width: 17.5',
+          'SizedBox.square(dimension: 19',
+          'spacing: 7',
+          'spacing: GameboxTokens.spacing.layout + 1',
+          'runSpacing: 9',
+          'mainAxisSpacing: 11',
+          'crossAxisSpacing: 13',
+        ],
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test('production verifier accepts token-backed Flutter styles', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-flutter-tokens-',
+    );
+    try {
+      _writeFixture(fixtureRoot, 'app/lib/token_styles.dart', '''
+final color = GameboxTokens.lightColorScheme.primary;
+final text = TextStyle(fontSize: GameboxTokens.typography.bodyLarge.fontSize);
+final radius = BorderRadius.circular(GameboxTokens.shape.card);
+final delay = GameboxTokens.motion.standard;
+final all = EdgeInsets.all(GameboxTokens.spacing.layout);
+final symmetric = EdgeInsets.symmetric(horizontal: GameboxTokens.spacing.page);
+final only = EdgeInsets.only(top: GameboxTokens.spacing.section);
+final sides = EdgeInsets.fromLTRB(
+  GameboxTokens.spacing.base,
+  GameboxTokens.spacing.layout,
+  GameboxTokens.spacing.compact,
+  GameboxTokens.spacing.page,
+);
+final directionalOnly = EdgeInsetsDirectional.only(
+  start: GameboxTokens.spacing.layout,
+);
+final directionalSides = EdgeInsetsDirectional.fromSTEB(
+  GameboxTokens.spacing.base,
+  GameboxTokens.spacing.layout,
+  GameboxTokens.spacing.compact,
+  GameboxTokens.spacing.page,
+);
+final box = SizedBox(width: GameboxTokens.components.pageMaxWidth);
+final squareBox = SizedBox.square(
+  dimension: GameboxTokens.components.smallProgressSize,
+);
+final wrap = Wrap(spacing: GameboxTokens.spacing.layout);
+final wrapped = Wrap(runSpacing: GameboxTokens.spacing.compact);
+final grid = GridView.count(mainAxisSpacing: GameboxTokens.spacing.section);
+final gridWide = GridView.count(crossAxisSpacing: GameboxTokens.spacing.page);
+''');
+      verifyProductionDesignHardcodes(fixtureRoot);
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test('production verifier rejects Godot color literals', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-godot-hardcodes-',
+    );
+    try {
+      _writeFixture(fixtureRoot, 'game_runtime/hardcodes.gd', '''
+const HEX_SIX := Color("123456")
+const HEX_EIGHT := Color("#12345678")
+const NAMED_STRING := Color("red")
+const NUMERIC := Color(0.1, 0.2, 0.3, 1.0)
+const NUMERIC_SPACED := Color ( 0.1 , 0.2 , 0.3 , 1.0 )
+var derived := Color(existing_color, 0.56)
+const NAMED_CONSTANT := Color.RED
+theme_override_font_sizes/font_size = 28
+''');
+      expectThrowsAll(
+        () => verifyProductionDesignHardcodes(fixtureRoot),
+        contains: const [
+          'Color("123456")',
+          'Color("#12345678")',
+          'Color("red")',
+          'Color(0.1,',
+          'Color ( 0.1 ,',
+          'Color(existing_color, 0.56',
+          'Color.RED',
+          'theme_override_font_sizes/font_size = 28',
+        ],
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test(
+    'production verifier accepts token-backed Godot styles and coordinates',
+    () {
+      final fixtureRoot = Directory.systemTemp.createTempSync(
+        'gamebox-godot-tokens-',
+      );
+      try {
+        _writeFixture(fixtureRoot, 'game_runtime/token_styles.gd', '''
+var board := Color(GameboxTokens.GAME["board"])
+var derived := Color(existing_color, GameboxTokens.GAME["pending_overlay_alpha"])
+theme_override_font_sizes/font_size = GameboxTokens.TYPOGRAPHY["body_large"]["font_size"]
+var coordinate := Vector2(60, 360)
+''');
+        verifyProductionDesignHardcodes(fixtureRoot);
+      } finally {
+        fixtureRoot.deleteSync(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'production verifier allows legacy reduction but rejects a duplicate',
+    () {
+      final fixtureRoot = Directory.systemTemp.createTempSync(
+        'gamebox-hardcode-baseline-',
+      );
+      try {
+        final fixture = _writeFixture(
+          fixtureRoot,
+          'app/lib/app.dart',
+          'final color = Colors.deepPurple;\n',
+        );
+        verifyProductionDesignHardcodes(fixtureRoot);
+        fixture.writeAsStringSync(
+          'final first = Colors.deepPurple;\n'
+          'final second = Colors.deepPurple;\n',
+        );
+        expectThrows(
+          () => verifyProductionDesignHardcodes(fixtureRoot),
+          contains: 'app/lib/app.dart:Colors.deepPurple',
+        );
+      } finally {
+        fixtureRoot.deleteSync(recursive: true);
+      }
+    },
+  );
+
+  test('production hard-code baseline has no additions', () {
+    verifyProductionDesignHardcodes(repositoryRoot);
+  });
+
   test('reconciles every registered normative numeric claim', () {
     verifyNormativeClaims(canonicalFixture, repositoryRoot);
   });
@@ -286,11 +478,12 @@ void main() {
   test('reconciliation rejects stale registered contexts', () {
     final fixtureRoot = _copyReconciliationFixture(repositoryRoot);
     try {
+      const markerPrefix = 'gamebox-numeric-';
       const unit = 'dp';
       final readme = File('${fixtureRoot.path}/design_system/README.md');
       readme.writeAsStringSync(
         '${readme.readAsStringSync()}\n'
-        '<!-- gamebox-numeric-claim '
+        '<!-- ${markerPrefix}claim '
         '{"id":"stale-test","path":".agents/skills/gamebox-material-3-ux/references/ux-standard.md",'
         '"token":"spacing.base","unit":"$unit","context":"missing {value}$unit context"} -->\n',
       );
@@ -316,6 +509,66 @@ void main() {
       expectThrows(
         () => verifyNormativeClaims(canonicalFixture, fixtureRoot),
         contains: 'unregistered numeric claim',
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test('reconciliation does not treat marker text as a scan exemption', () {
+    final fixtureRoot = _copyReconciliationFixture(repositoryRoot);
+    try {
+      const markerPrefix = 'gamebox-numeric-';
+      const value = 99;
+      const unit = 'dp';
+      final standard = File(
+        '${fixtureRoot.path}/.agents/skills/gamebox-material-3-ux/references/ux-standard.md',
+      );
+      standard.writeAsStringSync(
+        '${standard.readAsStringSync()}\n'
+        'Unregistered bypass ${markerPrefix}claim text: $value$unit.\n',
+      );
+      expectThrows(
+        () => verifyNormativeClaims(canonicalFixture, fixtureRoot),
+        contains: 'marker is only allowed',
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test('reconciliation rejects marker text outside the registry', () {
+    final fixtureRoot = _copyReconciliationFixture(repositoryRoot);
+    try {
+      const markerPrefix = 'gamebox-numeric-';
+      final standard = File(
+        '${fixtureRoot.path}/.agents/skills/gamebox-material-3-ux/references/ux-standard.md',
+      );
+      standard.writeAsStringSync(
+        '${standard.readAsStringSync()}\n'
+        'Stray ${markerPrefix}exception marker text.\n',
+      );
+      expectThrows(
+        () => verifyNormativeClaims(canonicalFixture, fixtureRoot),
+        contains: 'marker is only allowed',
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test('reconciliation rejects malformed registry markers', () {
+    final fixtureRoot = _copyReconciliationFixture(repositoryRoot);
+    try {
+      const markerPrefix = 'gamebox-numeric-';
+      final readme = File('${fixtureRoot.path}/design_system/README.md');
+      readme.writeAsStringSync(
+        '${readme.readAsStringSync()}\n'
+        '<!-- ${markerPrefix}claim {"id":"malformed" -->\n',
+      );
+      expectThrows(
+        () => verifyNormativeClaims(canonicalFixture, fixtureRoot),
+        contains: 'malformed numeric claim marker',
       );
     } finally {
       fixtureRoot.deleteSync(recursive: true);
@@ -375,6 +628,23 @@ void expectThrows(void Function() body, {required String contains}) {
     return;
   }
   throw StateError('Expected an exception containing <$contains>.');
+}
+
+void expectThrowsAll(void Function() body, {required List<String> contains}) {
+  try {
+    body();
+  } catch (error) {
+    final message = error.toString();
+    for (final expected in contains) {
+      if (!message.contains(expected)) {
+        throw StateError(
+          'Expected error containing <$expected>, got <$error>.',
+        );
+      }
+    }
+    return;
+  }
+  throw StateError('Expected an exception containing all of <$contains>.');
 }
 
 Map<String, Object?> _readObject(File file) {
@@ -441,4 +711,11 @@ Directory _copyReconciliationFixture(Directory sourceRoot) {
     File('${sourceRoot.path}/$relativePath').copySync(target.path);
   }
   return fixtureRoot;
+}
+
+File _writeFixture(Directory root, String relativePath, String contents) {
+  final file = File('${root.path}/$relativePath');
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(contents);
+  return file;
 }
