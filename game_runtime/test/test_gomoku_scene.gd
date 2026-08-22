@@ -14,6 +14,7 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 static func cases() -> Array:
 	return [
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
+		{"name": "gomoku scene hides the internal board revision", "run": _hides_internal_revision},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
 		{"name": "gomoku scene ignores non-authoritative snapshot callbacks while locked", "run": _ignores_non_authoritative_snapshots},
@@ -25,6 +26,12 @@ static func cases() -> Array:
 		{"name": "gomoku ready marker waits for one drawn frame and cancels safely", "run": _waits_for_drawn_frame_marker},
 		{"name": "gomoku scene disposes client and callbacks once", "run": _disposes_once},
 	]
+
+
+static func _hides_internal_revision() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	return _cleanup(scene, _check(not scene.has_node("RevisionLabel"), "internal board revision is visible to players"))
 
 
 static func _renders_live_states() -> bool:

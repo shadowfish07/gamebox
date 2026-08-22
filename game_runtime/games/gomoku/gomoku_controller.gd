@@ -231,7 +231,6 @@ func _refresh_ui() -> void:
 	$StatusLabel.text = _status_text(local_user_id) if has_state else _connection_text()
 	$ConnectionLabel.text = _connection_detail()
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
-	$RevisionLabel.text = "版本 %d" % _state.revision if has_state else ""
 	$ErrorLabel.text = _error_text
 	$ErrorLabel.visible = not _error_text.is_empty()
 
