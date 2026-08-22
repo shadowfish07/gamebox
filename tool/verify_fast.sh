@@ -7,7 +7,6 @@ if [[ -z "${GODOT_BIN:-}" ]] && command -v godot >/dev/null 2>&1; then
 fi
 
 (cd server && go test ./...)
-(cd packages/flutter_release_updater && flutter pub get && flutter analyze && flutter test)
 (cd app && flutter analyze && flutter test)
 bash -n tool/worktree.sh tool/lib/android_lease.sh tool/test_android_lease.sh \
   tool/e2e_android.sh tool/ensure_test_avds.sh \

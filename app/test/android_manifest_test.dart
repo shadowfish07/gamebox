@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -22,8 +23,10 @@ void main() {
     final appManifest = File(
       'android/app/src/main/AndroidManifest.xml',
     ).readAsStringSync();
-    final pluginManifest = File(
-      '../packages/flutter_release_updater/android/src/main/AndroidManifest.xml',
+    final pluginManifest = File.fromUri(
+      _packageRoot(
+        'flutter_release_updater',
+      ).resolve('android/src/main/AndroidManifest.xml'),
     ).readAsStringSync();
     expect(
       appManifest,
@@ -81,4 +84,14 @@ void main() {
     expect(gameActivity, contains('android:excludeFromRecents="true"'));
     expect(gameActivity, contains('android:launchMode="singleTask"'));
   });
+}
+
+Uri _packageRoot(String packageName) {
+  final packageConfigFile = File('.dart_tool/package_config.json');
+  final packageConfig = jsonDecode(packageConfigFile.readAsStringSync());
+  final packages = (packageConfig as Map<String, Object?>)['packages'];
+  final package = (packages as List<Object?>)
+      .cast<Map<String, Object?>>()
+      .singleWhere((entry) => entry['name'] == packageName);
+  return packageConfigFile.parent.uri.resolve(package['rootUri']! as String);
 }

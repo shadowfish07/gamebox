@@ -328,7 +328,6 @@ run_setup() {
   prepare_state
   bash "$ROOT_DIR/tool/bootstrap.sh" --build-only
   (cd "$ROOT_DIR/server" && go mod download)
-  (cd "$ROOT_DIR/packages/flutter_release_updater" && flutter pub get)
   (cd "$ROOT_DIR/app" && flutter pub get --enforce-lockfile)
   date -u '+%Y-%m-%dT%H:%M:%SZ' >"$SETUP_MARKER"
   chmod 600 "$SETUP_MARKER"

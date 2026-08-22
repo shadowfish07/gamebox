@@ -149,9 +149,11 @@ APKs with the wrong package name, a non-incrementing version code, or a differen
 signing certificate. Network or update failures do not block registration or
 gameplay.
 
-The reusable implementation lives in `packages/flutter_release_updater` and is
-UI-independent. Another Android Flutter application can use it through a path
-or Git dependency and provide its own update UI. The plugin contributes
+The reusable implementation lives in the independent
+[`flutter_release_updater`](https://github.com/shadowfish07/flutter_release_updater)
+repository and is pinned here through the `v0.1.0` Git tag. Other Android
+Flutter applications can pin the same tag and provide their own update UI. The
+plugin contributes
 `REQUEST_INSTALL_PACKAGES` through manifest merging because Android requires
 that special access for a normal application that installs its own downloaded
 APK; it never requests the signature-only `INSTALL_PACKAGES` permission or
