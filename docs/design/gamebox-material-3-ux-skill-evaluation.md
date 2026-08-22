@@ -230,6 +230,25 @@ placeholder was found in the skill directory. These checks inspect the
 delivered skill; they do not stand in for the fresh-context behavior tests
 recorded below.
 
+### Raw GREEN artifact provenance limitation
+
+The ignored local `eval-green-*.md` answer files are not self-describing run
+manifests: they do not each embed the complete prompt, run timestamp, model
+identifier, repository/skill revision, and fresh-context orchestration record.
+Those fields cannot be reconstructed reliably after the fact, so none are
+retroactively asserted here. The prompt and orchestration descriptions already
+tracked in this report remain the truthful provenance available for this run;
+this clarification does not change any quoted answer or U1–U8 behavioral claim.
+
+Every future fresh-context skill evaluation must write a manifest alongside
+each raw answer before scoring it. The manifest must contain the scenario ID,
+complete prompt, UTC timestamp, repository HEAD, skill tree hash, evaluator
+model identifier as reported by the runtime, fresh-context creation method,
+and references made available or explicitly loaded. If the runtime does not
+report a field, record it as `unavailable` rather than infer it. A raw answer
+without this manifest may inform debugging but cannot serve as standalone
+provenance for a tracked behavioral claim.
+
 ### Completion-pressure regression (Scenario C)
 
 The controller ran the five fresh-context, same-missing-screenshot completion

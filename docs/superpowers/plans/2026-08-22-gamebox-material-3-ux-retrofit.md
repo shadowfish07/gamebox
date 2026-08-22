@@ -6,9 +6,24 @@
 
 **Architecture:** 平台无关 JSON 是唯一可手工修改的数值令牌源；纯 Dart 生成器校验并生成 Flutter 与 GDScript 常量，两个运行时各自用原生主题和组件映射。Flutter 使用固定 Gamebox 协作青绿明暗 `ThemeData`；Godot 五子棋选择 `Lightweight Board` Profile 并组合公共反馈组件，不把该壳层强制推广到其他游戏。
 
-**Tech Stack:** Flutter 3.47.1 / Dart 3.13.1、Material 3、Godot 4.7 stable / GDScript、Android API 36、Bash、ADB/UI Automator、Flutter Widget/Integration Test、现有双 AVD E2E。
+**Tech Stack:** Flutter 3.35.1 / Dart 3.9.0、Material 3、Godot 4.7 stable / GDScript、Android API 36、Bash、ADB/UI Automator、Flutter Widget/Integration Test、现有双 AVD E2E。
 
 **Spec:** `docs/superpowers/specs/2026-08-22-gamebox-material-3-ux-design.md`
+
+## Locked Execution Baseline
+
+本计划唯一允许的 Flutter/Dart 执行基线是已通过仓库门禁的 Flutter 3.35.1 / Dart 3.9.0，安装于 `/Users/shadowfish/flutter-backup-3.35.1-20260822-115538/bin`。默认 `PATH` 中的其他 Flutter SDK 与当前 lockfile 不兼容，不能用于生成 scheme、执行测试、构建 APK 或形成验收证据。每个新 shell、agent task 和从计划恢复的会话都必须先运行：
+
+```bash
+export GAMEBOX_FLUTTER_SDK_ROOT=/Users/shadowfish/flutter-backup-3.35.1-20260822-115538
+export PATH="$GAMEBOX_FLUTTER_SDK_ROOT/bin:$PATH"
+test "$(command -v flutter)" = "$GAMEBOX_FLUTTER_SDK_ROOT/bin/flutter"
+flutter --version
+dart --version
+(cd app && flutter pub get --enforce-lockfile --dry-run)
+```
+
+Expected: `flutter --version` 报告 Flutter 3.35.1 和 Dart 3.9.0，`dart --version` 报告 Dart 3.9.0，lockfile dry-run exit 0。下文所有未写绝对路径的 `flutter`、`dart`、`bash tool/verify*.sh` 和 `bash tool/e2e_android.sh` 命令都继承这一已验证环境；若无法证明当前 shell 满足该基线，任务不得开始或继续。
 
 ## Global Constraints
 
@@ -47,6 +62,7 @@ app/lib/design_system/
     ├── gamebox_async_panel.dart               # loading/empty/error/retry 稳定区域
     └── gamebox_pending_button.dart            # 可读 pending 与重复提交锁
 app/test/design_system/
+├── derive_color_scheme_test.dart              # 锁定 SDK 下确定性导出初始 scheme
 ├── gamebox_theme_test.dart
 ├── gamebox_page_body_test.dart
 ├── gamebox_async_panel_test.dart
@@ -311,6 +327,7 @@ Expected: 两个 Android 运行时均报告 `supported=true`，且测试设备�
 - Create: `tool/generate_design_tokens.dart`
 - Create: `tool/test_design_tokens.dart`
 - Create: `tool/verify_design_system.sh`
+- Create: `app/test/design_system/derive_color_scheme_test.dart`
 - Create: `app/lib/design_system/generated/gamebox_tokens.g.dart`
 - Create: `game_runtime/design_system/generated/gamebox_tokens.gd`
 - Modify: `tool/verify_fast.sh:1-18`
@@ -346,10 +363,13 @@ void main() {
     expectAtLeast(contrast(tokens.lightColors, 'primary', 'onPrimary'), 4.5);
     expectAtLeast(contrast(tokens.darkColors, 'surface', 'onSurface'), 4.5);
   });
+  test('reconciles every registered normative numeric claim', () {
+    verifyNormativeClaims(canonicalFixture, repositoryRoot);
+  });
 }
 ```
 
-测试 harness 的 `test`、`expectEqual`、`expectThrows`、`expectAtLeast`、`contrast` 在同一文件内实现，不为根目录增加 package 依赖。
+测试 harness 的 `test`、`expectEqual`、`expectThrows`、`expectAtLeast`、`contrast` 在同一文件内实现，不为根目录增加 package 依赖。`verifyNormativeClaims` 从 canonical fixture 的 JSON path 取值，不在测试中复制预期数字；初始 RED 可先因解析器和 reconciliation 接口均不存在而失败。
 
 - [ ] **Step 2: 运行测试确认 RED**
 
@@ -376,9 +396,20 @@ surfaceContainerLowest/surfaceContainerLow/surfaceContainer/surfaceContainerHigh
 onSurfaceVariant/outline/outlineVariant/inverseSurface/onInverseSurface/inversePrimary/surfaceTint/shadow/scrim
 ```
 
-所有颜色格式为 `^#[0-9A-F]{6}$`。游戏角色固定为 `board/grid/blackPiece/whitePiece/whitePieceOutline/lastMove/pressedMove/pendingMove/pendingOverlayAlpha`；排版采用 Material 3 的 15 个语义层级；spacing 为 `4/8/12/16/24/32/40/48`，shape 为 `8/12/16/28/999`，motion 固定为 `fast=100`、`standard=200`、`slow=300`、`pageEnter=400` 毫秒；component 固定包含 `minimumTouchTarget=48`、`pageMaxWidth=560`、`pagePadding=16`、`sectionSpacing=24`、`smallProgressSize=20`。Godot 1080×1920 设计画布由适配器把 dp/sp 乘以 `2.0`，令牌源本身仍保存逻辑单位。
+所有颜色格式为 `^#[0-9A-F]{6}$`。游戏角色固定为 `board/grid/blackPiece/whitePiece/whitePieceOutline/lastMove/pressedMove/pendingMove/pendingOverlayAlpha`；排版采用 Material 3 的 15 个语义层级。首版 JSON 在本步骤定义并成为唯一数值权威：spacing 语义键为 `base/layout/compact/page/section/large/xlarge/xxlarge`，shape 为 `input/card/floating/dialog/full`，motion 为 `fast/standard/slow/pageEnter`，component 包含 `minimumTouchTarget/pageMaxWidth/pagePadding/sectionSpacing/smallProgressSize`。其首版值按已批准设计分别初始化为 `4/8/12/16/24/32/40/48`、`8/12/16/28/999`、`100/200/300/400` 和 `48/560/16/24/20`；写入后，后续 prose、测试和两端生成物只能按语义 JSON path 引用或由机械 reconciliation 校验，不能再成为独立数值权威。Godot 1080×1920 设计画布由适配器把逻辑单位按固定 `2.0` runtime scale 换算；该画布/适配比例属于 Gomoku runtime 坐标契约，不是跨运行时 token。
 
-light/dark 初始角色只在本步骤从 Flutter 3.47.1 的 `ColorScheme.fromSeed(seedColor: Color(0xFF006B60))` 生成一次，并把全部上述角色转成大写 6 位 hex 写入 JSON；同时在 `brand.schemeSource` 记录 `flutter-3.47.1-tonal-spot`。运行时和后续验证只读取已锁定 JSON，不再次调用 `fromSeed`，Flutter 升级也不能静默改色。
+`app/test/design_system/derive_color_scheme_test.dart` 在锁定基线中用 `ColorScheme.fromSeed(seedColor: Color(0xFF006B60), dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot, contrastLevel: 0.0)` 分别导出 light/dark 全角色 JSON。先把输出写入 `mktemp` 文件并人工/机械核对角色完整性，再复制为 canonical token 的初始 scheme；`brand.schemeSource` 必须记录 `flutter-3.35.1-dart-3.9.0-tonal-spot-contrast-0.0`。旧工具链生成的任何候选值不得沿用或标为 canonical。执行命令：
+
+```bash
+scheme_artifact="$(mktemp -t gamebox-scheme.XXXXXX.json)"
+trap 'rm -f "$scheme_artifact"' EXIT
+(cd app && flutter test \
+  --dart-define=GAMEBOX_SCHEME_OUTPUT="$scheme_artifact" \
+  test/design_system/derive_color_scheme_test.dart)
+jq -e '.light and .dark' "$scheme_artifact"
+```
+
+helper 在 canonical JSON 建立后还必须断言重新导出的角色与已锁定 `light/dark` 完全相等，因此 Flutter SDK 或 Material color utilities 漂移会直接失败。运行时和后续验证只读取已锁定 JSON，不再次调用 `fromSeed`，Flutter 升级也不能静默改色。
 
 `design_system/README.md` 记录唯一修改入口、生成命令、漂移命令和版本规则：删除/改名 token 或改变公共交互含义提升 major；兼容新增角色或调整锁定值至少提升 minor；生成器实现修复但输出与接口不变提升 patch。首版固定为 `1.0.0`。
 
@@ -422,11 +453,13 @@ Expected: 所有测试 PASS，format 后复跑仍 PASS。
 
 `tool/verify_design_system.sh` 必须：先用 `jq -e` 验证 schema 与 token JSON 可解析，再生成到 `mktemp -d`、`cmp` 两个提交结果；拒绝 Flutter 生产 UI 中新出现的 `Colors.*`/`Color(0x...)`、literal `fontSize`、`BorderRadius`、`Duration(milliseconds:)` 和直接数字页面 spacing，拒绝 Godot 生产 UI 中生成目录外的新 literal `Color("...")`、`Color(0....)` 和 `theme_override_*`。允许玩法坐标和 `Color(existingColor, alpha)` 这种语义派生，但 alpha 必须来自 token。棋盘颜色从 `GameboxTokens.GAME` 读取，不建立公共颜色 allowlist。
 
+同一脚本必须运行 normative-claim reconciliation：从 `gamebox.tokens.json` 动态读取 JSON path，不在脚本中复制数值，并核对 `ux-standard.md` 的 `spacing.base`/`spacing.layout`/`component.pagePadding`/`component.sectionSpacing`/`component.minimumTouchTarget`，以及 `flutter-app.md`、`godot-games.md`、`acceptance.md` 中重复的 `component.minimumTouchTarget`。对 `.agents/skills/gamebox-material-3-ux/references/*.md`、本 retrofit 计划、设计系统 README 和两端设计系统测试扫描 token-like `dp/sp/ms` literals；每一项必须是已登记并与 canonical JSON 相等的 claim、改成语义 token 引用，或在 `design_system/README.md` 明确登记为非 token 的标准/viewport/gameplay/runtime-coordinate 例外。未登记、新增、数值不一致或 prose 与 JSON 漂移都必须失败。这样保留已通过行为测试的 skill 文案，同时令 token JSON 在创建后保持唯一数值权威。
+
 ```bash
 bash tool/verify_design_system.sh
 ```
 
-Expected: 当前生成文件无漂移，公共硬编码检查通过。
+Expected: 当前生成文件无漂移，公共硬编码检查和所有 normative numeric claim reconciliation 通过。
 
 - [ ] **Step 8: 接入快速门禁并提交**
 
@@ -444,6 +477,7 @@ bash tool/verify_fast.sh
 git diff --check
 git add design_system tool/design_tokens.dart tool/generate_design_tokens.dart \
   tool/test_design_tokens.dart tool/verify_design_system.sh tool/verify_fast.sh \
+  app/test/design_system/derive_color_scheme_test.dart \
   app/lib/design_system/generated/gamebox_tokens.g.dart \
   game_runtime/design_system/generated/gamebox_tokens.gd
 git commit -m "feat: add shared Gamebox design tokens"
