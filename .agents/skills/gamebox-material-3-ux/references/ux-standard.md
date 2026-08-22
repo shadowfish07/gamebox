@@ -4,7 +4,7 @@
 
 This standard covers the Gamebox Flutter App, its Android host boundary, and all Godot games. Use stable Material 3 as the base and only cross-runtime typography, shape, and lightweight motion that Flutter and Godot can reproduce reliably. Keep a fixed Gamebox brand rather than Android wallpaper-derived color. Generate and version light and dark schemes from the Gamebox Teal seed `#006B60`.
 
-The supported device scope is Android phones. Each game declares one most-appropriate default orientation; simultaneous portrait and landscape support is not required. Shared interaction semantics, feedback, accessibility, and tokens are mandatory. Scene art, gameplay HUDs, audio, and controlled game extensions remain game-owned. A visible Gamebox shell is optional.
+The supported device scope is Android phones. Each game declares one most-appropriate default orientation; simultaneous portrait and landscape support is not required. Shared interaction semantics, feedback, and tokens are mandatory. Scene art, gameplay HUDs, audio, and controlled game extensions remain game-owned. A visible Gamebox shell is optional.
 
 ## Requirement Levels
 
@@ -21,7 +21,7 @@ Every game MUST:
 - handle safe areas, Android back, background recovery, and game Activity exit correctly;
 - never make Back implicitly resign, cancel a match, or discard progress;
 - use the common loading, pending, reconnect, error, dangerous-confirmation, and result semantics;
-- satisfy accessibility and target-runtime visual-evidence requirements.
+- satisfy target-runtime interaction and visual-evidence requirements.
 
 The Core Contract does not own scene art, boards, characters, gameplay scoring, gameplay animation, or the choice to adopt a visible shell.
 
@@ -38,7 +38,7 @@ The token file is the single hand-edited numeric source. It MUST be schema-valid
 | `comp` | Shared component mappings such as primary-button container, dialog shape, and status-chip type. |
 | `game` | Controlled roles such as `game_accent`, `playfield_surface`, and `piece_pending`; game visuals consume these without overriding public error, text, focus, disabled, or system-state roles. |
 
-Pair containers with their matching `on-*` foregrounds. Use `error` only for error or danger. Public controls and text MUST support both schemes; fixed game art MUST remain readable and state-distinguishable in both. Use the Material typography roles, a 4dp base grid with an 8dp layout rhythm, 16dp page margins, 24dp content groups, and 48×48dp public control targets. Prefer tonal surface hierarchy; reserve shadows for floating controls over complex content. Respect reduced motion.
+Pair containers with their matching `on-*` foregrounds. Use `error` only for error or danger. Public controls and text MUST support both schemes; fixed game art MUST remain readable and state-distinguishable in both. Use the Material typography roles, a 4dp base grid with an 8dp layout rhythm, 16dp page margins, 24dp content groups, and 48×48dp public control targets. Prefer tonal surface hierarchy; reserve shadows for floating controls over complex content.
 
 ## Interaction State Machine
 
@@ -65,11 +65,11 @@ Android system Back and the visible back control MUST lead to the same navigatio
 
 Resign, cancel, and exit-with-discard are separately named dangerous actions. Their confirmation MUST state the object and result, such as “Resign and end this match”; a generic “Confirm” is insufficient. Consequences, not button color, determine whether confirmation is required. Audit and verify Android Back behavior and dangerous confirmation even when a requested change is described as visual-only.
 
-## Accessibility
+## Scope Exclusion and Automation Contracts
 
-Accessibility is MUST. Normal text contrast is at least 4.5:1; large text, control boundaries, and essential non-text graphics are at least 3:1. Color MUST NOT be the only signal for online, busy, win/loss, error, or pending. Focus order follows visual order, and sound or haptics remain supplemental.
+Accessibility conformance is an explicit non-goal for this Gamebox standard. Do not add TalkBack checks, screen-reader names/roles/live regions, accessibility-service probes, focus-order gates, enlarged-font acceptance, WCAG contrast thresholds, reduced-motion gates, or equivalent completion blockers.
 
-Flutter MUST support system text scaling and TalkBack names, roles, current state, and important updates. Text may reflow or scroll but MUST NOT clip the primary action. Godot interactive `Control` and custom nodes MUST define usable accessibility name, description, flow, role/action, and live-region metadata. Godot Android screen-reader support additionally requires the capability gate in the Godot guidance. Public controls avoid status bars, gesture regions, cutouts, and rounded-corner clipping.
+Existing Flutter `Semantics.identifier`, `Key`, UI Automator selectors, and Android host-smoke selectors remain stable automation compatibility contracts. They do not create a user-facing accessibility requirement. Public controls still avoid status bars, gesture regions, cutouts, and rounded-corner clipping; normal-size text still wraps or scrolls instead of clipping primary actions.
 
 ## Game Onboarding Declaration
 
@@ -99,6 +99,7 @@ Version the design system independently, starting at `1.0.0`, and record its ver
 - A complex runtime DSL for all game declarations.
 - Shared abstractions for gameplay components without a second real consumer.
 - Expressive APIs that cannot be reproduced reliably in both runtimes.
+- Accessibility conformance, assistive-technology support, or accessibility acceptance gates.
 
 ## Quick Reference
 

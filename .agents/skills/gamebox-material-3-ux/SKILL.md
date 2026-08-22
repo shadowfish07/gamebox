@@ -1,6 +1,6 @@
 ---
 name: gamebox-material-3-ux
-description: Use when changing, reviewing, auditing, or accepting user-facing Flutter or Godot UI in the Gamebox repository, including Material 3 themes, navigation, game HUDs, interaction states, accessibility, and Android screenshot evidence.
+description: Use when changing, reviewing, auditing, or accepting user-facing Flutter or Godot UI in the Gamebox repository, including Material 3 themes, navigation, game HUDs, interaction states, and Android screenshot evidence.
 ---
 
 # Gamebox Material 3 UX
@@ -31,5 +31,6 @@ Unify Gamebox interaction semantics and tokens while preserving each game's visu
 - Do not force a common visible shell onto every game.
 - Do not treat mock, fixture, source inspection, static rendering, or golden output as target-runtime evidence.
 - Do not claim a UI change complete without relevant Android screenshots; report the exact blocker instead.
-- Do not claim Godot screen-reader support from metadata alone; verify `AccessibilityServer.is_supported()` and TalkBack on the packaged Android runtime.
+- Do not add or gate delivery on accessibility work; TalkBack, screen-reader metadata, accessibility services, focus order, enlarged-font checks, and accessibility conformance are explicit non-goals.
+- Preserve existing `Semantics.identifier`, `Key`, UI Automator, and host-smoke selectors as automation compatibility contracts, not accessibility requirements.
 - Do not expand a UI task into gameplay, protocol, server-authority, or unrelated platform changes.

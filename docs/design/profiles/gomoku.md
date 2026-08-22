@@ -15,9 +15,9 @@ This onboarding declaration targets Gamebox design-system version `1.0.0`. Gomok
 
 The selected shell contains a safe-area-aware return control, game title, turn/player/pending status, connection/recovery status only when relevant, a dominant board, resign outside the board, shared dangerous confirmation, and a result/return-to-lobby surface. Gameplay rendering remains Godot-owned; Flutter does not render the board.
 
-The 15×15 board uses the Dense Playfield Target Exception. Its individual intersections may be smaller than 48dp, but the entire board region is continuously hittable with no dead gaps between intersections. Touch resolves to the nearest intersection; ties use one deterministic coordinate rule. Occupied or otherwise illegal intersections do not submit. Pressed, `pendingMove`, accepted/`lastMove`, and rejected/restored states are visibly distinct and never rely on color alone. Back, resign, dialog, and result actions remain public ≥48×48dp targets and do not receive the exception.
+The 15×15 board uses the Dense Playfield Target Exception. Its individual intersections may be smaller than 48dp, but the entire board region is continuously hittable with no dead gaps between intersections. Touch resolves to the nearest intersection; ties use one deterministic coordinate rule. Occupied or otherwise illegal intersections do not submit. Pressed, `pendingMove`, accepted/`lastMove`, and rejected/restored states are visibly distinct. Back, resign, dialog, and result actions remain public ≥48×48dp targets and do not receive the exception.
 
-The current board already rounds a point to an intersection and bounds the outer half-cell region (`game_runtime/games/gomoku/gomoku_board.gd:83–108`), safely submits a same-cell single-finger release (`game_runtime/games/gomoku/gomoku_board.gd:133–168`), and tests coordinate inverse, expanded viewports, drag/multitouch cancellation, and pending separation (`game_runtime/test/test_gomoku_board.gd:19–112`). The retrofit must preserve those behaviors while adding pressed feedback, semantic token consumption, and the accessible coordinate/equivalent interaction.
+The current board already rounds a point to an intersection and bounds the outer half-cell region (`game_runtime/games/gomoku/gomoku_board.gd:83–108`), safely submits a same-cell single-finger release (`game_runtime/games/gomoku/gomoku_board.gd:133–168`), and tests coordinate inverse, expanded viewports, drag/multitouch cancellation, and pending separation (`game_runtime/test/test_gomoku_board.gd:19–112`). The retrofit must preserve those behaviors while adding pressed feedback and semantic token consumption.
 
 ## Inputs and Navigation
 
@@ -36,22 +36,22 @@ The game must present and test these states in portrait on both narrow 360×800 
 5. Resign confirmation open, confirmation cancelled, and confirmed resign pending.
 6. Win, loss, draw, cancelled, and abandoned result/return states.
 7. Visible Back return, Android system Back return, background/resume synchronization, and Game Activity exit.
-8. Standard/enlarged system text, safe areas, focus order, and TalkBack control/board operation when `AccessibilityServer.is_supported()` is true.
+8. Safe areas and normal-size long-copy wrapping without clipping public actions.
 
 The full capture combinations and sensitive-data rules are authoritative in `docs/design/gamebox-material-3-ux-audit.md#android-screenshot-matrix`. A headless scene, fixture, golden, or static render is not screenshot evidence.
 
 ## Token Roles
 
-Public shell components consume generated `sys`/`comp` roles for surfaces, text, focus, disabled, error, dialogs, status, shape, spacing, typography, and motion. Game art consumes only these controlled `game` roles; it may not override public error, text, focus, disabled, or system-state semantics:
+Public shell components consume generated `sys`/`comp` roles for surfaces, text, disabled, error, dialogs, status, shape, spacing, typography, and motion. Game art consumes only these controlled `game` roles; it may not override public error, text, disabled, or system-state semantics:
 
 | Role | Meaning |
 | --- | --- |
 | `board` | Dominant playfield surface. |
-| `grid` | Grid lines and star points with sufficient non-text contrast. |
+| `grid` | Grid lines and star points that remain visibly distinct in both schemes. |
 | `blackPiece` | Confirmed black stone. |
 | `whitePiece` | Confirmed white stone fill. |
 | `whitePieceOutline` | Boundary that keeps the white stone distinguishable on both schemes. |
-| `lastMove` | Non-color-only marker for the most recently accepted authoritative move. |
+| `lastMove` | Marker for the most recently accepted authoritative move. |
 | `pendingMove` | Non-final requested move marker; never interchangeable with a confirmed piece. |
 
 The current literals in `game_runtime/games/gomoku/gomoku_board.gd:15–21` map one-to-one to these semantic roles only as migration evidence; the generated GDScript mapping becomes authoritative. The game must pair public containers with their on-colors and remain readable/state-distinguishable in both versioned Gamebox Teal schemes.
@@ -62,7 +62,7 @@ The current literals in `game_runtime/games/gomoku/gomoku_board.gd:15–21` map 
 | --- | --- | --- |
 | Connection detail remains visible after recovery as “已连接” (`game_runtime/games/gomoku/gomoku_controller.gd:231–233,281–290`). | The existing fixed HUD dedicates one line to connection state at all times. | Record the deviation for the pre-change baseline only. During retrofit, preserve explicit connect/sync/reconnect/failure copy but collapse the steady connected detail; turn, player identity, and pending status remain visible. |
 
-There are no other approved SHOULD deviations. The current absolute layout, literal public/game colors, missing pressed indication, direct resignation, and missing Android accessibility capability evidence are MUST gaps; they cannot be justified as SHOULD alternatives. Board dominance, secondary actions outside the playfield, and the optional visible shell are selected profile behavior rather than deviations.
+There are no other approved SHOULD deviations. The current absolute layout, literal public/game colors, missing pressed indication, and direct resignation are MUST gaps; they cannot be justified as SHOULD alternatives. Board dominance, secondary actions outside the playfield, and the optional visible shell are selected profile behavior rather than deviations. Accessibility conformance and assistive-technology work are explicitly outside this profile's completion scope; existing automation selectors remain compatibility contracts only.
 
 ## Current Evidence to Preserve
 

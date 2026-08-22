@@ -1,5 +1,7 @@
 # Gamebox Material 3 UX Skill Evaluation
 
+> **Historical evidence notice (2026-08-22):** This file preserves the original RED/GREEN samples and quotations as recorded. The user subsequently removed accessibility from Gamebox Material 3 UX scope. Any accessibility, TalkBack, screen-reader, focus-order, enlarged-font, contrast-threshold, or reduced-motion expectation below is superseded and is not a current implementation or acceptance requirement. See the current skill references and retrofit plan.
+
 ## RED Baseline
 
 ### Scenario A — Cross-runtime audit

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 使用已验证的 `$gamebox-material-3-ux` 审计并改造现有 Flutter App 与 Godot 五子棋，使二者共享 Gamebox Material 3 语义令牌、交互状态、无障碍和运行时证据门禁，同时保留五子棋自己的棋盘视觉。
+**Goal:** 使用已验证的 `$gamebox-material-3-ux` 审计并改造现有 Flutter App 与 Godot 五子棋，使二者共享 Gamebox Material 3 语义令牌、交互状态和运行时证据门禁，同时保留五子棋自己的棋盘视觉。
 
 **Architecture:** 平台无关 JSON 是唯一可手工修改的数值令牌源；纯 Dart 生成器校验并生成 Flutter 与 GDScript 常量，两个运行时各自用原生主题和组件映射。Flutter 使用固定 Gamebox 协作青绿明暗 `ThemeData`；Godot 五子棋选择 `Lightweight Board` Profile 并组合公共反馈组件，不把该壳层强制推广到其他游戏。
 
@@ -31,10 +31,10 @@ Expected: `flutter --version` 报告 Flutter 3.35.1 和 Dart 3.9.0，`dart --ver
 - 固定品牌 seed 是 `#006B60`，不跟随 Android 壁纸动态取色；明暗 scheme 以令牌 JSON 的显式角色值锁定，不能在运行时依赖可能随 Flutter 版本改变的 [`ColorScheme.fromSeed` 输出](https://docs.flutter.dev/release/breaking-changes/new-color-scheme-roles)。
 - 仅支持 Android 手机；五子棋固定竖屏并选择 `Lightweight Board`，其他未来游戏不自动继承可见壳层。
 - Flutter 与 Godot 共享令牌名称、语义和值，不共享 Widget、Scene 或绘制代码。
-- 服务端权威状态、网络协议、对局规则、匹配模型、launch ticket 安全边界和现有 semantics identifier 不得改变。
+- 服务端权威状态、网络协议、对局规则、匹配模型、launch ticket 安全边界和现有 `Semantics.identifier`/`Key`/UI Automator/host-smoke 自动化契约不得改变。
 - 返回大厅不能隐式认输或取消；认输必须经过公共危险操作确认；pending、重连、错误和结算必须有独立可理解状态。
 - 所有行为改动先写失败测试并确认 RED；生成代码只由已测试生成器产生。
-- Godot screen-reader 支持必须在打包后的 Android 运行时验证 `AccessibilityServer.is_supported()` 和 TalkBack。属性存在或 headless 测试通过不能代替该能力门禁。
+- 无障碍合规、TalkBack、screen-reader semantics/roles/live regions、`AccessibilityServer` 探测、焦点顺序、放大字体验收、WCAG 对比度阈值和 reduced-motion 门禁是明确 non-goal，不实施也不决定最终 verdict。
 - 任何用户可见改动只有在实际构建的 Android App/Godot 游戏运行并截图后才可判定完成；mock、golden、静态渲染和源码检查不能替代截图。
 - E2E 证据不得包含邀请码、令牌、真实昵称或其他用户数据；只使用脚本创建的一次性测试身份。
 - 使用 `bash tool/verify.sh` 作为统一构建/测试门禁，使用 `bash tool/e2e_android.sh` 取得双 AVD 可玩闭环和截图证据。
@@ -128,13 +128,13 @@ docs/superpowers/specs/2026-08-22-gamebox-material-3-ux-design.md
 | 规格范围 | 实施任务 |
 | --- | --- |
 | 规范等级、边界、Profile 与接入声明 | Task 1 |
-| Godot Android screen-reader 能力边界 | Task 2、Task 8–9 |
+| 无障碍范围移除与自动化标识契约 | Task 2 |
 | 单一令牌源、schema、生成与版本治理 | Task 3 |
 | Flutter 原生 Theme、组件状态和响应式 | Task 4 |
 | 注册、目录、对手、更新、返回与危险操作 | Task 5 |
 | Godot 原生 Theme 与首批共享组件 | Task 6 |
 | 五子棋 pending、重连、返回、认输、结算与密集目标 | Task 7 |
-| light/dark、窄/大手机、放大字体、TalkBack 和实际截图 | Task 8 |
+| light/dark、窄/大手机、正常字号长文案和实际截图 | Task 8 |
 | unified gate、最终 skill verdict 和完成治理 | Task 9 |
 
 ### Task 1: 使用 Skill 审计现状并冻结改造范围
@@ -227,95 +227,35 @@ git commit -m "docs: audit Gamebox UX against Material 3 standard"
 
 Expected: 提交只有审计与 Profile 声明，没有 UI 或业务代码变化。
 
-### Task 2: 先验证 Godot Android Screen-reader 能力
+### Task 2: 移除无障碍范围并冻结自动化标识契约
 
 **Files:**
-- Modify: `game_runtime/main.gd:1-130`
-- Modify: `game_runtime/test/test_main.gd:8-180`
-- Modify: `tool/e2e_android.sh:20-35,1699-1755`
+- Modify: `.agents/skills/gamebox-material-3-ux/SKILL.md`
+- Modify: `.agents/skills/gamebox-material-3-ux/references/*.md`
+- Modify: `docs/superpowers/specs/2026-08-22-gamebox-material-3-ux-design.md`
+- Modify: `docs/superpowers/plans/2026-08-22-gamebox-material-3-ux-retrofit.md`
+- Modify: `docs/design/gamebox-material-3-ux-audit.md`
+- Modify: `docs/design/profiles/gomoku.md`
 
 **Interfaces:**
-- Consumes: Godot `AccessibilityServer.is_supported()`。
-- Produces: 安全日志标记 `GAMEBOX_ACCESSIBILITY supported=true|false` 和实际 Android/TalkBack 门禁结论。
+- Preserves: 现有 `Semantics.identifier`、`Key`、UI Automator selector、host-smoke selector 仅作为自动化兼容契约。
+- Produces: 不包含无障碍实施或验收门禁的当前 skill、规范、审计和改造计划。
 
-- [ ] **Step 1: 写入 marker 格式的失败测试**
+- [ ] **Step 1: 记录行为 RED**
 
-在 `test_main.gd` 的 cases 增加 `accessibility support marker is stable and contains no private state`，断言：
+比较不读取 skill 的 control 与完整读取当前 skill 的样本。只要后者必须显式覆盖 skill 自身的 Accessibility MUST 才能服从用户，即证明当前规范不自洽。
 
-```gdscript
-MainScript.accessibility_marker(true) == "GAMEBOX_ACCESSIBILITY supported=true"
-MainScript.accessibility_marker(false) == "GAMEBOX_ACCESSIBILITY supported=false"
-```
+- [ ] **Step 2: 精确撤销探针提交**
 
-- [ ] **Step 2: 运行 Godot 测试确认 RED**
+使用可恢复的 `git revert` 撤销 `67a7ad1`，不保留 `GAMEBOX_ACCESSIBILITY` marker、`AccessibilityServer` 调用或 E2E accessibility summary 逻辑。
 
-```bash
-bash tool/verify_godot_tests.sh
-```
+- [ ] **Step 3: 同步当前规范与后续计划**
 
-Expected: FAIL，因为 `accessibility_marker` 尚不存在；其余测试没有新的失败。
+移除 TalkBack、screen-reader metadata/roles/live regions、focus order、enlarged-font acceptance、WCAG contrast threshold 和 reduced-motion 的正向 MUST/验收要求。保留 safe area、48dp 公共目标、正常字号长文案、Back、危险确认、交互状态、双 AVD 真实流程和 Android 截图。
 
-- [ ] **Step 3: 实现最小能力标记**
+- [ ] **Step 4: 重跑 skill 行为场景并校验**
 
-在 `main.gd` 增加：
-
-```gdscript
-const ACCESSIBILITY_MARKER := "GAMEBOX_ACCESSIBILITY"
-
-static func accessibility_marker(supported: bool) -> String:
-	return "%s supported=%s" % [ACCESSIBILITY_MARKER, str(supported)]
-```
-
-并在 `_ready()` 的任何 launch 参数处理前执行：
-
-```gdscript
-print(accessibility_marker(AccessibilityServer.is_supported()))
-```
-
-- [ ] **Step 4: 运行测试确认 GREEN**
-
-```bash
-bash tool/verify_godot_tests.sh
-```
-
-Expected: `GAMEBOX_GODOT_TESTS_PASSED`，marker 单元测试通过。
-
-- [ ] **Step 5: 让 Android E2E 读取实际标记**
-
-在 `tool/e2e_android.sh` 添加稳定常量和等待逻辑：
-
-```bash
-readonly GAMEBOX_ACCESSIBILITY_MARKER="GAMEBOX_ACCESSIBILITY"
-
-wait_for_accessibility_marker() {
-  local serial="$1"
-  wait_for_log_marker "$serial" "$GAMEBOX_ACCESSIBILITY_MARKER supported="
-}
-```
-
-在首次 Godot 启动后，对两个 serial 等待该 marker，把 `supported` 值写入最终 `summary.json`；日志和 JSON 不包含用户输入。
-
-- [ ] **Step 6: 从干净提交运行打包后的 Android 能力探测**
-
-```bash
-git add game_runtime/main.gd game_runtime/test/test_main.gd tool/e2e_android.sh
-git commit -m "test: probe Godot Android accessibility support"
-bash tool/e2e_android.sh --self-test
-bash tool/e2e_android.sh
-```
-
-Expected: E2E 产物记录两个设备的 `AccessibilityServer.is_supported()` 实际值。
-
-- [ ] **Step 7: 执行能力检查点**
-
-```bash
-latest_summary="$(find artifacts/e2e -name summary.json -type f -print0 | xargs -0 ls -t | head -n 1)"
-jq '.accessibility' "$latest_summary"
-adb -s emulator-5560 shell settings get secure enabled_accessibility_services
-adb -s emulator-5562 shell settings get secure enabled_accessibility_services
-```
-
-Expected: 两个 Android 运行时均报告 `supported=true`，且测试设备有可启用的 TalkBack 服务。若任一运行时为 `false`，或 AVD 无可用 TalkBack，把精确结果写入审计报告并继续完成不依赖 screen reader 的令牌、Flutter 和 Godot 视觉/交互改造；最终 verdict 必须保持 `incomplete` 或 `blocked`，直到该平台能力真实闭环。不得用 Control 属性、桌面支持或 headless 测试把该 MUST 标记完成。
+使用相同的显式排除请求验证修订后 skill 不再要求执行者覆盖内部 MUST；同时运行 skill 结构校验和定向残留检查。
 
 ### Task 3: 建立共享令牌契约、生成器和漂移门禁
 
@@ -358,10 +298,10 @@ void main() {
     expectEqual(renderDart(tokens), renderDart(tokens));
     expectEqual(renderGdscript(tokens), renderGdscript(tokens));
   });
-  test('keeps semantic foreground pairs at accessible contrast', () {
+  test('keeps semantic foreground and container roles distinct', () {
     final tokens = DesignTokenDocument.fromJson(canonicalFixture);
-    expectAtLeast(contrast(tokens.lightColors, 'primary', 'onPrimary'), 4.5);
-    expectAtLeast(contrast(tokens.darkColors, 'surface', 'onSurface'), 4.5);
+    expectNotEqual(tokens.lightColors['primary'], tokens.lightColors['onPrimary']);
+    expectNotEqual(tokens.darkColors['surface'], tokens.darkColors['onSurface']);
   });
   test('reconciles every registered normative numeric claim', () {
     verifyNormativeClaims(canonicalFixture, repositoryRoot);
@@ -369,7 +309,7 @@ void main() {
 }
 ```
 
-测试 harness 的 `test`、`expectEqual`、`expectThrows`、`expectAtLeast`、`contrast` 在同一文件内实现，不为根目录增加 package 依赖。`verifyNormativeClaims` 从 canonical fixture 的 JSON path 取值，不在测试中复制预期数字；初始 RED 可先因解析器和 reconciliation 接口均不存在而失败。
+测试 harness 的 `test`、`expectEqual`、`expectNotEqual`、`expectThrows` 在同一文件内实现，不为根目录增加 package 依赖。`verifyNormativeClaims` 从 canonical fixture 的 JSON path 取值，不在测试中复制预期数字；初始 RED 可先因解析器和 reconciliation 接口均不存在而失败。
 
 - [ ] **Step 2: 运行测试确认 RED**
 
@@ -508,12 +448,12 @@ Expected: 令牌、生成器、两端输出和门禁在一个提交内；尚未�
 expect(GameboxTheme.light().colorScheme, GameboxTokens.lightColorScheme);
 expect(GameboxTheme.dark().colorScheme, GameboxTokens.darkColorScheme);
 expect(GameboxTheme.light().useMaterial3, isTrue);
-expect(find.bySemanticsLabel('正在注册'), findsOneWidget);
+expect(find.text('正在注册'), findsOneWidget);
 expect(tester.getSize(find.byType(FilledButton)).height, greaterThanOrEqualTo(48));
 expect(tester.takeException(), isNull);
 ```
 
-`GameboxPageBody` 分别在 360×800、412×915 和 `TextScaler.linear(2.0)` 下泵入长文案；`GameboxAsyncPanel` 覆盖 loading/error/retry；pending button 覆盖默认、pressed、focused、disabled、pending、failure-return-to-enabled，保留可见动词并禁用重复点击。Theme 测试断言输入框 8dp、卡片 12dp、浮动容器 16dp、Dialog 28dp、Button/Chip full shape；`MediaQuery.disableAnimations=true` 时组件不启动位移、弹跳或循环装饰动画。
+`GameboxPageBody` 分别在 360×800 和 412×915 的正常系统字号下泵入长文案；`GameboxAsyncPanel` 覆盖 loading/error/retry；pending button 覆盖默认、pressed、disabled、pending、failure-return-to-enabled，保留可见动词并禁用重复点击。Theme 测试断言输入框 8dp、卡片 12dp、浮动容器 16dp、Dialog 28dp、Button/Chip full shape。
 
 - [ ] **Step 2: 运行 focused tests 确认 RED**
 
@@ -549,8 +489,8 @@ ThemeData(
 - [ ] **Step 4: 实现三个最小复用组件**
 
 - `GameboxPageBody`：`SafeArea -> Center -> ConstrainedBox(maxWidth: 560) -> ListView`，默认手机页面 padding 16、内容分组间距 24。
-- `GameboxAsyncPanel`：固定占位区域，接收 `icon/title/message/liveRegion/actionLabel/onAction/isLoading`。
-- `GameboxPendingButton`：接收 `identifier/label/pendingLabel/isPending/onPressed`，pending 时显示 20dp progress 和动作文案，Semantics 同步 busy/disabled 状态。
+- `GameboxAsyncPanel`：固定占位区域，接收 `icon/title/message/actionLabel/onAction/isLoading`。
+- `GameboxPendingButton`：接收 `identifier/label/pendingLabel/isPending/onPressed`，pending 时显示 20dp progress 和动作文案，`identifier` 仅延续既有自动化定位契约。
 
 - [ ] **Step 5: 运行 tests 与 analyze 确认 GREEN**
 
@@ -608,9 +548,9 @@ expect(find.text('取消这局尚未开始的对局？'), findsOneWidget);
 expect(tester.takeException(), isNull);
 ```
 
-每个页面在 360×800、412×915、dark theme 和 2× text scale 下至少覆盖一个测试；现有 controller/API 行为断言保持不变。
+每个页面在 360×800、412×915、dark theme 和正常字号长文案下至少覆盖一个测试；现有 controller/API 行为断言保持不变。
 
-`update_action_test.dart` 用真实 `UpdateController` 加窄 fake service/installer 覆盖 checking、up-to-date、available、downloading、permission-required、installer-opened、failed，断言 Dialog 只有一个最高强调安装动作、进度有文字、错误使用 live region，长 release notes 可滚动且不 overflow。
+`update_action_test.dart` 用真实 `UpdateController` 加窄 fake service/installer 覆盖 checking、up-to-date、available、downloading、permission-required、installer-opened、failed，断言 Dialog 只有一个最高强调安装动作、进度有文字、错误保留稳定反馈区域，长 release notes 可滚动且不 overflow。
 
 - [ ] **Step 2: 运行 focused tests 确认 RED**
 
@@ -638,7 +578,7 @@ themeMode: ThemeMode.system,
 
 - [ ] **Step 4: 迁移注册页**
 
-使用 `GameboxPageBody` 构建单列品牌加入流程：顶部 gamepad Material icon、`加入 Gamebox` 标题、说明文案、带 `labelText` 的邀请码/昵称输入、唯一最高强调注册按钮。邀请码为空和昵称长度错误通过各自 `InputDecoration.errorText` 归属字段，网络/服务/安全存储错误保留在表单级 live region，失败后不清空输入。提交中保留更新入口、credential cleanup/retry 和所有 identifier；pending 按钮同时显示 spinner 与 `正在注册`。
+使用 `GameboxPageBody` 构建单列品牌加入流程：顶部 gamepad Material icon、`加入 Gamebox` 标题、说明文案、带 `labelText` 的邀请码/昵称输入、唯一最高强调注册按钮。邀请码为空和昵称长度错误通过各自 `InputDecoration.errorText` 归属字段，网络/服务/安全存储错误保留在稳定表单区域，失败后不清空输入。提交中保留更新入口、credential cleanup/retry 和所有 identifier；pending 按钮同时显示 spinner 与 `正在注册`。
 
 - [ ] **Step 5: 迁移目录与活跃对局卡**
 
@@ -646,7 +586,7 @@ themeMode: ThemeMode.system,
 
 - [ ] **Step 6: 迁移对手列表与更新 Dialog**
 
-对手项用头像占位、昵称、`在线/离线` 与 `可邀请/游戏中` 文本和辅助色共同表达；busy 状态不能只靠颜色。更新入口保持 AppBar 次级操作；Dialog 维持检查、下载、权限、安装器、失败状态并使用统一 pending/error 层级。
+对手项用头像占位、昵称、`在线/离线` 与 `可邀请/游戏中` 明确文本表达，可用令牌化辅助色增强普通视觉清晰度。更新入口保持 AppBar 次级操作；Dialog 维持检查、下载、权限、安装器、失败状态并使用统一 pending/error 层级。
 
 - [ ] **Step 7: 运行 Flutter 全套验证**
 
@@ -662,7 +602,7 @@ flutter test
 flutter build apk --debug
 ```
 
-Expected: 所有稳定 identifier 仍存在；窄屏、dark 和放大字体无 overflow；debug APK 构建成功。
+Expected: 所有稳定 identifier 仍存在；窄屏、dark 和正常字号长文案无 overflow；debug APK 构建成功。
 
 - [ ] **Step 8: 创建可供实际运行验证的 Flutter 提交**
 
@@ -713,7 +653,7 @@ _check(back.custom_minimum_size.x >= 96.0 and back.custom_minimum_size.y >= 96.0
 _check(dialog.dialog_text == "认输后本局立即结束，确认认输吗？", "danger copy changed")
 ```
 
-组件测试还覆盖 back/button 的 default/pressed/focused/disabled，connection `connecting/reconnecting/failed/hidden`、Snackbar live region、loading busy、result panel 返回信号以及公开 accessibility name/description。
+组件测试还覆盖 back/button 的 default/pressed/disabled，connection `connecting/reconnecting/failed/hidden`、Snackbar 显示/消失、loading 输入锁和可见文案、result panel 返回信号以及稳定节点路径。
 
 - [ ] **Step 2: 运行 Godot tests 确认 RED**
 
@@ -729,9 +669,9 @@ Expected: 新 suite 无法 preload，因为 Theme 和组件尚不存在。
 
 - [ ] **Step 4: 实现六个窄组件**
 
-- Back button：96×96 最小目标、`返回大厅` accessibility name。
+- Back button：96×96 最小目标和可见 `返回大厅` 图标/文案。
 - Connection banner：`present(state, detail)` 只在连接、重连、失败时突出；已连接稳定态隐藏。
-- Snackbar：`present(message, tone)` 显示错误/动作拒绝短反馈，live region polite。
+- Snackbar：`present(message, tone)` 显示错误/动作拒绝短反馈，定时消失不挡住主要操作。
 - Confirmation dialog：固定危险文案，取消与确认动作明确。
 - Loading overlay：`set_loading(active, message)` 阻止重复输入并暴露 busy 状态。
 - Result panel：`present(status, local_won)` 映射胜/负/和棋/取消/作废文案和唯一“返回大厅”操作。
@@ -792,7 +732,7 @@ _check(scene.get_node("ResignDialog").visible, "resign did not request confirmat
 _check(client.resign_requests == 0, "resign submitted before confirmation")
 ```
 
-新增：对话框可取消、确认只发一次、Android back 先关闭可见 Dialog、返回不发 resign、已连接 banner 隐藏、reconnecting/failed banner 显示、terminal 使用 result panel、状态 accessibility live、棋盘 description 含当前回合和 pending 坐标。棋盘测试新增 touch-down 立即设置 `pressed_cell`、drag/cancel 清除、release 转为服务端权威 pending、接受后转为正式棋子的完整状态序列。
+新增：对话框可取消、确认只发一次、Android back 先关闭可见 Dialog、返回不发 resign、已连接 banner 隐藏、reconnecting/failed banner 显示、terminal 使用 result panel，并保留现有节点路径、日志 marker 和输入 action。棋盘测试新增 touch-down 立即设置 `pressed_cell`、drag/cancel 清除、release 转为服务端权威 pending、接受后转为正式棋子的完整状态序列。
 
 - [ ] **Step 2: 运行 focused Godot suite 确认 RED**
 
@@ -800,7 +740,7 @@ _check(client.resign_requests == 0, "resign submitted before confirmation")
 bash tool/verify_godot_tests.sh
 ```
 
-Expected: 新确认、组件和 accessibility 断言失败，现有对局状态逻辑测试继续运行。
+Expected: 新确认、组件、pressed 状态和自动化契约断言失败，现有对局状态逻辑测试继续运行。
 
 - [ ] **Step 3: 重组场景但保留棋盘坐标**
 
@@ -827,11 +767,11 @@ func _on_resign_confirmed() -> void:
 
 - [ ] **Step 6: 将棋盘绘制迁移到 game tokens**
 
-删除 `BOARD_COLOR` 等硬编码，改读 `GameboxTokens.GAME`；保留棋盘木色、黑白棋子、last move 与 pending 的游戏个性。touch-down 使用 `pressedMove` 立即画轻量状态层；release 后清除 pressed，并在请求成功时显示填充+描边的 pending；权威接受后才绘制正式棋子。last move、pressed 与 pending 同时使用形状/描边差异，不能只靠颜色区分。
+删除 `BOARD_COLOR` 等硬编码，改读 `GameboxTokens.GAME`；保留棋盘木色、黑白棋子、last move 与 pending 的游戏个性。touch-down 使用 `pressedMove` 立即画轻量状态层；release 后清除 pressed，并在请求成功时显示填充+描边的 pending；权威接受后才绘制正式棋子。last move、pressed 与 pending 通过状态层、填充和描边保持清晰区分。
 
-- [ ] **Step 7: 添加 Godot accessibility 元数据与等效棋盘描述**
+- [ ] **Step 7: 验证自动化与输入契约**
 
-为返回、状态、认输、确认、加载和结算设置 name/description/live/flow。棋盘作为玩法区暴露 15×15、当前回合、最后落子和 pending 坐标描述；如果 Android runtime 支持 sub-elements，为 225 个交点建立 `ROLE_CELL` 和 click action，并仅让当前合法空位可操作。该实现必须以 Task 2 的 `supported=true` 为前置。
+断言可见返回、认输、确认、加载、结算节点路径以及 `ui_cancel` 不漂移，继续保留 `GAMEBOX_GODOT_READY/STATE/MATCH_RESULT` 日志契约和 E2E 棋盘坐标。本步不新增读屏元数据、cell 子元素或辅助技术接口。
 
 - [ ] **Step 8: 运行 Godot 与快速门禁确认 GREEN**
 
@@ -863,11 +803,11 @@ Expected: 提交保持协议和玩法逻辑不变；最终视觉完成判定仍�
 - Modify: `README.md:250-290`
 
 **Interfaces:**
-- Produces: `artifacts/e2e/<UTC>/screenshots/*.png`、`summary.json.uiEvidence`、TalkBack 检查结果。
+- Produces: `artifacts/e2e/<UTC>/screenshots/*.png`、`summary.json.uiEvidence` 和自动化契约检查结果。
 
 - [ ] **Step 1: 先扩展 `--self-test` 的证据安全契约**
 
-fixture 测试必须证明：secret flag 为 1 时拒绝截图；远端 UI dump 始终清理；截图文件名只允许固定 slug；summary 只能引用 artifact 内相对路径；脚本结束恢复两个 AVD 原来的 ui mode、font scale、display override 和 TalkBack 设置。
+fixture 测试必须证明：secret flag 为 1 时拒绝截图；远端 UI dump 始终清理；截图文件名只允许固定 slug；summary 只能引用 artifact 内相对路径；脚本结束恢复两个 AVD 原来的 ui mode 和 display override。本任务不修改 font scale 或 accessibility service 设置。
 
 - [ ] **Step 2: 运行 self-test 确认 RED**
 
@@ -895,15 +835,15 @@ helper 只能在邀请码字段为空或页面已离开注册输入后调用；�
 
 - [ ] **Step 4: 在真实流程捕获 Flutter 页面**
 
-项目自有 AVD A 使用 light 和典型大屏手机视口，B 使用 dark、1.5× 字体和典型窄屏手机视口，并在 trap 中恢复原值。外部传入 serial 不修改 display override；它们必须天然覆盖一窄一大两个手机视口，否则视觉矩阵明确失败。捕获：
+项目自有 AVD A 使用 light 和典型大屏手机视口，B 使用 dark 和典型窄屏手机视口，两者保持正常系统字号，并在 trap 中恢复 ui mode 原值。外部传入 serial 不修改 display override；它们必须天然覆盖一窄一大两个手机视口，否则视觉矩阵明确失败。捕获：
 
 ```text
 registration-light.png
-registration-dark-large-text.png
+registration-dark-narrow.png
 lobby-idle-light.png
-lobby-active-dark-large-text.png
+lobby-active-dark-narrow.png
 opponents-light.png
-cancel-match-dialog-dark-large-text.png
+cancel-match-dialog-dark-narrow.png
 update-dialog-dark.png
 ```
 
@@ -926,9 +866,9 @@ gomoku-terminal-light.png
 
 pending 通过暂停 E2E 自有 server 进程、点击合法落点、等待本地 pending marker 后截图，再恢复 server；reconnecting 通过同一受控暂停等待 `connection=reconnecting` marker；connection-failed 通过终止并以同一临时数据库、端口和测试 secrets 重启 E2E 自有 server 形成真实断线状态。所有暂停、终止和重启都由 trap 绑定到已验证的 E2E server PID，不能影响非 E2E 进程。
 
-- [ ] **Step 6: 用 TalkBack 操作 Flutter 与 Godot 公共控件**
+- [ ] **Step 6: 验证 Flutter 与 Godot 自动化契约**
 
-先在 Flutter 注册、目录、对手和取消确认流程验证名称、role、disabled/busy、错误 live region 与焦点顺序；邀请码仍由现有私密 instrumentation helper 输入，TalkBack/UI Automator 不读取或记录其值。在 Godot 支持门禁为 true 的设备上，再读取并操作返回、认输、取消/确认和结算返回；棋盘至少验证一个合法空位 cell 的名称、坐标、click action 和 pending 播报。测试结束恢复原 accessibility service 设置。
+在 Flutter 注册、目录、对手和取消确认流程验证现有 `Semantics.identifier`/`Key` 与 UI Automator selector 继续可定位；邀请码仍由现有私密 instrumentation helper 输入，UI Automator 不读取或记录其值。Godot 继续通过已有固定坐标、输入 action 和 `GAMEBOX_GODOT_READY/STATE/MATCH_RESULT` marker 验证返回、认输确认、落子与结算返回。不启用、修改或恢复 accessibility service。
 
 - [ ] **Step 7: 把证据清单写入 summary**
 
@@ -940,7 +880,7 @@ pending 通过暂停 E2E 自有 server 进程、点击合法落点、等待本�
     "flutter": ["screenshots/registration-light.png", "screenshots/lobby-idle-light.png"],
     "godot": ["screenshots/gomoku-initial-light.png", "screenshots/gomoku-terminal-light.png"],
     "themes": ["light", "dark"],
-    "talkBack": "passed"
+    "viewports": ["narrow", "large"]
   }
 }
 ```
@@ -1034,7 +974,7 @@ Expected: unified gate、E2E self-test 和实际双设备闭环全部 exit 0；�
 - 状态：Gamebox UX skill 与现有 Flutter App/Godot 五子棋改造均已完成验证
 ```
 
-若 Godot TalkBack、截图或真实流程任一未通过，状态保持“等待现有改造”，并在审计中明确 `incomplete` 或 `blocked`。
+若截图或真实流程任一未通过，状态保持“等待现有改造”，并在审计中明确 `incomplete` 或 `blocked`。无障碍能力不影响 verdict。
 
 - [ ] **Step 6: 最终差异与敏感信息检查**
 
@@ -1068,4 +1008,4 @@ bash tool/e2e_android.sh
 git status --short
 ```
 
-Expected: 最终 HEAD 的 unified gate 与双 AVD E2E 均通过，工作树干净。最终回复附上实际 Android 截图本身，并列出 unified gate、E2E、TalkBack、源码 commit 和 artifact 结果；未通过的能力必须保留 `incomplete` 或 `blocked` verdict。
+Expected: 最终 HEAD 的 unified gate 与双 AVD E2E 均通过，工作树干净。最终回复附上实际 Android 截图本身，并列出 unified gate、E2E、自动化契约、源码 commit 和 artifact 结果；未通过的范围内能力必须保留 `incomplete` 或 `blocked` verdict。

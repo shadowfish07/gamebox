@@ -15,13 +15,13 @@ Gamebox 需要一套可执行、可验证、可长期演进的交互规范。它
 2. 以平台无关的语义令牌作为唯一设计数据源。
 3. Flutter 与 Godot 各自使用原生组件和主题能力，不共享渲染代码。
 4. 公共可见壳层按需使用，不强制覆盖所有游戏。
-5. 无障碍、错误恢复、返回语义和目标运行时视觉证据属于不可豁免的 Core Contract。
+5. 错误恢复、返回语义和目标运行时视觉证据属于不可豁免的 Core Contract。
 
 ## 2. 已确认的产品决策
 
 | 决策 | 结论 |
 | --- | --- |
-| App 与游戏的统一程度 | 统一设计令牌、交互语义、反馈和无障碍；游戏保留场景美术、玩法 HUD、音效和主题扩展 |
+| App 与游戏的统一程度 | 统一设计令牌、交互语义和反馈；游戏保留场景美术、玩法 HUD、音效和主题扩展 |
 | 品牌主题 | 固定 Gamebox 品牌主题，不跟随 Android 壁纸动态取色 |
 | 品牌方向 | “协作青绿”，建议 seed 为 `#006B60` |
 | 明暗模式 | 使用同一 seed 生成并锁定版本的明暗 Material 3 配色 |
@@ -55,7 +55,7 @@ Gamebox 需要一套可执行、可验证、可长期演进的交互规范。它
 - 正确处理 Android 安全区域、返回键、后台恢复和游戏 Activity 退出。
 - 返回不得隐式认输、取消对局或丢弃进度。
 - 使用统一的加载、待确认、重连、错误、危险操作确认和结算语义。
-- 满足本文的无障碍与运行时视觉证据要求。
+- 满足本文的运行时交互与视觉证据要求。
 
 ### 3.2 游戏可自由决定的内容
 
@@ -189,7 +189,6 @@ Flutter 使用 `ThemeData`、`ColorScheme`、`TextTheme`、组件主题和必要
 - 页面进入约 400ms，退出约 200ms，普通状态变化约 200–300ms。
 - 弹性、形变或强调动画只用于按钮按压、选中、棋子落下等局部反馈。
 - 网络等待、对手行动等不确定时长状态不能用一次性动画冒充进度。
-- 系统启用减少动态效果时，移除弹跳、位移和非必要循环动画。
 
 ## 6. 统一交互状态机
 
@@ -259,7 +258,7 @@ App 负责进入、发现、配置和恢复游戏，不承载游戏本身的玩�
 
 - **注册页**：Outlined Text Field 带浮动标签；字段错误归属到字段，通用服务错误放在表单区域；失败后保留输入。
 - **游戏目录**：使用 Feed/Card 模式，展示名称、人数、对局状态和唯一主要操作。
-- **游戏准备页**：使用 List Item；在线、离线和忙碌通过文字与辅助视觉共同表达。
+- **游戏准备页**：使用 List Item；在线、离线和忙碌使用明确状态文案，可补充辅助视觉。
 - **活跃对局卡**：主要操作为“继续对局”；取消未开始对局是低强调危险操作。
 - **平台操作**：更新、设置等不得与开始或继续游戏争夺主操作层级。
 
@@ -290,7 +289,7 @@ App 负责进入、发现、配置和恢复游戏，不承载游戏本身的玩�
 - 默认不显示 Gamebox 可见壳层。
 - Android 返回键打开游戏自己的暂停或退出界面。
 - 平台级故障可以临时覆盖显示，但不能长期占据画面。
-- 游戏视觉组件可以完全定制，但公共语义和无障碍要求不变。
+- 游戏视觉组件可以完全定制，但公共状态、恢复、返回与运行时证据要求不变。
 
 ### 11.4 首批共享 Godot 组件
 
@@ -312,22 +311,12 @@ App 负责进入、发现、配置和恢复游戏，不承载游戏本身的玩�
 - 整块玩法区域连续命中，没有不可点击缝隙。
 - 输入吸附到最近合法目标，并解决相邻目标歧义。
 - 按下、待确认、接受和拒绝均有清晰反馈。
-- 为辅助技术提供可理解的坐标、状态或等效交互方式。
 
-## 12. 无障碍
+## 12. 范围排除与自动化契约
 
-无障碍是 MUST：
+本轮及后续 Gamebox Material 3 UX 不包含无障碍合规、TalkBack、读屏语义/role/live region、`AccessibilityServer` 探测、焦点顺序、放大字体验收、WCAG 对比度阈值或 reduced-motion 门禁，不以这些能力决定完成状态。
 
-- 普通文字对比度至少 4.5:1；大字号、控件边界和关键非文字图形至少 3:1。
-- 颜色不能单独表达在线、忙碌、胜负、错误或待确认。
-- Flutter 页面支持系统字体缩放；文字放大后允许重排和滚动，不截断主要操作。
-- Flutter App 必须通过 TalkBack 暴露控件名称、角色、当前状态和重要变化。
-- Godot `Control` 和自定义可操作节点必须填写可用的 accessibility name、description、flow、role/action 与 live-region 元数据。
-- Godot 的 Android screen-reader 桥接属于目标运行时能力，不能仅凭节点属性或桌面支持宣称可用；实施时必须在项目锁定的 Godot Android 导出上验证 `AccessibilityServer.is_supported()` 和 TalkBack 实际操作。若运行时不支持，该项必须作为明确的未完成平台能力跟踪，不能静默豁免或声称完整支持。
-- 重连、错误、轮到玩家等变化使用适度的 live region，避免重复播报。
-- 焦点顺序与视觉顺序一致。
-- 触觉和声音只作为辅助反馈，不能成为唯一提示。
-- 公共控件避开状态栏、导航手势区、刘海和圆角裁切区域。
+现有 Flutter `Semantics.identifier`、`Key`、UI Automator selector 和 Android host-smoke selector 仅作为自动化兼容契约保留，不产生新的读屏实施义务。普通 UX 仍要求公共控件避开状态栏、导航手势区、刘海和圆角裁切区域，正常字号下文案可重排/滚动且不截断主要操作。
 
 ## 13. 游戏接入声明
 
@@ -364,10 +353,10 @@ App 负责进入、发现、配置和恢复游戏，不承载游戏本身的玩�
 
 Flutter Widget Test 与 Godot 场景测试覆盖：
 
-- 默认、按下、焦点、禁用和 pending
+- 默认、按下、禁用和 pending
 - 加载、错误、空状态和成功
 - light 与 dark scheme
-- 标准字体与放大字体
+- 正常字号与长文案重排
 - 文案增长和安全区域
 
 ### 14.4 流程验证
@@ -397,7 +386,7 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 
 - App 页面覆盖典型窄屏和典型大屏手机。
 - 每个游戏只验证其声明的默认方向。
-- 关键页面覆盖明暗主题、标准字体和放大字体。
+- 关键页面覆盖明暗主题、正常字号和长文案。
 - 游戏至少覆盖默认、pending、重连、错误与结算状态中受本次修改影响的部分。
 
 ## 15. 迁移顺序
@@ -447,6 +436,7 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 - 把全部游戏声明提前做成复杂运行时 DSL
 - 为尚未出现第二个使用方的玩法组件建立通用抽象
 - 全面追逐只在部分平台可用的 Material 3 Expressive API
+- 无障碍合规、辅助技术支持或无障碍验收门禁
 
 ## 18. 完成标准
 
@@ -478,8 +468,5 @@ Flutter Widget Test 与 Godot 场景测试覆盖：
 - [Material Design for Flutter](https://docs.flutter.dev/ui/design/material)
 - [Flutter Material 3 migration](https://docs.flutter.dev/release/breaking-changes/material-3-migration)
 - [Flutter Material 3 ColorScheme roles](https://docs.flutter.dev/release/breaking-changes/new-color-scheme-roles)
-- [Godot UI applications and screen-reader integration](https://docs.godotengine.org/en/stable/tutorials/ui/creating_applications.html)
-- [Godot Control accessibility properties](https://docs.godotengine.org/en/stable/classes/class_control.html)
-- [Godot AccessibilityServer](https://docs.godotengine.org/en/stable/classes/class_accessibilityserver.html)
 
 外部 Material 文档用于定义设计语义；本文件记录 Gamebox 的范围、Profile、验证和治理决策。第一项交付完成后，执行任务以 skill 中的权威规范与令牌源为准。

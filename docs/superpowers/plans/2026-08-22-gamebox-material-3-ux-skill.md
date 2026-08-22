@@ -1,5 +1,7 @@
 # Gamebox Material 3 UX Skill Implementation Plan
 
+> **Superseded scope note (2026-08-22):** This completed plan is historical implementation evidence. The user later removed accessibility from the current Gamebox Material 3 UX scope; its accessibility-related scenario expectations no longer govern implementation or acceptance. Use the current skill references and retrofit plan without rewriting the original completed evidence below.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在仓库内交付一个自包含、可自动发现并经过基线与正向场景验证的 Gamebox Material 3 UX skill，作为后续 Flutter App、Godot 游戏和 UI 验收的权威规范入口。

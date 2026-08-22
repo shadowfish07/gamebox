@@ -24,7 +24,7 @@ Use a small Material 3 Top App Bar by default. Secondary pages expose visible Ba
 
 Each page has at most one highest-emphasis `FilledButton`. Use Filled Tonal or Outlined for secondary actions and Text Button for low-frequency or cancel actions. Use `title_large` for Top App Bar, `title_medium` for card titles, `body_large`/`body_medium` for body, `label_large` for buttons and chips, `body_medium` for supporting text and Snackbar, and `headline_small` for Dialog titles.
 
-Public controls have at least 48×48dp hit targets and use the shared spacing, shape, state, focus, disabled, and error semantics. A dangerous action is identified by consequence, not merely by an error color.
+Public controls have at least 48×48dp hit targets and use the shared spacing, shape, state, disabled, and error semantics. A dangerous action is identified by consequence, not merely by an error color.
 
 ## Async and Error States
 
@@ -32,16 +32,16 @@ Reserve stable layout regions for loading, empty, and error states so content ar
 
 Use inline validation for fields, Snackbar for transient recoverable events, page state for content failures, Dialog for dangerous decisions, and full-screen blocking only when the App cannot continue. Do not expose internal connection details.
 
-## Responsive and Text Scaling
+## Responsive Layout
 
-Verify typical narrow and large Android phones. Pages MUST handle safe areas and system text scaling. At standard and enlarged text, allow reflow, wrapping, or scrolling; do not clip labels, status, or the primary action. This version does not promise tablet, foldable, ChromeOS, desktop, or simultaneous orientation layouts.
+Verify typical narrow and large Android phones. Pages MUST handle safe areas. At the normal system text size, allow reflow, wrapping, or scrolling; do not clip labels, status, or the primary action. This version does not promise tablet, foldable, ChromeOS, desktop, or simultaneous orientation layouts.
 
-## Semantics
+## Automation Contracts and Excluded Work
 
-Expose TalkBack names, roles, values/current states, focus order, and important state changes. Use restrained live regions for errors and async changes. Never use color alone. Preserve existing stable semantics identifiers and keys so accessibility, automation, and users do not lose established targets; if a change is necessary, update all callers and tests deliberately.
+Preserve existing stable `Semantics.identifier` values, keys, UI Automator selectors, and host-smoke selectors so automation does not lose established targets; if a change is necessary, update all callers and tests deliberately. Do not add TalkBack, screen-reader semantics/roles/live regions, focus-order, enlarged-font, accessibility contrast, or reduced-motion acceptance work.
 
 ## Widget and Android Checks
 
-Widget tests cover default, pressed, focus, disabled, pending, loading, empty, error, success, light/dark, standard/enlarged text, content growth, and safe areas as relevant. Flow checks cover registration/identity recovery, catalog/opponent selection, Godot launch failure/retry, and return-state refresh.
+Widget tests cover default, pressed, disabled, pending, loading, empty, error, success, light/dark, normal-size text, content growth, and safe areas as relevant. Flow checks cover registration/identity recovery, catalog/opponent selection, Godot launch failure/retry, and return-state refresh.
 
-Run the actual built Android App at the affected viewports and states. Verify visible and system Back parity, TalkBack behavior, text scaling, touch targets, and absence of overflow. Capture non-sensitive screenshots of every affected state; Widget tests, goldens, mocks, and static inspection do not replace them.
+Run the actual built Android App at the affected viewports and states. Verify visible and system Back parity, touch targets, safe areas, normal-size text wrapping, and absence of overflow. Capture non-sensitive screenshots of every affected state; Widget tests, goldens, mocks, and static inspection do not replace them.

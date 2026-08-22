@@ -24,7 +24,7 @@ Check schema and required roles, matching containers and `on-*` values, legal ty
 
 ## Component and Flow Gate
 
-Run relevant Flutter Widget and Godot scene tests for default, pressed, focus, disabled, pending, loading, empty, error, success/result, light/dark, standard/enlarged text, content growth, and safe areas.
+Run relevant Flutter Widget and Godot scene tests for default, pressed, disabled, pending, loading, empty, error, success/result, light/dark, normal-size text, content growth, and safe areas.
 
 Exercise affected end-to-end flows: registration and identity recovery; catalog and opponent selection; launch failure/retry; pending move and server accept/reject; disconnect/reconnect and authoritative snapshot recovery; resignation/cancellation confirmation; result and return to lobby; Android Back and visible Back parity; background recovery and game Activity exit. For linked games, deterministic fake services prove state wiring but do not replace the real two-device boundary.
 
@@ -34,9 +34,9 @@ Every user-facing UI change MUST run as the actual built Android App or packaged
 
 If required screenshots are missing, the verdict is `incomplete` or `blocked` with the exact reason and an explicit statement that visual verification remains incomplete. Approval to release with risk does not convert missing evidence into `complete`.
 
-## Accessibility Gate
+## Layout and Interaction Gate
 
-Check contrast, non-color cues, 48×48dp public targets, focus order, safe areas, text scaling, roles/names/current state, and important announcements. Verify Flutter with TalkBack. For Godot, verify node metadata and then gate the packaged Android export on both `AccessibilityServer.is_supported()` and real TalkBack operation. Record unsupported bridging as an incomplete platform capability.
+Check 48×48dp public targets, safe areas, normal-size text wrapping, content growth, pressed/pending/disabled feedback, and absence of overflow. Accessibility conformance, TalkBack, screen-reader metadata/roles/live regions, accessibility-service probes, focus order, enlarged-font acceptance, WCAG contrast thresholds, and reduced-motion gates are explicit non-goals. Existing semantics identifiers and selectors remain automation contracts only.
 
 ## Sensitive-data Rules
 
@@ -51,7 +51,6 @@ Screenshots and retained artifacts MUST exclude invite codes, access tokens, cre
 - [ ] Server-authoritative actions remain pending until acknowledged.
 - [ ] Android system and visible Back behavior match.
 - [ ] Every dangerous action has consequence-named confirmation.
-- [ ] Android accessibility capability is verified or explicitly incomplete.
 - [ ] Actual target runtime was exercised in the declared orientation/viewports.
 - [ ] The screenshot matrix covers all affected states without sensitive data.
 - [ ] The repository verification gate passes.
