@@ -22,10 +22,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/lan/httpapi"
 	"me.zqydev/gamebox/server/internal/lan/room"
 	"me.zqydev/gamebox/server/internal/nickname"
+	"me.zqydev/gamebox/server/internal/protocol"
 )
 
 // NormalizeNickname exposes the single Go nickname implementation through a
@@ -47,6 +50,7 @@ func NormalizeNickname(raw string) string {
 var (
 	ErrInvalidConfiguration = errors.New("invalid configuration")
 	ErrNotRunning           = errors.New("not_running")
+	ErrCleanupNotReady      = errors.New("cleanup_not_ready")
 	ErrInternal             = errors.New("internal_error")
 )
 
@@ -256,6 +260,101 @@ func (engine *Engine) IssueHostLaunch() (string, error) {
 	})
 }
 
+// CloseRoom durably applies an explicit host close action. Cancel is valid
+// only before the first game revision; resign is authenticated with the
+// durable host resume credential and goes through the same action journal as
+// every other Gomoku action.
+func (engine *Engine) CloseRoom(mode string) (string, error) {
+	if engine == nil || (mode != "cancel" && mode != "resign") {
+		return "", ErrInvalidConfiguration
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.service == nil {
+		return "", ErrNotRunning
+	}
+	snapshot := engine.service.Snapshot()
+	switch mode {
+	case "cancel":
+		if snapshot.Revision != 0 {
+			return "", ErrInvalidConfiguration
+		}
+		event, err := engine.service.Cancel(context.Background(), engine.secrets.HostPlayerID)
+		if err != nil {
+			if errors.Is(err, room.ErrRoomNotCancellable) {
+				return "", ErrInvalidConfiguration
+			}
+			return "", ErrInternal
+		}
+		if err := engine.router.PublishCommitted(event); err != nil {
+			return "", ErrInternal
+		}
+	case "resign":
+		if snapshot.Status != room.StatusActive || snapshot.Revision <= 0 {
+			return "", ErrInvalidConfiguration
+		}
+		credential, err := engine.service.ConnectLAN(context.Background(), room.ConnectCredential{ResumeToken: engine.secrets.HostResumeToken})
+		if err != nil || credential.PlayerID != engine.secrets.HostPlayerID {
+			return "", ErrInvalidConfiguration
+		}
+		actionID, err := uuid.NewRandom()
+		if err != nil {
+			return "", ErrInternal
+		}
+		event, _, _, err := engine.service.Apply(context.Background(), room.ActionRequest{
+			PlayerID: engine.secrets.HostPlayerID, ActionID: actionID.String(), ExpectedRevision: snapshot.Revision,
+			Type: protocol.TypeGomokuResignRequested, Payload: json.RawMessage(`{}`),
+		})
+		if err != nil {
+			if errors.Is(err, room.ErrInvalidRequest) || errors.Is(err, room.ErrStaleRevision) || errors.Is(err, room.ErrActionConflict) {
+				return "", ErrInvalidConfiguration
+			}
+			return "", ErrInternal
+		}
+		if err := engine.router.PublishCommitted(event); err != nil {
+			return "", ErrInternal
+		}
+	}
+	return engine.statusLocked(), nil
+}
+
+// PrepareCleanup verifies terminal persistence policy and atomically stops the
+// listener plus journal lock. The caller may delete the resolved active-room
+// directory only after this method succeeds.
+func (engine *Engine) PrepareCleanup(allowMissingGuestAck bool) (string, error) {
+	if engine == nil {
+		return "", ErrNotRunning
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.service == nil {
+		return "", ErrNotRunning
+	}
+	snapshot := engine.service.Snapshot()
+	switch snapshot.Status {
+	case room.StatusCancelled:
+		// A revision-zero cancellation carries no result to persist.
+	case room.StatusFinished:
+		if snapshot.Result == nil || !containsPlayerID(snapshot.ResultAcknowledgedPlayerIDs, engine.secrets.HostPlayerID) {
+			return "", ErrCleanupNotReady
+		}
+		if !allowMissingGuestAck {
+			for _, player := range snapshot.Players {
+				if !containsPlayerID(snapshot.ResultAcknowledgedPlayerIDs, player.PlayerID) {
+					return "", ErrCleanupNotReady
+				}
+			}
+		}
+	default:
+		return "", ErrCleanupNotReady
+	}
+	status := engine.statusLocked()
+	if engine.stopLocked() != nil {
+		return "", ErrInternal
+	}
+	return status, nil
+}
+
 func (engine *Engine) Status() string {
 	if engine == nil {
 		return `{"schemaVersion":1,"state":"empty"}`
@@ -271,6 +370,28 @@ func (engine *Engine) Stop() error {
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
+	return engine.stopLocked()
+}
+
+// DeleteActiveRoom removes only the engine's fixed active_room tree after all
+// listener, router, HTTP server, and journal-lock owners are stopped. It is
+// idempotent when the fixed tree is absent and rejects links or special files.
+func (engine *Engine) DeleteActiveRoom() error {
+	if engine == nil {
+		return ErrInvalidConfiguration
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.service != nil || engine.router != nil || engine.server != nil || engine.listener != nil {
+		return ErrCleanupNotReady
+	}
+	if err := removeActiveRoomTree(engine.root); err != nil {
+		return ErrInternal
+	}
+	return nil
+}
+
+func (engine *Engine) stopLocked() error {
 	var failed bool
 	if engine.server != nil && engine.server.Close() != nil {
 		failed = true
@@ -296,6 +417,15 @@ func (engine *Engine) Stop() error {
 		return ErrInternal
 	}
 	return nil
+}
+
+func containsPlayerID(playerIDs []string, target string) bool {
+	for _, playerID := range playerIDs {
+		if playerID == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (engine *Engine) String() string   { return "lanengine.Engine{root:<path> room:<redacted>}" }

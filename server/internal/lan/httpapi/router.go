@@ -75,6 +75,18 @@ func (router *Router) Close(ctx context.Context) error {
 	return router.hub.Close(ctx)
 }
 
+// PublishCommitted delivers an event already durably committed through the
+// authoritative RoomService. It is the narrow boundary used by local Android
+// host actions so they share the hub's revision ordering and slow-client rules
+// with WebSocket actions.
+func (router *Router) PublishCommitted(event room.Event) error {
+	if router == nil || router.hub == nil || event.RoomID == "" || event.Revision <= 0 {
+		return room.ErrInvalidRequest
+	}
+	router.hub.publish(event)
+	return nil
+}
+
 func (router *Router) webSocket(writer http.ResponseWriter, request *http.Request) {
 	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 || request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" {
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request")

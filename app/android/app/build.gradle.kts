@@ -95,6 +95,10 @@ val selectedGameboxAbi = providers.gradleProperty("gameboxAndroidAbi").orNull
 require(selectedGameboxAbi == null || selectedGameboxAbi in supportedGameboxAbis) {
     "Unsupported gameboxAndroidAbi"
 }
+val gameboxTargetSdk = providers.gradleProperty("GAMEBOX_TARGET_SDK").orNull?.toIntOrNull()
+require(gameboxTargetSdk != null && gameboxTargetSdk in 24..flutter.compileSdkVersion) {
+    "GAMEBOX_TARGET_SDK must be between minSdk and compileSdk"
+}
 val standaloneAndroidTestRuntime by configurations.creating
 val signingPropertiesFile = rootProject.file("key.properties")
 val signingProperties = Properties().apply {
@@ -139,7 +143,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = gameboxTargetSdk
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

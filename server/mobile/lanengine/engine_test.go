@@ -86,6 +86,125 @@ func TestEngineHasStableEmptyStatusAndStrictInputs(t *testing.T) {
 	}
 }
 
+func TestEngineCloseRoomCancelsOnlyRevisionZeroAndStopsForCleanup(t *testing.T) {
+	engine, err := NewEngine(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.CreateRoom(createJSON()); err != nil {
+		t.Fatal(err)
+	}
+	created := decodeStatus(t, engine.Status())
+	join := postJoin(t, created.Port)
+	hostLaunchJSON, err := engine.IssueHostLaunch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostLaunch := decodeLaunch(t, hostLaunchJSON)
+	host := connectEngineWS(t, hostLaunch.WSURL, hostLaunch.LaunchTicket, engineHostResume)
+	defer host.CloseNow()
+	guest := connectEngineWS(t, hostLaunch.WSURL, join.LaunchTicket, engineGuestResume)
+	defer guest.CloseNow()
+	_ = readEngineEnvelope(t, host)
+	_ = readEngineEnvelope(t, guest)
+	closedJSON, err := engine.CloseRoom("cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := decodeStatus(t, closedJSON)
+	if closed.State != "cancelled" || closed.GameRevision != 1 || closed.RoomID != engineRoomID {
+		t.Fatalf("cancelled status = %#v", closed)
+	}
+	for _, connection := range []*websocket.Conn{host, guest} {
+		event := readEngineEnvelope(t, connection)
+		if event.Type != protocol.TypePlatformMatchCancelled || event.Revision == nil || *event.Revision != 1 {
+			t.Fatalf("cancel broadcast = %#v", event)
+		}
+	}
+	preparedJSON, err := engine.PrepareCleanup(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := decodeStatus(t, preparedJSON)
+	if prepared.State != "cancelled" || engine.Status() != `{"schemaVersion":1,"state":"empty"}` {
+		t.Fatalf("prepared cleanup = %#v status=%s", prepared, engine.Status())
+	}
+}
+
+func TestEngineCloseRoomResignsHostThroughAuthoritativePipeline(t *testing.T) {
+	root := t.TempDir()
+	engine, err := NewEngine(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.CreateRoom(createJSON()); err != nil {
+		t.Fatal(err)
+	}
+	created := decodeStatus(t, engine.Status())
+	join := postJoin(t, created.Port)
+	activateRoomWithOneMove(t, engine, join)
+	host := connectEngineWS(t, "ws://127.0.0.1:"+strconv.Itoa(created.Port)+"/lan/v1/ws", "", engineHostResume)
+	defer host.CloseNow()
+	guest := connectEngineWS(t, "ws://127.0.0.1:"+strconv.Itoa(created.Port)+"/lan/v1/ws", "", engineGuestResume)
+	defer guest.CloseNow()
+	_ = readEngineEnvelope(t, host)
+	_ = readEngineEnvelope(t, guest)
+
+	closedJSON, err := engine.CloseRoom("resign")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := decodeStatus(t, closedJSON)
+	if closed.State != "finished" || closed.GameRevision != 2 || closed.RoomID != engineRoomID {
+		t.Fatalf("resigned status = %#v", closed)
+	}
+	for _, connection := range []*websocket.Conn{host, guest} {
+		event := readEngineEnvelope(t, connection)
+		if event.Type != protocol.TypeGomokuResigned || event.Revision == nil || *event.Revision != 2 {
+			t.Fatalf("resign broadcast = %#v", event)
+		}
+	}
+	if _, err := engine.PrepareCleanup(true); !errors.Is(err, ErrCleanupNotReady) {
+		t.Fatalf("cleanup before host ack error = %v", err)
+	}
+	snapshot := engine.service.Snapshot()
+	if snapshot.Result == nil || snapshot.Result.Reason != "resignation" {
+		t.Fatalf("resignation result = %#v", snapshot.Result)
+	}
+	if err := engine.service.AcknowledgeResult(context.Background(), engineHostID, snapshot.Result.ResultHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.PrepareCleanup(false); !errors.Is(err, ErrCleanupNotReady) {
+		t.Fatalf("all-player cleanup before guest ack error = %v", err)
+	}
+	preparedJSON, err := engine.PrepareCleanup(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared := decodeStatus(t, preparedJSON); prepared.State != "finished" || prepared.GameRevision != 2 {
+		t.Fatalf("prepared finished cleanup = %#v", prepared)
+	}
+}
+
+func TestEngineCloseRoomRejectsWrongModeAndRevisionSemantics(t *testing.T) {
+	engine, _ := NewEngine(t.TempDir())
+	if _, err := engine.CreateRoom(createJSON()); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"", " cancel", "discard_corrupt", "other"} {
+		if result, err := engine.CloseRoom(mode); result != "" || !errors.Is(err, ErrInvalidConfiguration) {
+			t.Fatalf("CloseRoom(%q) = (%q, %v)", mode, result, err)
+		}
+	}
+	if result, err := engine.CloseRoom("resign"); result != "" || !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("revision-zero resign = (%q, %v)", result, err)
+	}
+	if status := decodeStatus(t, engine.Status()); status.State != "waiting" || status.GameRevision != 0 {
+		t.Fatalf("invalid close mutated room = %#v", status)
+	}
+	_ = engine.Stop()
+}
+
 func TestEngineRealSocketMoveStopReopenAndResume(t *testing.T) {
 	root := t.TempDir()
 	engine, err := NewEngine(root)
@@ -489,6 +608,86 @@ func TestEngineCorruptJournalWithFIFOManifestNeverListens(t *testing.T) {
 	_ = reopened.Stop()
 }
 
+func TestEngineDeleteActiveRoomRequiresStoppedEngineAndRemovesOnlyResolvedTree(t *testing.T) {
+	root := t.TempDir()
+	engine, _ := NewEngine(root)
+	if _, err := engine.CreateRoom(createJSON()); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.DeleteActiveRoom(); !errors.Is(err, ErrCleanupNotReady) {
+		t.Fatalf("DeleteActiveRoom while running error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "active_room", "manifest.json")); err != nil {
+		t.Fatalf("running room was changed: %v", err)
+	}
+	if err := engine.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.DeleteActiveRoom(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "active_room")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active room remains after delete: %v", err)
+	}
+}
+
+func TestEngineDeleteActiveRoomRejectsSymlinkAndFIFOWithoutTouchingOutside(t *testing.T) {
+	for _, hostile := range []string{"symlink", "fifo"} {
+		t.Run(hostile, func(t *testing.T) {
+			root := t.TempDir()
+			active := filepath.Join(root, "active_room")
+			if err := os.MkdirAll(active, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "outside")
+			if err := os.WriteFile(outside, []byte("preserve"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			hostilePath := filepath.Join(active, "hostile")
+			var err error
+			if hostile == "symlink" {
+				err = os.Symlink(outside, hostilePath)
+			} else {
+				err = unix.Mkfifo(hostilePath, 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			engine, _ := NewEngine(root)
+			if err := engine.DeleteActiveRoom(); !errors.Is(err, ErrInternal) {
+				t.Fatalf("DeleteActiveRoom hostile error = %v", err)
+			}
+			if data, err := os.ReadFile(outside); err != nil || string(data) != "preserve" {
+				t.Fatalf("outside file changed: data=%q err=%v", data, err)
+			}
+			if _, err := os.Lstat(hostilePath); err != nil {
+				t.Fatalf("hostile evidence was removed: %v", err)
+			}
+		})
+	}
+}
+
+func TestOpenedDirectoryMustMatchInitialIdentityBeforeReadingChildren(t *testing.T) {
+	initial := unix.Stat_t{Dev: 11, Ino: 22, Mode: unix.S_IFDIR | 0o700, Uid: 501}
+
+	for name, opened := range map[string]unix.Stat_t{
+		"device": {Dev: 12, Ino: 22, Mode: unix.S_IFDIR | 0o700, Uid: 501},
+		"inode":  {Dev: 11, Ino: 23, Mode: unix.S_IFDIR | 0o700, Uid: 501},
+		"type":   {Dev: 11, Ino: 22, Mode: unix.S_IFREG | 0o600, Uid: 501},
+		"owner":  {Dev: 11, Ino: 22, Mode: unix.S_IFDIR | 0o700, Uid: 502},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := requireSameDirectoryIdentity(initial, opened); err == nil {
+				t.Fatal("requireSameDirectoryIdentity() error = nil")
+			}
+		})
+	}
+
+	if err := requireSameDirectoryIdentity(initial, initial); err != nil {
+		t.Fatalf("requireSameDirectoryIdentity() error = %v", err)
+	}
+}
+
 func startEnginePromptly(t *testing.T, engine *Engine, fifoPath string) (string, error) {
 	t.Helper()
 	type result struct {
@@ -661,6 +860,34 @@ func readCommittedSnapshot(t *testing.T, host, guest *websocket.Conn) protocol.E
 		t.Fatalf("committed snapshot = %#v", snapshot)
 	}
 	return snapshot
+}
+
+func activateRoomWithOneMove(t *testing.T, engine *Engine, join engineJoin) {
+	t.Helper()
+	launchJSON, err := engine.IssueHostLaunch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch := decodeLaunch(t, launchJSON)
+	host := connectEngineWS(t, launch.WSURL, launch.LaunchTicket, engineHostResume)
+	defer host.CloseNow()
+	guest := connectEngineWS(t, launch.WSURL, join.LaunchTicket, engineGuestResume)
+	defer guest.CloseNow()
+	hostSnapshot := readEngineEnvelope(t, host)
+	guestSnapshot := readEngineEnvelope(t, guest)
+	if hostSnapshot.Type != protocol.TypePlatformSnapshot || guestSnapshot.Type != protocol.TypePlatformSnapshot {
+		t.Fatal("initial snapshots missing")
+	}
+	actor := host
+	if snapshotBlackID(t, guestSnapshot) == join.PlayerID {
+		actor = guest
+	}
+	writeEngineEnvelope(t, actor, protocol.Envelope{
+		ProtocolVersion: protocol.Version1, GameID: gomoku.GameID, MatchID: engineRoomID,
+		ExpectedRevision: int64Ptr(0), Type: gomoku.MoveRequested, ActionID: engineMoveID,
+		Payload: json.RawMessage(`{"x":4,"y":4}`),
+	})
+	_ = readCommittedSnapshot(t, host, guest)
 }
 
 func snapshotBlackID(t *testing.T, envelope protocol.Envelope) string {

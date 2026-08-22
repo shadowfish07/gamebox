@@ -2,12 +2,20 @@ package me.zqydev.gamebox
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import org.godotengine.godot.GodotActivity
 
 class MainActivity : FlutterActivity() {
+    private var lanHostChannel: LanHostChannel? = null
+    private var lanHostWorker: ExecutorService? = null
+    private var localNetworkPermissionRequested = false
+
     override fun onResume() {
         super.onResume()
         launchGate.onHostResumed(
@@ -15,10 +23,23 @@ class MainActivity : FlutterActivity() {
                 GameProcessLease.lockFile(noBackupFilesDir),
             ),
         )
+        recoverLanHostIfNeeded()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val worker = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "lan-host-command")
+        }
+        lanHostWorker = worker
+        lanHostChannel = LanHostChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            LanHostService.serviceReady,
+            { startLanHostCommand() },
+            { LanSecretStore(this).hasStoredBlob() },
+            worker,
+            { runnable -> runOnUiThread(runnable) },
+        )
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             GAME_LAUNCHER_CHANNEL,
@@ -71,6 +92,60 @@ class MainActivity : FlutterActivity() {
                 result.error(INSTALLER_UNAVAILABLE_CODE, INSTALLER_UNAVAILABLE_MESSAGE, null)
             }
         }
+    }
+
+    override fun onDestroy() {
+        lanHostChannel?.close()
+        lanHostChannel = null
+        lanHostWorker?.shutdownNow()
+        lanHostWorker = null
+        super.onDestroy()
+    }
+
+    private fun recoverLanHostIfNeeded() {
+        val worker = lanHostWorker ?: return
+        worker.execute {
+            val hasRecovery = try {
+                LanSecretStore(this).hasStoredBlob()
+            } catch (_: RuntimeException) {
+                false
+            }
+            if (hasRecovery) {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        startLanHostRecoveryIfPermitted()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun startLanHostCommand() {
+        if (!ensureLocalNetworkPermission()) {
+            throw IllegalStateException("Local-network permission is required")
+        }
+        ContextCompat.startForegroundService(this, LanHostService.commandIntent(this))
+    }
+
+    private fun startLanHostRecoveryIfPermitted() {
+        if (!ensureLocalNetworkPermission()) return
+        LanHostService.serviceReady.prepareStart()
+        ContextCompat.startForegroundService(this, LanHostService.recoverIntent(this))
+    }
+
+    private fun ensureLocalNetworkPermission(): Boolean {
+        val permission = LanLocalNetworkPermissionPolicy.permissionToRequest(
+            applicationInfo.targetSdkVersion,
+            ContextCompat.checkSelfPermission(
+                this,
+                LanLocalNetworkPermissionPolicy.ACCESS_LOCAL_NETWORK,
+            ) == PackageManager.PERMISSION_GRANTED,
+        ) ?: return true
+        if (!localNetworkPermissionRequested) {
+            localNetworkPermissionRequested = true
+            requestPermissions(arrayOf(permission), LOCAL_NETWORK_PERMISSION_REQUEST)
+        }
+        return false
     }
 
     private fun launch(args: GameLaunchArgs, result: MethodChannel.Result) {
@@ -126,6 +201,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private companion object {
+        const val LOCAL_NETWORK_PERMISSION_REQUEST = 0x4c41
         const val GAME_LAUNCHER_CHANNEL = "me.zqydev.gamebox/game_launcher"
         const val APP_UPDATER_CHANNEL = "me.zqydev.gamebox/app_updater"
         const val INVALID_ARGUMENTS_CODE = "invalid_arguments"
