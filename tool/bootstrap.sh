@@ -24,7 +24,7 @@ run_self_test() {
 		'set -euo pipefail' \
 		'case "${0##*/}" in' \
 		'  flutter)' \
-		'    if [[ "${1:-}" == "--version" ]]; then printf "Flutter 3.35.1 fixture\\n"; else printf "All Android licenses accepted.\\n"; fi' \
+		'    if [[ "${1:-}" == "--version" ]]; then printf "Waiting for another flutter command to release the startup lock...\\nFlutter 3.35.1 fixture\\n"; else printf "All Android licenses accepted.\\n"; fi' \
 		'    ;;' \
 		'  dart) printf "Dart SDK version: 3.9.0 (stable)\\n" ;;' \
 		'  go) printf "go version go1.25.0 fixture/amd64\\n" ;;' \
@@ -128,7 +128,8 @@ version_matches() {
 
 if command -v flutter >/dev/null 2>&1; then
 	if flutter_output="$(flutter --version 2>&1)"; then
-		if [[ "$flutter_output" =~ ^Flutter[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		flutter_version_line="$(printf '%s\n' "$flutter_output" | sed -n '/^Flutter[[:space:]][0-9]/{p;q;}')"
+		if [[ "$flutter_version_line" =~ ^Flutter[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
 			flutter_version="${BASH_REMATCH[1]}"
 			if [[ "$flutter_version" == "3.35.1" ]]; then
 				ok "Flutter $flutter_version"
