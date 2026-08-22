@@ -14,6 +14,7 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 static func cases() -> Array:
 	return [
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
+		{"name": "gomoku scene renders reusable opponent presence updates", "run": _renders_presence_updates},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
 		{"name": "gomoku scene ignores non-authoritative snapshot callbacks while locked", "run": _ignores_non_authoritative_snapshots},
@@ -57,6 +58,21 @@ static func _renders_live_states() -> bool:
 	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
 	var result := _check(_error(scene).is_empty(), "authoritative snapshot did not clear stale error")
 	return _cleanup(scene, result)
+
+
+static func _renders_presence_updates() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.set_player_presence(WHITE_ID, true, false)
+	client.accept_snapshot(_snapshot(0))
+	if not _check(_opponent_presence(scene) == "对手在线", "initial opponent presence was not rendered"):
+		return _cleanup(scene)
+	client.set_player_presence(WHITE_ID, false)
+	if not _check(_opponent_presence(scene) == "对手离线", "offline opponent transition was not rendered"):
+		return _cleanup(scene)
+	client.set_connection("reconnecting")
+	return _cleanup(scene, _check(_opponent_presence(scene) == "对手状态未知", "reconnect retained stale opponent presence"))
 
 
 static func _renders_terminal_states() -> bool:
@@ -371,6 +387,10 @@ static func _error(scene: Control) -> String:
 	return (scene.get_node("ErrorLabel") as Label).text
 
 
+static func _opponent_presence(scene: Control) -> String:
+	return (scene.get_node("OpponentPresenceLabel") as Label).text
+
+
 static func _back_text(scene: Control) -> String:
 	return (scene.get_node("BackButton") as Button).text
 
@@ -457,6 +477,7 @@ class FakeMatchClient:
 	signal snapshot_sync_started
 	signal snapshot_received(envelope: Dictionary)
 	signal event_received(envelope: Dictionary)
+	signal player_presence_changed(user_id: String, online: bool)
 	signal match_error(code: String)
 	signal return_to_lobby_requested(code: String)
 
@@ -466,6 +487,7 @@ class FakeMatchClient:
 	var move_requests: Array[Vector2i] = []
 	var resign_requests := 0
 	var dispose_calls := 0
+	var player_presence := {}
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant) -> bool:
 		state = game_state
@@ -486,6 +508,17 @@ class FakeMatchClient:
 	func request_resign() -> String:
 		resign_requests += 1
 		return ACTION_ID if state.mark_pending_resign(ACTION_ID, local_user_id) else ""
+
+	func has_player_presence(user_id: String) -> bool:
+		return player_presence.has(user_id)
+
+	func is_player_online(user_id: String) -> bool:
+		return bool(player_presence.get(user_id, false))
+
+	func set_player_presence(user_id: String, online: bool, emit_change: bool = true) -> void:
+		player_presence[user_id] = online
+		if emit_change:
+			player_presence_changed.emit(user_id, online)
 
 	func dispose() -> void:
 		dispose_calls += 1
@@ -623,6 +656,10 @@ static func _connected(revision: int) -> Dictionary:
 		"payload": {
 			"userId": BLACK_ID, "connectionId": "55555555-5555-4555-8555-555555555555",
 			"resumeToken": "resume-secret", "resumeExpiresAt": 4102444800000,
+			"players": [
+				{"userId": BLACK_ID, "online": true},
+				{"userId": WHITE_ID, "online": false},
+			],
 		},
 	}
 

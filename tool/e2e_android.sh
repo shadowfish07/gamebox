@@ -1977,6 +1977,11 @@ wait_for_log_marker "$SERIAL_A" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_
 tap_identifier "$SERIAL_B" continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "B Godot did not report ready for the first match"
+presence_marker="$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=0 status=active connection=connected opponent_presence=online"
+wait_for_log_marker "$SERIAL_A" "$presence_marker" \
+  || fail "A did not render B as online in the first match"
+wait_for_log_marker "$SERIAL_B" "$presence_marker" \
+  || fail "B did not render A as online in the first match"
 
 display_size() {
   adb_for "$1" shell wm size | sed -n 's/.*: \([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' | tail -n 1
