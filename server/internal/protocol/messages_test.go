@@ -18,20 +18,29 @@ func TestFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("glob fixtures: %v", err)
 	}
-	if len(paths) != 4 {
-		t.Fatalf("fixture count = %d, want 4", len(paths))
-	}
-
 	wantTypes := map[string]string{
 		"snapshot.json":      TypePlatformSnapshot,
 		"move_action.json":   TypeGomokuMoveRequested,
 		"move_accepted.json": TypeGomokuMoveAccepted,
 		"error.json":         TypePlatformError,
 	}
+	auxiliaryFixtures := map[string]struct{}{
+		"nickname_cases.json": {},
+	}
+	if want := len(wantTypes) + len(auxiliaryFixtures); len(paths) != want {
+		t.Fatalf("fixture count = %d, want %d", len(paths), want)
+	}
 
 	for _, path := range paths {
 		path := path
 		name := filepath.Base(path)
+		if _, ok := auxiliaryFixtures[name]; ok {
+			continue
+		}
+		wantType, ok := wantTypes[name]
+		if !ok {
+			t.Fatalf("unexpected protocol fixture %q", name)
+		}
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -48,8 +57,8 @@ func TestFixtures(t *testing.T) {
 			if envelope.Type == "" {
 				t.Fatal("type is required")
 			}
-			if envelope.Type != wantTypes[name] {
-				t.Fatalf("type = %q, want %q", envelope.Type, wantTypes[name])
+			if envelope.Type != wantType {
+				t.Fatalf("type = %q, want %q", envelope.Type, wantType)
 			}
 			if envelope.Revision != nil && envelope.ExpectedRevision != nil {
 				t.Fatal("revision and expectedRevision must be mutually exclusive")

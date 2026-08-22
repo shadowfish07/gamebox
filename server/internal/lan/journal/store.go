@@ -33,6 +33,8 @@ type FileOps interface {
 	SyncDir(path string) error
 }
 
+type committedRecordReader func(root, name string, limit int) ([]byte, error)
+
 // Store is safe for concurrent use. A directory-sync failure poisons it because
 // the rename may already have made a record visible after the caller saw error.
 type Store struct {
@@ -50,8 +52,15 @@ type Store struct {
 // chain. The manifest is intentionally ignored: callers must rebuild their
 // state from the returned records.
 func Open(root string, ops FileOps) (*Store, []Record, error) {
+	return openWithCommittedRecordReader(root, ops, readCommittedRecord)
+}
+
+func openWithCommittedRecordReader(root string, ops FileOps, readRecord committedRecordReader) (*Store, []Record, error) {
 	if root == "" {
 		return nil, nil, errors.New("journal root is required")
+	}
+	if readRecord == nil {
+		return nil, nil, errors.New("committed record reader is required")
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create journal root: %w", err)
@@ -77,13 +86,6 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		if recordFileName.MatchString(name) {
-			info, err := entry.Info()
-			if err != nil {
-				return nil, nil, fmt.Errorf("inspect committed journal candidate %q: %w", name, err)
-			}
-			if !info.Mode().IsRegular() {
-				return nil, nil, fmt.Errorf("%w: committed journal candidate %q is not a regular file", ErrJournalCorrupt, name)
-			}
 			fileNames = append(fileNames, name)
 			continue
 		}
@@ -111,7 +113,7 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		if fileSequence != expectedSequence {
 			return nil, nil, fmt.Errorf("%w: %w or reorder at %q: got %d, want %d", ErrJournalCorrupt, ErrJournalSequenceGap, name, fileSequence, expectedSequence)
 		}
-		data, err := readFileBounded(filepath.Join(root, name), maxRecordBytes)
+		data, err := readRecord(root, name, maxRecordBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read record %q: %w", name, err)
 		}
@@ -290,6 +292,10 @@ func readFileBounded(path string, limit int) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return readOpenedFileBounded(file, limit)
+}
+
+func readOpenedFileBounded(file io.Reader, limit int) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return data, err
