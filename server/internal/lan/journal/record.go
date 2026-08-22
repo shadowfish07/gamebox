@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	schemaVersion   = 1
-	maxPayloadBytes = 1 << 20
+	schemaVersion          = 1
+	maxPayloadBytes        = 1 << 20
+	maxRecordMetadataBytes = 4 << 10
+	maxRecordOverheadBytes = 64 << 10
+	maxRecordBytes         = maxPayloadBytes + maxRecordOverheadBytes
 )
 
 var (
@@ -46,17 +49,10 @@ type Draft struct {
 	Payload      json.RawMessage
 }
 
-type recordWithoutHash struct {
-	SchemaVersion   int             `json:"schemaVersion"`
-	JournalSequence int64           `json:"journalSequence"`
-	GameRevision    *int64          `json:"gameRevision"`
-	Type            string          `json:"type"`
-	ActionID        *string         `json:"actionId"`
-	Payload         json.RawMessage `json:"payload"`
-	PreviousHash    string          `json:"previousHash"`
-}
-
 func makeRecord(sequence int64, previousHash string, draft Draft) (Record, error) {
+	if err := validateDraftInput(draft); err != nil {
+		return Record{}, fmt.Errorf("%w: %v", ErrInvalidDraft, err)
+	}
 	payload, err := canonicalPayload(draft.Payload)
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: payload: %v", ErrInvalidDraft, err)
@@ -77,32 +73,118 @@ func makeRecord(sequence int64, previousHash string, draft Draft) (Record, error
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: encode: %v", ErrInvalidDraft, err)
 	}
+	if len(encoded)+len(`,"hash":"`)+sha256.Size*2+1 > maxRecordBytes {
+		return Record{}, fmt.Errorf("%w: record exceeds %d byte limit", ErrInvalidDraft, maxRecordBytes)
+	}
 	digest := sha256.Sum256(encoded)
 	record.Hash = hex.EncodeToString(digest[:])
 	return record, nil
 }
 
-func canonicalRecord(record Record) ([]byte, error) {
-	withoutHash, err := canonicalRecordWithoutHash(record)
-	if err != nil {
-		return nil, err
+func validateDraftInput(draft Draft) error {
+	if len(draft.Payload) == 0 || len(draft.Payload) > maxPayloadBytes {
+		return fmt.Errorf("payload exceeds %d byte limit", maxPayloadBytes)
 	}
+	if err := validateBoundedMetadata(draft.Type, draft.ActionID); err != nil {
+		return err
+	}
+	if draft.Type != "room.created" {
+		return nil
+	}
+	fields, err := strictObjectFields(draft.Payload)
+	if err != nil {
+		return fmt.Errorf("room.created payload: %w", err)
+	}
+	rawCreatedAt, ok := fields["createdAt"]
+	if !ok || !positiveCanonicalInteger.Match(rawCreatedAt) {
+		return errors.New("room.created payload createdAt must be a positive canonical integer")
+	}
+	createdAt, err := strconv.ParseInt(string(rawCreatedAt), 10, 64)
+	if err != nil || createdAt <= 0 {
+		return errors.New("room.created payload createdAt must be a positive canonical integer")
+	}
+	return nil
+}
+
+func canonicalRecord(record Record) ([]byte, error) {
 	if !isCanonicalHash(record.Hash) {
 		return nil, fmt.Errorf("hash is not canonical lower-case SHA-256")
 	}
-	return append(append(withoutHash[:len(withoutHash)-1:len(withoutHash)-1], `,"hash":"`...), append([]byte(record.Hash), `"}`...)...), nil
+	encoded := newCappedJSONBuffer(maxRecordBytes)
+	if err := writeCanonicalRecord(&encoded, record, true); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
 }
 
 func canonicalRecordWithoutHash(record Record) ([]byte, error) {
-	return json.Marshal(recordWithoutHash{
-		SchemaVersion:   record.SchemaVersion,
-		JournalSequence: record.JournalSequence,
-		GameRevision:    record.GameRevision,
-		Type:            record.Type,
-		ActionID:        record.ActionID,
-		Payload:         record.Payload,
-		PreviousHash:    record.PreviousHash,
-	})
+	encoded := newCappedJSONBuffer(maxRecordBytes - len(`,"hash":`) - sha256.Size*2 - 2)
+	if err := writeCanonicalRecord(&encoded, record, false); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
+}
+
+func writeCanonicalRecord(encoded *cappedJSONBuffer, record Record, includeHash bool) error {
+	if err := encoded.WriteString(`{"schemaVersion":`); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(strconv.Itoa(record.SchemaVersion)); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(`,"journalSequence":`); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(strconv.FormatInt(record.JournalSequence, 10)); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(`,"gameRevision":`); err != nil {
+		return err
+	}
+	if record.GameRevision == nil {
+		if err := encoded.WriteString("null"); err != nil {
+			return err
+		}
+	} else if err := encoded.WriteString(strconv.FormatInt(*record.GameRevision, 10)); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(`,"type":`); err != nil {
+		return err
+	}
+	if err := writeJSONString(encoded, record.Type); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(`,"actionId":`); err != nil {
+		return err
+	}
+	if record.ActionID == nil {
+		if err := encoded.WriteString("null"); err != nil {
+			return err
+		}
+	} else if err := writeJSONString(encoded, *record.ActionID); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(`,"payload":`); err != nil {
+		return err
+	}
+	if err := encoded.Write(record.Payload); err != nil {
+		return err
+	}
+	if err := encoded.WriteString(`,"previousHash":`); err != nil {
+		return err
+	}
+	if err := writeJSONString(encoded, record.PreviousHash); err != nil {
+		return err
+	}
+	if includeHash {
+		if err := encoded.WriteString(`,"hash":`); err != nil {
+			return err
+		}
+		if err := writeJSONString(encoded, record.Hash); err != nil {
+			return err
+		}
+	}
+	return encoded.WriteByte('}')
 }
 
 func canonicalPayload(raw json.RawMessage) (json.RawMessage, error) {
@@ -149,11 +231,7 @@ func writeCanonicalJSON(encoded *cappedJSONBuffer, value any) error {
 		}
 		return encoded.WriteString("false")
 	case string:
-		stringValue, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		return encoded.Write(stringValue)
+		return writeJSONString(encoded, value)
 	case json.Number:
 		number, err := canonicalNumber(string(value))
 		if err != nil {
@@ -190,11 +268,7 @@ func writeCanonicalJSON(encoded *cappedJSONBuffer, value any) error {
 					return err
 				}
 			}
-			encodedKey, err := json.Marshal(key)
-			if err != nil {
-				return err
-			}
-			if err := encoded.Write(encodedKey); err != nil {
+			if err := writeJSONString(encoded, key); err != nil {
 				return err
 			}
 			if err := encoded.WriteByte(':'); err != nil {
@@ -208,6 +282,84 @@ func writeCanonicalJSON(encoded *cappedJSONBuffer, value any) error {
 	default:
 		return fmt.Errorf("unsupported decoded JSON type %T", value)
 	}
+}
+
+// writeJSONString uses the journal's canonical escaping: short escapes for
+// backspace/tab/newline/form-feed/carriage-return, lower-case \u00xx for the
+// remaining controls, and lower-case escapes for HTML-sensitive and line
+// separator runes. Other valid UTF-8 bytes are emitted verbatim.
+func writeJSONString(encoded *cappedJSONBuffer, value string) error {
+	if !utf8.ValidString(value) {
+		return errors.New("JSON string is not UTF-8")
+	}
+	if err := encoded.WriteByte('"'); err != nil {
+		return err
+	}
+	start := 0
+	flush := func(end int) error {
+		if start == end {
+			return nil
+		}
+		if err := encoded.WriteString(value[start:end]); err != nil {
+			return err
+		}
+		start = end
+		return nil
+	}
+	for index := 0; index < len(value); {
+		current := value[index]
+		var escape string
+		width := 1
+		switch current {
+		case '"':
+			escape = `\"`
+		case '\\':
+			escape = `\\`
+		case '\b':
+			escape = `\b`
+		case '\t':
+			escape = `\t`
+		case '\n':
+			escape = `\n`
+		case '\f':
+			escape = `\f`
+		case '\r':
+			escape = `\r`
+		case '<':
+			escape = `\u003c`
+		case '>':
+			escape = `\u003e`
+		case '&':
+			escape = `\u0026`
+		default:
+			if current < 0x20 {
+				escape = fmt.Sprintf(`\u00%02x`, current)
+			} else if index+2 < len(value) && current == 0xe2 && value[index+1] == 0x80 && (value[index+2] == 0xa8 || value[index+2] == 0xa9) {
+				if value[index+2] == 0xa8 {
+					escape = `\u2028`
+				} else {
+					escape = `\u2029`
+				}
+				width = 3
+			}
+		}
+		if escape == "" {
+			index++
+			continue
+		}
+		if err := flush(index); err != nil {
+			return err
+		}
+		if err := encoded.WriteString(escape); err != nil {
+			return err
+		}
+		index += width
+		start = index
+	}
+	if err := flush(len(value)); err != nil {
+		return err
+	}
+	return encoded.WriteByte('"')
 }
 
 type cappedJSONBuffer struct {
@@ -228,7 +380,11 @@ func (buffer *cappedJSONBuffer) Write(data []byte) error {
 }
 
 func (buffer *cappedJSONBuffer) WriteString(value string) error {
-	return buffer.Write([]byte(value))
+	if len(value) > buffer.limit-buffer.Len() {
+		return fmt.Errorf("exceeds %d byte limit", buffer.limit)
+	}
+	_, err := buffer.Buffer.WriteString(value)
+	return err
 }
 
 func (buffer *cappedJSONBuffer) WriteByte(value byte) error {
@@ -388,11 +544,11 @@ func validateRecordFields(record Record) error {
 	if record.JournalSequence <= 0 {
 		return errors.New("journal sequence must be positive")
 	}
-	if !utf8.ValidString(record.Type) || strings.TrimSpace(record.Type) == "" {
-		return errors.New("type is required")
+	if err := validateBoundedMetadata(record.Type, record.ActionID); err != nil {
+		return err
 	}
-	if record.ActionID != nil && !utf8.ValidString(*record.ActionID) {
-		return errors.New("action ID is not UTF-8")
+	if strings.TrimSpace(record.Type) == "" {
+		return errors.New("type is required")
 	}
 	if record.Type == "game.event" {
 		if record.GameRevision == nil || *record.GameRevision <= 0 {
@@ -407,6 +563,24 @@ func validateRecordFields(record Record) error {
 		}
 	} else if !isCanonicalHash(record.PreviousHash) {
 		return errors.New("previous hash is not canonical lower-case SHA-256")
+	}
+	return nil
+}
+
+func validateBoundedMetadata(recordType string, actionID *string) error {
+	if !utf8.ValidString(recordType) {
+		return errors.New("type is not UTF-8")
+	}
+	if len(recordType) > maxRecordMetadataBytes {
+		return fmt.Errorf("type exceeds %d byte limit", maxRecordMetadataBytes)
+	}
+	if actionID != nil {
+		if !utf8.ValidString(*actionID) {
+			return errors.New("action ID is not UTF-8")
+		}
+		if len(*actionID) > maxRecordMetadataBytes {
+			return fmt.Errorf("action ID exceeds %d byte limit", maxRecordMetadataBytes)
+		}
 	}
 	return nil
 }

@@ -26,7 +26,7 @@ func TestAppendWritesFirstCanonicalRecord(t *testing.T) {
 	record, err := store.Append(context.Background(), Draft{
 		Type:     "room.created",
 		ActionID: stringPtr("create-1"),
-		Payload:  json.RawMessage(`{"roomId":"room-1","players":[]}`),
+		Payload:  json.RawMessage(`{"roomId":"room-1","players":[],"createdAt":1}`),
 	})
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
@@ -42,7 +42,7 @@ func TestAppendWritesFirstCanonicalRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read record: %v", err)
 	}
-	want := `{"schemaVersion":1,"journalSequence":1,"gameRevision":null,"type":"room.created","actionId":"create-1","payload":{"players":[],"roomId":"room-1"},"previousHash":"","hash":"` + record.Hash + `"}`
+	want := `{"schemaVersion":1,"journalSequence":1,"gameRevision":null,"type":"room.created","actionId":"create-1","payload":{"createdAt":1,"players":[],"roomId":"room-1"},"previousHash":"","hash":"` + record.Hash + `"}`
 	if string(contents) != want {
 		t.Fatalf("canonical record = %s\nwant %s", contents, want)
 	}
@@ -53,7 +53,7 @@ func TestAppendChainsConsecutiveRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	first, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{}`)})
+	first, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)})
 	if err != nil {
 		t.Fatalf("first Append() error = %v", err)
 	}
@@ -196,10 +196,13 @@ func TestAppendRejectsOversizedPayloadBeforeFileOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	exactPayload := validJSONStringOfLength(maxPayloadBytes)
-	if record, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: exactPayload}); err != nil {
+	if record, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: exactPayload}); err != nil {
 		t.Fatalf("Append() exact %d-byte canonical payload error = %v", maxPayloadBytes, err)
 	} else if got := len(record.Payload); got != maxPayloadBytes {
 		t.Fatalf("accepted canonical payload bytes = %d, want %d", got, maxPayloadBytes)
+	}
+	if _, records, err := Open(root, nil); err != nil || len(records) != 1 || len(records[0].Payload) != maxPayloadBytes {
+		t.Fatalf("Open() exact payload = (%d records, %v), want one replayable %d-byte payload", len(records), err, maxPayloadBytes)
 	}
 	callsBeforeOversize := len(ops.calls)
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: validJSONStringOfLength(maxPayloadBytes + 1)}); !errors.Is(err, ErrInvalidDraft) {
@@ -219,7 +222,7 @@ func TestAppendCanonicalizesEquivalentNestedNumericSpellings(t *testing.T) {
 		t.Fatal(err)
 	}
 	record, err := store.Append(context.Background(), Draft{
-		Type:    "room.created",
+		Type:    "credential.issued",
 		Payload: json.RawMessage(`{"outer":{"integer":1.0,"negativeZero":-0.0},"items":[1e0,10e-1,0.0100]}`),
 	})
 	if err != nil {
@@ -228,6 +231,110 @@ func TestAppendCanonicalizesEquivalentNestedNumericSpellings(t *testing.T) {
 	want := `{"items":[1,1,0.01],"outer":{"integer":1,"negativeZero":0}}`
 	if string(record.Payload) != want {
 		t.Fatalf("canonical payload = %s\nwant %s", record.Payload, want)
+	}
+}
+
+func TestStreamingJSONStringEscapingIsCanonicalAndCapped(t *testing.T) {
+	output := newCappedJSONBuffer(maxPayloadBytes)
+	if err := writeJSONString(&output, "<>&\u2028\u2029\x01\n\\"); err != nil {
+		t.Fatalf("writeJSONString() error = %v", err)
+	}
+	want := `"\u003c\u003e\u0026\u2028\u2029\u0001\n\\"`
+	if got := string(output.Bytes()); got != want {
+		t.Fatalf("escaped string = %q, want %q", got, want)
+	}
+	if err := writeJSONString(&output, string([]byte{0xff})); err == nil {
+		t.Fatal("writeJSONString() accepted invalid UTF-8")
+	}
+
+	for name, payload := range map[string]json.RawMessage{
+		"value": json.RawMessage(`"` + strings.Repeat("<", 200_000) + `"`),
+		"key":   json.RawMessage(`{"` + strings.Repeat("<", 200_000) + `":0}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(payload) >= maxPayloadBytes {
+				t.Fatalf("raw payload = %d bytes, want below %d", len(payload), maxPayloadBytes)
+			}
+			store, _, err := Open(t.TempDir(), &recordingFileOps{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
+				t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
+			}
+			if got := len(store.Records()); got != 0 {
+				t.Fatalf("escaped expansion advanced records to %d", got)
+			}
+		})
+	}
+}
+
+func TestAppendRejectsOversizedRecordMetadataBeforeFileOperation(t *testing.T) {
+	ops := &recordingFileOps{}
+	store, _, err := Open(t.TempDir(), ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(context.Background(), Draft{Type: strings.Repeat("x", maxRecordMetadataBytes+1), Payload: json.RawMessage(`{}`)}); !errors.Is(err, ErrInvalidDraft) {
+		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
+	}
+	if len(ops.calls) != 0 || len(store.Records()) != 0 {
+		t.Fatalf("oversized metadata reached durability boundary: calls=%v records=%v", ops.calls, store.Records())
+	}
+}
+
+func TestOpenRejectsOversizedCommittedRecordWithBoundedRead(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "0000000000000001.json")
+	if err := os.WriteFile(path, bytes.Repeat([]byte{'x'}, maxRecordBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readFileBounded(path, maxRecordBytes)
+	if err == nil {
+		t.Fatal("readFileBounded() error = nil, want oversize rejection")
+	}
+	if len(data) > maxRecordBytes+1 {
+		t.Fatalf("bounded read retained %d bytes, want at most %d", len(data), maxRecordBytes+1)
+	}
+	if _, _, err := Open(root, nil); err == nil {
+		t.Fatal("Open() error = nil, want oversized committed record rejection")
+	}
+}
+
+func TestRoomCreatedDraftRequiresCanonicalCreatedAtBeforeNormalization(t *testing.T) {
+	for name, payload := range map[string]json.RawMessage{
+		"null":     json.RawMessage(`{"createdAt":null}`),
+		"zero":     json.RawMessage(`{"createdAt":0}`),
+		"negative": json.RawMessage(`{"createdAt":-1}`),
+		"fraction": json.RawMessage(`{"createdAt":1.0}`),
+		"exponent": json.RawMessage(`{"createdAt":1e0}`),
+		"overflow": json.RawMessage(`{"createdAt":9223372036854775808}`),
+		"missing":  json.RawMessage(`{}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ops := &recordingFileOps{}
+			store, _, err := Open(t.TempDir(), ops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
+				t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
+			}
+			if len(ops.calls) != 0 || len(store.Records()) != 0 {
+				t.Fatalf("invalid createdAt reached durability boundary: calls=%v records=%v", ops.calls, store.Records())
+			}
+		})
+	}
+
+	store, _, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1724300000}`)}); err != nil {
+		t.Fatalf("Append() valid room.created error = %v", err)
+	}
+	if err := store.WriteManifestProjection("room-1", "gomoku", "192.168.1.7:1", 1); err != nil {
+		t.Fatalf("WriteManifestProjection() after valid append error = %v", err)
 	}
 }
 
@@ -286,7 +393,7 @@ func TestReplayRejectsAlternateNestedNumericSpellingsBeforeHashVerification(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"array":[1,1],"nested":{"count":1}}`)}); err != nil {
+	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: json.RawMessage(`{"array":[1,1],"nested":{"count":1}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "0000000000000001.json")
@@ -365,11 +472,8 @@ func TestManifestProjectionRequiresPositiveCanonicalIntegerCreatedAt(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); err != nil {
-				t.Fatal(err)
-			}
-			if err := store.WriteManifestProjection("room-1", "gomoku", "192.168.1.7:1", 1); err == nil {
-				t.Fatal("WriteManifestProjection() error = nil, want createdAt rejection")
+			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
+				t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 			}
 		})
 	}

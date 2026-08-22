@@ -20,7 +20,7 @@ func TestFaultAppendWritesSyncBeforeRenameAndDirectorySyncAfterRename(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{}`)}); err != nil {
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := ops.calls, []string{"write", "rename", "syncdir"}; !equalStrings(got, want) {
@@ -37,7 +37,7 @@ func TestFaultAppendFailureDoesNotAdvanceInMemorySequenceBeforeReplayableRecord(
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{}`)}); !errors.Is(err, errInjected) {
+			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)}); !errors.Is(err, errInjected) {
 				t.Fatalf("Append() error = %v, want injected failure", err)
 			}
 			if len(store.Records()) != 0 {
@@ -57,7 +57,7 @@ func TestFaultDirectorySyncPoisonsStoreBecauseRenameMayBeDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{}`)}); !errors.Is(err, errInjected) {
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)}); !errors.Is(err, errInjected) {
 		t.Fatalf("Append() error = %v, want injected failure", err)
 	}
 	if len(store.Records()) != 0 {
@@ -101,7 +101,7 @@ func TestFaultContextCanceledAfterTempSyncDoesNotRenameOrAdvance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Append(ctx, Draft{Type: "room.created", Payload: json.RawMessage(`{}`)}); !errors.Is(err, context.Canceled) {
+	if _, err := store.Append(ctx, Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Append() error = %v, want context.Canceled", err)
 	}
 	if got := len(store.Records()); got != 0 {
@@ -124,7 +124,7 @@ func TestAppendIsSafeForConcurrentCallers(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			_, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{}`)})
+			_, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)})
 			errs <- err
 		}()
 	}

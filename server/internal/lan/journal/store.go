@@ -86,7 +86,7 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		if fileSequence != expectedSequence {
 			return nil, nil, fmt.Errorf("journal sequence gap or reorder at %q: got %d, want %d", name, fileSequence, expectedSequence)
 		}
-		data, err := os.ReadFile(filepath.Join(root, name))
+		data, err := readFileBounded(filepath.Join(root, name), maxRecordBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read record %q: %w", name, err)
 		}
@@ -133,6 +133,9 @@ func (store *Store) Append(ctx context.Context, draft Draft) (Record, error) {
 	data, err := canonicalRecord(record)
 	if err != nil {
 		return Record{}, fmt.Errorf("encode record: %w", err)
+	}
+	if len(data) > maxRecordBytes {
+		return Record{}, fmt.Errorf("encode record: exceeds %d byte limit", maxRecordBytes)
 	}
 	finalPath := filepath.Join(store.root, recordFilename(sequence))
 	temporaryPath := finalPath + ".tmp"
@@ -245,6 +248,22 @@ func createdAtFromRecords(records []Record) (int64, error) {
 }
 
 func recordFilename(sequence int64) string { return fmt.Sprintf("%016d.json", sequence) }
+
+func readFileBounded(path string, limit int) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	if err != nil {
+		return data, err
+	}
+	if len(data) > limit {
+		return data, fmt.Errorf("exceeds %d byte limit", limit)
+	}
+	return data, nil
+}
 
 func cloneRecords(records []Record) []Record {
 	clones := make([]Record, len(records))
