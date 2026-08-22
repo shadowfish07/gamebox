@@ -19,6 +19,7 @@ var (
 	ErrReopenRequired        = errors.New("journal must be reopened and replayed")
 	ErrJournalLocked         = errors.New("journal root is already locked")
 	ErrJournalClosed         = errors.New("journal store is closed")
+	ErrJournalSequenceGap    = errors.New("journal sequence gap")
 	recordFileName           = regexp.MustCompile(`^[0-9]{16}\.json$`)
 	temporaryFileName        = regexp.MustCompile(`^[0-9]{16}\.json\.tmp$`)
 	positiveCanonicalInteger = regexp.MustCompile(`^[1-9][0-9]*$`)
@@ -99,7 +100,7 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 		expectedSequence := int64(index + 1)
 		fileSequence, _ := strconv.ParseInt(name[:16], 10, 64)
 		if fileSequence != expectedSequence {
-			return nil, nil, fmt.Errorf("journal sequence gap or reorder at %q: got %d, want %d", name, fileSequence, expectedSequence)
+			return nil, nil, fmt.Errorf("%w or reorder at %q: got %d, want %d", ErrJournalSequenceGap, name, fileSequence, expectedSequence)
 		}
 		data, err := readFileBounded(filepath.Join(root, name), maxRecordBytes)
 		if err != nil {

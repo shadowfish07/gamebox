@@ -101,14 +101,60 @@ func TestOpenCleansOnlyRecognizedJournalTemps(t *testing.T) {
 }
 
 func TestOpenRejectsCorruptAndNonContiguousCommittedRecords(t *testing.T) {
-	for _, fixture := range []string{"corrupt_hash", "sequence_gap"} {
-		t.Run(fixture, func(t *testing.T) {
+	for _, testCase := range []struct {
+		fixture  string
+		want     error
+		contains string
+	}{
+		{fixture: "corrupt_hash", want: ErrInvalidRecord, contains: "current hash does not verify"},
+		{fixture: "sequence_gap", want: ErrJournalSequenceGap, contains: "sequence gap"},
+	} {
+		t.Run(testCase.fixture, func(t *testing.T) {
 			root := t.TempDir()
-			copyFixtureTree(t, fixture, root)
-			if _, _, err := Open(root, nil); err == nil {
-				t.Fatal("Open() error = nil, want corruption rejection")
+			copyFixtureTree(t, testCase.fixture, root)
+			if _, _, err := Open(root, nil); !errors.Is(err, testCase.want) || !strings.Contains(err.Error(), testCase.contains) {
+				t.Fatalf("Open() error = %v, want %v containing %q", err, testCase.want, testCase.contains)
 			}
 		})
+	}
+}
+
+func TestSequenceGapFixturesContainCanonicalChainRecords(t *testing.T) {
+	first, err := makeRecord(1, "", Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := makeRecord(2, first.Hash, Draft{Type: "credential.issued", Payload: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := makeRecord(3, second.Hash, Draft{Type: "credential.issued", Payload: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, record := range map[string]Record{
+		"0000000000000001.json": first,
+		"0000000000000003.json": third,
+	} {
+		want, err := canonicalRecord(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join("testdata", "sequence_gap", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("fixture %s is not its valid canonical chain record\ngot  %s\nwant %s", name, got, want)
+		}
+	}
+}
+
+func TestCorruptHashFixtureReachesHashVerification(t *testing.T) {
+	root := t.TempDir()
+	copyFixtureTree(t, "corrupt_hash", root)
+	if _, _, err := Open(root, nil); !errors.Is(err, ErrInvalidRecord) || !strings.Contains(err.Error(), "current hash does not verify") {
+		t.Fatalf("Open() error = %v, want hash-verification rejection", err)
 	}
 }
 
