@@ -17,6 +17,7 @@ static func cases() -> Array:
 		{"name": "private ticket hydration uses fixed key positions", "run": _hydrates_ticket_with_key_collision_value},
 		{"name": "malformed private ticket arguments fail closed", "run": _rejects_malformed_private_ticket_args},
 		{"name": "project requests portrait handheld orientation", "run": _requests_portrait_orientation},
+		{"name": "project expands into tall portrait screens", "run": _expands_into_tall_portrait_screens},
 	]
 
 
@@ -144,6 +145,13 @@ static func _requests_portrait_orientation() -> bool:
 	return _check(
 		ProjectSettings.get_setting("display/window/handheld/orientation") == DisplayServer.SCREEN_PORTRAIT,
 		"expected portrait handheld orientation",
+	)
+
+
+static func _expands_into_tall_portrait_screens() -> bool:
+	return _check(
+		ProjectSettings.get_setting("display/window/stretch/aspect") == "expand",
+		"expected stretch aspect to expand instead of adding letterbox bars",
 	)
 
 

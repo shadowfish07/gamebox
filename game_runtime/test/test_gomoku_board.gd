@@ -10,7 +10,7 @@ static func cases() -> Array:
 	return [
 		{"name": "gomoku board maps corners center and inverse coordinates", "run": _maps_board_coordinates},
 		{"name": "gomoku board rejects points beyond half a cell", "run": _rejects_outside_tap_margin},
-		{"name": "gomoku board mapping survives centered viewport stretch", "run": _maps_stretched_viewports},
+		{"name": "gomoku board mapping survives expanded viewport stretch", "run": _maps_expanded_viewports},
 		{"name": "gomoku board submits one safe single-finger release", "run": _submits_only_safe_release},
 		{"name": "gomoku board keeps authoritative stones separate from pending", "run": _keeps_pending_separate},
 	]
@@ -34,8 +34,13 @@ static func _rejects_outside_tap_margin() -> bool:
 		and _check(GomokuBoard.pixel_to_cell(Vector2(BOARD_RECT.position.x, BOARD_RECT.end.y + spacing * 0.51), BOARD_RECT) == Vector2i(-1, -1), "bottom outside tap accepted")
 
 
-static func _maps_stretched_viewports() -> bool:
+static func _maps_expanded_viewports() -> bool:
 	for viewport_size in [Vector2(540.0, 960.0), Vector2(1080.0, 2400.0), Vector2(1440.0, 2560.0)]:
+		if not _check(
+			GomokuBoard.design_to_viewport(Vector2.ZERO, DESIGN_SIZE, viewport_size) == Vector2.ZERO,
+			"expanded content stopped using the top-left origin at %s" % viewport_size,
+		):
+			return false
 		var transformed_rect: Rect2 = GomokuBoard.design_rect_to_viewport(BOARD_RECT, DESIGN_SIZE, viewport_size)
 		if not _check(is_equal_approx(transformed_rect.size.x, transformed_rect.size.y), "board stopped being square at %s" % viewport_size):
 			return false
