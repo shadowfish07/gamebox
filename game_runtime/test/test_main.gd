@@ -12,6 +12,7 @@ static func cases() -> Array:
 		{"name": "main helper starts one full-viewport gomoku scene", "run": _starts_gomoku_in_main_scene},
 		{"name": "opaque smoke-looking ticket remains a normal launch", "run": _keeps_smoke_looking_ticket_in_normal_launch},
 		{"name": "host smoke exposes a controlled exit marker", "run": _has_controlled_exit_marker},
+		{"name": "accessibility support marker is stable and contains no private state", "run": _has_stable_accessibility_support_marker},
 		{"name": "private ticket is hydrated once before LaunchConfig", "run": _hydrates_private_ticket_once},
 		{"name": "main injects hydrated launch config without retaining a second ticket", "run": _injects_hydrated_config_once},
 		{"name": "private ticket hydration uses fixed key positions", "run": _hydrates_ticket_with_key_collision_value},
@@ -70,6 +71,16 @@ static func _has_controlled_exit_marker() -> bool:
 	return _check(
 		MainScript.HOST_SMOKE_EXITING_MARKER == "GAMEBOX_GODOT_EXITING",
 		"expected stable controlled exit marker",
+	)
+
+
+static func _has_stable_accessibility_support_marker() -> bool:
+	return _check(
+		MainScript.accessibility_marker(true) == "GAMEBOX_ACCESSIBILITY supported=true",
+		"expected stable supported accessibility marker",
+	) and _check(
+		MainScript.accessibility_marker(false) == "GAMEBOX_ACCESSIBILITY supported=false",
+		"expected stable unsupported accessibility marker",
 	)
 
 
