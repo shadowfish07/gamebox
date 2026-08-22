@@ -766,6 +766,73 @@ cleanup_remote_ui_dump() {
   adb_for "$serial" shell rm -f -- "$remote" >/dev/null 2>&1
 }
 
+valid_evidence_serial() {
+  [[ "$1" =~ ^[A-Za-z0-9._:-]{1,128}$ ]]
+}
+
+register_evidence_remote_dump() {
+  local serial="$1"
+  local remote="$2"
+  valid_evidence_serial "$serial" && valid_remote_ui_path "$remote" || return 2
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" ]] \
+    || return 2
+  local index
+  for ((index = 0; index < ${#EVIDENCE_REMOTE_DUMP_PATHS[@]}; index++)); do
+    if [[ "${EVIDENCE_REMOTE_DUMP_SERIALS[index]}" == "$serial" \
+      && "${EVIDENCE_REMOTE_DUMP_PATHS[index]}" == "$remote" ]]; then
+      return 0
+    fi
+  done
+  EVIDENCE_REMOTE_DUMP_SERIALS+=("$serial")
+  EVIDENCE_REMOTE_DUMP_PATHS+=("$remote")
+}
+
+unregister_evidence_remote_dump() {
+  local serial="$1"
+  local remote="$2"
+  valid_evidence_serial "$serial" && valid_remote_ui_path "$remote" || return 2
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" ]] \
+    || return 2
+  local -a retained_serials=()
+  local -a retained_paths=()
+  local index found=0
+  for ((index = 0; index < ${#EVIDENCE_REMOTE_DUMP_PATHS[@]}; index++)); do
+    if [[ "${EVIDENCE_REMOTE_DUMP_SERIALS[index]}" == "$serial" \
+      && "${EVIDENCE_REMOTE_DUMP_PATHS[index]}" == "$remote" ]]; then
+      found=1
+      continue
+    fi
+    retained_serials+=("${EVIDENCE_REMOTE_DUMP_SERIALS[index]}")
+    retained_paths+=("${EVIDENCE_REMOTE_DUMP_PATHS[index]}")
+  done
+  ((found == 1)) || return 1
+  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]}")
+  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]}")
+}
+
+cleanup_registered_evidence_remote_dumps() {
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" ]] \
+    || return 2
+  local -a retained_serials=()
+  local -a retained_paths=()
+  local index status=0 serial remote
+  for ((index = 0; index < ${#EVIDENCE_REMOTE_DUMP_PATHS[@]}; index++)); do
+    serial="${EVIDENCE_REMOTE_DUMP_SERIALS[index]}"
+    remote="${EVIDENCE_REMOTE_DUMP_PATHS[index]}"
+    if valid_evidence_serial "$serial" \
+      && valid_remote_ui_path "$remote" \
+      && cleanup_remote_ui_dump "$serial" "$remote"; then
+      continue
+    fi
+    retained_serials+=("$serial")
+    retained_paths+=("$remote")
+    status=1
+  done
+  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]}")
+  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]}")
+  return "$status"
+}
+
 dump_ui_remote() {
   local serial="$1"
   local local_path="$2"
@@ -849,7 +916,11 @@ capture_ui_evidence() {
   local remote_dump="/data/local/tmp/gamebox-e2e-evidence-$slug-${RUN_ID:-fixture-run}.xml"
   valid_remote_ui_path "$remote_dump" || return 1
   mkdir -p "$screenshot_dir"
-  ui_dump_safe_for_evidence "$serial" "$ui_dump" "$remote_dump" || return 1
+  register_evidence_remote_dump "$serial" "$remote_dump" || return 1
+  if ! ui_dump_safe_for_evidence "$serial" "$ui_dump" "$remote_dump"; then
+    return 1
+  fi
+  unregister_evidence_remote_dump "$serial" "$remote_dump" || return 1
   rm -f -- "$staged" "$output"
   if ! adb_for "$serial" exec-out screencap -p >"$staged" 2>/dev/null || [[ ! -s "$staged" ]]; then
     rm -f -- "$staged"
@@ -981,6 +1052,45 @@ assert_selected_viewport_matrix() {
     || fail "serial B must naturally or by managed override provide the narrow phone viewport"
   VIEWPORT_A="${width_a}x${height_a}"
   VIEWPORT_B="${width_b}x${height_b}"
+}
+
+crop_ssim() {
+  local comparison_side=$((BOARD_SIDE / 2))
+  ffmpeg -v info -i "$1" -i "$2" \
+    -filter_complex \
+    "[0:v]scale=$comparison_side:$comparison_side:flags=lanczos,setsar=1,format=yuv444p[a];[1:v]scale=$comparison_side:$comparison_side:flags=lanczos,setsar=1,format=yuv444p[b];[a][b]ssim" \
+    -f null - 2>&1 \
+    | sed -E -n 's/.* All:([0-9.]+).*/\1/p' \
+    | tail -n 1
+}
+
+finalize_cleanup_outcome() {
+  local original_exit_code="$1"
+  local cleanup_ok="$2"
+  local summary_path="$3"
+  [[ "$original_exit_code" =~ ^[0-9]+$ \
+    && ("$cleanup_ok" == "0" || "$cleanup_ok" == "1") \
+    && -n "$summary_path" ]] || return 2
+
+  local final_exit_code="$original_exit_code"
+  if [[ "$cleanup_ok" == "0" ]]; then
+    if [[ -f "$summary_path" ]] \
+      && jq -e '.status == "passed"' "$summary_path" >/dev/null 2>&1; then
+      local replacement="${summary_path}.cleanup-$HARNESS_PID"
+      if jq -n \
+        --arg status failure \
+        --arg phase cleanup \
+        --arg message 'E2E assertions passed, but owned runtime cleanup was incomplete.' \
+        '{status:$status,phase:$phase,message:$message}' >"$replacement" \
+        && mv "$replacement" "$summary_path"; then
+        :
+      else
+        rm -f -- "$replacement" "$summary_path"
+      fi
+    fi
+    [[ "$original_exit_code" == "0" ]] && final_exit_code=1
+  fi
+  printf '%s\n' "$final_exit_code"
 }
 
 owned_process_matches() {
@@ -1162,6 +1272,51 @@ self_test() {
     } and (has("api") | not)
   ' <<<"$devices" >/dev/null \
     || { printf 'device summary fixture failed\n' >&2; return 1; }
+
+  local crop_large="$fixture_dir/board-large.png"
+  local crop_narrow="$fixture_dir/board-narrow.png"
+  ffmpeg -v error -f lavfi -i color=c=0xD8A85F:s=960x960:d=0.04 \
+    -frames:v 1 -y "$crop_large" \
+    || { printf 'large board crop fixture generation failed\n' >&2; return 1; }
+  ffmpeg -v error -f lavfi -i color=c=0xD8A85F:s=640x640:d=0.04 \
+    -frames:v 1 -y "$crop_narrow" \
+    || { printf 'narrow board crop fixture generation failed\n' >&2; return 1; }
+  local crop_large_hash crop_narrow_hash crop_similarity
+  crop_large_hash="$(shasum -a 256 "$crop_large" | awk '{print $1}')"
+  crop_narrow_hash="$(shasum -a 256 "$crop_narrow" | awk '{print $1}')"
+  crop_similarity="$(crop_ssim "$crop_large" "$crop_narrow")" \
+    || { printf 'differing-size board crops could not be compared\n' >&2; return 1; }
+  ruby -e 'exit(Float(ARGV[0]) >= 0.999 ? 0 : 1)' "$crop_similarity" \
+    || { printf 'normalized board crop similarity fixture failed\n' >&2; return 1; }
+  [[ "$(shasum -a 256 "$crop_large" | awk '{print $1}')" == "$crop_large_hash" \
+    && "$(shasum -a 256 "$crop_narrow" | awk '{print $1}')" == "$crop_narrow_hash" ]] \
+    || { printf 'board crop comparison mutated an evidence original\n' >&2; return 1; }
+
+  local cleanup_summary="$fixture_dir/cleanup-summary.json"
+  local cleanup_result
+  printf '{"status":"passed","evidence":"fixture"}\n' >"$cleanup_summary"
+  cleanup_result="$(finalize_cleanup_outcome 0 0 "$cleanup_summary")" \
+    || { printf 'success-path cleanup failure outcome fixture errored\n' >&2; return 1; }
+  [[ "$cleanup_result" == "1" ]] \
+    || { printf 'success-path cleanup failure remained successful\n' >&2; return 1; }
+  if [[ -f "$cleanup_summary" ]] \
+    && jq -e '.status == "passed"' "$cleanup_summary" >/dev/null 2>&1; then
+    printf 'cleanup failure retained a passed summary\n' >&2
+    return 1
+  fi
+
+  printf '{"status":"passed","evidence":"fixture"}\n' >"$cleanup_summary"
+  cleanup_result="$(finalize_cleanup_outcome 23 0 "$cleanup_summary")" \
+    || { printf 'nonzero cleanup failure outcome fixture errored\n' >&2; return 1; }
+  [[ "$cleanup_result" == "23" ]] \
+    || { printf 'cleanup failure replaced the original nonzero exit code\n' >&2; return 1; }
+
+  printf '{"status":"passed","evidence":"fixture"}\n' >"$cleanup_summary"
+  cleanup_result="$(finalize_cleanup_outcome 0 1 "$cleanup_summary")" \
+    || { printf 'successful cleanup outcome fixture errored\n' >&2; return 1; }
+  [[ "$cleanup_result" == "0" ]] \
+    && jq -e '.status == "passed"' "$cleanup_summary" >/dev/null \
+    || { printf 'successful cleanup altered its exit code or summary\n' >&2; return 1; }
 
   local server_fixture="$fixture_dir/gameboxd-fixture"
   local server_environment_log="$fixture_dir/server-environment.log"
@@ -1527,6 +1682,8 @@ self_test() {
   INVITE_B='second-fixture-secret-abcdefghijklmnopqrstuvwxyz0123456789'
   JWT_SECRET='fixture-jwt-secret-abcdefghijklmnopqrstuvwxyz0123456789'
   TOKEN_PEPPER='fixture-token-pepper-abcdefghijklmnopqrstuvwxyz0123456789'
+  EVIDENCE_REMOTE_DUMP_SERIALS=()
+  EVIDENCE_REMOTE_DUMP_PATHS=()
   if capture_ui_evidence fixture-serial registration-light 1; then
     printf 'secret-active UI evidence capture was accepted\n' >&2
     return 1
@@ -1543,6 +1700,31 @@ self_test() {
   fi
   [[ ! -s "$fake_log" ]] \
     || { printf 'invalid UI evidence slug reached adb\n' >&2; return 1; }
+
+  export FAKE_ADB_MODE=pull-fail
+  if capture_ui_evidence fixture-A registration-light 0; then
+    printf 'failed evidence UI dump was accepted\n' >&2
+    return 1
+  fi
+  unset FAKE_ADB_MODE
+  local interrupted_remote='/data/local/tmp/gamebox-e2e-evidence-registration-light-fixture-run.xml'
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "1" \
+    && "${EVIDENCE_REMOTE_DUMP_SERIALS[0]}" == "fixture-A" \
+    && "${EVIDENCE_REMOTE_DUMP_PATHS[0]}" == "$interrupted_remote" ]] \
+    || { printf 'failed evidence UI dump was not retained for EXIT cleanup\n' >&2; return 1; }
+  local second_interrupted_remote='/data/local/tmp/gamebox-e2e-evidence-opponents-light-fixture-run.xml'
+  register_evidence_remote_dump fixture-B "$second_interrupted_remote" \
+    || { printf 'second evidence UI dump could not be registered\n' >&2; return 1; }
+  : >"$fake_log"
+  cleanup_registered_evidence_remote_dumps \
+    || { printf 'registered evidence UI dump cleanup fixture failed\n' >&2; return 1; }
+  grep -F "arg=$interrupted_remote" "$fake_log" >/dev/null \
+    || { printf 'EXIT cleanup missed A evidence UI dump\n' >&2; return 1; }
+  grep -F "arg=$second_interrupted_remote" "$fake_log" >/dev/null \
+    || { printf 'EXIT cleanup missed B evidence UI dump\n' >&2; return 1; }
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "0" \
+    && "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" == "0" ]] \
+    || { printf 'verified evidence UI dump deletion did not clear the registry\n' >&2; return 1; }
   local capture_fake_adb="$fixture_dir/capture-fake-adb.sh"
   printf '%s\n' \
     '#!/bin/sh' \
@@ -1557,6 +1739,9 @@ self_test() {
     || { printf 'safe allowlisted UI evidence capture fixture failed\n' >&2; return 1; }
   [[ -s "$evidence_fixture/screenshots/lobby-idle-light.png" ]] \
     || { printf 'safe UI evidence capture did not retain its artifact\n' >&2; return 1; }
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "0" \
+    && "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" == "0" ]] \
+    || { printf 'successful evidence UI dump remained registered\n' >&2; return 1; }
   ADB_BIN="$fake_adb"
   ADB_TIMEOUT_SECONDS=1
 
@@ -1757,6 +1942,8 @@ REMOTE_UI_PATH="/data/local/tmp/gamebox-e2e-$RUN_ID.xml"
 SECRET_INPUT_COUNTER=0
 SECRET_INPUT_FILES_A=()
 SECRET_INPUT_FILES_B=()
+EVIDENCE_REMOTE_DUMP_SERIALS=()
+EVIDENCE_REMOTE_DUMP_PATHS=()
 ORIGINAL_UI_MODE_A=""
 ORIGINAL_UI_MODE_B=""
 ORIGINAL_DISPLAY_OVERRIDE_A=""
@@ -1848,9 +2035,11 @@ cleanup_serial_private_state() {
 cleanup() {
   local exit_code=$?
   local cleanup_ok=1
+  local finalized_exit_code
   trap - EXIT INT TERM ERR
   set +e
   terminate_registered_bounded_children
+  cleanup_registered_evidence_remote_dumps || cleanup_ok=0
   if [[ -n "$SERIAL_A" ]]; then
     cleanup_serial_private_state "$SERIAL_A" A
     bounded_helper_uninstall "$SERIAL_A"
@@ -1875,6 +2064,14 @@ cleanup() {
   fi
   if ((cleanup_ok == 0)); then
     printf 'Gamebox E2E cleanup was incomplete; owned runtime and lease metadata were preserved for tool/worktree.sh down.\n' >&2
+  fi
+  if finalized_exit_code="$(
+    finalize_cleanup_outcome "$exit_code" "$cleanup_ok" "$ARTIFACT_DIR/summary.json"
+  )"; then
+    exit_code="$finalized_exit_code"
+  else
+    rm -f -- "$ARTIFACT_DIR/summary.json"
+    ((exit_code == 0)) && exit_code=1
   fi
   rm -rf "$TEMP_DIR"
   exit "$exit_code"
@@ -2713,12 +2910,6 @@ crop_grid_score() {
     -vf 'edgedetect=low=0.05:high=0.2,signalstats,metadata=print:file=-' \
     -frames:v 1 -f null - 2>&1 \
     | sed -n 's/^lavfi\.signalstats\.YAVG=//p' \
-    | tail -n 1
-}
-
-crop_ssim() {
-  ffmpeg -v info -i "$1" -i "$2" -lavfi ssim -f null - 2>&1 \
-    | sed -E -n 's/.* All:([0-9.]+).*/\1/p' \
     | tail -n 1
 }
 
