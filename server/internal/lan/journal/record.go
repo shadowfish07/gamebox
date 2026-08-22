@@ -91,19 +91,30 @@ func validateDraftInput(draft Draft) error {
 	if draft.Type != "room.created" {
 		return nil
 	}
-	fields, err := strictObjectFields(draft.Payload)
+	_, err := roomCreatedAt(draft.Payload)
 	if err != nil {
 		return fmt.Errorf("room.created payload: %w", err)
 	}
+	return nil
+}
+
+// roomCreatedAt validates the durable room-created contract against the
+// original payload bytes. Callers use it before canonicalization; replay uses
+// it again after strict record decoding so either path rejects the same event.
+func roomCreatedAt(payload json.RawMessage) (int64, error) {
+	fields, err := strictObjectFields(payload)
+	if err != nil {
+		return 0, err
+	}
 	rawCreatedAt, ok := fields["createdAt"]
 	if !ok || !positiveCanonicalInteger.Match(rawCreatedAt) {
-		return errors.New("room.created payload createdAt must be a positive canonical integer")
+		return 0, errors.New("createdAt must be a positive canonical integer")
 	}
 	createdAt, err := strconv.ParseInt(string(rawCreatedAt), 10, 64)
 	if err != nil || createdAt <= 0 {
-		return errors.New("room.created payload createdAt must be a positive canonical integer")
+		return 0, errors.New("createdAt must be a positive canonical integer")
 	}
-	return nil
+	return createdAt, nil
 }
 
 func canonicalRecord(record Record) ([]byte, error) {
@@ -556,6 +567,11 @@ func validateRecordFields(record Record) error {
 		}
 	} else if record.GameRevision != nil {
 		return errors.New("only game events may contain game revision")
+	}
+	if record.Type == "room.created" {
+		if _, err := roomCreatedAt(record.Payload); err != nil {
+			return fmt.Errorf("room.created payload: %w", err)
+		}
 	}
 	if record.JournalSequence == 1 {
 		if record.PreviousHash != "" {

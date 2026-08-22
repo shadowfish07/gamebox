@@ -263,20 +263,9 @@ func createdAtFromRecords(records []Record) (int64, error) {
 		if record.Type != "room.created" {
 			continue
 		}
-		var payload map[string]json.RawMessage
-		if err := json.Unmarshal(record.Payload, &payload); err != nil {
+		createdAt, err := roomCreatedAt(record.Payload)
+		if err != nil {
 			return 0, fmt.Errorf("room.created payload: %w", err)
-		}
-		rawCreatedAt, ok := payload["createdAt"]
-		if !ok {
-			return 0, errors.New("room.created payload has no createdAt")
-		}
-		if !positiveCanonicalInteger.Match(rawCreatedAt) {
-			return 0, errors.New("room.created payload createdAt must be a positive canonical integer")
-		}
-		createdAt, err := strconv.ParseInt(string(rawCreatedAt), 10, 64)
-		if err != nil || createdAt <= 0 {
-			return 0, errors.New("room.created payload createdAt must be a positive canonical integer")
 		}
 		return createdAt, nil
 	}

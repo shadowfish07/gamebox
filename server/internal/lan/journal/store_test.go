@@ -19,6 +19,7 @@ func TestAppendWritesFirstCanonicalRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
+	cleanupStore(t, store)
 	if len(records) != 0 {
 		t.Fatalf("Open() records = %d, want 0", len(records))
 	}
@@ -53,6 +54,7 @@ func TestAppendChainsConsecutiveRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
+	cleanupStore(t, store)
 	first, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)})
 	if err != nil {
 		t.Fatalf("first Append() error = %v", err)
@@ -82,9 +84,11 @@ func TestOpenCleansOnlyRecognizedJournalTemps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "unrelated.tmp"), []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Open(root, nil); err != nil {
+	store, _, err := Open(root, nil)
+	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
+	cleanupStore(t, store)
 	if _, err := os.Stat(filepath.Join(root, "0000000000000001.json.tmp")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("journal temp stat error = %v, want not exist", err)
 	}
@@ -140,6 +144,7 @@ func TestOpenRejectsReorderedDuplicateMalformedAndUnverifiableRecords(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
+		cleanupStore(t, storeB)
 		if _, err := storeB.Append(context.Background(), Draft{Type: "different.created", Payload: json.RawMessage(`{}`)}); err != nil {
 			t.Fatal(err)
 		}
@@ -195,6 +200,7 @@ func TestAppendRejectsOversizedPayloadBeforeFileOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	exactPayload := validJSONStringOfLength(maxPayloadBytes)
 	if record, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: exactPayload}); err != nil {
 		t.Fatalf("Append() exact %d-byte canonical payload error = %v", maxPayloadBytes, err)
@@ -226,6 +232,7 @@ func TestAppendCanonicalizesEquivalentNestedNumericSpellings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	record, err := store.Append(context.Background(), Draft{
 		Type:    "credential.issued",
 		Payload: json.RawMessage(`{"outer":{"integer":1.0,"negativeZero":-0.0},"items":[1e0,10e-1,0.0100]}`),
@@ -264,6 +271,7 @@ func TestStreamingJSONStringEscapingIsCanonicalAndCapped(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			cleanupStore(t, store)
 			if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
 				t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 			}
@@ -280,6 +288,7 @@ func TestAppendRejectsOversizedRecordMetadataBeforeFileOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: strings.Repeat("x", maxRecordMetadataBytes+1), Payload: json.RawMessage(`{}`)}); !errors.Is(err, ErrInvalidDraft) {
 		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 	}
@@ -322,6 +331,7 @@ func TestRoomCreatedDraftRequiresCanonicalCreatedAtBeforeNormalization(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
+			cleanupStore(t, store)
 			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
 				t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 			}
@@ -335,6 +345,7 @@ func TestRoomCreatedDraftRequiresCanonicalCreatedAtBeforeNormalization(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1724300000}`)}); err != nil {
 		t.Fatalf("Append() valid room.created error = %v", err)
 	}
@@ -354,6 +365,7 @@ func TestAppendRejectsCumulativeCanonicalExpansionBeforeFileOperation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: raw}); !errors.Is(err, ErrInvalidDraft) {
 		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 	}
@@ -384,6 +396,7 @@ func TestAppendRejectsWhitespaceExpandedRawPayloadBeforeDecoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: raw}); !errors.Is(err, ErrInvalidDraft) {
 		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 	}
@@ -398,6 +411,7 @@ func TestReplayRejectsAlternateNestedNumericSpellingsBeforeHashVerification(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: json.RawMessage(`{"array":[1,1],"nested":{"count":1}}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -428,6 +442,7 @@ func TestAppendRejectsNonUTF8CallerFieldsBeforeFileOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: string([]byte{0xff}), Payload: json.RawMessage(`{}`)}); !errors.Is(err, ErrInvalidDraft) {
 		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 	}
@@ -442,6 +457,7 @@ func TestManifestProjectionCanLagAuthoritativeJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1724300000}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -484,6 +500,7 @@ func TestManifestProjectionRequiresPositiveCanonicalIntegerCreatedAt(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
+			cleanupStore(t, store)
 			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
 				t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
 			}
@@ -505,6 +522,7 @@ func TestAppendRejectsCanceledContextBeforeCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupStore(t, store)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := store.Append(ctx, Draft{Type: "room.created", Payload: json.RawMessage(`{}`)}); !errors.Is(err, context.Canceled) {
@@ -519,6 +537,15 @@ func TestAppendRejectsCanceledContextBeforeCommit(t *testing.T) {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func cleanupStore(t *testing.T, store *Store) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Store.Close() error = %v", err)
+		}
+	})
+}
 
 func validJSONStringOfLength(length int) json.RawMessage {
 	return append(append(json.RawMessage(`"`), bytes.Repeat([]byte{'a'}, length-2)...), '"')
