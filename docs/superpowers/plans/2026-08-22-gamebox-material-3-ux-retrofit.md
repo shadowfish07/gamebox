@@ -229,6 +229,8 @@ Expected: 提交只有审计与 Profile 声明，没有 UI 或业务代码变化
 
 ### Task 2: 移除无障碍范围并冻结自动化标识契约
 
+> **已完成（2026-08-22）：** `b8581e1` 已精确撤销旧探针提交 `67a7ad1`，`f8c0063` 已同步当前 skill、规范、审计和后续计划。以下步骤保留为迁移记录，不得重复执行 revert。
+
 **Files:**
 - Modify: `.agents/skills/gamebox-material-3-ux/SKILL.md`
 - Modify: `.agents/skills/gamebox-material-3-ux/references/*.md`
@@ -236,24 +238,26 @@ Expected: 提交只有审计与 Profile 声明，没有 UI 或业务代码变化
 - Modify: `docs/superpowers/plans/2026-08-22-gamebox-material-3-ux-retrofit.md`
 - Modify: `docs/design/gamebox-material-3-ux-audit.md`
 - Modify: `docs/design/profiles/gomoku.md`
+- Modify: `docs/design/gamebox-material-3-ux-skill-evaluation.md`（仅增加历史范围说明）
+- Modify: `docs/superpowers/plans/2026-08-22-gamebox-material-3-ux-skill.md`（仅增加历史范围说明）
 
 **Interfaces:**
 - Preserves: 现有 `Semantics.identifier`、`Key`、UI Automator selector、host-smoke selector 仅作为自动化兼容契约。
 - Produces: 不包含无障碍实施或验收门禁的当前 skill、规范、审计和改造计划。
 
-- [ ] **Step 1: 记录行为 RED**
+- [x] **Step 1: 记录行为 RED**
 
 比较不读取 skill 的 control 与完整读取当前 skill 的样本。只要后者必须显式覆盖 skill 自身的 Accessibility MUST 才能服从用户，即证明当前规范不自洽。
 
-- [ ] **Step 2: 精确撤销探针提交**
+- [x] **Step 2: 精确撤销探针提交**
 
 使用可恢复的 `git revert` 撤销 `67a7ad1`，不保留 `GAMEBOX_ACCESSIBILITY` marker、`AccessibilityServer` 调用或 E2E accessibility summary 逻辑。
 
-- [ ] **Step 3: 同步当前规范与后续计划**
+- [x] **Step 3: 同步当前规范与后续计划**
 
 移除 TalkBack、screen-reader metadata/roles/live regions、focus order、enlarged-font acceptance、WCAG contrast threshold 和 reduced-motion 的正向 MUST/验收要求。保留 safe area、48dp 公共目标、正常字号长文案、Back、危险确认、交互状态、双 AVD 真实流程和 Android 截图。
 
-- [ ] **Step 4: 重跑 skill 行为场景并校验**
+- [x] **Step 4: 重跑 skill 行为场景并校验**
 
 使用相同的显式排除请求验证修订后 skill 不再要求执行者覆盖内部 MUST；同时运行 skill 结构校验和定向残留检查。
 
