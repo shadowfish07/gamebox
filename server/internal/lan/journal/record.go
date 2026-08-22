@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -116,7 +118,7 @@ func canonicalPayload(raw json.RawMessage) (json.RawMessage, error) {
 	if err := requireEOF(decoder); err != nil {
 		return nil, errors.New("contains a trailing JSON document")
 	}
-	canonical, err := json.Marshal(value)
+	canonical, err := encodeCanonicalJSON(value)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +126,162 @@ func canonicalPayload(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("exceeds %d byte limit", maxPayloadBytes)
 	}
 	return json.RawMessage(canonical), nil
+}
+
+// encodeCanonicalJSON uses one decimal spelling for every JSON number: no
+// exponent, no leading plus/zeroes, no fractional trailing zeroes, and zero is
+// always "0". This keeps numerically equal payloads on one hash-chain byte form.
+func encodeCanonicalJSON(value any) ([]byte, error) {
+	switch value := value.(type) {
+	case nil:
+		return []byte("null"), nil
+	case bool:
+		if value {
+			return []byte("true"), nil
+		}
+		return []byte("false"), nil
+	case string:
+		return json.Marshal(value)
+	case json.Number:
+		return canonicalNumber(string(value))
+	case []any:
+		var encoded bytes.Buffer
+		encoded.WriteByte('[')
+		for index, item := range value {
+			if index > 0 {
+				encoded.WriteByte(',')
+			}
+			child, err := encodeCanonicalJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			encoded.Write(child)
+		}
+		encoded.WriteByte(']')
+		return encoded.Bytes(), nil
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var encoded bytes.Buffer
+		encoded.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				encoded.WriteByte(',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return nil, err
+			}
+			encoded.Write(encodedKey)
+			encoded.WriteByte(':')
+			child, err := encodeCanonicalJSON(value[key])
+			if err != nil {
+				return nil, err
+			}
+			encoded.Write(child)
+		}
+		encoded.WriteByte('}')
+		return encoded.Bytes(), nil
+	default:
+		return nil, fmt.Errorf("unsupported decoded JSON type %T", value)
+	}
+}
+
+func canonicalNumber(raw string) ([]byte, error) {
+	negative := strings.HasPrefix(raw, "-")
+	if negative {
+		raw = raw[1:]
+	}
+	mantissa, exponentText, hasExponent := strings.Cut(raw, "e")
+	if !hasExponent {
+		mantissa, exponentText, hasExponent = strings.Cut(raw, "E")
+	}
+	exponent := int64(0)
+	if hasExponent {
+		var err error
+		exponent, err = strconv.ParseInt(exponentText, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid numeric exponent")
+		}
+	}
+	integerPart, fractionalPart, hasFraction := strings.Cut(mantissa, ".")
+	if integerPart == "" || (hasFraction && fractionalPart == "") || !decimalDigits(integerPart) || (hasFraction && !decimalDigits(fractionalPart)) {
+		return nil, fmt.Errorf("invalid JSON number")
+	}
+	digits := strings.TrimLeft(integerPart+fractionalPart, "0")
+	if digits == "" {
+		return []byte("0"), nil
+	}
+	if exponent > int64(maxPayloadBytes) || exponent < -int64(maxPayloadBytes) {
+		return nil, fmt.Errorf("numeric exponent is too large")
+	}
+	scale := exponent - int64(len(fractionalPart))
+	for strings.HasSuffix(digits, "0") {
+		digits = digits[:len(digits)-1]
+		if scale == int64(^uint64(0)>>1) {
+			return nil, fmt.Errorf("numeric exponent is too large")
+		}
+		scale++
+	}
+
+	negativeLength := int64(0)
+	if negative {
+		negativeLength = 1
+	}
+	var length int64
+	if scale >= 0 {
+		if scale > int64(maxPayloadBytes) {
+			return nil, fmt.Errorf("number exceeds %d byte limit", maxPayloadBytes)
+		}
+		length = negativeLength + int64(len(digits)) + scale
+	} else {
+		point := int64(len(digits)) + scale
+		if point > 0 {
+			length = negativeLength + int64(len(digits)) + 1
+		} else {
+			length = negativeLength + 2 + -point + int64(len(digits))
+		}
+	}
+	if length > maxPayloadBytes {
+		return nil, fmt.Errorf("number exceeds %d byte limit", maxPayloadBytes)
+	}
+	var encoded strings.Builder
+	encoded.Grow(int(length))
+	if negative {
+		encoded.WriteByte('-')
+	}
+	if scale >= 0 {
+		encoded.WriteString(digits)
+		for range scale {
+			encoded.WriteByte('0')
+		}
+		return []byte(encoded.String()), nil
+	}
+	point := int64(len(digits)) + scale
+	if point > 0 {
+		encoded.WriteString(digits[:point])
+		encoded.WriteByte('.')
+		encoded.WriteString(digits[point:])
+		return []byte(encoded.String()), nil
+	}
+	encoded.WriteString("0.")
+	for range -point {
+		encoded.WriteByte('0')
+	}
+	encoded.WriteString(digits)
+	return []byte(encoded.String()), nil
+}
+
+func decimalDigits(value string) bool {
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeRecord(data []byte) (Record, error) {

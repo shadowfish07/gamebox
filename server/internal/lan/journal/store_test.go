@@ -1,11 +1,13 @@
 package journal
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -162,12 +164,21 @@ func TestOpenRejectsReorderedDuplicateMalformedAndUnverifiableRecords(t *testing
 		},
 		"wrong current hash": func(data []byte) []byte {
 			value := string(data)
-			return []byte(value[:len(value)-2] + `0"}`)
+			lastHashDigit := len(value) - 3
+			replacement := byte('0')
+			if value[lastHashDigit] == replacement {
+				replacement = '1'
+			}
+			return []byte(value[:lastHashDigit] + string(replacement) + value[lastHashDigit+1:])
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root, records := journalWithTwoRecords(t)
-			if err := os.WriteFile(filepath.Join(root, "0000000000000001.json"), mutate(records[0]), 0o600); err != nil {
+			mutated := mutate(records[0])
+			if name == "wrong current hash" && bytes.Equal(mutated, records[0]) {
+				t.Fatal("hash corruption test did not change a hexadecimal digit")
+			}
+			if err := os.WriteFile(filepath.Join(root, "0000000000000001.json"), mutated, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if _, _, err := Open(root, nil); err == nil {
@@ -184,13 +195,65 @@ func TestAppendRejectsOversizedPayloadBeforeFileOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := append(json.RawMessage(`"`), make([]byte, 1<<20)...)
-	payload = append(payload, '"')
-	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); !errors.Is(err, ErrInvalidDraft) {
-		t.Fatalf("Append() error = %v, want ErrInvalidDraft", err)
+	exactPayload := validJSONStringOfLength(maxPayloadBytes)
+	if record, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: exactPayload}); err != nil {
+		t.Fatalf("Append() exact %d-byte canonical payload error = %v", maxPayloadBytes, err)
+	} else if got := len(record.Payload); got != maxPayloadBytes {
+		t.Fatalf("accepted canonical payload bytes = %d, want %d", got, maxPayloadBytes)
 	}
-	if len(ops.calls) != 0 || len(store.Records()) != 0 {
-		t.Fatalf("oversized draft reached durability boundary: calls=%v records=%v", ops.calls, store.Records())
+	callsBeforeOversize := len(ops.calls)
+	if _, err := store.Append(context.Background(), Draft{Type: "credential.issued", Payload: validJSONStringOfLength(maxPayloadBytes + 1)}); !errors.Is(err, ErrInvalidDraft) {
+		t.Fatalf("Append() %d-byte canonical payload error = %v, want ErrInvalidDraft", maxPayloadBytes+1, err)
+	}
+	if got := len(ops.calls); got != callsBeforeOversize {
+		t.Fatalf("oversized draft reached durability boundary: calls=%v", ops.calls)
+	}
+	if got := len(store.Records()); got != 1 {
+		t.Fatalf("oversized draft advanced sequence: records=%d, want 1", got)
+	}
+}
+
+func TestAppendCanonicalizesEquivalentNestedNumericSpellings(t *testing.T) {
+	store, _, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Append(context.Background(), Draft{
+		Type:    "room.created",
+		Payload: json.RawMessage(`{"outer":{"integer":1.0,"negativeZero":-0.0},"items":[1e0,10e-1,0.0100]}`),
+	})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	want := `{"items":[1,1,0.01],"outer":{"integer":1,"negativeZero":0}}`
+	if string(record.Payload) != want {
+		t.Fatalf("canonical payload = %s\nwant %s", record.Payload, want)
+	}
+}
+
+func TestReplayRejectsAlternateNestedNumericSpellingsBeforeHashVerification(t *testing.T) {
+	root := t.TempDir()
+	store, _, err := Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"array":[1,1],"nested":{"count":1}}`)}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "0000000000000001.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	altered := strings.Replace(string(data), `"payload":{"array":[1,1],"nested":{"count":1}}`, `"payload":{"array":[1.0,1e0],"nested":{"count":1.00}}`, 1)
+	if altered == string(data) {
+		t.Fatal("test fixture did not alter payload")
+	}
+	if err := os.WriteFile(path, []byte(altered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Open(root, nil); err == nil || !strings.Contains(err.Error(), "payload is not canonical") {
+		t.Fatalf("Open() error = %v, want noncanonical numeric payload rejection before hash verification", err)
 	}
 }
 
@@ -241,6 +304,35 @@ func TestManifestProjectionCanLagAuthoritativeJournal(t *testing.T) {
 	}
 }
 
+func TestManifestProjectionRequiresPositiveCanonicalIntegerCreatedAt(t *testing.T) {
+	for name, payload := range map[string]json.RawMessage{
+		"null":     json.RawMessage(`{"createdAt":null}`),
+		"zero":     json.RawMessage(`{"createdAt":0}`),
+		"negative": json.RawMessage(`{"createdAt":-1}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _, err := Open(t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: payload}); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.WriteManifestProjection("room-1", "gomoku", "192.168.1.7:1", 1); err == nil {
+				t.Fatal("WriteManifestProjection() error = nil, want createdAt rejection")
+			}
+		})
+	}
+	for _, payload := range []json.RawMessage{
+		json.RawMessage(`{"createdAt":1.0}`),
+		json.RawMessage(`{"createdAt":1e0}`),
+	} {
+		if _, err := createdAtFromRecords([]Record{{Type: "room.created", Payload: payload}}); err == nil {
+			t.Fatalf("createdAtFromRecords(%s) error = nil, want noncanonical integer rejection", payload)
+		}
+	}
+}
+
 func TestAppendRejectsCanceledContextBeforeCommit(t *testing.T) {
 	root := t.TempDir()
 	store, _, err := Open(root, nil)
@@ -261,6 +353,10 @@ func TestAppendRejectsCanceledContextBeforeCommit(t *testing.T) {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func validJSONStringOfLength(length int) json.RawMessage {
+	return append(append(json.RawMessage(`"`), bytes.Repeat([]byte{'a'}, length-2)...), '"')
+}
 
 func isLowerSHA256(value string) bool {
 	if len(value) != 64 {

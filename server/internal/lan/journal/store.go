@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	ErrReopenRequired = errors.New("journal must be reopened and replayed")
-	recordFileName    = regexp.MustCompile(`^[0-9]{16}\.json$`)
-	temporaryFileName = regexp.MustCompile(`^[0-9]{16}\.json\.tmp$`)
+	ErrReopenRequired        = errors.New("journal must be reopened and replayed")
+	recordFileName           = regexp.MustCompile(`^[0-9]{16}\.json$`)
+	temporaryFileName        = regexp.MustCompile(`^[0-9]{16}\.json\.tmp$`)
+	positiveCanonicalInteger = regexp.MustCompile(`^[1-9][0-9]*$`)
 )
 
 // FileOps isolates the fallible durable-write boundaries for deterministic tests.
@@ -231,9 +232,12 @@ func createdAtFromRecords(records []Record) (int64, error) {
 		if !ok {
 			return 0, errors.New("room.created payload has no createdAt")
 		}
-		var createdAt int64
-		if err := json.Unmarshal(rawCreatedAt, &createdAt); err != nil {
-			return 0, errors.New("room.created payload createdAt must be an integer")
+		if !positiveCanonicalInteger.Match(rawCreatedAt) {
+			return 0, errors.New("room.created payload createdAt must be a positive canonical integer")
+		}
+		createdAt, err := strconv.ParseInt(string(rawCreatedAt), 10, 64)
+		if err != nil || createdAt <= 0 {
+			return 0, errors.New("room.created payload createdAt must be a positive canonical integer")
 		}
 		return createdAt, nil
 	}
