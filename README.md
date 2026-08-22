@@ -256,7 +256,12 @@ before using Android. With no serial overrides it creates/starts only
 those processes/packages; it does not stop, wipe, clear logcat, or change an
 unrelated emulator such as `emulator-5554`. Alternatively, set both
 `GAMEBOX_E2E_SERIAL_A` and `GAMEBOX_E2E_SERIAL_B`; supplied devices are selected
-but not created, wiped, restarted, or stopped.
+but not created, wiped, restarted, or stopped. Managed AVD A is captured in
+light mode at a 1080x2400 large-phone viewport and B in dark mode at a 720x1600
+narrow-phone viewport. Supplied devices keep their display overrides and must
+naturally provide portrait viewports with A at least 1080 pixels wide and B at
+most 720 pixels wide. The harness restores each selected device's original UI
+mode and every managed display override on success and through its exit trap.
 
 The semantics integration test always uses the selected A-device explicitly:
 
@@ -271,7 +276,11 @@ Match and revision progress require independent signals to agree: bounded
 device ready/state logs plus the authoritative read-only `gameboxctl` snapshot;
 board crops from both devices are also checked against that snapshot before the
 next move. This proves wiring and rendered state without making UI text or an
-E2E-only board model authoritative.
+E2E-only board model authoritative. Pending evidence pauses only the verified
+E2E-owned server PID before the move and resumes it after the local marker is
+visible. Reconnect and failed states stop and restart that same owned server
+with its temporary database, port, and test secrets; the trap will not signal a
+PID that fails the ownership checks.
 
 Artifacts are written under `artifacts/e2e/<UTC timestamp>/` only after
 sanitization and secret scanning. They include serial/API level, commit and APK
@@ -279,6 +288,14 @@ provenance, assertions, screenshots, sanitized server output, and the final
 read-only match snapshot, but no invites or tokens. Each adb/UI operation and
 build has a bounded watchdog; `GAMEBOX_E2E_*_TIMEOUT_SECONDS` variables exist
 for shorter fault-injection bounds, not for removing timeouts.
+
+`summary.json.uiEvidence` lists artifact-relative paths for exactly 13 required
+screenshots: both registration layouts, idle and active lobbies, opponent
+selection, update and cancel-confirmation dialogs, plus Gomoku initial, pending,
+resign-confirmation, reconnecting, connection-failed, and terminal states. A
+registration screenshot is taken before private invite input; capture is
+rejected while a secret may be on screen, every UI dump is removed from the
+device, and a missing or non-relative screenshot prevents a passed summary.
 
 ## Continue after this phase
 
