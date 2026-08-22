@@ -12,12 +12,10 @@ enum SessionStatus { restoring, unauthenticated, submitting, authenticated }
 /// Owns the in-memory access credential and the rotating refresh lifecycle.
 final class SessionController extends ChangeNotifier {
   SessionController({
-    required AuthApi authApi,
-    required TokenStore tokenStore,
+    required this._authApi,
+    required this._tokenStore,
     DateTime Function()? now,
-  }) : _authApi = authApi,
-       _tokenStore = tokenStore,
-       _now = now ?? DateTime.now;
+  }) : _now = now ?? DateTime.now;
 
   // The current server deliberately collapses every invalid, revoked, or
   // expired HTTP credential into this single authoritative code.
@@ -163,7 +161,7 @@ final class SessionController extends ChangeNotifier {
         );
         return false;
       }
-      return _persistAndPublish(rotated, generation);
+      return await _persistAndPublish(rotated, generation);
     } on ApiError catch (error) {
       if (!_isCurrent(generation)) {
         return false;
@@ -289,7 +287,7 @@ final class SessionController extends ChangeNotifier {
         await _clearStoredCredential(generation);
         return false;
       }
-      return _persistAndPublish(rotated, generation);
+      return await _persistAndPublish(rotated, generation);
     } on ApiError catch (error) {
       if (!_isCurrent(generation)) {
         return false;

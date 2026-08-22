@@ -117,42 +117,39 @@ void main() {
     );
   }
 
-  test(
-    'temporary runtime refresh failure preserves credential without auth memory',
-    () async {
-      final api = _FakeAuthApi()
-        ..onRefresh = (_) async => _session(
-          accessToken: 'access-one',
-          refreshToken: 'refresh-one',
-          now: now,
-        );
-      final store = _MemoryTokenStore(value: 'refresh-zero');
-      final controller = SessionController(
-        authApi: api,
-        tokenStore: store,
-        now: () => now,
-      );
-      await controller.restore();
-      api.onRefresh = (_) => Future<Session>.error(
-        const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试'),
-      );
-
-      expect(await controller.refresh('access-one'), isFalse);
-      expect(controller.status, SessionStatus.unauthenticated);
-      expect(controller.accessToken, isNull);
-      expect(controller.canRetryRestore, isTrue);
-      expect(store.value, 'refresh-one');
-      expect(store.deleteCalls, 0);
-
-      api.onRefresh = (_) async => _session(
-        accessToken: 'access-two',
-        refreshToken: 'refresh-two',
+  test('temporary runtime refresh failure preserves credential without auth memory', () async {
+    final api = _FakeAuthApi()
+      ..onRefresh = (_) async => _session(
+        accessToken: 'access-one',
+        refreshToken: 'refresh-one',
         now: now,
       );
-      expect(await controller.handleAppResumed(), isTrue);
-      expect(controller.accessToken, 'access-two');
-    },
-  );
+    final store = _MemoryTokenStore(value: 'refresh-zero');
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: store,
+      now: () => now,
+    );
+    await controller.restore();
+    api.onRefresh = (_) => Future<Session>.error(
+      const ApiError(code: 'network_error', message: '网络连接失败，请稍后重试'),
+    );
+
+    expect(await controller.refresh('access-one'), isFalse);
+    expect(controller.status, SessionStatus.unauthenticated);
+    expect(controller.accessToken, isNull);
+    expect(controller.canRetryRestore, isTrue);
+    expect(store.value, 'refresh-one');
+    expect(store.deleteCalls, 0);
+
+    api.onRefresh = (_) async => _session(
+      accessToken: 'access-two',
+      refreshToken: 'refresh-two',
+      now: now,
+    );
+    expect(await controller.handleAppResumed(), isTrue);
+    expect(controller.accessToken, 'access-two');
+  });
 
   test(
     'registration cannot overwrite a preserved account after temporary failure',
@@ -299,62 +296,56 @@ void main() {
     },
   );
 
-  test(
-    'failed credential deletion stays locked and concurrent retry is single-flight',
-    () async {
-      const secret = 'private-platform-diagnostic';
-      final api = _FakeAuthApi()
-        ..onRefresh = (_) async => _session(
-          accessToken: 'access-one',
-          refreshToken: 'refresh-one',
-          now: now,
-        );
-      final store = _MemoryTokenStore(value: 'refresh-zero');
-      final controller = SessionController(
-        authApi: api,
-        tokenStore: store,
-        now: () => now,
+  test('failed credential deletion stays locked and concurrent retry is single-flight', () async {
+    const secret = 'private-platform-diagnostic';
+    final api = _FakeAuthApi()
+      ..onRefresh = (_) async => _session(
+        accessToken: 'access-one',
+        refreshToken: 'refresh-one',
+        now: now,
       );
-      await controller.restore();
-      store.deleteError = PlatformException(
-        code: 'unavailable',
-        message: secret,
-      );
-      api.onRefresh = (_) => Future<Session>.error(
-        const ApiError(code: 'unauthorized', message: '身份验证失败'),
-      );
+    final store = _MemoryTokenStore(value: 'refresh-zero');
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: store,
+      now: () => now,
+    );
+    await controller.restore();
+    store.deleteError = PlatformException(code: 'unavailable', message: secret);
+    api.onRefresh = (_) => Future<Session>.error(
+      const ApiError(code: 'unauthorized', message: '身份验证失败'),
+    );
 
-      expect(await controller.refresh('access-one'), isFalse);
+    expect(await controller.refresh('access-one'), isFalse);
 
-      expect(controller.status, SessionStatus.unauthenticated);
-      expect(controller.session, isNull);
-      expect(controller.canRegister, isFalse);
-      expect(controller.canRetryRestore, isFalse);
-      expect(controller.canRetryCredentialCleanup, isTrue);
-      expect(controller.lastError.toString(), isNot(contains(secret)));
-      expect(store.value, 'refresh-one');
+    expect(controller.status, SessionStatus.unauthenticated);
+    expect(controller.session, isNull);
+    expect(controller.canRegister, isFalse);
+    expect(controller.canRetryRestore, isFalse);
+    expect(controller.canRetryCredentialCleanup, isTrue);
+    expect(controller.lastError.toString(), isNot(contains(secret)));
+    expect(store.value, 'refresh-one');
 
-      final deletion = Completer<void>();
-      store.deleteError = null;
-      store.onDelete = () => deletion.future;
-      store.deleteStarted = Completer<void>();
-      final first = controller.retryCredentialCleanup();
-      final second = controller.retryCredentialCleanup();
+    final deletion = Completer<void>();
+    store.deleteError = null;
+    store.onDelete = () => deletion.future;
+    store.deleteStarted = Completer<void>();
+    final first = controller.retryCredentialCleanup();
+    final second = controller.retryCredentialCleanup();
 
-      expect(identical(first, second), isTrue);
-      await store.deleteStarted.future;
-      expect(controller.credentialCleanupPending, isTrue);
-      expect(controller.canRegister, isFalse);
-      expect(store.deleteCalls, 2);
+    expect(identical(first, second), isTrue);
+    await store.deleteStarted.future;
+    expect(controller.credentialCleanupPending, isTrue);
+    expect(controller.canRegister, isFalse);
+    expect(store.deleteCalls, 2);
 
-      deletion.complete();
-      expect(await first, isTrue);
-      expect(await second, isTrue);
-      expect(controller.canRegister, isTrue);
-      expect(controller.canRetryCredentialCleanup, isFalse);
-      expect(store.value, isNull);
-    },
-  );
+    deletion.complete();
+    expect(await first, isTrue);
+    expect(await second, isTrue);
+    expect(controller.canRegister, isTrue);
+    expect(controller.canRetryCredentialCleanup, isFalse);
+    expect(store.value, isNull);
+  });
 
   test(
     'concurrent unauthorized refreshes start one credential cleanup',

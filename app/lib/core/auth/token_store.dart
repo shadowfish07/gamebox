@@ -26,10 +26,10 @@ abstract interface class TokenStore {
 /// Android-backed storage for the sole long-lived client credential.
 final class SecureTokenStore implements TokenStore {
   SecureTokenStore({
-    FlutterSecureStorage storage = const FlutterSecureStorage(
+    this._storage = const FlutterSecureStorage(
       aOptions: AndroidOptions(resetOnError: false),
     ),
-  }) : _storage = storage;
+  });
 
   static const refreshTokenKey = 'gamebox.refresh_token.v1';
 

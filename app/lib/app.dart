@@ -166,9 +166,9 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  bool get _canLaunchInstrumentationCanary => RegExp(
-    r'^[A-Za-z0-9_-]{8,64}$',
-  ).hasMatch(widget.instrumentationCanaryNonce);
+  bool get _canLaunchInstrumentationCanary =>
+      RegExp(r'^[A-Za-z0-9_-]{8,64}$')
+          .hasMatch(widget.instrumentationCanaryNonce);
 
   Future<void> _launchHostSmoke() async {
     if (_isLaunchingHostSmoke) {

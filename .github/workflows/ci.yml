@@ -29,7 +29,7 @@ jobs:
           cache: gradle
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.1'
+          flutter-version: '3.47.1'
           channel: stable
           cache: true
       - uses: chickensoft-games/setup-godot@v2

@@ -18,19 +18,14 @@ final class UpdateController extends ChangeNotifier {
 
   UpdateController({
     required this.installedVersion,
-    required ReleaseService releaseService,
-    required ApkInstaller installer,
-    required http.Client downloadClient,
-    required SharedPreferences preferences,
-    required Directory updateDirectory,
+    required this._releaseService,
+    required this._installer,
+    required this._downloadClient,
+    required this._preferences,
+    required this._updateDirectory,
     DateTime Function()? now,
     this.checkInterval = const Duration(hours: 6),
-  }) : _releaseService = releaseService,
-       _installer = installer,
-       _downloadClient = downloadClient,
-       _preferences = preferences,
-       _updateDirectory = updateDirectory,
-       _now = now ?? DateTime.now;
+  }) : _now = now ?? DateTime.now;
 
   static const _lastCheckKey = 'update.lastCheckAt';
   static const _cachedUpdateKey = 'update.available';

@@ -159,23 +159,26 @@ final class _OpponentPageState extends State<OpponentPage> {
         !_loading &&
         _creatingOpponentId == null &&
         opponent.availability == OpponentAvailability.idle;
-    return MergeSemantics(
+    final onTap = enabled ? () => _choose(opponent) : null;
+    return Semantics(
       key: Key('opponent-${opponent.id}'),
-      child: Semantics(
-        identifier: 'opponent-${opponent.id}',
-        button: true,
-        child: ListTile(
-          enabled: enabled,
-          title: Text(opponent.nickname),
-          subtitle: Text(_availabilityText(opponent)),
-          trailing: creating
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : null,
-          onTap: enabled ? () => _choose(opponent) : null,
-        ),
+      identifier: 'opponent-${opponent.id}',
+      label: '${opponent.nickname}\n${_availabilityText(opponent)}',
+      button: true,
+      enabled: enabled,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: ListTile(
+        enabled: enabled,
+        title: Text(opponent.nickname),
+        subtitle: Text(_availabilityText(opponent)),
+        trailing: creating
+            ? const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : null,
+        onTap: onTap,
       ),
     );
   }
