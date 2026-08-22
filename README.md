@@ -143,11 +143,11 @@ never credential plaintext.
 The Android app checks the latest stable GitHub Release at startup, with a
 six-hour local cache. The update button in the app bar can bypass that cache.
 When a newer semantic version is available, Gamebox downloads the APK into its
-private application-support directory, enforces a 500 MiB limit, verifies its
-SHA-256 digest, and asks Android's system package installer to install it. The
-native bridge also rejects APKs with the wrong package name, a non-incrementing
-version code, or a different signing certificate. Network or update failures
-do not block registration or gameplay.
+private application-support directory, verifies its SHA-256 digest, then asks
+Android's system package installer to install it. The native bridge also rejects
+APKs with the wrong package name, a non-incrementing version code, or a different
+signing certificate. Network or update failures do not block registration or
+gameplay.
 
 The reusable implementation lives in `packages/flutter_release_updater` and is
 UI-independent. Another Android Flutter application can use it through a path

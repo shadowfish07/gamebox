@@ -25,8 +25,6 @@ enum UpdateStatus {
 }
 
 final class UpdateController extends ChangeNotifier {
-  static const defaultMaxApkBytes = 500 * 1024 * 1024;
-
   UpdateController({
     required this.installedVersion,
     required ReleaseService releaseService,
@@ -38,7 +36,6 @@ final class UpdateController extends ChangeNotifier {
     required this.downloadUserAgent,
     DateTime Function()? now,
     this.checkInterval = const Duration(hours: 6),
-    this.maxApkBytes = defaultMaxApkBytes,
   }) : _releaseService = releaseService,
        _installer = installer,
        _downloadClient = downloadClient,
@@ -60,9 +57,6 @@ final class UpdateController extends ChangeNotifier {
         'Invalid HTTP user agent',
       );
     }
-    if (maxApkBytes <= 0) {
-      throw ArgumentError.value(maxApkBytes, 'maxApkBytes', 'Must be positive');
-    }
   }
 
   static Future<UpdateController> production({
@@ -71,7 +65,6 @@ final class UpdateController extends ChangeNotifier {
     String cacheKeyPrefix = 'releaseUpdater',
     String apiBaseUrl = 'https://api.github.com',
     Duration checkInterval = const Duration(hours: 6),
-    int maxApkBytes = defaultMaxApkBytes,
     ApkAssetMatcher? apkAssetMatcher,
   }) async {
     final packageInfo = await PackageInfo.fromPlatform();
@@ -97,7 +90,6 @@ final class UpdateController extends ChangeNotifier {
       cacheKeyPrefix: cacheKeyPrefix,
       downloadUserAgent: userAgent,
       checkInterval: checkInterval,
-      maxApkBytes: maxApkBytes,
     ).._ownedClients = [releaseClient, downloadClient];
   }
 
@@ -105,7 +97,6 @@ final class UpdateController extends ChangeNotifier {
   final String cacheKeyPrefix;
   final String downloadUserAgent;
   final Duration checkInterval;
-  final int maxApkBytes;
   final ReleaseService _releaseService;
   final ApkInstaller _installer;
   final http.Client _downloadClient;
@@ -205,10 +196,6 @@ final class UpdateController extends ChangeNotifier {
       if (response.statusCode != 200) {
         throw const UpdateDownloadException('APK 下载失败');
       }
-      if (response.contentLength case final contentLength?
-          when contentLength > maxApkBytes) {
-        throw const UpdateDownloadException('APK 文件异常过大');
-      }
       final sink = partial.openWrite();
       var received = 0;
       var lastReported = 0.0;
@@ -218,9 +205,6 @@ final class UpdateController extends ChangeNotifier {
         )) {
           sink.add(chunk);
           received += chunk.length;
-          if (received > maxApkBytes) {
-            throw const UpdateDownloadException('APK 文件异常过大');
-          }
           final total = response.contentLength;
           if (total != null && total > 0) {
             final progress = (received / total).clamp(0.0, 1.0);

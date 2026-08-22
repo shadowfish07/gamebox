@@ -6,7 +6,7 @@ APK files on GitHub Releases. The package is UI-independent and provides:
 - semantic-version checks against `releases/latest`, with a configurable cache;
 - APK selection plus a required SHA-256 from GitHub's asset digest or
   `checksums.txt`;
-- bounded streaming download into application-private storage;
+- streaming download into application-private storage;
 - package name, version code, and signing-certificate checks on Android;
 - handoff to Android's system package installer and explicit handling of the
   per-app "install unknown apps" setting.

@@ -173,20 +173,26 @@ void main() {
     expect(installer.paths[0], installer.paths[1]);
   });
 
-  test('stops a streaming download at the configured byte limit', () async {
+  test('does not impose an APK content-length limit', () async {
     SharedPreferences.setMockInitialValues({});
     final directory = await Directory.systemTemp.createTemp(
-      'flutter-updater-limit-test.',
+      'flutter-updater-unlimited-test.',
     );
+    final bytes = [1, 2, 3, 4];
     final installer = _FakeInstaller(InstallLaunchResult.started);
     final controller = await _controller(
       service: _FakeReleaseService(
-        UpdateCheckResult(update: _update(List.filled(64, '0').join())),
+        UpdateCheckResult(update: _update(sha256.convert(bytes).toString())),
       ),
       installer: installer,
       directory: directory,
-      client: MockClient((_) async => http.Response.bytes([1, 2, 3, 4], 200)),
-      maxApkBytes: 3,
+      client: _StreamClient(
+        (request) async => http.StreamedResponse(
+          http.ByteStream.fromBytes(bytes),
+          200,
+          contentLength: 1024 * 1024 * 1024,
+        ),
+      ),
     );
     addTearDown(() async {
       controller.dispose();
@@ -196,9 +202,10 @@ void main() {
     await controller.start();
     await controller.downloadAndInstall();
 
-    expect(controller.status, UpdateStatus.failed);
-    expect(controller.errorMessage, contains('异常过大'));
-    expect(installer.paths, isEmpty);
+    expect(controller.status, UpdateStatus.installerOpened);
+    expect(controller.downloadProgress, 1);
+    expect(installer.paths, hasLength(1));
+    expect(await File(installer.paths.single).readAsBytes(), bytes);
   });
 }
 
@@ -210,7 +217,6 @@ Future<UpdateController> _controller({
   SharedPreferences? preferences,
   String installedVersion = '1.0.0',
   DateTime Function()? now,
-  int maxApkBytes = UpdateController.defaultMaxApkBytes,
 }) async => UpdateController(
   installedVersion: installedVersion,
   releaseService: service,
@@ -221,7 +227,6 @@ Future<UpdateController> _controller({
   cacheKeyPrefix: 'example.update',
   downloadUserAgent: 'Example-update-download',
   now: now,
-  maxApkBytes: maxApkBytes,
 );
 
 AppUpdate _update(String checksum) => AppUpdate(
@@ -260,4 +265,14 @@ final class _FakeInstaller implements ApkInstaller {
     paths.add(apkPath);
     return result;
   }
+}
+
+final class _StreamClient extends http.BaseClient {
+  _StreamClient(this._send);
+
+  final Future<http.StreamedResponse> Function(http.BaseRequest request) _send;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _send(request);
 }
