@@ -249,7 +249,10 @@ func _refresh_ui() -> void:
 	else:
 		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
 
-	$StatusLabel.text = _status_text(local_user_id) if has_state else _connection_text()
+	var status_text: String = _status_text(local_user_id) if has_state else _connection_text()
+	if _force_return:
+		status_text = _error_text if not _error_text.is_empty() else "请返回大厅"
+	$StatusLabel.text = status_text
 	$ConnectionLabel.present(_connection_state, _connection_detail())
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
 	$ErrorLabel.present(_error_text, "error")

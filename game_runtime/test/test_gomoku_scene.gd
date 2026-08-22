@@ -15,6 +15,7 @@ static func cases() -> Array:
 	return [
 		{"name": "gomoku scene consumes the lightweight Gamebox shell", "run": _uses_lightweight_shell},
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
+		{"name": "gomoku scene keeps required return guidance after Snackbar timeout", "run": _keeps_required_return_guidance},
 		{"name": "gomoku scene hides the internal board revision", "run": _hides_internal_revision},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
@@ -113,6 +114,33 @@ static func _renders_live_states() -> bool:
 	return _cleanup(scene, result)
 
 
+static func _keeps_required_return_guidance() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	var snackbar_timer := scene.get_node("ErrorLabel/AutoHideTimer") as Timer
+	snackbar_timer.wait_time = 0.05
+	client.accept_snapshot(_snapshot(0))
+	client.require_return("resume_expired")
+	var safe_guidance := "登录状态已失效，请返回大厅"
+	if not _check(_error_visible(scene) and _error(scene) == safe_guidance, "required-return Snackbar did not show safe guidance") \
+		or not _check(not _status(scene).contains("resume_expired"), "required-return status exposed a raw code"):
+		return _cleanup(scene)
+	await (Engine.get_main_loop() as SceneTree).create_timer(0.08).timeout
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	if not _check(not _error_visible(scene), "required-return Snackbar did not complete its real timeout") \
+		or not _check(_status(scene) == safe_guidance, "required-return guidance disappeared with its Snackbar"):
+		return _cleanup(scene)
+	var back := scene.get_node("BackButton") as Button
+	if not _check(back.visible and not back.disabled, "required-return state disabled the visible Back control"):
+		return _cleanup(scene)
+	back.pressed.emit()
+	var result := _check(quit_calls.size() == 1, "required-return Back did not return exactly once") \
+		and _check(not _status(scene).contains("resume_expired"), "required-return UI exposed the raw return code")
+	return _cleanup(scene, result)
+
+
 static func _renders_terminal_states() -> bool:
 	var five := _five_board()
 	if not await _assert_terminal(BLACK_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "你赢了"):
@@ -158,7 +186,8 @@ static func _ignores_non_authoritative_snapshots() -> bool:
 	invalid_client.accept_snapshot(_snapshot(2, _two_stone_board(), "active", "black"))
 	invalid_client.begin_snapshot_sync()
 	invalid_client.emit_snapshot_raw({"type": "platform.snapshot"})
-	var result := _check(_status(invalid_scene) == "正在同步对局…", "invalid snapshot callback unlocked controller") \
+	var result := _check(_status(invalid_scene) == "同步失败，请返回大厅", "invalid snapshot did not keep required-return guidance") \
+		and _check((invalid_scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE, "invalid snapshot callback unlocked board input") \
 		and _check(invalid_scene.get_node("ResignButton").disabled, "invalid snapshot callback unlocked resign")
 	return _cleanup(invalid_scene, result)
 
@@ -655,6 +684,9 @@ class FakeMatchClient:
 
 	func emit_error(code: String) -> void:
 		match_error.emit(code)
+
+	func require_return(code: String) -> void:
+		return_to_lobby_requested.emit(code)
 
 	func begin_snapshot_sync() -> void:
 		snapshot_sync_started.emit()
