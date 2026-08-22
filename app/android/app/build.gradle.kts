@@ -1,4 +1,6 @@
 import java.util.Properties
+import javax.inject.Inject
+import org.gradle.api.file.FileSystemOperations
 
 plugins {
     id("com.android.application")
@@ -7,6 +9,9 @@ plugins {
 }
 
 abstract class StageGameRuntimeAssets : DefaultTask() {
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val sourceDirectory: DirectoryProperty
@@ -16,7 +21,7 @@ abstract class StageGameRuntimeAssets : DefaultTask() {
 
     @TaskAction
     fun stage() {
-        project.sync {
+        fileSystemOperations.sync {
             from(sourceDirectory) {
                 include(
                     "project.godot",
