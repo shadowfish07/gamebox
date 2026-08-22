@@ -42,17 +42,18 @@ class E2eSetTextTest {
         val editable = findEditable(field)
             ?: throw AssertionError("Approved E2E text field structure was invalid")
         editable.click()
-        device.wait(
-            Until.findObject(By.clazz(EDIT_TEXT_CLASS).focused(true)),
-            SELECTOR_TIMEOUT_MS,
-        ) ?: throw AssertionError("Approved E2E text field did not receive focus")
         // Opening the IME resizes Flutter's view and rebuilds its semantics
         // nodes, so the object clicked above may already be stale.
-        val focusedField = device.findObject(By.res(target))
-        val focusedEditable = focusedField?.let(::findEditable)
-        if (focusedEditable?.isFocused != true) {
-            throw AssertionError("Approved E2E text field focus was not stable")
-        }
+        val focusedField = device.wait(
+            Until.findObject(
+                By.res(target).hasDescendant(
+                    By.clazz(EDIT_TEXT_CLASS).focused(true),
+                ),
+            ),
+            SELECTOR_TIMEOUT_MS,
+        ) ?: throw AssertionError("Approved E2E text field focus was not stable")
+        val focusedEditable = findEditable(focusedField)
+            ?: throw AssertionError("Approved E2E text field structure was invalid after focus")
         // UiAutomator 2.4 injects text directly. Keeping the value inside this
         // process avoids exposing it through adb arguments or clipboard state.
         focusedEditable.text = decoded
