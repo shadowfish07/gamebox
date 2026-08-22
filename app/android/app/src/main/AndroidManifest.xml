@@ -32,11 +32,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- The main-process launch gate rejects overlap; singleTask is a defensive one-host backstop. -->
+        <!-- A private task lets Godot remove itself without removing the Flutter lobby task. -->
         <activity
             android:name=".GameActivity"
             android:exported="false"
             android:process=":game"
+            android:taskAffinity="${applicationId}.game"
+            android:excludeFromRecents="true"
             android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"

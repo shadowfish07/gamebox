@@ -43,4 +43,23 @@ void main() {
       contains('-keep class org.godotengine.godot.** { *; }'),
     );
   });
+
+  test('Android game process uses a private disposable task', () {
+    final manifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    final gameActivity = RegExp(
+      r'<activity\b(?=[^>]*android:name="\.GameActivity")[^>]*>',
+      dotAll: true,
+    ).firstMatch(manifest)?.group(0);
+
+    expect(gameActivity, isNotNull);
+    expect(gameActivity, contains('android:process=":game"'));
+    expect(
+      gameActivity,
+      contains(r'android:taskAffinity="${applicationId}.game"'),
+    );
+    expect(gameActivity, contains('android:excludeFromRecents="true"'));
+    expect(gameActivity, contains('android:launchMode="singleTask"'));
+  });
 }

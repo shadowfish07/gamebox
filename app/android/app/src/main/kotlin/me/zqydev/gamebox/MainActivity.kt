@@ -77,22 +77,50 @@ class MainActivity : FlutterActivity() {
         val gameProcessRunning = GameProcessLease.isHeld(
             GameProcessLease.lockFile(noBackupFilesDir),
         )
-        if (!launchGate.tryBeginLaunch(gameProcessRunning)) {
-            result.error(GAME_ALREADY_ACTIVE_CODE, GAME_ALREADY_ACTIVE_MESSAGE, null)
-            return
+        when (launchGate.requestLaunch(gameProcessRunning)) {
+            GameLaunchGate.Decision.START_NEW -> startNewGame(args, result)
+            GameLaunchGate.Decision.RESUME_ACTIVE -> resumeActiveGame(result)
+            GameLaunchGate.Decision.REJECT ->
+                result.error(GAME_ALREADY_ACTIVE_CODE, GAME_ALREADY_ACTIVE_MESSAGE, null)
         }
+    }
+
+    private fun startNewGame(args: GameLaunchArgs, result: MethodChannel.Result) {
         val intent = Intent(this, GameActivity::class.java).apply {
             putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, args.commandLineParams)
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
         }
+        startGameActivity(intent, result, releaseLaunchGateOnFailure = true)
+    }
+
+    private fun resumeActiveGame(result: MethodChannel.Result) {
+        val intent = Intent(this, GameActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+        }
+        startGameActivity(intent, result, releaseLaunchGateOnFailure = false)
+    }
+
+    private fun startGameActivity(
+        intent: Intent,
+        result: MethodChannel.Result,
+        releaseLaunchGateOnFailure: Boolean,
+    ) {
         try {
             startActivity(intent)
             result.success(null)
         } catch (_: ActivityNotFoundException) {
-            launchGate.onLaunchFailed()
+            if (releaseLaunchGateOnFailure) launchGate.onLaunchFailed()
             result.error(LAUNCH_FAILED_CODE, LAUNCH_FAILED_MESSAGE, null)
         } catch (_: SecurityException) {
-            launchGate.onLaunchFailed()
+            if (releaseLaunchGateOnFailure) launchGate.onLaunchFailed()
             result.error(LAUNCH_FAILED_CODE, LAUNCH_FAILED_MESSAGE, null)
         }
     }

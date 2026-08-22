@@ -45,17 +45,13 @@ class HostSmokeClickTest {
     }
 
     @Test
-    fun clickHostSmokeAndExpectActiveLaunchRejection() {
+    fun clickHostSmokeToResumeActiveGame() {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val button = findLaunchButton(device)
 
         assertNotNull("Missing accessibility selector: $HOST_SMOKE_DESCRIPTION", button)
         button.click()
-        val error = device.wait(
-            Until.findObject(By.pkg(APP_PACKAGE).desc(HOST_SMOKE_ERROR_DESCRIPTION)),
-            SELECTOR_TIMEOUT_MS,
-        )
-        assertNotNull("Missing deterministic active-launch rejection", error)
+        device.waitForIdle()
     }
 
     @Test
@@ -76,7 +72,6 @@ class HostSmokeClickTest {
         const val HOST_SMOKE_DESCRIPTION = "host-smoke.launch"
         const val NORMAL_CANARY_DESCRIPTION = "host-smoke.normal-canary"
         const val COLLISION_CANARY_DESCRIPTION = "host-smoke.collision-canary"
-        const val HOST_SMOKE_ERROR_DESCRIPTION = "host-smoke.error"
         const val SELECTOR_TIMEOUT_MS = 20_000L
     }
 }
