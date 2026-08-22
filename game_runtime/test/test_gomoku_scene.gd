@@ -133,7 +133,8 @@ static func _keeps_required_return_guidance() -> bool:
 		or not _check(_status(scene) == safe_guidance, "required-return guidance disappeared with its Snackbar"):
 		return _cleanup(scene)
 	var back := scene.get_node("BackButton") as Button
-	if not _check(back.visible and not back.disabled, "required-return state disabled the visible Back control"):
+	if not _check(back.visible and not back.disabled, "required-return state disabled the visible Back control") \
+		or not _check(quit_calls.is_empty(), "required-return guidance auto-returned before player input"):
 		return _cleanup(scene)
 	back.pressed.emit()
 	var result := _check(quit_calls.size() == 1, "required-return Back did not return exactly once") \
