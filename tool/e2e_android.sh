@@ -1140,6 +1140,8 @@ self_test() {
     || { printf 'remote UI dump cleanup contract is missing\n' >&2; return 1; }
   grep -F 'apkSha256' <<<"$runtime_source" >/dev/null \
     || { printf 'APK build provenance is missing\n' >&2; return 1; }
+  grep -F 'uninstall "$installed_package"' <<<"$runtime_source" >/dev/null \
+    || { printf 'preinstall package cleanup is missing\n' >&2; return 1; }
   printf 'Gamebox E2E parser fixtures passed.\n'
 }
 
@@ -1602,13 +1604,16 @@ readonly APK_SHA256 TEST_APK_SHA256
 
 install_app() {
   local serial="$1"
-  if adb_for "$serial" shell pm path "$PACKAGE" 2>/dev/null | grep -q '^package:'; then
-    adb_for "$serial" shell pm clear "$PACKAGE" >/dev/null \
-      || fail "could not clear only $PACKAGE on $serial before install"
-  fi
-  adb_for "$serial" install --streaming -r "$APK" >/dev/null \
+  local installed_package
+  for installed_package in "$TEST_PACKAGE" "$PACKAGE"; do
+    if adb_for "$serial" shell pm path "$installed_package" 2>/dev/null | grep -q '^package:'; then
+      adb_for "$serial" uninstall "$installed_package" >/dev/null \
+        || fail "could not remove the previous $installed_package installation on $serial"
+    fi
+  done
+  adb_for "$serial" install --streaming "$APK" >/dev/null \
     || fail "APK installation failed on $serial"
-  adb_for "$serial" install --streaming -r -t "$TEST_APK" >/dev/null \
+  adb_for "$serial" install --streaming -t "$TEST_APK" >/dev/null \
     || fail "E2E-owned UI Automator helper installation failed on $serial"
   adb_for "$serial" shell pm clear "$PACKAGE" >/dev/null \
     || fail "could not clear only $PACKAGE on $serial after install"
