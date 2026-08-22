@@ -66,13 +66,19 @@ static func _renders_presence_updates() -> bool:
 	var client: FakeMatchClient = harness["client"]
 	client.set_player_presence(WHITE_ID, true, false)
 	client.accept_snapshot(_snapshot(0))
-	if not _check(_opponent_presence(scene) == "对手在线", "initial opponent presence was not rendered"):
+	var online_color: Color = (scene.get_node("PresenceDot") as Label).get_theme_color("font_color")
+	if not _check(_opponent_presence(scene) == "对手在线", "initial opponent presence was not rendered") \
+		or not _check(online_color == Color("248457"), "online presence did not use the live accent"):
 		return _cleanup(scene)
 	client.set_player_presence(WHITE_ID, false)
-	if not _check(_opponent_presence(scene) == "对手离线", "offline opponent transition was not rendered"):
+	var offline_color: Color = (scene.get_node("PresenceDot") as Label).get_theme_color("font_color")
+	if not _check(_opponent_presence(scene) == "对手离线", "offline opponent transition was not rendered") \
+		or not _check(offline_color == Color("c4473d"), "offline presence did not use the warning accent"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
-	return _cleanup(scene, _check(_opponent_presence(scene) == "对手状态未知", "reconnect retained stale opponent presence"))
+	var unknown_color: Color = (scene.get_node("PresenceDot") as Label).get_theme_color("font_color")
+	return _cleanup(scene, _check(_opponent_presence(scene) == "对手状态未知", "reconnect retained stale opponent presence") \
+		and _check(unknown_color == Color("667085"), "unknown presence did not use the neutral accent"))
 
 
 static func _renders_terminal_states() -> bool:

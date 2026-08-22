@@ -237,6 +237,9 @@ func _refresh_ui() -> void:
 	$ConnectionLabel.text = _connection_detail()
 	$OpponentPresenceLabel.text = _opponent_presence_text(opponent_presence)
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
+	_refresh_status_style(has_state, local_user_id)
+	_refresh_presence_style(opponent_presence)
+	_refresh_player_style(local_color)
 	$RevisionLabel.text = "版本 %d" % _state.revision if has_state else ""
 	$ErrorLabel.text = _error_text
 	$ErrorLabel.visible = not _error_text.is_empty()
@@ -318,6 +321,68 @@ func _opponent_presence_text(presence: String) -> String:
 			return "对手离线"
 		_:
 			return "对手状态未知"
+
+
+func _refresh_status_style(has_state: bool, local_user_id: String) -> void:
+	var accent := Color("3978c5")
+	if _connection_state in ["reconnecting", "connecting"] or _awaiting_snapshot:
+		accent = Color("c4862c")
+	elif _connection_state in ["failed", "closed"]:
+		accent = Color("c4473d")
+	elif has_state and _state.status == "finished":
+		accent = Color("2f8a5b") if _state.result == "draw" or _state.winner_user_id == local_user_id else Color("c4473d")
+	elif has_state and _state.status in ["cancelled", "abandoned"]:
+		accent = Color("667085")
+	elif has_state and _local_color(local_user_id) != _state.next_color:
+		accent = Color("8a6a3d")
+	$StatusLabel.add_theme_color_override("font_color", accent)
+	$TurnAccent.color = accent
+
+
+func _refresh_presence_style(presence: String) -> void:
+	var foreground := Color("667085")
+	var background := Color("ecebe7")
+	var border := Color("667085", 0.16)
+	match presence:
+		"online":
+			foreground = Color("248457")
+			background = Color("e5f4eb")
+			border = Color("248457", 0.22)
+		"offline":
+			foreground = Color("c4473d")
+			background = Color("fae9e5")
+			border = Color("c4473d", 0.22)
+	$PresenceDot.add_theme_color_override("font_color", foreground)
+	$OpponentPresenceLabel.add_theme_color_override("font_color", foreground)
+	$OpponentPresencePill.add_theme_stylebox_override("panel", _rounded_pill(background, border))
+
+
+func _refresh_player_style(local_color: String) -> void:
+	$PlayerStone.text = "●" if not local_color.is_empty() else "○"
+	if local_color == "white":
+		$PlayerStone.add_theme_color_override("font_color", Color("fffdf7"))
+		$PlayerStone.add_theme_constant_override("outline_size", 3)
+	elif local_color == "black":
+		$PlayerStone.add_theme_color_override("font_color", Color("1b2230"))
+		$PlayerStone.add_theme_constant_override("outline_size", 0)
+	else:
+		$PlayerStone.add_theme_color_override("font_color", Color("98a2b3"))
+		$PlayerStone.add_theme_constant_override("outline_size", 0)
+
+
+func _rounded_pill(background: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.corner_radius_top_left = 22
+	style.corner_radius_top_right = 22
+	style.corner_radius_bottom_right = 22
+	style.corner_radius_bottom_left = 22
+	return style
 
 
 func _local_color(local_user_id: String) -> String:
