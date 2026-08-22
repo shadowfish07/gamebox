@@ -319,6 +319,43 @@ final gridWide = GridView.count(crossAxisSpacing: 13);
     }
   });
 
+  test('production verifier rejects complete Flutter numeric literals', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-flutter-numeric-',
+    );
+    try {
+      _writeFixture(fixtureRoot, 'app/lib/numeric_literals.dart', '''
+final exponentSize = TextStyle(fontSize: 1e2);
+final exponentInset = EdgeInsets.all(1e2);
+final underscoredDuration = Duration(milliseconds: 1_00);
+final underscoredSize = TextStyle(fontSize: 1_00.0);
+final positiveExponent = TextStyle(fontSize: 1E+2);
+final negativeExponent = TextStyle(fontSize: 1e-2);
+final leadingDot = TextStyle(fontSize: .5);
+final leadingDotExponent = TextStyle(fontSize: .5E+2);
+final separatedExponent = TextStyle(fontSize: 1_2.3_4e-5_6);
+final separatedHex = Color(0xFF_12_34_56);
+''');
+      expectThrowsAll(
+        () => verifyProductionDesignHardcodes(fixtureRoot),
+        contains: const [
+          'fontSize: 1e2',
+          'EdgeInsets.all(1e2',
+          'milliseconds: 1_00',
+          'fontSize: 1_00.0',
+          'fontSize: 1E+2',
+          'fontSize: 1e-2',
+          'fontSize: .5',
+          'fontSize: .5E+2',
+          'fontSize: 1_2.3_4e-5_6',
+          'Color(0xFF_12_34_56',
+        ],
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
   test('production verifier accepts token-backed Flutter styles', () {
     final fixtureRoot = Directory.systemTemp.createTempSync(
       'gamebox-flutter-tokens-',
@@ -362,6 +399,32 @@ final gridWide = GridView.count(crossAxisSpacing: GameboxTokens.spacing.page);
     }
   });
 
+  test('production verifier ignores Dart comments and unrelated strings', () {
+    final fixtureRoot = Directory.systemTemp.createTempSync(
+      'gamebox-flutter-non-code-',
+    );
+    try {
+      _writeFixture(fixtureRoot, 'app/lib/non_code.dart', r'''
+// EdgeInsetsDirectional.only(start: 7)
+/* Colors.red and fontSize: 13.5 */
+final single = 'Colors.red';
+final double = "fontSize: 13.5";
+final escaped = "quoted \"Colors.red\" value";
+final raw = r'EdgeInsetsDirectional.only(start: 7)';
+final multiline = """
+Colors.red
+fontSize: 13.5
+""";
+final rawMultiline = r"""
+EdgeInsetsDirectional.only(start: 7)
+""";
+''');
+      verifyProductionDesignHardcodes(fixtureRoot);
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+    }
+  });
+
   test('production verifier rejects Godot color literals', () {
     final fixtureRoot = Directory.systemTemp.createTempSync(
       'gamebox-godot-hardcodes-',
@@ -375,6 +438,7 @@ const NUMERIC := Color(0.1, 0.2, 0.3, 1.0)
 const NUMERIC_SPACED := Color ( 0.1 , 0.2 , 0.3 , 1.0 )
 var derived := Color(existing_color, 0.56)
 const NAMED_CONSTANT := Color.RED
+var first := 1; var AFTER_SEMICOLON := Color.BLUE
 theme_override_font_sizes/font_size = 28
 ''');
       expectThrowsAll(
@@ -387,6 +451,7 @@ theme_override_font_sizes/font_size = 28
           'Color ( 0.1 ,',
           'Color(existing_color, 0.56',
           'Color.RED',
+          'Color.BLUE',
           'theme_override_font_sizes/font_size = 28',
         ],
       );
@@ -394,6 +459,72 @@ theme_override_font_sizes/font_size = 28
       fixtureRoot.deleteSync(recursive: true);
     }
   });
+
+  test(
+    'production verifier rejects complete Godot numeric and hex literals',
+    () {
+      final fixtureRoot = Directory.systemTemp.createTempSync(
+        'gamebox-godot-numeric-',
+      );
+      try {
+        _writeFixture(fixtureRoot, 'game_runtime/numeric_literals.gd', '''
+const HEX_THREE := Color("#abc")
+const HEX_FOUR := Color("#abcd")
+const POSITIVE_EXPONENT := Color(1e+2, 0.0, 0.0, 1.0)
+const NEGATIVE_EXPONENT := Color(1e-2, 0.0, 0.0, 1.0)
+const UNDERSCORED := Color(1_00.0, 0.0, 0.0, 1.0)
+const SEPARATED_EXPONENT := Color(1_2.3_4e-5_6, 0.0, 0.0, 1.0)
+''');
+        expectThrowsAll(
+          () => verifyProductionDesignHardcodes(fixtureRoot),
+          contains: const [
+            'Color("#abc")',
+            'Color("#abcd")',
+            'Color(1e+2,',
+            'Color(1e-2,',
+            'Color(1_00.0,',
+            'Color(1_2.3_4e-5_6,',
+          ],
+        );
+      } finally {
+        fixtureRoot.deleteSync(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'production verifier ignores GDScript comments and unrelated strings',
+    () {
+      final fixtureRoot = Directory.systemTemp.createTempSync(
+        'gamebox-godot-non-code-',
+      );
+      try {
+        final fixture = _writeFixture(
+          fixtureRoot,
+          'game_runtime/non_code.gd',
+          r'''
+# Color("red") and Color.RED
+var single := 'Color("red")'
+var double := "Colors.red and fontSize: 13.5"
+var escaped := "quoted \"Color(0.1, 0.2, 0.3, 1.0)\" value"
+var raw := r"Color.RED"
+var multiline := """
+Color("red")
+Color(0.1, 0.2, 0.3, 1.0)
+"""
+''',
+        );
+        verifyProductionDesignHardcodes(fixtureRoot);
+        fixture.writeAsStringSync('var real := Color("red")\n');
+        expectThrows(
+          () => verifyProductionDesignHardcodes(fixtureRoot),
+          contains: 'Color("red")',
+        );
+      } finally {
+        fixtureRoot.deleteSync(recursive: true);
+      }
+    },
+  );
 
   test(
     'production verifier accepts token-backed Godot styles and coordinates',
@@ -575,6 +706,92 @@ var coordinate := Vector2(60, 360)
     }
   });
 
+  test('reconciliation rejects unsafe registered paths before reading', () {
+    final sandboxRoot = Directory.systemTemp.createTempSync(
+      'gamebox-normative-paths-',
+    );
+    final temporaryFixture = _copyReconciliationFixture(repositoryRoot);
+    final fixtureRoot = temporaryFixture.renameSync(
+      '${sandboxRoot.path}/repository',
+    );
+    try {
+      const value = 4;
+      const unit = 'dp';
+      File(
+        '${sandboxRoot.path}/outside.md',
+      ).writeAsStringSync('a $value$unit base grid\n');
+      final standard = File(
+        '${fixtureRoot.path}/.agents/skills/gamebox-material-3-ux/references/ux-standard.md',
+      );
+      standard.writeAsStringSync(
+        standard.readAsStringSync().replaceFirst(
+          'a $value$unit base grid',
+          'a four-$unit base grid',
+        ),
+      );
+      final readme = File('${fixtureRoot.path}/design_system/README.md');
+      final canonicalReadme = readme.readAsStringSync();
+      for (final unsafePath in [
+        '../outside.md',
+        '${sandboxRoot.path}/outside.md',
+        '.agents/./skills/gamebox-material-3-ux/references/ux-standard.md',
+        r'..\outside.md',
+      ]) {
+        readme.writeAsStringSync(
+          _replaceRegisteredPath(
+            canonicalReadme,
+            id: 'ux-spacing-base',
+            path: unsafePath,
+          ),
+        );
+        expectThrows(
+          () => verifyNormativeClaims(canonicalFixture, fixtureRoot),
+          contains: 'must be a normalized repository-relative path',
+        );
+      }
+    } finally {
+      sandboxRoot.deleteSync(recursive: true);
+    }
+  });
+
+  test('reconciliation rejects registered symlink escapes', () {
+    final fixtureRoot = _copyReconciliationFixture(repositoryRoot);
+    final outsideRoot = Directory.systemTemp.createTempSync(
+      'gamebox-normative-symlink-',
+    );
+    try {
+      const value = 4;
+      const unit = 'dp';
+      final outside = File('${outsideRoot.path}/outside.md')
+        ..writeAsStringSync('a $value$unit base grid\n');
+      Link('${fixtureRoot.path}/escape.md').createSync(outside.path);
+      final standard = File(
+        '${fixtureRoot.path}/.agents/skills/gamebox-material-3-ux/references/ux-standard.md',
+      );
+      standard.writeAsStringSync(
+        standard.readAsStringSync().replaceFirst(
+          'a $value$unit base grid',
+          'a four-$unit base grid',
+        ),
+      );
+      final readme = File('${fixtureRoot.path}/design_system/README.md');
+      readme.writeAsStringSync(
+        _replaceRegisteredPath(
+          readme.readAsStringSync(),
+          id: 'ux-spacing-base',
+          path: 'escape.md',
+        ),
+      );
+      expectThrows(
+        () => verifyNormativeClaims(canonicalFixture, fixtureRoot),
+        contains: 'must resolve inside the repository',
+      );
+    } finally {
+      fixtureRoot.deleteSync(recursive: true);
+      outsideRoot.deleteSync(recursive: true);
+    }
+  });
+
   if (_failed != 0) {
     stderr.writeln('FAILED: $_failed test(s), PASSED: $_passed');
     exitCode = 1;
@@ -718,4 +935,22 @@ File _writeFixture(Directory root, String relativePath, String contents) {
   file.parent.createSync(recursive: true);
   file.writeAsStringSync(contents);
   return file;
+}
+
+String _replaceRegisteredPath(
+  String readme, {
+  required String id,
+  required String path,
+}) {
+  final markerStart = '"id":"$id","path":';
+  final start = readme.indexOf(markerStart);
+  if (start < 0) {
+    throw StateError('Missing numeric claim marker <$id>.');
+  }
+  final valueStart = start + markerStart.length;
+  final valueEnd = readme.indexOf(',"token":', valueStart);
+  if (valueEnd < 0) {
+    throw StateError('Missing path terminator for numeric claim marker <$id>.');
+  }
+  return readme.replaceRange(valueStart, valueEnd, jsonEncode(path));
 }

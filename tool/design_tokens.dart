@@ -929,13 +929,16 @@ void verifyProductionDesignHardcodes(Directory repositoryRoot) {
     repositoryRoot,
     relativeRoot: 'app/lib',
     extensions: const {'.dart'},
-    pattern: _flutterStyleLiteralPattern(),
+    dialect: _SourceDialect.dart,
+    codePattern: _flutterStyleLiteralPattern(),
   );
   final godotMatches = _collectStyleLiterals(
     repositoryRoot,
     relativeRoot: 'game_runtime',
     extensions: const {'.gd', '.tscn'},
-    pattern: _godotStyleLiteralPattern(),
+    dialect: _SourceDialect.godot,
+    codePattern: _godotStyleLiteralPattern(),
+    codeStartPattern: _godotColorStringLiteralPattern(),
   );
   final newFlutter = _subtractExactMultiset(
     flutterMatches,
@@ -968,11 +971,11 @@ void verifyProductionDesignHardcodes(Directory repositoryRoot) {
 }
 
 RegExp _flutterStyleLiteralPattern() {
-  const number =
-      r'(?<![A-Za-z0-9_.])(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?![A-Za-z0-9_.])';
+  const number = _sourceNumericLiteralPattern;
+  const hexadecimal = r'0[xX][0-9A-Fa-f](?:_*[0-9A-Fa-f])*';
   return RegExp(
     '\\bColors\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*'
-    '|\\bColor\\s*\\(\\s*(?:0x[0-9A-Fa-f]+|$number)'
+    '|\\bColor\\s*\\(\\s*(?:$hexadecimal|$number)'
     '|\\bColor\\s*\\.\\s*(?:fromARGB|fromRGBO)\\s*\\([^)]*?$number'
     '|\\bfontSize\\s*:\\s*[^,\\n})]*?$number'
     '|\\bBorderRadius\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*\\s*\\([^)]*?$number'
@@ -989,13 +992,9 @@ RegExp _flutterStyleLiteralPattern() {
 }
 
 RegExp _godotStyleLiteralPattern() {
-  const number =
-      r'(?<![A-Za-z0-9_.])(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?![A-Za-z0-9_.])';
+  const number = _sourceNumericLiteralPattern;
   return RegExp(
-    '\\bColor\\s*\\(\\s*[\"\\\']'
-    '(?:#?[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?|[A-Za-z][A-Za-z0-9_]*)'
-    '[\"\\\']\\s*\\)'
-    '|\\bColor\\s*\\.\\s*[A-Z][A-Z0-9_]*'
+    '\\bColor\\s*\\.\\s*[A-Z][A-Z0-9_]*'
     '|\\bColor\\s*\\(\\s*$number\\s*,'
     '|\\bColor\\s*\\(\\s*[^,\\n]+,\\s*[^)]*?$number'
     '|\\btheme_override_[A-Za-z0-9_/]+\\s*=\\s*$number',
@@ -1004,11 +1003,27 @@ RegExp _godotStyleLiteralPattern() {
   );
 }
 
+RegExp _godotColorStringLiteralPattern() => RegExp(
+  '\\bColor\\s*\\(\\s*[\"\\\']'
+  '(?:#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|'
+  '[0-9A-Fa-f]{8})|[A-Za-z][A-Za-z0-9_]*)'
+  '[\"\\\']\\s*\\)',
+);
+
+const _sourceNumericLiteralPattern =
+    r'(?<![A-Za-z0-9_.])'
+    r'(?:(?:[0-9](?:_*[0-9])*)(?:\.(?:[0-9](?:_*[0-9])*)?)?'
+    r'|\.[0-9](?:_*[0-9])*)'
+    r'(?:[eE][+-]?[0-9](?:_*[0-9])*)?'
+    r'(?![A-Za-z0-9_.])';
+
 List<String> _collectStyleLiterals(
   Directory repositoryRoot, {
   required String relativeRoot,
   required Set<String> extensions,
-  required RegExp pattern,
+  required _SourceDialect dialect,
+  required RegExp codePattern,
+  RegExp? codeStartPattern,
 }) {
   final sourceRoot = Directory('${repositoryRoot.path}/$relativeRoot');
   if (!sourceRoot.existsSync()) {
@@ -1030,13 +1045,181 @@ List<String> _collectStyleLiterals(
   final matches = <String>[];
   for (final file in files) {
     final relativePath = _relativePath(repositoryRoot, file);
-    for (final match in pattern.allMatches(file.readAsStringSync())) {
-      matches.add('$relativePath:${_normalizeStyleLiteral(match.group(0)!)}');
+    final source = file.readAsStringSync();
+    final masked = _maskNonCode(source, dialect);
+    for (final match in codePattern.allMatches(masked.code)) {
+      matches.add(
+        '$relativePath:'
+        '${_normalizeStyleLiteral(source.substring(match.start, match.end))}',
+      );
+    }
+    if (codeStartPattern != null) {
+      for (final match in codeStartPattern.allMatches(source)) {
+        if (!masked.isCode(match.start)) {
+          continue;
+        }
+        matches.add(
+          '$relativePath:'
+          '${_normalizeStyleLiteral(source.substring(match.start, match.end))}',
+        );
+      }
     }
   }
   matches.sort();
   return matches;
 }
+
+enum _SourceDialect { dart, godot }
+
+final class _MaskedSource {
+  const _MaskedSource(this.code, this._codePositions);
+
+  final String code;
+  final List<bool> _codePositions;
+
+  bool isCode(int index) =>
+      index >= 0 && index < _codePositions.length && _codePositions[index];
+}
+
+_MaskedSource _maskNonCode(String source, _SourceDialect dialect) {
+  final units = source.codeUnits.toList();
+  final codePositions = List<bool>.filled(units.length, true);
+  var index = 0;
+  while (index < units.length) {
+    if (dialect == _SourceDialect.dart && source.startsWith('//', index)) {
+      index = _maskLineComment(units, codePositions, index);
+      continue;
+    }
+    if (dialect == _SourceDialect.dart && source.startsWith('/*', index)) {
+      index = _maskDartBlockComment(source, units, codePositions, index);
+      continue;
+    }
+    if (dialect == _SourceDialect.godot && units[index] == _hash) {
+      index = _maskLineComment(units, codePositions, index);
+      continue;
+    }
+
+    var quoteIndex = index;
+    var raw = false;
+    if ((units[index] == _lowerR || units[index] == _upperR) &&
+        index + 1 < units.length &&
+        _isQuote(units[index + 1]) &&
+        (index == 0 || !_isIdentifierUnit(units[index - 1]))) {
+      raw = true;
+      quoteIndex += 1;
+    }
+    if (_isQuote(units[quoteIndex])) {
+      index = _maskString(
+        source,
+        units,
+        codePositions,
+        start: index,
+        quoteIndex: quoteIndex,
+        raw: raw,
+      );
+      continue;
+    }
+    index += 1;
+  }
+  return _MaskedSource(String.fromCharCodes(units), codePositions);
+}
+
+int _maskLineComment(List<int> units, List<bool> codePositions, int start) {
+  var end = start;
+  while (end < units.length && units[end] != _lineFeed) {
+    end += 1;
+  }
+  _maskRange(units, codePositions, start, end);
+  return end;
+}
+
+int _maskDartBlockComment(
+  String source,
+  List<int> units,
+  List<bool> codePositions,
+  int start,
+) {
+  var depth = 1;
+  var end = start + 2;
+  while (end < units.length && depth > 0) {
+    if (source.startsWith('/*', end)) {
+      depth += 1;
+      end += 2;
+    } else if (source.startsWith('*/', end)) {
+      depth -= 1;
+      end += 2;
+    } else {
+      end += 1;
+    }
+  }
+  _maskRange(units, codePositions, start, end);
+  return end;
+}
+
+int _maskString(
+  String source,
+  List<int> units,
+  List<bool> codePositions, {
+  required int start,
+  required int quoteIndex,
+  required bool raw,
+}) {
+  final quote = units[quoteIndex];
+  final delimiter = String.fromCharCodes([quote, quote, quote]);
+  final triple = source.startsWith(delimiter, quoteIndex);
+  var end = quoteIndex + (triple ? 3 : 1);
+  while (end < units.length) {
+    if (!raw && units[end] == _backslash) {
+      end += end + 1 < units.length ? 2 : 1;
+      continue;
+    }
+    if (triple && source.startsWith(delimiter, end)) {
+      end += 3;
+      break;
+    }
+    if (!triple && units[end] == quote) {
+      end += 1;
+      break;
+    }
+    end += 1;
+  }
+  _maskRange(units, codePositions, start, end);
+  return end;
+}
+
+void _maskRange(List<int> units, List<bool> codePositions, int start, int end) {
+  for (var index = start; index < end && index < units.length; index += 1) {
+    codePositions[index] = false;
+    if (units[index] != _lineFeed && units[index] != _carriageReturn) {
+      units[index] = _space;
+    }
+  }
+}
+
+bool _isQuote(int unit) => unit == _singleQuote || unit == _doubleQuote;
+
+bool _isIdentifierUnit(int unit) =>
+    unit == _underscore ||
+    unit >= _zero && unit <= _nine ||
+    unit >= _upperA && unit <= _upperZ ||
+    unit >= _lowerA && unit <= _lowerZ;
+
+const _lineFeed = 0x0A;
+const _carriageReturn = 0x0D;
+const _space = 0x20;
+const _hash = 0x23;
+const _singleQuote = 0x27;
+const _doubleQuote = 0x22;
+const _backslash = 0x5C;
+const _zero = 0x30;
+const _nine = 0x39;
+const _upperA = 0x41;
+const _upperR = 0x52;
+const _upperZ = 0x5A;
+const _underscore = 0x5F;
+const _lowerA = 0x61;
+const _lowerR = 0x72;
+const _lowerZ = 0x7A;
 
 String _normalizeStyleLiteral(String literal) =>
     literal.replaceAll(RegExp(r'\s+'), ' ');
@@ -1147,6 +1330,16 @@ void verifyNormativeClaims(
     );
   }
   final registry = _parseNumericClaimRegistry(registryFile.readAsLinesSync());
+  for (final registration in registry) {
+    _validateRegisteredRelativePath(registration);
+  }
+  final registeredFiles = <String, File>{
+    for (final registration in registry)
+      registration.id: _resolveRegisteredClaimFile(
+        repositoryRoot,
+        registration,
+      ),
+  };
   final scanPaths = <String>{
     ...Directory(
           '${repositoryRoot.path}/.agents/skills/gamebox-material-3-ux/references',
@@ -1167,14 +1360,7 @@ void verifyNormativeClaims(
 
   final registeredOccurrences = <String, String>{};
   for (final registration in registry) {
-    final file = File('${repositoryRoot.path}/${registration.relativePath}');
-    if (!file.existsSync()) {
-      throw DesignTokenFormatException(
-        registration.id,
-        'registered normative claim file is missing: '
-        '${registration.relativePath}.',
-      );
-    }
+    final file = registeredFiles[registration.id]!;
     final value = registration.tokenPath == null
         ? registration.fixedValue
         : _jsonPath(canonical, registration.tokenPath!);
@@ -1271,6 +1457,49 @@ void verifyNormativeClaims(
       );
     }
   }
+}
+
+void _validateRegisteredRelativePath(_NumericClaim registration) {
+  final path = registration.relativePath;
+  final segments = path.split('/');
+  if (path.isEmpty ||
+      path.startsWith('/') ||
+      path.contains(r'\') ||
+      RegExp(r'^[A-Za-z]:').hasMatch(path) ||
+      segments.any(
+        (segment) => segment.isEmpty || segment == '.' || segment == '..',
+      )) {
+    throw DesignTokenFormatException(
+      registration.id,
+      'registered path must be a normalized repository-relative path.',
+    );
+  }
+}
+
+File _resolveRegisteredClaimFile(
+  Directory repositoryRoot,
+  _NumericClaim registration,
+) {
+  final file = File('${repositoryRoot.path}/${registration.relativePath}');
+  if (!file.existsSync()) {
+    throw DesignTokenFormatException(
+      registration.id,
+      'registered normative claim file is missing: '
+      '${registration.relativePath}.',
+    );
+  }
+  final resolvedRoot = repositoryRoot.resolveSymbolicLinksSync();
+  final resolvedFile = file.resolveSymbolicLinksSync();
+  final rootPrefix = resolvedRoot.endsWith(Platform.pathSeparator)
+      ? resolvedRoot
+      : '$resolvedRoot${Platform.pathSeparator}';
+  if (!resolvedFile.startsWith(rootPrefix)) {
+    throw DesignTokenFormatException(
+      registration.id,
+      'registered path must resolve inside the repository.',
+    );
+  }
+  return file;
 }
 
 List<_NumericClaim> _parseNumericClaimRegistry(List<String> lines) {
