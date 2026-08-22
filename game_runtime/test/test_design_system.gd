@@ -26,7 +26,7 @@ static func _maps_semantic_tokens() -> bool:
 
 static func _defines_control_states() -> bool:
 	var theme := GameboxTheme.create(false)
-	for type_name in ["Label", "Button", "PanelContainer", "ProgressBar", "ConfirmationDialog"]:
+	for type_name in ["Label", "Button", "PanelContainer", "ProgressBar", "Window", "AcceptDialog"]:
 		if not _check(theme.get_type_list().has(type_name), "missing shared Theme type %s" % type_name):
 			return false
 	for state in ["normal", "hover", "pressed", "disabled"]:

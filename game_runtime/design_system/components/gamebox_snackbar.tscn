@@ -5,6 +5,7 @@
 [node name="GameboxSnackbar" type="PanelContainer"]
 visible = false
 mouse_filter = 2
+mouse_behavior_recursive = 1
 theme_type_variation = &"GameboxSnackbar"
 script = ExtResource("1_snackbar")
 
@@ -13,6 +14,7 @@ layout_mode = 2
 
 [node name="Message" type="Label" parent="Content"]
 layout_mode = 2
+theme_type_variation = &"GameboxOnInverseSurface"
 horizontal_alignment = 1
 autowrap_mode = 2
 

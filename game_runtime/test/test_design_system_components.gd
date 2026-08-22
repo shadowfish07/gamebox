@@ -1,6 +1,7 @@
 extends RefCounted
 
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 const BackButtonScene = preload("res://design_system/components/gamebox_back_button.tscn")
 const ConnectionBannerScene = preload("res://design_system/components/gamebox_connection_banner.tscn")
 const SnackbarScene = preload("res://design_system/components/gamebox_snackbar.tscn")
@@ -13,7 +14,9 @@ static func cases() -> Array:
 	return [
 		{"name": "design system back button keeps target copy and states", "run": _back_button_contract},
 		{"name": "design system connection banner maps transient states", "run": _connection_states},
+		{"name": "design system semantic surfaces resolve paired colors", "run": _semantic_surface_colors},
 		{"name": "design system snackbar presents and times out", "run": _snackbar_lifecycle},
+		{"name": "design system snackbar passes clicks through its subtree", "run": _snackbar_mouse_passthrough},
 		{"name": "design system confirmation dialog states the consequence", "run": _confirmation_contract},
 		{"name": "design system loading overlay locks input with visible copy", "run": _loading_contract},
 		{"name": "design system result panel maps outcomes and returns", "run": _result_contract},
@@ -61,10 +64,50 @@ static func _connection_states() -> bool:
 	return result
 
 
+static func _semantic_surface_colors() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	for dark in [false, true]:
+		var colors: Dictionary = GameboxTokens.DARK if dark else GameboxTokens.LIGHT
+		var theme := GameboxTheme.create(dark)
+		var banner := ConnectionBannerScene.instantiate() as PanelContainer
+		banner.theme = theme
+		tree.root.add_child(banner)
+		await tree.process_frame
+		var banner_label := banner.get_node("Content/Message") as Label
+		var banner_panel := banner.get_theme_stylebox("panel") as StyleBoxFlat
+		if not _check(banner_label.get_theme_color("font_color") == colors["on_secondary_container"], "connection foreground drifted") \
+			or not _check(banner_panel.bg_color == colors["secondary_container"], "connection background drifted"):
+			banner.free()
+			return false
+		banner.free()
+
+		var snackbar := SnackbarScene.instantiate() as PanelContainer
+		snackbar.theme = theme
+		tree.root.add_child(snackbar)
+		await tree.process_frame
+		var snackbar_label := snackbar.get_node("Content/Message") as Label
+		var neutral_panel := snackbar.get_theme_stylebox("panel") as StyleBoxFlat
+		if not _check(snackbar_label.get_theme_color("font_color") == colors["on_inverse_surface"], "neutral snackbar foreground drifted") \
+			or not _check(neutral_panel.bg_color == colors["inverse_surface"], "neutral snackbar background drifted") \
+			or not _check(snackbar_label.get_theme_color("font_color") != neutral_panel.bg_color, "neutral snackbar foreground collided with its background"):
+			snackbar.free()
+			return false
+		snackbar.present("", "error")
+		var error_panel := snackbar.get_theme_stylebox("panel") as StyleBoxFlat
+		if not _check(snackbar_label.get_theme_color("font_color") == colors["on_error_container"], "error snackbar foreground drifted") \
+			or not _check(error_panel.bg_color == colors["error_container"], "error snackbar background drifted"):
+			snackbar.free()
+			return false
+		snackbar.free()
+	return true
+
+
 static func _snackbar_lifecycle() -> bool:
 	var snackbar := SnackbarScene.instantiate()
 	var tree := Engine.get_main_loop() as SceneTree
 	tree.root.add_child(snackbar)
+	var timer := snackbar.get_node("AutoHideTimer") as Timer
+	timer.wait_time = 0.12
 	if not _check(snackbar.name == "GameboxSnackbar", "snackbar root path changed") \
 		or not _check(snackbar.has_node("Content/Message"), "snackbar message path changed") \
 		or not _check(snackbar.has_node("AutoHideTimer"), "snackbar timer path changed"):
@@ -73,22 +116,91 @@ static func _snackbar_lifecycle() -> bool:
 	snackbar.present("这个位置已经有棋子", "error")
 	if not _check(snackbar.visible, "snackbar did not show") \
 		or not _check((snackbar.get_node("Content/Message") as Label).text == "这个位置已经有棋子", "snackbar copy changed") \
-		or not _check(snackbar.tone == "error", "snackbar tone changed"):
+		or not _check(snackbar.tone == "error", "snackbar tone changed") \
+		or not _check(not timer.is_stopped() and timer.time_left > 0.0, "snackbar timer did not start"):
 		snackbar.free()
 		return false
-	(snackbar.get_node("AutoHideTimer") as Timer).timeout.emit()
-	var result := _check(not snackbar.visible, "snackbar did not hide after its timer")
+	await tree.create_timer(0.04).timeout
+	var elapsed_time_left := timer.time_left
+	snackbar.present("请稍后重试", "neutral")
+	var result := _check(timer.time_left > elapsed_time_left, "repeated present did not restart the snackbar timer") \
+		and _check((snackbar.get_node("Content/Message") as Label).text == "请稍后重试", "repeated snackbar copy did not update")
+	await tree.create_timer(0.16).timeout
+	await tree.process_frame
+	result = result and _check(not snackbar.visible, "snackbar did not hide after its real timer") \
+		and _check(timer.is_stopped(), "snackbar timer kept running after timeout")
 	snackbar.free()
 	return result
 
 
+static func _snackbar_mouse_passthrough() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	var host := Control.new()
+	host.size = Vector2(600.0, 400.0)
+	tree.root.add_child(host)
+	var underlying_button := Button.new()
+	underlying_button.position = Vector2(100.0, 100.0)
+	underlying_button.size = Vector2(320.0, 160.0)
+	host.add_child(underlying_button)
+	var button_hits: Array[int] = []
+	underlying_button.pressed.connect(func() -> void: button_hits.append(1))
+
+	var snackbar := SnackbarScene.instantiate() as PanelContainer
+	snackbar.position = underlying_button.position
+	snackbar.size = underlying_button.size
+	host.add_child(snackbar)
+	snackbar.present("覆盖按钮但不拦截点击")
+	(snackbar.get_node("AutoHideTimer") as Timer).stop()
+	var overlay_hits: Array[int] = []
+	for control in [snackbar, snackbar.get_node("Content"), snackbar.get_node("Content/Message")]:
+		(control as Control).gui_input.connect(func(_event: InputEvent) -> void: overlay_hits.append(1))
+	await tree.process_frame
+	await _dispatch_click(tree, Vector2(220.0, 180.0))
+	var result := _check(button_hits.size() == 1, "visible snackbar subtree blocked the underlying button") \
+		and _check(overlay_hits.is_empty(), "visible snackbar subtree handled the underlying button click")
+	host.free()
+	return result
+
+
+static func _dispatch_click(tree: SceneTree, position: Vector2) -> void:
+	for is_pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = position
+		event.global_position = position
+		event.pressed = is_pressed
+		tree.root.push_input(event, true)
+		await tree.process_frame
+
+
 static func _confirmation_contract() -> bool:
-	var dialog := ConfirmationDialogScene.instantiate() as ConfirmationDialog
-	var result := _check(dialog.name == "GameboxConfirmationDialog", "confirmation root path changed") \
-		and _check(dialog.dialog_text == "认输后本局立即结束，确认认输吗？", "danger copy changed") \
-		and _check(dialog.ok_button_text == "确认认输", "danger confirmation action changed") \
-		and _check(dialog.cancel_button_text == "继续对局", "danger cancellation action changed")
-	dialog.free()
+	var tree := Engine.get_main_loop() as SceneTree
+	var result := true
+	for dark in [false, true]:
+		var colors: Dictionary = GameboxTokens.DARK if dark else GameboxTokens.LIGHT
+		var dialog := ConfirmationDialogScene.instantiate() as ConfirmationDialog
+		dialog.theme = GameboxTheme.create(dark)
+		tree.root.add_child(dialog)
+		dialog.popup_centered(Vector2i(720, 480))
+		await tree.process_frame
+		await tree.process_frame
+		var ok_button := dialog.get_ok_button()
+		var cancel_button := dialog.get_cancel_button()
+		var panel := dialog.get_theme_stylebox("panel", "Window") as StyleBoxFlat
+		result = result and _check(dialog.name == "GameboxConfirmationDialog", "confirmation root path changed") \
+			and _check(dialog.dialog_text == "认输后本局立即结束，确认认输吗？", "danger copy changed") \
+			and _check(dialog.ok_button_text == "确认认输", "danger confirmation action changed") \
+			and _check(dialog.cancel_button_text == "继续对局", "danger cancellation action changed") \
+			and _check(dialog.get_theme_color("title_color", "Window") == colors["on_surface"], "confirmation title color drifted") \
+			and _check(dialog.get_theme_font_size("title_font_size", "Window") == 48, "confirmation title size drifted") \
+			and _check(dialog.get_theme_constant("buttons_min_width", "AcceptDialog") == 96, "confirmation button minimum width drifted") \
+			and _check(dialog.get_theme_constant("buttons_min_height", "AcceptDialog") == 96, "confirmation button minimum height drifted") \
+			and _check(dialog.get_theme_constant("buttons_separation", "AcceptDialog") == 16, "confirmation button separation drifted") \
+			and _check(panel != null and panel.bg_color == colors["surface_container_high"], "confirmation panel surface drifted") \
+			and _check(ok_button.size.x >= 96.0 and ok_button.size.y >= 96.0, "confirmation action rendered below minimum target") \
+			and _check(cancel_button.size.x >= 96.0 and cancel_button.size.y >= 96.0, "confirmation cancel rendered below minimum target")
+		dialog.hide()
+		dialog.free()
 	return result
 
 

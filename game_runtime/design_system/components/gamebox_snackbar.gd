@@ -11,6 +11,7 @@ func present(message: String, next_tone: String = "neutral") -> void:
 	$AutoHideTimer.stop()
 	tone = next_tone
 	theme_type_variation = &"GameboxSnackbarError" if tone == "error" else &"GameboxSnackbar"
+	$Content/Message.theme_type_variation = &"GameboxOnErrorContainer" if tone == "error" else &"GameboxOnInverseSurface"
 	$Content/Message.text = message
 	visible = not message.is_empty()
 	if visible:

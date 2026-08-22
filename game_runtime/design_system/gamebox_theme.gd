@@ -11,6 +11,7 @@ static func create(dark: bool) -> Theme:
 	var body_size := _scaled(GameboxTokens.TYPOGRAPHY["body_medium"]["font_size"])
 	var label_size := _scaled(GameboxTokens.TYPOGRAPHY["label_large"]["font_size"])
 	var title_size := _scaled(GameboxTokens.TYPOGRAPHY["headline_small"]["font_size"])
+	var minimum_touch_target := _scaled(GameboxTokens.COMPONENT["minimum_touch_target"])
 	var card_radius: float = GameboxTokens.SHAPE["card"]
 	var dialog_radius: float = GameboxTokens.SHAPE["dialog"]
 
@@ -32,11 +33,19 @@ static func create(dark: bool) -> Theme:
 	theme.set_stylebox("background", "ProgressBar", _style_box(colors["surface_container_highest"], GameboxTokens.SHAPE["full"]))
 	theme.set_stylebox("fill", "ProgressBar", _style_box(colors["primary"], GameboxTokens.SHAPE["full"]))
 
-	theme.set_color("font_color", "ConfirmationDialog", colors["on_surface"])
-	theme.set_font_size("font_size", "ConfirmationDialog", title_size)
-	theme.set_constant("buttons_separation", "ConfirmationDialog", _scaled(GameboxTokens.SPACING["layout"]))
-	theme.set_stylebox("panel", "ConfirmationDialog", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
+	theme.set_color("title_color", "Window", colors["on_surface"])
+	theme.set_font_size("title_font_size", "Window", title_size)
+	theme.set_stylebox("panel", "Window", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
+	theme.set_constant("buttons_min_width", "AcceptDialog", minimum_touch_target)
+	theme.set_constant("buttons_min_height", "AcceptDialog", minimum_touch_target)
+	theme.set_constant("buttons_separation", "AcceptDialog", _scaled(GameboxTokens.SPACING["layout"]))
 
+	theme.set_type_variation("GameboxOnSecondaryContainer", "Label")
+	theme.set_type_variation("GameboxOnInverseSurface", "Label")
+	theme.set_type_variation("GameboxOnErrorContainer", "Label")
+	theme.set_color("font_color", "GameboxOnSecondaryContainer", colors["on_secondary_container"])
+	theme.set_color("font_color", "GameboxOnInverseSurface", colors["on_inverse_surface"])
+	theme.set_color("font_color", "GameboxOnErrorContainer", colors["on_error_container"])
 	theme.set_type_variation("GameboxConnectionBanner", "PanelContainer")
 	theme.set_type_variation("GameboxSnackbar", "PanelContainer")
 	theme.set_type_variation("GameboxSnackbarError", "PanelContainer")
