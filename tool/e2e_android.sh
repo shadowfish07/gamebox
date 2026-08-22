@@ -23,7 +23,6 @@ readonly BOARD_GRID_SIDE=888
 readonly GAMEBOX_READY_MARKER="GAMEBOX_GODOT_READY"
 readonly GAMEBOX_STATE_MARKER="GAMEBOX_GODOT_STATE"
 readonly GAMEBOX_RESULT_MARKER="GAMEBOX_MATCH_RESULT"
-readonly GAMEBOX_ACCESSIBILITY_MARKER="GAMEBOX_ACCESSIBILITY"
 
 ADB_BIN="${GAMEBOX_E2E_ADB_BIN:-adb}"
 ADB_TIMEOUT_SECONDS="${GAMEBOX_E2E_ADB_TIMEOUT_SECONDS:-30}"
@@ -534,44 +533,6 @@ device_summary_json() {
     }'
 }
 
-parse_accessibility_marker() {
-  local parsed
-  parsed="$(
-    sed -E -n "s/.*${GAMEBOX_ACCESSIBILITY_MARKER} supported=(true|false)[[:space:]]*$/\\1/p" \
-      | sort -u
-  )"
-  [[ "$parsed" == "true" || "$parsed" == "false" ]] || return 1
-  printf '%s\n' "$parsed"
-}
-
-wait_for_accessibility_marker() {
-  local serial="$1"
-  local deadline=$((SECONDS + WAIT_SECONDS))
-  local supported
-  while ((SECONDS < deadline)); do
-    if supported="$(
-      game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
-        | parse_accessibility_marker
-    )"; then
-      printf '%s\n' "$supported"
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-accessibility_summary_json() {
-  local supported_a="$1"
-  local supported_b="$2"
-  [[ "$supported_a" == "true" || "$supported_a" == "false" ]] || return 2
-  [[ "$supported_b" == "true" || "$supported_b" == "false" ]] || return 2
-  jq -cn \
-    --argjson serialA "$supported_a" \
-    --argjson serialB "$supported_b" \
-    '{serialA:$serialA,serialB:$serialB}'
-}
-
 failure_media_safe() {
   local secret_active="$1"
   local clear_verified="$2"
@@ -873,39 +834,6 @@ self_test() {
     } and (has("api") | not)
   ' <<<"$devices" >/dev/null \
     || { printf 'device summary fixture failed\n' >&2; return 1; }
-
-  local accessibility_log="$fixture_dir/accessibility.log"
-  printf '%s\n' \
-    '08-22 I godot : GAMEBOX_ACCESSIBILITY supported=yes' \
-    '08-22 I godot : GAMEBOX_ACCESSIBILITY supported=true' \
-    >"$accessibility_log"
-  [[ "$(parse_accessibility_marker <"$accessibility_log")" == "true" ]] \
-    || { printf 'accessibility marker parser fixture failed\n' >&2; return 1; }
-  printf '%s\n' \
-    '08-22 I godot : GAMEBOX_ACCESSIBILITY supported=true' \
-    '08-22 I godot : GAMEBOX_ACCESSIBILITY supported=false' \
-    >"$accessibility_log"
-  if parse_accessibility_marker <"$accessibility_log" >/dev/null 2>&1; then
-    printf 'ambiguous accessibility markers were accepted\n' >&2
-    return 1
-  fi
-  printf '%s\n' \
-    '08-22 I godot : GAMEBOX_ACCESSIBILITY supported=true username=private-fixture' \
-    >"$accessibility_log"
-  if parse_accessibility_marker <"$accessibility_log" >/dev/null 2>&1; then
-    printf 'accessibility marker with private state was accepted\n' >&2
-    return 1
-  fi
-  printf '%s\n' '08-22 I godot : GAMEBOX_ACCESSIBILITY supported=false' >"$accessibility_log"
-  ACCESSIBILITY_SELF_TEST_LOG="$accessibility_log"
-  game_logs_after_boundary() { cat "$ACCESSIBILITY_SELF_TEST_LOG"; }
-  boundary_for_serial() { printf 'fixture-boundary-%s\n' "$1"; }
-  [[ "$(wait_for_accessibility_marker fixture-A)" == "false" ]] \
-    || { printf 'accessibility marker wait fixture failed\n' >&2; return 1; }
-  local accessibility
-  accessibility="$(accessibility_summary_json true false)"
-  jq -e '. == {serialA:true,serialB:false}' <<<"$accessibility" >/dev/null \
-    || { printf 'accessibility summary fixture failed\n' >&2; return 1; }
 
   failure_media_safe 0 0 \
     || { printf 'inactive secret media gate fixture failed\n' >&2; return 1; }
@@ -1287,8 +1215,6 @@ LOG_BOUNDARY_B=""
 MATCH_ID=""
 SECOND_MATCH_ID=""
 RECOVERY_SERIAL=""
-ACCESSIBILITY_SUPPORTED_A=""
-ACCESSIBILITY_SUPPORTED_B=""
 PREVIOUS_BOARD_HASH=""
 VISUAL_METRICS="$TEMP_DIR/visual-metrics.tsv"
 REMOTE_UI_PATH="/data/local/tmp/gamebox-e2e-$RUN_ID.xml"
@@ -2048,13 +1974,9 @@ readonly BLACK_USER_ID WHITE_USER_ID BLACK_SERIAL WHITE_SERIAL
 
 wait_for_log_marker "$SERIAL_A" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "A Godot did not report ready for the first match"
-ACCESSIBILITY_SUPPORTED_A="$(wait_for_accessibility_marker "$SERIAL_A")" \
-  || fail "A Godot did not report a stable accessibility capability"
 tap_identifier "$SERIAL_B" continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "B Godot did not report ready for the first match"
-ACCESSIBILITY_SUPPORTED_B="$(wait_for_accessibility_marker "$SERIAL_B")" \
-  || fail "B Godot did not report a stable accessibility capability"
 
 display_size() {
   adb_for "$1" shell wm size | sed -n 's/.*: \([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' | tail -n 1
@@ -2376,7 +2298,6 @@ cp "$VISUAL_METRICS" "$ARTIFACT_DIR/visual-metrics.tsv"
 sanitize_stream <"$SERVER_LOG" >"$ARTIFACT_DIR/server-sanitized.log"
 sanitize_stream <"$SEMANTICS_LOG" >"$ARTIFACT_DIR/semantics-test.log"
 devices_json="$(device_summary_json "$SERIAL_A" "$SERIAL_B" "$API_LEVEL_A" "$API_LEVEL_B" "$api_base")"
-accessibility_json="$(accessibility_summary_json "$ACCESSIBILITY_SUPPORTED_A" "$ACCESSIBILITY_SUPPORTED_B")"
 jq -n \
   --arg status passed \
   --arg sourceRevision "$SOURCE_REVISION_START" \
@@ -2387,7 +2308,6 @@ jq -n \
   --arg installedTestApkSha256A "$INSTALLED_TEST_APK_SHA_A" \
   --arg installedTestApkSha256B "$INSTALLED_TEST_APK_SHA_B" \
   --argjson devices "$devices_json" \
-  --argjson accessibility "$accessibility_json" \
   --arg matchId "$MATCH_ID" \
   --arg secondMatchId "$SECOND_MATCH_ID" \
   --arg recoverySerial "$RECOVERY_SERIAL" \
@@ -2401,7 +2321,6 @@ jq -n \
     installedApkSha256:{serialA:$installedApkSha256A,serialB:$installedApkSha256B},
     installedTestApkSha256:{serialA:$installedTestApkSha256A,serialB:$installedTestApkSha256B},
     devices:$devices,
-    accessibility:$accessibility,
     firstMatch:{id:$matchId,revisions:[0,1,2,3,4,5,6,7,8,9],status:"finished",result:"five"},
     recovery:{serial:$recoverySerial,beforeRevision:$recoveryBefore,afterRevision:$recoveryAfter,eventLoss:false},
     secondMatch:{id:$secondMatchId,revision:1,status:"cancelled",slotsReleased:true},

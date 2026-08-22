@@ -3,7 +3,6 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const GameRegistry = preload("res://core/game_registry.gd")
 const SAFE_LAUNCH_ERROR := "Unable to launch game. Please return to Gamebox and try again."
-const ACCESSIBILITY_MARKER := "GAMEBOX_ACCESSIBILITY"
 const HOST_SMOKE_MAX_DELAY_MS := 60000
 const HOST_SMOKE_EXITING_MARKER := "GAMEBOX_GODOT_EXITING"
 const NORMAL_READY_MARKER := "GAMEBOX_GODOT_NORMAL_READY"
@@ -14,12 +13,7 @@ const NORMAL_TICKET_VALUE_INDEX := 5
 
 
 func _ready() -> void:
-	print(accessibility_marker(AccessibilityServer.is_supported()))
 	_start_with_args(OS.get_cmdline_user_args())
-
-
-static func accessibility_marker(supported: bool) -> String:
-	return "%s supported=%s" % [ACCESSIBILITY_MARKER, str(supported)]
 
 
 func _start_with_args(args: PackedStringArray) -> void:
