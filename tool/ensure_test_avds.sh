@@ -5,6 +5,23 @@ readonly IMAGE_PACKAGE="system-images;android-36;google_apis_playstore_ps16k;arm
 readonly IMAGE_PATH_FRAGMENT="system-images/android-36/google_apis_playstore_ps16k/arm64-v8a"
 readonly DEVICE_PROFILE="pixel_7_pro"
 readonly -a MANAGED_AVDS=("Gamebox_A_API_36" "Gamebox_B_API_36")
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly ROOT_DIR
+# shellcheck source=tool/lib/android_lease.sh
+source "$ROOT_DIR/tool/lib/android_lease.sh"
+
+cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  set +e
+  gamebox_android_lease_release
+  exit "$exit_status"
+}
+trap cleanup EXIT
+
+gamebox_android_lease_acquire \
+  "$ROOT_DIR" "Gamebox_A_API_36,Gamebox_B_API_36 configuration" \
+  "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}"
 
 if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   export JAVA_HOME

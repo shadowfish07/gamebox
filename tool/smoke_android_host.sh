@@ -35,6 +35,8 @@ readonly APK_DIR="$ROOT_DIR/app/build/app/outputs/flutter-apk"
 readonly TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 # shellcheck source=tool/lib/android_smoke_log.sh
 source "$ROOT_DIR/tool/lib/android_smoke_log.sh"
+# shellcheck source=tool/lib/android_lease.sh
+source "$ROOT_DIR/tool/lib/android_lease.sh"
 
 RUN_NONCE="run_$(date +%s)_$$_$RANDOM"
 readonly RUN_NONCE
@@ -61,6 +63,9 @@ if [[ "$device_state" != "device" ]]; then
   echo "Android device '$SERIAL' is not connected and ready (state: ${device_state:-missing})." >&2
   exit 2
 fi
+gamebox_android_lease_acquire \
+  "$ROOT_DIR" "$SERIAL host-smoke" "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}"
+trap 'gamebox_android_lease_release' EXIT
 ORIGINAL_ACCELEROMETER_ROTATION="$("${ADB[@]}" shell settings get system accelerometer_rotation | tr -d '\r')"
 readonly ORIGINAL_ACCELEROMETER_ROTATION
 ORIGINAL_USER_ROTATION="$("${ADB[@]}" shell settings get system user_rotation | tr -d '\r')"
@@ -106,6 +111,7 @@ cleanup() {
   trap - EXIT
   set +e
   remove_helper_package >/dev/null 2>&1
+  gamebox_android_lease_release
   exit "$exit_status"
 }
 trap cleanup EXIT

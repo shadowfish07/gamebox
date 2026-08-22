@@ -67,6 +67,25 @@ export GAMEBOX_ADDR="127.0.0.1:8080"
 create `server/data` with mode `0700` before using that default. Runtime SQLite
 data and its WAL/SHM sidecars are local state and are ignored by Git.
 
+For parallel linked-worktree development, use the repository lifecycle wrapper
+instead of sharing this default port or database:
+
+```bash
+bash tool/worktree.sh setup
+bash tool/worktree.sh status
+bash tool/worktree.sh up       # foreground, isolated DB and stable port
+bash tool/worktree.sh down
+bash tool/worktree.sh e2e      # shared Android lease + two-AVD gate
+```
+
+Setup preserves existing local state, uses the committed Flutter lockfile, and
+never copies the deployed service or Keychain. An explicit `data:pull` can copy
+a consistent primary *development* snapshot into a linked worktree with a target
+backup; reverse database synchronization is blocked because auth and gameplay
+data share one SQLite file. See
+[`docs/worktree-development.md`](docs/worktree-development.md) for state paths,
+port/lease ownership, Orca hooks, exclusions, and recovery.
+
 The Android debug client defaults to `http://10.0.2.2:8080`. Android emulators
 map `10.0.2.2` to the host machine's loopback interface, whereas `127.0.0.1`
 inside an emulator refers to that emulator. Override the client endpoint at

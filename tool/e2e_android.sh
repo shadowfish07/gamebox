@@ -37,6 +37,8 @@ readonly HARNESS_PID=$$
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
+# shellcheck source=tool/lib/android_lease.sh
+source "$ROOT_DIR/tool/lib/android_lease.sh"
 HARNESS_PGID="$(ps -p "$HARNESS_PID" -o pgid= | tr -d ' ')"
 readonly HARNESS_PGID
 [[ "$HARNESS_PGID" =~ ^[1-9][0-9]*$ ]] || {
@@ -1201,8 +1203,6 @@ SERIAL_A=""
 SERIAL_B=""
 STARTED_A=0
 STARTED_B=0
-LEASE_OWNED=0
-LEASE_DIR=""
 SECRETS_ON_UI_A=0
 SECRETS_ON_UI_B=0
 FAILURE_CAPTURED=0
@@ -1222,6 +1222,49 @@ SECRET_INPUT_COUNTER=0
 SECRET_INPUT_FILES_A=()
 SECRET_INPUT_FILES_B=()
 readonly REMOTE_UI_PATH
+WORKTREE_ANDROID_RUNTIME_DIR="${GAMEBOX_WORKTREE_ANDROID_RUNTIME_DIR:-}"
+if [[ -n "$WORKTREE_ANDROID_RUNTIME_DIR" \
+  && "$WORKTREE_ANDROID_RUNTIME_DIR" != "$ROOT_DIR/.gamebox-worktree/android-runtime" ]]; then
+  printf 'Gamebox E2E failed: worktree Android runtime path is outside the approved local state directory\n' >&2
+  exit 2
+fi
+readonly WORKTREE_ANDROID_RUNTIME_DIR
+
+write_android_runtime_value() {
+  local name="$1"
+  local value="$2"
+  local staged
+  [[ -n "$WORKTREE_ANDROID_RUNTIME_DIR" ]] || return 0
+  mkdir -p "$WORKTREE_ANDROID_RUNTIME_DIR"
+  chmod 700 "$WORKTREE_ANDROID_RUNTIME_DIR"
+  staged="$(mktemp "$WORKTREE_ANDROID_RUNTIME_DIR/.runtime.XXXXXX")"
+  printf '%s\n' "$value" >"$staged"
+  chmod 600 "$staged"
+  mv "$staged" "$WORKTREE_ANDROID_RUNTIME_DIR/$name"
+}
+
+record_android_runtime() {
+  [[ -n "$WORKTREE_ANDROID_RUNTIME_DIR" ]] || return 0
+  write_android_runtime_value token "$GAMEBOX_ANDROID_LEASE_TOKEN"
+  write_android_runtime_value started-a "$STARTED_A"
+  write_android_runtime_value started-b "$STARTED_B"
+  write_android_runtime_value pid-a "$EMULATOR_PID_A"
+  write_android_runtime_value pid-b "$EMULATOR_PID_B"
+  write_android_runtime_value avd-a "$MANAGED_AVD_A"
+  write_android_runtime_value avd-b "$MANAGED_AVD_B"
+  write_android_runtime_value serial-a "$SERIAL_A"
+  write_android_runtime_value serial-b "$SERIAL_B"
+}
+
+clear_android_runtime() {
+  local name
+  [[ -n "$WORKTREE_ANDROID_RUNTIME_DIR" && -d "$WORKTREE_ANDROID_RUNTIME_DIR" ]] || return 0
+  for name in token started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
+    [[ -e "$WORKTREE_ANDROID_RUNTIME_DIR/$name" ]] && rm -f "$WORKTREE_ANDROID_RUNTIME_DIR/$name"
+  done
+  find "$WORKTREE_ANDROID_RUNTIME_DIR" -mindepth 1 -maxdepth 1 -type f -name '.runtime.*' -delete
+  rmdir "$WORKTREE_ANDROID_RUNTIME_DIR" 2>/dev/null || true
+}
 
 owned_process_matches() {
   local pid="$1"
@@ -1279,6 +1322,7 @@ cleanup_serial_private_state() {
 
 cleanup() {
   local exit_code=$?
+  local cleanup_ok=1
   trap - EXIT INT TERM ERR
   set +e
   terminate_registered_bounded_children
@@ -1293,10 +1337,18 @@ cleanup() {
   stop_owned_process "$SERVER_PID" "$SERVER_BIN" 10
   ((STARTED_B)) && stop_owned_process "$EMULATOR_PID_B" "-avd $MANAGED_AVD_B" 20
   ((STARTED_A)) && stop_owned_process "$EMULATOR_PID_A" "-avd $MANAGED_AVD_A" 20
-  if ((LEASE_OWNED)) && [[ -f "$LEASE_DIR/owner" ]] \
-    && grep -Fx "$RUN_ID" "$LEASE_DIR/owner" >/dev/null 2>&1; then
-    rm -f "$LEASE_DIR/owner"
-    rmdir "$LEASE_DIR" 2>/dev/null || true
+  if ((STARTED_B)) && owned_process_matches "$EMULATOR_PID_B" "-avd $MANAGED_AVD_B"; then
+    cleanup_ok=0
+  fi
+  if ((STARTED_A)) && owned_process_matches "$EMULATOR_PID_A" "-avd $MANAGED_AVD_A"; then
+    cleanup_ok=0
+  fi
+  if ((cleanup_ok)) && ((GAMEBOX_ANDROID_LEASE_OWNED == 1 || GAMEBOX_ANDROID_LEASE_INHERITED == 1)); then
+    clear_android_runtime
+    gamebox_android_lease_release || cleanup_ok=0
+  fi
+  if ((cleanup_ok == 0)); then
+    printf 'Gamebox E2E cleanup was incomplete; owned runtime and lease metadata were preserved for tool/worktree.sh down.\n' >&2
   fi
   rm -rf "$TEMP_DIR"
   exit "$exit_code"
@@ -1420,17 +1472,10 @@ unexpected_error() {
 }
 trap 'unexpected_error "$?" "$LINENO"' ERR
 
-common_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null \
-  || git -C "$ROOT_DIR" rev-parse --git-common-dir)"
-if [[ "$common_dir" != /* ]]; then
-  common_dir="$(cd "$ROOT_DIR" && cd "$common_dir" && pwd)"
-fi
-LEASE_DIR="$common_dir/gamebox-android-e2e.lease"
-if ! mkdir "$LEASE_DIR" 2>/dev/null; then
-  fail "the shared Android E2E lease is held at $LEASE_DIR"
-fi
-printf '%s\n' "$RUN_ID" >"$LEASE_DIR/owner"
-LEASE_OWNED=1
+gamebox_android_lease_acquire \
+  "$ROOT_DIR" "$MANAGED_AVD_A,$MANAGED_AVD_B" "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}" \
+  || fail "could not acquire the shared Android lease"
+record_android_runtime
 
 validate_serial_text() {
   [[ "$1" =~ ^[A-Za-z0-9._:-]+$ ]]
@@ -1494,6 +1539,7 @@ start_managed_emulator() {
   local serial="emulator-$port"
   printf -v "$pid_var" '%s' "$pid"
   printf -v "$serial_var" '%s' "$serial"
+  record_android_runtime
   wait_for_boot "$serial" || fail "$avd_name did not become healthy within three bounded boot phases"
   owned_process_matches "$pid" "-avd $avd_name" || fail "$avd_name process exited during boot"
 }
@@ -1516,6 +1562,7 @@ else
   STARTED_B=1
   start_managed_emulator B "$MANAGED_AVD_B" "$MANAGED_PORT_B" EMULATOR_PID_B SERIAL_B
 fi
+record_android_runtime
 readonly SERIAL_A SERIAL_B
 
 validate_device() {

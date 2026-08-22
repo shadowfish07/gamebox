@@ -16,6 +16,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 # shellcheck source=tool/lib/android_smoke_log.sh
 source "$ROOT_DIR/tool/lib/android_smoke_log.sh"
+# shellcheck source=tool/lib/android_lease.sh
+source "$ROOT_DIR/tool/lib/android_lease.sh"
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 PATH_TO_SIGNED_RELEASE_APK" >&2
@@ -144,9 +146,12 @@ cleanup() {
   set +e
   "${ADB[@]}" shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1
   "${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null 2>&1
+  gamebox_android_lease_release
   exit "$exit_status"
 }
 trap cleanup EXIT
+gamebox_android_lease_acquire \
+  "$ROOT_DIR" "$SERIAL release-apk-smoke" "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}"
 
 "${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null 2>&1 || true
 "${ADB[@]}" uninstall "$PACKAGE" >/dev/null 2>&1 || true
