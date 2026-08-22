@@ -341,6 +341,61 @@ func (service *Service) Connect(ctx context.Context, credential ConnectCredentia
 	return ConnectionCredential{}, ErrResumeInvalid
 }
 
+// ConnectLAN authenticates a LAN WebSocket's first message. An initial
+// connection proves the launch ticket and durable resume token together before
+// the one-time ticket is consumed; a reconnect presents only the resume token.
+func (service *Service) ConnectLAN(ctx context.Context, credential ConnectCredential) (ConnectionCredential, error) {
+	if service == nil || service.store == nil {
+		return ConnectionCredential{}, ErrInvalidConfiguration
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if err := service.commandContext(ctx); err != nil {
+		return ConnectionCredential{}, err
+	}
+	launch := credential.LaunchTicket != ""
+	resume := credential.ResumeToken != ""
+	if !resume || !validCredential(credential.ResumeToken) {
+		return ConnectionCredential{}, ErrResumeInvalid
+	}
+	resumeDigest := credentialDigest(service.tokenPepper, resumeDigestDomain, credential.ResumeToken)
+	resumePlayerID, found, collision := lookupResumeDigest(service.state.resumeDigests, resumeDigest)
+	if !found || collision || service.state.snapshot.Status == StatusCancelled {
+		return ConnectionCredential{}, ErrResumeInvalid
+	}
+	if !launch {
+		return ConnectionCredential{RoomID: service.state.snapshot.RoomID, PlayerID: resumePlayerID}, nil
+	}
+	if !validCredential(credential.LaunchTicket) {
+		return ConnectionCredential{}, ErrTicketInvalid
+	}
+	launchDigest := credentialDigest(service.tokenPepper, launchDigestDomain, credential.LaunchTicket)
+	storedDigest, issued, ok := findIssuedCredential(service.state.issued, launchDigest)
+	now, err := service.nowMillis()
+	if err != nil {
+		return ConnectionCredential{}, ErrInternal
+	}
+	if !ok || issued.consumed || !activeDigestMatches(service.state.activeTicket, issued.playerID, launchDigest) || now > issued.expiresAt {
+		return ConnectionCredential{}, ErrTicketInvalid
+	}
+	if issued.playerID != resumePlayerID {
+		return ConnectionCredential{}, ErrResumeInvalid
+	}
+	payload := credentialConsumedPayload{RoomID: service.state.snapshot.RoomID, PlayerID: issued.playerID, CredentialDigest: storedDigest, ConsumedAt: now}
+	draft, err := makeDraft(recordCredentialConsumed, nil, nil, payload)
+	if err != nil {
+		return ConnectionCredential{}, ErrInternal
+	}
+	record, err := service.store.Append(ctx, draft)
+	if err != nil {
+		return ConnectionCredential{}, err
+	}
+	if err := service.advanceCommitted(record); err != nil {
+		return ConnectionCredential{}, err
+	}
+	return ConnectionCredential{RoomID: service.state.snapshot.RoomID, PlayerID: issued.playerID}, nil
+}
+
 func (service *Service) Apply(ctx context.Context, request ActionRequest) (Event, Snapshot, *GameResult, error) {
 	if service == nil || service.store == nil {
 		return Event{}, Snapshot{}, nil, ErrInvalidConfiguration
@@ -515,6 +570,20 @@ func (service *Service) Snapshot() Snapshot {
 	service.mu.RLock()
 	defer service.mu.RUnlock()
 	return cloneSnapshot(service.state.snapshot)
+}
+
+// WriteManifestProjection updates only the non-authoritative endpoint locator.
+// Authoritative room state continues to come exclusively from journal replay.
+func (service *Service) WriteManifestProjection(endpoint string) error {
+	if service == nil || service.store == nil || strings.TrimSpace(endpoint) == "" {
+		return ErrInvalidConfiguration
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	if service.closed || !service.state.created {
+		return ErrInvalidRequest
+	}
+	return service.store.WriteManifestProjection(service.state.snapshot.RoomID, service.state.snapshot.GameID, endpoint, 1)
 }
 
 func (service *Service) advanceCommitted(record journal.Record) error {

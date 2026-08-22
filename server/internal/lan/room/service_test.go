@@ -87,6 +87,35 @@ func TestCreateJoinLocksRoomAndRetriesOnlyExactCandidate(t *testing.T) {
 	}
 }
 
+func TestConnectLANValidatesResumeBindingBeforeConsumingLaunchTicket(t *testing.T) {
+	service := openTestService(t, t.TempDir(), nil, 0)
+	createTestRoom(t, service)
+	joined, err := service.Join(context.Background(), testJoinRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.ConnectLAN(context.Background(), ConnectCredential{
+		LaunchTicket: joined.LaunchTicket.Token,
+		ResumeToken:  testHostResume,
+	}); !errors.Is(err, ErrResumeInvalid) {
+		t.Fatalf("cross-player ConnectLAN error = %v, want resume invalid", err)
+	}
+	connected, err := service.ConnectLAN(context.Background(), ConnectCredential{
+		LaunchTicket: joined.LaunchTicket.Token,
+		ResumeToken:  testGuestResume,
+	})
+	if err != nil || connected.PlayerID != joined.Player.PlayerID {
+		t.Fatalf("valid ConnectLAN = (%#v, %v)", connected, err)
+	}
+	if _, err := service.ConnectLAN(context.Background(), ConnectCredential{
+		LaunchTicket: joined.LaunchTicket.Token,
+		ResumeToken:  testGuestResume,
+	}); !errors.Is(err, ErrTicketInvalid) {
+		t.Fatalf("reused ConnectLAN error = %v, want ticket invalid", err)
+	}
+}
+
 func TestSecretBearingValuesRedactFormattedOutput(t *testing.T) {
 	service := openTestService(t, t.TempDir(), nil, 0)
 	create := testCreateRequest()

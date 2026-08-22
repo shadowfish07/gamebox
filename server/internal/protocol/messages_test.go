@@ -23,6 +23,7 @@ func TestFixtures(t *testing.T) {
 		"move_action.json":   TypeGomokuMoveRequested,
 		"move_accepted.json": TypeGomokuMoveAccepted,
 		"error.json":         TypePlatformError,
+		"lan_connected.json": TypePlatformConnected,
 	}
 	auxiliaryFixtures := map[string]struct{}{
 		"nickname_cases.json": {},
@@ -244,6 +245,30 @@ func TestDecodeClientRequiresExactControlPayloadsAndCanonicalBindings(t *testing
 	for _, input := range invalid {
 		if _, err := DecodeClient([]byte(input)); err == nil {
 			t.Fatalf("DecodeClient accepted %s", input)
+		}
+	}
+}
+
+func TestDecodeLANClientRequiresPairedInitialCredentialsWithoutWeakeningPublicConnect(t *testing.T) {
+	initial := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume"}}`)
+	if _, err := DecodeLANClient(initial); err != nil {
+		t.Fatalf("DecodeLANClient initial connect: %v", err)
+	}
+	if _, err := DecodeClient(initial); err == nil {
+		t.Fatal("public DecodeClient accepted LAN-only paired credentials")
+	}
+	resume := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":"resume"}}`)
+	if _, err := DecodeLANClient(resume); err != nil {
+		t.Fatalf("DecodeLANClient resume connect: %v", err)
+	}
+	invalid := []string{
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch"}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":""}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","extra":true}}`,
+	}
+	for _, input := range invalid {
+		if _, err := DecodeLANClient([]byte(input)); err == nil {
+			t.Fatalf("DecodeLANClient accepted %s", input)
 		}
 	}
 }

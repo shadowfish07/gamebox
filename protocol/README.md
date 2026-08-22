@@ -1,8 +1,9 @@
 # Gamebox realtime protocol v1
 
 This directory is the shared wire contract for the Go server and Godot game
-runtime. The JSON files in `fixtures/` are executable examples consumed by both
-runtimes; changing one is a protocol change.
+runtime. The public message examples in `fixtures/` are consumed by both
+runtimes; `lan_connected.json` is the explicit Go/LAN-only metadata fixture.
+Changing either shared or LAN-only wire bytes is a protocol change.
 
 Every message is one JSON object with this versioned envelope:
 
@@ -21,6 +22,14 @@ Client game actions are `gomoku.move.requested` and
 `platform.pong`, and `platform.snapshot.requested` do not carry either revision
 field or an action ID. `platform.pong` and `platform.snapshot.requested` remain
 match-bound.
+
+The public `platform.connect` payload remains unchanged. The LAN-only decoder
+accepts exactly either `{launchTicket,resumeToken}` for the first connection or
+`{resumeToken}` for reconnect; this credential object is the first bounded
+WebSocket data message and credentials never appear in its URL or headers.
+LAN `platform.connected` uses the room player ID as `userId`, echoes the supplied
+resume token, and sets `resumeExpiresAt` to the non-expiring sentinel
+`9007199254740991`.
 
 Version 1 accepts only the following directions and types:
 
@@ -103,8 +112,9 @@ UTF-8 byte-size check, and every successful encoding is passed through the same
 strict decoder before it is returned. A complete message of exactly 65,536
 bytes is accepted; 65,537 bytes is rejected.
 
-The four message fixtures freeze a snapshot, a requested Gomoku move, its
-accepted server event, and a match-bound error. `snapshot.json` contains a 15
+The four shared message fixtures freeze a snapshot, a requested Gomoku move,
+its accepted server event, and a match-bound error. The additional Go-only LAN
+fixture freezes connected metadata. `snapshot.json` contains a 15
 by 15 board with exactly 225 integer cells. The compatibility fixture under
 `fixtures/compat/` is consumed by both runtimes to keep JSON string escape,
 UTF-16 surrogate, and escaped NUL byte semantics aligned with Go v1.

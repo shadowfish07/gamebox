@@ -69,6 +69,39 @@ func DecodeClient(data []byte) (Envelope, error) {
 	return envelope, nil
 }
 
+// DecodeLANClient preserves the public client contract while allowing the LAN
+// transport's initial connect to prove both the one-time launch credential and
+// its durable resume binding in one room transaction.
+func DecodeLANClient(data []byte) (Envelope, error) {
+	envelope, err := Decode(data)
+	if err != nil {
+		return Envelope{}, err
+	}
+	if envelope.Type != TypePlatformConnect {
+		if err := validateClientMessage(envelope); err != nil {
+			return Envelope{}, err
+		}
+		return envelope, nil
+	}
+	fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"launchTicket": {}, "resumeToken": {}})
+	if err != nil || len(fields) == 0 || len(fields) > 2 {
+		return Envelope{}, protocolFailure(codeInvalidEnvelope)
+	}
+	if _, launch := fields["launchTicket"]; launch && len(fields) != 2 {
+		return Envelope{}, protocolFailure(codeInvalidEnvelope)
+	}
+	if _, resume := fields["resumeToken"]; !resume {
+		return Envelope{}, protocolFailure(codeInvalidEnvelope)
+	}
+	for _, raw := range fields {
+		var token string
+		if json.Unmarshal(raw, &token) != nil || token == "" || len(token) > 256 || !utf8.ValidString(token) {
+			return Envelope{}, protocolFailure(codeInvalidEnvelope)
+		}
+	}
+	return envelope, nil
+}
+
 func validateClientMessage(envelope Envelope) error {
 	switch envelope.Type {
 	case TypePlatformConnect:
