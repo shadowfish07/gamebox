@@ -67,7 +67,7 @@ final class DesignTokenDocument {
       typography: _typographyMap(json['typography']),
       spacing: _positiveMap(json['spacing'], 'spacing', _spacingRoles),
       shape: _positiveMap(json['shape'], 'shape', _shapeRoles),
-      motion: _positiveMap(json['motion'], 'motion', _motionRoles),
+      motion: _positiveIntegerMap(json['motion'], 'motion', _motionRoles),
       components: _positiveMap(json['component'], 'component', _componentRoles),
     );
   }
@@ -83,6 +83,33 @@ final class DesignTokenDocument {
   final Map<String, num> shape;
   final Map<String, num> motion;
   final Map<String, num> components;
+}
+
+const canonicalDesignTokenSchemaReference = '../schema/tokens.schema.json';
+
+DesignTokenDocument loadCanonicalDesignTokenDocument({
+  required File inputFile,
+  required File committedSchemaFile,
+}) {
+  final canonical = _readJsonObject(inputFile);
+  final schemaReference = canonical[r'$schema'];
+  if (schemaReference != canonicalDesignTokenSchemaReference) {
+    throw const DesignTokenFormatException(
+      r'$.$schema',
+      'must equal ../schema/tokens.schema.json.',
+    );
+  }
+  final schema = _readJsonObject(committedSchemaFile);
+  validateJsonSchema(schema, canonical);
+  return DesignTokenDocument.fromJson(canonical);
+}
+
+Map<String, Object?> _readJsonObject(File file) {
+  final decoded = jsonDecode(file.readAsStringSync());
+  if (decoded is! Map<String, Object?>) {
+    throw DesignTokenFormatException(file.path, 'must contain a JSON object.');
+  }
+  return decoded;
 }
 
 const _topLevelKeys = {
@@ -228,6 +255,30 @@ num _positiveNumber(Object? value, String path) {
   return value;
 }
 
+int _positiveInteger(Object? value, String path) {
+  if (value is! num ||
+      !value.isFinite ||
+      value <= 0 ||
+      value != value.roundToDouble()) {
+    throw DesignTokenFormatException(
+      path,
+      'must be a finite positive integer.',
+    );
+  }
+  return value.toInt();
+}
+
+int _fontWeight(Object? value, String path) {
+  final weight = _positiveInteger(value, path);
+  if (weight < 100 || weight > 900 || weight % 100 != 0) {
+    throw DesignTokenFormatException(
+      path,
+      'must be a shared font weight from 100 through 900 in steps of 100.',
+    );
+  }
+  return weight;
+}
+
 void _expectKeys(
   String path,
   Map<String, Object?> object,
@@ -288,8 +339,9 @@ Map<String, num> _typeStyle(Object? value, String path) {
   final object = _object(value, path);
   _expectKeys(path, object, _typeStyleRoles);
   return {
-    for (final role in _typeStyleRoles)
-      role: _positiveNumber(object[role], '$path.$role'),
+    'fontSize': _positiveNumber(object['fontSize'], '$path.fontSize'),
+    'fontWeight': _fontWeight(object['fontWeight'], '$path.fontWeight'),
+    'lineHeight': _positiveNumber(object['lineHeight'], '$path.lineHeight'),
   };
 }
 
@@ -299,6 +351,19 @@ Map<String, num> _positiveMap(Object? value, String path, Set<String> roles) {
   return {
     for (final role in roles)
       role: _positiveNumber(object[role], '$path.$role'),
+  };
+}
+
+Map<String, num> _positiveIntegerMap(
+  Object? value,
+  String path,
+  Set<String> roles,
+) {
+  final object = _object(value, path);
+  _expectKeys(path, object, roles);
+  return {
+    for (final role in roles)
+      role: _positiveInteger(object[role], '$path.$role'),
   };
 }
 
@@ -320,7 +385,9 @@ const _supportedSchemaKeywords = {
   'const',
   'pattern',
   'exclusiveMinimum',
+  'minimum',
   'maximum',
+  'multipleOf',
   'additionalProperties',
   'required',
   'properties',
@@ -388,7 +455,7 @@ void _validateSchemaNode(
   final type = schema['type'];
   if (type != null) {
     if (type is! String ||
-        !const {'object', 'string', 'number'}.contains(type)) {
+        !const {'object', 'string', 'number', 'integer'}.contains(type)) {
       throw DesignTokenFormatException(
         '$schemaPath.type',
         'unsupported schema type.',
@@ -398,6 +465,10 @@ void _validateSchemaNode(
       'object' => instance is Map,
       'string' => instance is String,
       'number' => instance is num && instance.isFinite,
+      'integer' =>
+        instance is num &&
+            instance.isFinite &&
+            instance == instance.roundToDouble(),
       _ => false,
     };
     if (!valid) {
@@ -441,9 +512,32 @@ void _validateSchemaNode(
     instance,
     instancePath,
     schemaPath,
+    'minimum',
+    (value, boundary) => value >= boundary,
+  );
+  _validateNumberBoundary(
+    schema,
+    instance,
+    instancePath,
+    schemaPath,
     'maximum',
     (value, boundary) => value <= boundary,
   );
+  final multipleOf = schema['multipleOf'];
+  if (multipleOf != null) {
+    if (multipleOf is! num || !multipleOf.isFinite || multipleOf <= 0) {
+      throw DesignTokenFormatException(
+        '$schemaPath.multipleOf',
+        'must be a finite positive number.',
+      );
+    }
+    if (instance is num && instance % multipleOf != 0) {
+      throw DesignTokenFormatException(
+        instancePath,
+        'must be a multiple of $multipleOf.',
+      );
+    }
+  }
 
   if (instance is Map) {
     if (instance.keys.any((key) => key is! String)) {
@@ -854,11 +948,81 @@ void verifyNormativeClaims(
     'design_system/README.md',
     'app/test/design_system/derive_color_scheme_test.dart',
     'tool/test_design_tokens.dart',
+    ...registry.map((entry) => entry.relativePath),
   };
   final numericPattern = RegExp(
     r'(?<![A-Za-z0-9_.])(\d+(?:\.\d+)?)\s*(dp|sp|ms)\b',
   );
 
+  final registeredOccurrences = <String, String>{};
+  for (final registration in registry) {
+    final file = File('${repositoryRoot.path}/${registration.relativePath}');
+    if (!file.existsSync()) {
+      throw DesignTokenFormatException(
+        registration.id,
+        'registered normative claim file is missing: '
+        '${registration.relativePath}.',
+      );
+    }
+    final value = registration.tokenPath == null
+        ? registration.fixedValue
+        : _jsonPath(canonical, registration.tokenPath!);
+    if (value is! num) {
+      throw DesignTokenFormatException(
+        registration.id,
+        'registered value must resolve to a number.',
+      );
+    }
+    final plainValue = _plainNumber(value);
+    final expectedContext = registration.context.replaceAll(
+      '{value}',
+      plainValue,
+    );
+    final expectedLiteral = '$plainValue${registration.unit}';
+    final literalOffset = expectedContext.indexOf(expectedLiteral);
+    if (literalOffset < 0 ||
+        expectedContext.indexOf(expectedLiteral, literalOffset + 1) >= 0) {
+      throw DesignTokenFormatException(
+        registration.id,
+        'context must identify exactly one $expectedLiteral occurrence.',
+      );
+    }
+    final contextMatches = <(int, int)>[];
+    final lines = file.readAsLinesSync();
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      var start = 0;
+      while (true) {
+        final offset = lines[lineIndex].indexOf(expectedContext, start);
+        if (offset < 0) {
+          break;
+        }
+        contextMatches.add((lineIndex, offset));
+        start = offset + expectedContext.length;
+      }
+    }
+    if (contextMatches.length != 1) {
+      throw DesignTokenFormatException(
+        registration.id,
+        contextMatches.isEmpty
+            ? 'registered context is stale or missing.'
+            : 'registered context is ambiguous.',
+      );
+    }
+    final contextMatch = contextMatches.single;
+    final occurrenceKey =
+        '${registration.relativePath}|${contextMatch.$1}|'
+        '${contextMatch.$2 + literalOffset}';
+    final previous = registeredOccurrences[occurrenceKey];
+    if (previous != null) {
+      throw DesignTokenFormatException(
+        registration.id,
+        'numeric occurrence is already owned by $previous.',
+      );
+    }
+    registeredOccurrences[occurrenceKey] = registration.id;
+  }
+
+  final seenOccurrences = <String>{};
   for (final relativePath in scanPaths.toList()..sort()) {
     final file = File('${repositoryRoot.path}/$relativePath');
     if (!file.existsSync()) {
@@ -867,86 +1031,88 @@ void verifyNormativeClaims(
     final lines = file.readAsLinesSync();
     for (var index = 0; index < lines.length; index += 1) {
       final line = lines[index];
-      if (line.contains('gamebox-numeric-claim:') ||
-          line.contains('gamebox-numeric-exception:')) {
+      if (line.contains('gamebox-numeric-claim') ||
+          line.contains('gamebox-numeric-exception')) {
         continue;
       }
       for (final match in numericPattern.allMatches(line)) {
-        final value = num.parse(match.group(1)!);
-        final unit = match.group(2)!;
-        final key = '$relativePath|$value|$unit';
-        final registration = registry[key];
-        if (registration == null) {
+        final occurrenceKey = '$relativePath|$index|${match.start}';
+        final registrationId = registeredOccurrences[occurrenceKey];
+        if (registrationId == null) {
           throw DesignTokenFormatException(
             '$relativePath:${index + 1}',
             'unregistered numeric claim ${match.group(0)}.',
           );
         }
-        if (registration.tokenPath != null) {
-          final canonicalValue = _jsonPath(canonical, registration.tokenPath!);
-          if (canonicalValue is! num || canonicalValue != value) {
-            throw DesignTokenFormatException(
-              '$relativePath:${index + 1}',
-              '${match.group(0)} differs from ${registration.tokenPath}=$canonicalValue.',
-            );
-          }
-        }
+        seenOccurrences.add(occurrenceKey);
       }
     }
   }
 
-  for (final registration in registry.values.where(
-    (entry) => entry.tokenPath != null,
-  )) {
-    final file = File('${repositoryRoot.path}/${registration.relativePath}');
-    if (!file.existsSync()) {
+  for (final entry in registeredOccurrences.entries) {
+    if (!seenOccurrences.contains(entry.key)) {
       throw DesignTokenFormatException(
-        registration.relativePath,
-        'registered normative claim file is missing.',
-      );
-    }
-    final canonicalValue = _jsonPath(canonical, registration.tokenPath!);
-    final expected =
-        '${_plainNumber(canonicalValue as num)}${registration.unit}';
-    if (!file.readAsStringSync().contains(expected)) {
-      throw DesignTokenFormatException(
-        registration.relativePath,
-        'registered claim $expected for ${registration.tokenPath} is missing.',
+        entry.value,
+        'registered numeric occurrence is not scan-visible.',
       );
     }
   }
 }
 
-Map<String, _NumericClaim> _parseNumericClaimRegistry(List<String> lines) {
-  final result = <String, _NumericClaim>{};
-  final pattern = RegExp(
-    r'gamebox-numeric-(claim|exception):\s*([^|]+)\|\s*([^|]+)\|\s*(dp|sp|ms)\s*\|\s*([^\s]+)',
-  );
+List<_NumericClaim> _parseNumericClaimRegistry(List<String> lines) {
+  final result = <_NumericClaim>[];
+  final ids = <String>{};
+  final pattern = RegExp(r'gamebox-numeric-(claim|exception)\s+(\{.*\})\s+-->');
   for (final line in lines) {
     final match = pattern.firstMatch(line);
     if (match == null) {
       continue;
     }
     final kind = match.group(1)!;
-    final relativePath = match.group(2)!.trim();
-    final value = num.parse(match.group(3)!.trim());
-    final unit = match.group(4)!;
-    final target = match.group(5)!;
-    final claim = _NumericClaim(
-      relativePath: relativePath,
-      value: value,
-      unit: unit,
-      tokenPath: kind == 'claim' ? target : null,
-    );
-    final key = '$relativePath|$value|$unit';
-    final previous = result[key];
-    if (previous != null && previous.tokenPath != claim.tokenPath) {
-      throw DesignTokenFormatException(
+    final decoded = jsonDecode(match.group(2)!);
+    if (decoded is! Map<String, Object?>) {
+      throw const DesignTokenFormatException(
         'design_system/README.md',
-        'conflicting numeric claim registration for $key.',
+        'numeric claim marker must contain a JSON object.',
       );
     }
-    result[key] = claim;
+    final id = _string(decoded['id'], 'numericClaim.id');
+    final expectedKeys = kind == 'claim'
+        ? const {'id', 'path', 'token', 'unit', 'context'}
+        : const {'id', 'path', 'value', 'unit', 'context', 'reason'};
+    _expectKeys('numericClaim.$id', decoded, expectedKeys);
+    if (!ids.add(id)) {
+      throw DesignTokenFormatException(id, 'numeric claim id is duplicated.');
+    }
+    final unit = _string(decoded['unit'], '$id.unit');
+    if (!const {'dp', 'sp', 'ms'}.contains(unit)) {
+      throw DesignTokenFormatException(id, 'unsupported numeric claim unit.');
+    }
+    final context = _string(decoded['context'], '$id.context');
+    if (!context.contains('{value}')) {
+      throw DesignTokenFormatException(
+        id,
+        'context must contain a {value} placeholder.',
+      );
+    }
+    final fixedValue = decoded['value'];
+    if (kind == 'exception' && fixedValue is! num) {
+      throw DesignTokenFormatException(
+        id,
+        'numeric exception value must be a number.',
+      );
+    }
+    final claim = _NumericClaim(
+      id: id,
+      relativePath: _string(decoded['path'], '$id.path'),
+      unit: unit,
+      context: context,
+      tokenPath: kind == 'claim'
+          ? _string(decoded['token'], '$id.token')
+          : null,
+      fixedValue: kind == 'exception' ? fixedValue! as num : null,
+    );
+    result.add(claim);
   }
   if (result.isEmpty) {
     throw const DesignTokenFormatException(
@@ -985,14 +1151,18 @@ String _plainNumber(num value) {
 
 final class _NumericClaim {
   const _NumericClaim({
+    required this.id,
     required this.relativePath,
-    required this.value,
     required this.unit,
+    required this.context,
     required this.tokenPath,
+    required this.fixedValue,
   });
 
+  final String id;
   final String relativePath;
-  final num value;
   final String unit;
+  final String context;
   final String? tokenPath;
+  final num? fixedValue;
 }

@@ -159,10 +159,10 @@
       "additionalProperties": false,
       "required": ["fast", "standard", "slow", "pageEnter"],
       "properties": {
-        "fast": { "$ref": "#/$defs/positiveNumber" },
-        "standard": { "$ref": "#/$defs/positiveNumber" },
-        "slow": { "$ref": "#/$defs/positiveNumber" },
-        "pageEnter": { "$ref": "#/$defs/positiveNumber" }
+        "fast": { "$ref": "#/$defs/positiveInteger" },
+        "standard": { "$ref": "#/$defs/positiveInteger" },
+        "slow": { "$ref": "#/$defs/positiveInteger" },
+        "pageEnter": { "$ref": "#/$defs/positiveInteger" }
       }
     },
     "component": {
@@ -193,6 +193,10 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
+    "positiveInteger": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
     "positiveTokenMap": {
       "type": "object"
     },
@@ -202,7 +206,12 @@
       "required": ["fontSize", "fontWeight", "lineHeight"],
       "properties": {
         "fontSize": { "$ref": "#/$defs/positiveNumber" },
-        "fontWeight": { "$ref": "#/$defs/positiveNumber" },
+        "fontWeight": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 900,
+          "multipleOf": 100
+        },
         "lineHeight": { "$ref": "#/$defs/positiveNumber" }
       }
     },

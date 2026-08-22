@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'design_tokens.dart';
@@ -7,20 +6,13 @@ void main(List<String> arguments) {
   try {
     final options = _parseArguments(arguments);
     final inputFile = File(options['--input']!).absolute;
-    final canonical = _readObject(inputFile);
-    final schemaReference = canonical[r'$schema'];
-    if (schemaReference is! String ||
-        schemaReference.isEmpty ||
-        Uri.parse(schemaReference).hasScheme) {
-      throw const DesignTokenFormatException(
-        r'$.$schema',
-        'must be a non-empty repository-relative file reference.',
-      );
-    }
-    final schemaFile = File.fromUri(inputFile.uri.resolve(schemaReference));
-    final schema = _readObject(schemaFile);
-    validateJsonSchema(schema, canonical);
-    final document = DesignTokenDocument.fromJson(canonical);
+    final repositoryRoot = File.fromUri(Platform.script).parent.parent;
+    final document = loadCanonicalDesignTokenDocument(
+      inputFile: inputFile,
+      committedSchemaFile: File(
+        '${repositoryRoot.path}/design_system/schema/tokens.schema.json',
+      ),
+    );
 
     _write(File(options['--dart-output']!), renderDart(document));
     _write(File(options['--godot-output']!), renderGdscript(document));
@@ -72,14 +64,6 @@ Map<String, String> _parseArguments(List<String> arguments) {
     }
   }
   return result;
-}
-
-Map<String, Object?> _readObject(File file) {
-  final decoded = jsonDecode(file.readAsStringSync());
-  if (decoded is! Map<String, Object?>) {
-    throw DesignTokenFormatException(file.path, 'must contain a JSON object.');
-  }
-  return decoded;
 }
 
 void _write(File file, String contents) {
