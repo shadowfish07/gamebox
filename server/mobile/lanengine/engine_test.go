@@ -15,6 +15,15 @@ func TestEngineRejectsBlankRoot(t *testing.T) {
 	}
 }
 
+func TestNormalizeNicknameUsesSharedMobileSafeRules(t *testing.T) {
+	if got := NormalizeNickname("\u2003Alice 中\u2003"); got != `{"display":"Alice 中","normalized":"alice 中","valid":true}` {
+		t.Fatalf("NormalizeNickname valid = %q", got)
+	}
+	if got := NormalizeNickname("A\u202eB"); got != `{"display":"","normalized":"","valid":false}` {
+		t.Fatalf("NormalizeNickname invalid = %q", got)
+	}
+}
+
 func TestEngineHasStableEmptyStatusAndPendingErrors(t *testing.T) {
 	engine, err := NewEngine("/tmp/gamebox-lanengine")
 	if err != nil {

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"name":"unicode surrounding whitespace","input":"\u2003Alice-中🙂\u2003","valid":true,"display":"Alice-中🙂","normalized":"alice-中🙂"},
+    {"name":"minimum two runes","input":"界🙂","valid":true,"display":"界🙂","normalized":"界🙂"},
+    {"name":"maximum sixteen runes","input":"界界界界界界界界界界界界界界界界","valid":true,"display":"界界界界界界界界界界界界界界界界","normalized":"界界界界界界界界界界界界界界界界"},
+    {"name":"ordinary internal space","input":"A B","valid":true,"display":"A B","normalized":"a b"},
+    {"name":"emoji zwj","input":"👩🏽‍💻","valid":true,"display":"👩🏽‍💻","normalized":"👩🏽💻"},
+    {"name":"text zwnj","input":"می‌خواهم","valid":true,"display":"می‌خواهم","normalized":"میخواهم"},
+    {"name":"one rune","input":"🙂","valid":false,"display":"","normalized":""},
+    {"name":"seventeen runes","input":"界界界界界界界界界界界界界界界界界","valid":false,"display":"","normalized":""},
+    {"name":"control","input":"A\nB","valid":false,"display":"","normalized":""},
+    {"name":"line separator","input":"A\u2028B","valid":false,"display":"","normalized":""},
+    {"name":"paragraph separator","input":"A\u2029B","valid":false,"display":"","normalized":""},
+    {"name":"forbidden formatting","input":"A\u202eB","valid":false,"display":"","normalized":""},
+    {"name":"invalid zwj context","input":"a‍b","valid":false,"display":"","normalized":""},
+    {"name":"invalid zwnj context","input":"🙂‌🎮","valid":false,"display":"","normalized":""},
+    {"name":"invisible only whitespace","input":" \t\u2003 ","valid":false,"display":"","normalized":""},
+    {"name":"invisible only combining marks","input":"́̂","valid":false,"display":"","normalized":""}
+  ]
+}

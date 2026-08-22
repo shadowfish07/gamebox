@@ -2,9 +2,28 @@
 package lanengine
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
+
+	"me.zqydev/gamebox/server/internal/nickname"
 )
+
+// NormalizeNickname exposes the single Go nickname implementation through a
+// primitive gomobile-safe JSON boundary.
+func NormalizeNickname(raw string) string {
+	display, normalized, err := nickname.Normalize(raw)
+	result := struct {
+		Display    string `json:"display"`
+		Normalized string `json:"normalized"`
+		Valid      bool   `json:"valid"`
+	}{Display: display, Normalized: normalized, Valid: err == nil}
+	encoded, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return `{"display":"","normalized":"","valid":false}`
+	}
+	return string(encoded)
+}
 
 var ErrInvalidConfiguration = errors.New("invalid configuration")
 
