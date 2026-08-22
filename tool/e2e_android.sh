@@ -1982,6 +1982,46 @@ display_size() {
   adb_for "$1" shell wm size | sed -n 's/.*: \([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' | tail -n 1
 }
 
+edge_band_luma() {
+  local screenshot="$1"
+  local width="$2"
+  local height="$3"
+  local y="$4"
+  local left=$((width / 10))
+  local sample_width=$((width * 8 / 10))
+  ffmpeg -v error -i "$screenshot" \
+    -vf "crop=$sample_width:$height:$left:$y,signalstats,metadata=print:file=-" \
+    -frames:v 1 -f null - 2>&1 \
+    | sed -n 's/^lavfi\.signalstats\.YAVG=//p' \
+    | tail -n 1
+}
+
+assert_display_not_letterboxed() {
+  local serial="$1"
+  local label="$2"
+  local screenshot="$TEMP_DIR/fullscreen-$label.png"
+  local width height band_height top_y bottom_y top_luma bottom_luma
+  read -r width height <<<"$(display_size "$serial")"
+  [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
+  band_height=$((height / 25))
+  top_y=$((height / 50))
+  bottom_y=$((height - top_y - band_height))
+  adb_for "$serial" exec-out screencap -p >"$screenshot" || return 1
+  [[ -s "$screenshot" ]] || return 1
+  top_luma="$(edge_band_luma "$screenshot" "$width" "$band_height" "$top_y")"
+  bottom_luma="$(edge_band_luma "$screenshot" "$width" "$band_height" "$bottom_y")"
+  ruby -e '
+    top, bottom = ARGV.map { |value| Float(value, exception: false) }
+    exit 1 unless top && bottom && top > 40.0 && bottom > 40.0
+  ' "$top_luma" "$bottom_luma" || return 1
+  printf 'fullscreen %s edge luma top=%s bottom=%s\n' "$label" "$top_luma" "$bottom_luma"
+}
+
+assert_display_not_letterboxed "$SERIAL_A" A \
+  || fail "A retained black letterbox bars around the Godot scene"
+assert_display_not_letterboxed "$SERIAL_B" B \
+  || fail "B retained black letterbox bars around the Godot scene"
+
 design_point_for_serial() {
   local serial="$1"
   local design_x="$2"
@@ -1991,9 +2031,7 @@ design_point_for_serial() {
   ruby -e '
     width, height, design_width, design_height, x, y = ARGV.map(&:to_f)
     scale = [width / design_width, height / design_height].min
-    offset_x = (width - design_width * scale) / 2.0
-    offset_y = (height - design_height * scale) / 2.0
-    puts "#{(offset_x + x * scale).round} #{(offset_y + y * scale).round}"
+    puts "#{(x * scale).round} #{(y * scale).round}"
   ' "$width" "$height" "$DESIGN_WIDTH" "$DESIGN_HEIGHT" "$design_x" "$design_y"
 }
 

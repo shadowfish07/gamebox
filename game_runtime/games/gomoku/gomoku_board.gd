@@ -243,4 +243,4 @@ static func _viewport_transform(design_size: Vector2, viewport_size: Vector2) ->
 		or design_size.x <= 0.0 or design_size.y <= 0.0 or viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return {"ok": false}
 	var scale: float = minf(viewport_size.x / design_size.x, viewport_size.y / design_size.y)
-	return {"ok": true, "scale": scale, "offset": (viewport_size - design_size * scale) * 0.5}
+	return {"ok": true, "scale": scale, "offset": Vector2.ZERO}
