@@ -27,7 +27,9 @@ The Core Contract does not own scene art, boards, characters, gameplay scoring, 
 
 ## Token Layers and Ownership
 
-`gamebox.tokens.json` is the single hand-edited numeric token source. It MUST be schema-validated and generate committed Dart and GDScript mappings; drift, missing roles, illegal values, or generation failures MUST fail at build time rather than silently fall back.
+`references/ux-standard.md` is authoritative for interaction prose, and `design_system/tokens/gamebox.tokens.json` is authoritative for numeric token values. Platform references specialize this shared standard for their runtime and MUST NOT override it.
+
+The token file is the single hand-edited numeric source. It MUST be schema-validated and generate committed Dart and GDScript mappings; drift, missing roles, illegal values, or generation failures MUST fail at build time rather than silently fall back.
 
 | Layer | Ownership and consumers |
 | --- | --- |
