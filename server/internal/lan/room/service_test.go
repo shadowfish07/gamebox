@@ -165,6 +165,12 @@ func TestLaunchTicketsAreSingleUseAndResumeTokensStayPlayerBound(t *testing.T) {
 	if resumed, err := service.Connect(context.Background(), ConnectCredential{ResumeToken: testGuestResume}); err != nil || resumed.PlayerID != guest.Player.PlayerID {
 		t.Fatalf("guest resume = (%#v, %v)", resumed, err)
 	}
+	if _, err := service.Connect(context.Background(), ConnectCredential{ResumeToken: testGuestResume + "-wrong"}); !errors.Is(err, ErrResumeInvalid) {
+		t.Fatalf("wrong resume error = %v", err)
+	}
+	if resumed, err := service.Connect(context.Background(), ConnectCredential{ResumeToken: testHostResume}); err != nil || resumed.PlayerID != testHostID {
+		t.Fatalf("host resume = (%#v, %v)", resumed, err)
+	}
 	if _, err := service.IssueLaunch(context.Background(), testHostID, testGuestResume); !errors.Is(err, ErrResumeInvalid) {
 		t.Fatalf("cross-player resume error = %v", err)
 	}
@@ -211,6 +217,47 @@ func TestDigestLookupMatchesOnlyFixedLengthCredentialDigests(t *testing.T) {
 	})
 	if !ok || comparisons != len(credentials) {
 		t.Fatalf("constant-work lookup = (found %v, comparisons %d), want true and %d", ok, comparisons, len(credentials))
+	}
+}
+
+func TestResumeDigestLookupComparesEveryCandidateForEveryMatchPosition(t *testing.T) {
+	digests := map[string]string{
+		"player-1": strings64("1"),
+		"player-2": strings64("2"),
+		"player-3": strings64("3"),
+		"player-4": strings64("4"),
+	}
+	for _, test := range []struct {
+		name    string
+		matchAt int
+		found   bool
+	}{
+		{name: "zero match", matchAt: -1, found: false},
+		{name: "first match", matchAt: 0, found: true},
+		{name: "middle match", matchAt: 2, found: true},
+		{name: "last match", matchAt: 3, found: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			comparisons := 0
+			_, found, collision := lookupResumeDigestWithComparator(digests, strings64("a"), func(stored, candidate string) bool {
+				matched := comparisons == test.matchAt
+				comparisons++
+				return matched
+			})
+			if found != test.found || collision || comparisons != len(digests) {
+				t.Fatalf("lookup = (found %v collision %v comparisons %d), want (%v false %d)", found, collision, comparisons, test.found, len(digests))
+			}
+		})
+	}
+
+	comparisons := 0
+	_, found, collision := lookupResumeDigestWithComparator(digests, strings64("a"), func(stored, candidate string) bool {
+		match := comparisons == 0 || comparisons == 3
+		comparisons++
+		return match
+	})
+	if !found || !collision || comparisons != len(digests) {
+		t.Fatalf("collision lookup = (found %v collision %v comparisons %d), want (true true %d)", found, collision, comparisons, len(digests))
 	}
 }
 

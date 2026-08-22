@@ -179,10 +179,8 @@ func (service *Service) Join(ctx context.Context, request JoinRequest) (JoinedPl
 		}
 		return JoinedPlayer{Player: guest, LaunchTicket: ticket}, nil
 	}
-	for _, existingDigest := range service.state.resumeDigests {
-		if digestEqual(existingDigest, candidateDigest) {
-			return JoinedPlayer{}, ErrInvalidRequest
-		}
+	if _, found, collision := lookupResumeDigest(service.state.resumeDigests, candidateDigest); found || collision {
+		return JoinedPlayer{}, ErrInvalidRequest
 	}
 	if service.state.snapshot.Status != StatusWaiting {
 		return JoinedPlayer{}, ErrRoomLocked
@@ -336,10 +334,9 @@ func (service *Service) Connect(ctx context.Context, credential ConnectCredentia
 		return ConnectionCredential{}, ErrResumeInvalid
 	}
 	digest := credentialDigest(service.tokenPepper, resumeDigestDomain, credential.ResumeToken)
-	for playerID, stored := range service.state.resumeDigests {
-		if digestEqual(stored, digest) {
-			return ConnectionCredential{RoomID: service.state.snapshot.RoomID, PlayerID: playerID}, nil
-		}
+	playerID, found, collision := lookupResumeDigest(service.state.resumeDigests, digest)
+	if found && !collision {
+		return ConnectionCredential{RoomID: service.state.snapshot.RoomID, PlayerID: playerID}, nil
 	}
 	return ConnectionCredential{}, ErrResumeInvalid
 }

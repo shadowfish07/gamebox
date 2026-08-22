@@ -75,10 +75,21 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 	}
 	fileNames := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		name := entry.Name()
+		if recordFileName.MatchString(name) {
+			info, err := entry.Info()
+			if err != nil {
+				return nil, nil, fmt.Errorf("inspect committed journal candidate %q: %w", name, err)
+			}
+			if !info.Mode().IsRegular() {
+				return nil, nil, fmt.Errorf("%w: committed journal candidate %q is not a regular file", ErrJournalCorrupt, name)
+			}
+			fileNames = append(fileNames, name)
+			continue
+		}
 		if entry.IsDir() {
 			continue
 		}
-		name := entry.Name()
 		if name == "manifest.json.tmp" || temporaryFileName.MatchString(name) {
 			if err := os.Remove(filepath.Join(root, name)); err != nil {
 				return nil, nil, fmt.Errorf("remove uncommitted temp %q: %w", name, err)
@@ -89,10 +100,7 @@ func Open(root string, ops FileOps) (*Store, []Record, error) {
 			continue
 		}
 		if filepath.Ext(name) == ".json" {
-			if !recordFileName.MatchString(name) {
-				return nil, nil, fmt.Errorf("%w: invalid committed journal filename %q", ErrJournalCorrupt, name)
-			}
-			fileNames = append(fileNames, name)
+			return nil, nil, fmt.Errorf("%w: invalid committed journal filename %q", ErrJournalCorrupt, name)
 		}
 	}
 	sort.Strings(fileNames)

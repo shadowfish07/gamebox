@@ -84,6 +84,9 @@ func TestOpenCleansOnlyRecognizedJournalTemps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "unrelated.tmp"), []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(root, "unrelated.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	store, _, err := Open(root, nil)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -98,6 +101,66 @@ func TestOpenCleansOnlyRecognizedJournalTemps(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(root, "unrelated.tmp")); err != nil || string(got) != "keep" {
 		t.Fatalf("unrelated temp = %q, %v; want preserved", got, err)
 	}
+	if info, err := os.Lstat(filepath.Join(root, "unrelated.json")); err != nil || !info.IsDir() {
+		t.Fatalf("unrelated JSON-named directory = (%v, %v), want preserved directory", info, err)
+	}
+}
+
+func TestOpenRejectsNonRegularCommittedRecordCandidatesWithoutFollowingThem(t *testing.T) {
+	t.Run("directory", func(t *testing.T) {
+		root := initializedJournalRoot(t)
+		path := filepath.Join(root, "0000000000000001.json")
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for attempt := 1; attempt <= 2; attempt++ {
+			store, _, err := Open(root, nil)
+			if store != nil {
+				_ = store.Close()
+			}
+			if store != nil || !errors.Is(err, ErrJournalCorrupt) || errors.Is(err, ErrJournalLocked) {
+				t.Fatalf("Open() attempt %d = (%v, %v), want typed corruption with released lock", attempt, store, err)
+			}
+		}
+		if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+			t.Fatalf("committed-looking directory = (%v, %v), want unchanged directory", info, err)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		root := initializedJournalRoot(t)
+		externalPath := filepath.Join(t.TempDir(), "external-record.json")
+		record, err := makeRecord(1, "", Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		externalContents, err := canonicalRecord(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(externalPath, externalContents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, "0000000000000001.json")
+		if err := os.Symlink(externalPath, path); err != nil {
+			t.Fatal(err)
+		}
+		for attempt := 1; attempt <= 2; attempt++ {
+			store, _, err := Open(root, nil)
+			if store != nil {
+				_ = store.Close()
+			}
+			if store != nil || !errors.Is(err, ErrJournalCorrupt) || errors.Is(err, ErrJournalLocked) {
+				t.Fatalf("Open() attempt %d = (%v, %v), want typed corruption with released lock", attempt, store, err)
+			}
+		}
+		if target, err := os.Readlink(path); err != nil || target != externalPath {
+			t.Fatalf("committed-looking symlink = (%q, %v), want unchanged target %q", target, err, externalPath)
+		}
+		if contents, err := os.ReadFile(externalPath); err != nil || !bytes.Equal(contents, externalContents) {
+			t.Fatalf("external target changed, read error = %v", err)
+		}
+	})
 }
 
 func TestOpenRejectsCorruptAndNonContiguousCommittedRecords(t *testing.T) {
@@ -703,4 +766,17 @@ func journalWithTwoRecords(t *testing.T) (string, [][]byte) {
 		}
 	}
 	return root, contents
+}
+
+func initializedJournalRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	store, _, err := Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }

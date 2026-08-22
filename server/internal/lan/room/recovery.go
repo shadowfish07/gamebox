@@ -175,7 +175,7 @@ func (state *projection) applyCreated(record journal.Record, tokenPepper string)
 	}
 	var payload roomCreatedPayload
 	if decodeStrict(record.Payload, &payload) != nil || !canonicalID(payload.RoomID) || payload.GameID != gomoku.GameID || payload.CreatedAt <= 0 ||
-		payload.JoinExpiresAt <= payload.CreatedAt || !validPlayer(payload.Host, 0) || !canonicalDigest.MatchString(payload.RoomKeyDigest) ||
+		payload.JoinExpiresAt <= payload.CreatedAt || !validPlayer(payload.Host, 0) || payload.Host.PlayerID == payload.RoomID || !canonicalDigest.MatchString(payload.RoomKeyDigest) ||
 		!canonicalDigest.MatchString(payload.PepperCheck) || !canonicalDigest.MatchString(payload.HostResumeDigest) {
 		return ErrRecoveryCorrupt
 	}
@@ -201,15 +201,13 @@ func (state *projection) applyJoined(record journal.Record) error {
 	}
 	var payload playerJoinedPayload
 	if decodeStrict(record.Payload, &payload) != nil || payload.RoomID != state.snapshot.RoomID || !validPlayer(payload.Player, 1) ||
-		payload.Player.PlayerID == state.snapshot.Players[0].PlayerID || payload.Player.Color == state.snapshot.Players[0].Color ||
+		payload.Player.PlayerID == state.snapshot.Players[0].PlayerID || payload.Player.PlayerID == state.snapshot.RoomID || payload.Player.Color == state.snapshot.Players[0].Color ||
 		!canonicalID(payload.JoinAttemptID) || !canonicalDigest.MatchString(payload.ResumeDigest) ||
 		!validJoinTimestamp(state.createdAt, payload.JoinedAt, state.snapshot.JoinExpiresAt) {
 		return ErrRecoveryCorrupt
 	}
-	for _, existingDigest := range state.resumeDigests {
-		if digestEqual(existingDigest, payload.ResumeDigest) {
-			return ErrRecoveryCorrupt
-		}
+	if _, found, collision := lookupResumeDigest(state.resumeDigests, payload.ResumeDigest); found || collision {
+		return ErrRecoveryCorrupt
 	}
 	var blackID, whiteID string
 	for _, player := range []Player{state.snapshot.Players[0], payload.Player} {
@@ -433,6 +431,27 @@ func findIssuedCredentialWithComparator(credentials map[string]issuedCredential,
 		}
 	}
 	return matchedDigest, matched, found
+}
+
+func lookupResumeDigest(resumeDigests map[string]string, candidate string) (string, bool, bool) {
+	return lookupResumeDigestWithComparator(resumeDigests, candidate, digestEqual)
+}
+
+func lookupResumeDigestWithComparator(resumeDigests map[string]string, candidate string, compare func(string, string) bool) (string, bool, bool) {
+	matchedPlayerID := ""
+	found := false
+	collision := false
+	for playerID, storedDigest := range resumeDigests {
+		if compare(storedDigest, candidate) {
+			if found {
+				collision = true
+			} else {
+				matchedPlayerID = playerID
+				found = true
+			}
+		}
+	}
+	return matchedPlayerID, found, collision
 }
 
 func activeDigestMatches(activeTickets map[string]string, playerID, candidate string) bool {

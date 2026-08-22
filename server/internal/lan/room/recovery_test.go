@@ -239,6 +239,146 @@ func TestRecoveryRejectsConsistentHashChainWithInvalidRoomSemanticsWithoutEditin
 	}
 }
 
+func TestRecoveryRejectsRoomAndPlayerIdentityAliasing(t *testing.T) {
+	t.Run("host equals room", func(t *testing.T) {
+		root := t.TempDir()
+		service := openTestService(t, root, nil, 0)
+		payload := roomCreatedPayload{
+			RoomID: testRoomID, GameID: gomoku.GameID, CreatedAt: 1_000, JoinExpiresAt: 100_000,
+			Host:             Player{PlayerID: testRoomID, Nickname: "Host", Seat: 0, Color: ColorBlack},
+			RoomKeyDigest:    credentialDigest(testPepper, roomKeyDigestDomain, testRoomKey),
+			PepperCheck:      credentialDigest(testPepper, pepperCheckDomain, testRoomID),
+			HostResumeDigest: credentialDigest(testPepper, resumeDigestDomain, testHostResume),
+		}
+		draft, err := makeDraft(recordRoomCreated, nil, nil, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.store.Append(context.Background(), draft); err != nil {
+			t.Fatal(err)
+		}
+		assertRecoveryCorruptWithoutEdits(t, service, root)
+	})
+
+	t.Run("guest equals room", func(t *testing.T) {
+		root := t.TempDir()
+		service := openTestService(t, root, nil, 0)
+		created := createTestRoom(t, service)
+		host := created.Snapshot.Players[0]
+		guestColor := ColorBlack
+		if host.Color == ColorBlack {
+			guestColor = ColorWhite
+		}
+		payload := playerJoinedPayload{
+			RoomID:        testRoomID,
+			Player:        Player{PlayerID: testRoomID, Nickname: "Guest", Seat: 1, Color: guestColor},
+			JoinAttemptID: testJoinAttempt,
+			ResumeDigest:  credentialDigest(testPepper, resumeDigestDomain, testGuestResume),
+			JoinedAt:      1_000,
+		}
+		draft, err := makeDraft(recordPlayerJoined, nil, nil, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.store.Append(context.Background(), draft); err != nil {
+			t.Fatal(err)
+		}
+		assertRecoveryCorruptWithoutEdits(t, service, root)
+	})
+}
+
+func TestRecoveryRejectsResumeDigestCollision(t *testing.T) {
+	root := t.TempDir()
+	service := openTestService(t, root, nil, 0)
+	created := createTestRoom(t, service)
+	host := created.Snapshot.Players[0]
+	guestColor := ColorBlack
+	if host.Color == ColorBlack {
+		guestColor = ColorWhite
+	}
+	payload := playerJoinedPayload{
+		RoomID:        testRoomID,
+		Player:        Player{PlayerID: "22222222-2222-4222-8222-222222222222", Nickname: "Guest", Seat: 1, Color: guestColor},
+		JoinAttemptID: testJoinAttempt,
+		ResumeDigest:  credentialDigest(testPepper, resumeDigestDomain, testHostResume),
+		JoinedAt:      1_000,
+	}
+	draft, err := makeDraft(recordPlayerJoined, nil, nil, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.store.Append(context.Background(), draft); err != nil {
+		t.Fatal(err)
+	}
+	assertRecoveryCorruptWithoutEdits(t, service, root)
+}
+
+func TestRecoveryMapsNonRegularCommittedRecordCandidates(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T, string) func(*testing.T)
+	}{
+		{name: "directory", setup: func(t *testing.T, root string) func(*testing.T) {
+			path := filepath.Join(root, "0000000000000001.json")
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return func(t *testing.T) {
+				if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+					t.Fatalf("committed-looking directory = (%v, %v), want unchanged", info, err)
+				}
+			}
+		}},
+		{name: "symlink", setup: func(t *testing.T, root string) func(*testing.T) {
+			externalRoot := t.TempDir()
+			externalService := openTestService(t, externalRoot, nil, 0)
+			createTestRoom(t, externalService)
+			if err := externalService.Close(); err != nil {
+				t.Fatal(err)
+			}
+			externalPath := filepath.Join(externalRoot, "0000000000000001.json")
+			externalContents, err := os.ReadFile(externalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "0000000000000001.json")
+			if err := os.Symlink(externalPath, path); err != nil {
+				t.Fatal(err)
+			}
+			return func(t *testing.T) {
+				if target, err := os.Readlink(path); err != nil || target != externalPath {
+					t.Fatalf("committed-looking symlink = (%q, %v), want unchanged", target, err)
+				}
+				if contents, err := os.ReadFile(externalPath); err != nil || !bytes.Equal(contents, externalContents) {
+					t.Fatalf("external target changed, read error = %v", err)
+				}
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, _, err := journal.Open(root, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			assertUnchanged := test.setup(t, root)
+			for attempt := 1; attempt <= 2; attempt++ {
+				opened, err := Open(Config{Root: root, TokenPepper: testPepper})
+				if opened != nil {
+					_ = opened.Close()
+				}
+				if opened != nil || !errors.Is(err, ErrRecoveryCorrupt) || errors.Is(err, journal.ErrJournalLocked) {
+					t.Fatalf("room.Open() attempt %d = (%v, %v), want recovery corruption with released lock", attempt, opened, err)
+				}
+			}
+			assertUnchanged(t)
+		})
+	}
+}
+
 func TestRecoveryRejectsJoinOutsideCreatedRoomWindow(t *testing.T) {
 	for _, test := range []struct {
 		name     string
