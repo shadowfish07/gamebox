@@ -31,7 +31,7 @@ final class AppUpdate {
   };
 
   static AppUpdate? fromJson(Object? value) {
-    if (value is! Map<String, Object?>) return null;
+    if (value is! Map<Object?, Object?>) return null;
     final version = value['version'];
     final title = value['title'];
     final releaseNotes = value['releaseNotes'];
@@ -43,12 +43,17 @@ final class AppUpdate {
         title is! String ||
         releaseNotes is! String ||
         releaseUrl is! String ||
+        !isSafeWebUrl(releaseUrl) ||
         apkUrl is! String ||
+        !isSafeWebUrl(apkUrl) ||
         apkName is! String ||
+        !isSafeAssetName(apkName) ||
+        !apkName.toLowerCase().endsWith('.apk') ||
         checksum is! String ||
-        !RegExp(r'^[0-9a-f]{64}$').hasMatch(checksum)) {
+        !isSha256(checksum)) {
       return null;
     }
+
     return AppUpdate(
       version: version,
       title: title,
@@ -56,7 +61,7 @@ final class AppUpdate {
       releaseUrl: releaseUrl,
       apkUrl: apkUrl,
       apkName: apkName,
-      sha256: checksum,
+      sha256: checksum.toLowerCase(),
       publishedAt: value['publishedAt'] is String
           ? DateTime.tryParse(value['publishedAt']! as String)?.toLocal()
           : null,
@@ -71,13 +76,15 @@ final class UpdateCheckResult {
   bool get hasUpdate => update != null;
 }
 
-enum UpdateStatus {
-  idle,
-  checking,
-  upToDate,
-  available,
-  downloading,
-  permissionRequired,
-  installerOpened,
-  failed,
+bool isSafeAssetName(String value) =>
+    RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]*$').hasMatch(value);
+
+bool isSha256(String value) => RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(value);
+
+bool isSafeWebUrl(String value) {
+  final uri = Uri.tryParse(value);
+  return uri != null &&
+      uri.scheme == 'https' &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty;
 }

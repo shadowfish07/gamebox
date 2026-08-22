@@ -19,7 +19,9 @@ final class MethodChannelApkInstaller implements ApkInstaller {
   MethodChannelApkInstaller({MethodChannel? channel})
     : _channel = channel ?? _defaultChannel;
 
-  static const _defaultChannel = MethodChannel('me.zqydev.gamebox/app_updater');
+  static const _defaultChannel = MethodChannel(
+    'me.zqydev.flutter_release_updater/app_updater',
+  );
 
   final MethodChannel _channel;
 

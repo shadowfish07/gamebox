@@ -1,11 +1,13 @@
 import 'package:flutter/services.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gamebox/core/platform/apk_installer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channel = MethodChannel('me.zqydev.gamebox/app_updater');
+  const channel = MethodChannel(
+    'me.zqydev.flutter_release_updater/app_updater',
+  );
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -19,17 +21,17 @@ void main() {
     });
 
     final result = await MethodChannelApkInstaller().launchInstaller(
-      '/private/app/files/updates/gamebox.apk',
+      '/private/app/files/updates/example.apk',
     );
 
     expect(result, InstallLaunchResult.started);
     expect(recorded?.method, 'installApk');
     expect(recorded?.arguments, {
-      'path': '/private/app/files/updates/gamebox.apk',
+      'path': '/private/app/files/updates/example.apk',
     });
   });
 
-  test('reports when Android requires unknown-source permission', () async {
+  test('reports when Android requires unknown-source access', () async {
     messenger.setMockMethodCallHandler(
       channel,
       (_) async => 'permission_required',

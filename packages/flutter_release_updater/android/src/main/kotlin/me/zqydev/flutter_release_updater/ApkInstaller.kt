@@ -1,4 +1,4 @@
-package me.zqydev.gamebox
+package me.zqydev.flutter_release_updater
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -44,18 +44,24 @@ internal class ApkInstaller(private val activity: Activity) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !activity.packageManager.canRequestPackageInstalls()
         ) {
-            activity.startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:${activity.packageName}"),
-                ),
-            )
+            try {
+                activity.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${activity.packageName}"),
+                    ),
+                )
+            } catch (_: ActivityNotFoundException) {
+                throw IllegalStateException("settings_unavailable")
+            } catch (_: SecurityException) {
+                throw IllegalStateException("settings_unavailable")
+            }
             return ApkInstallResult.PERMISSION_REQUIRED
         }
 
         val contentUri = FileProvider.getUriForFile(
             activity,
-            "${activity.packageName}.fileprovider",
+            "${activity.packageName}.flutter_release_updater.fileprovider",
             apk,
         )
         val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -103,12 +109,7 @@ internal object ApkPackageValidator {
     @Suppress("DEPRECATION")
     private fun certificateDigests(packageInfo: PackageInfo): Set<String> {
         val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signingInfo = packageInfo.signingInfo ?: return emptySet()
-            if (signingInfo.hasMultipleSigners()) {
-                signingInfo.apkContentsSigners
-            } else {
-                signingInfo.apkContentsSigners
-            }
+            packageInfo.signingInfo?.apkContentsSigners
         } else {
             packageInfo.signatures
         }

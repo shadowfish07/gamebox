@@ -18,18 +18,37 @@ void main() {
     );
   });
 
-  test(
-    'Android application declares its constrained APK installer surface',
-    () {
-      final manifest = File(
-        'android/app/src/main/AndroidManifest.xml',
-      ).readAsStringSync();
-      expect(manifest, contains('android.permission.REQUEST_INSTALL_PACKAGES'));
-      expect(manifest, contains('androidx.core.content.FileProvider'));
-      expect(manifest, contains(r'${applicationId}.fileprovider'));
-      expect(manifest, contains('@xml/godot_provider_paths'));
-    },
-  );
+  test('Android installer privilege is owned by the reusable plugin', () {
+    final appManifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    final pluginManifest = File(
+      '../packages/flutter_release_updater/android/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    expect(
+      appManifest,
+      isNot(contains('android.permission.REQUEST_INSTALL_PACKAGES')),
+    );
+    expect(appManifest, isNot(contains('android.permission.INSTALL_PACKAGES')));
+    expect(
+      appManifest,
+      isNot(contains('application/vnd.android.package-archive')),
+    );
+    expect(
+      pluginManifest,
+      contains('android.permission.REQUEST_INSTALL_PACKAGES'),
+    );
+    expect(
+      pluginManifest,
+      isNot(contains('android.permission.INSTALL_PACKAGES')),
+    );
+    expect(pluginManifest, contains('FlutterReleaseUpdaterFileProvider'));
+    expect(
+      pluginManifest,
+      contains(r'${applicationId}.flutter_release_updater.fileprovider'),
+    );
+    expect(pluginManifest, contains('application/vnd.android.package-archive'));
+  });
 
   test('Android release keeps the Godot JNI bridge names intact', () {
     final buildScript = File('android/app/build.gradle.kts').readAsStringSync();

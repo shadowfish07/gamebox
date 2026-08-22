@@ -9,12 +9,23 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/platform/apk_installer.dart';
+import 'apk_installer.dart';
 import 'app_update.dart';
 import 'github_release_service.dart';
 
+enum UpdateStatus {
+  idle,
+  checking,
+  upToDate,
+  available,
+  downloading,
+  permissionRequired,
+  installerOpened,
+  failed,
+}
+
 final class UpdateController extends ChangeNotifier {
-  static const maxApkBytes = 500 * 1024 * 1024;
+  static const defaultMaxApkBytes = 500 * 1024 * 1024;
 
   UpdateController({
     required this.installedVersion,
@@ -23,43 +34,86 @@ final class UpdateController extends ChangeNotifier {
     required http.Client downloadClient,
     required SharedPreferences preferences,
     required Directory updateDirectory,
+    required this.cacheKeyPrefix,
+    required this.downloadUserAgent,
     DateTime Function()? now,
     this.checkInterval = const Duration(hours: 6),
+    this.maxApkBytes = defaultMaxApkBytes,
   }) : _releaseService = releaseService,
        _installer = installer,
        _downloadClient = downloadClient,
        _preferences = preferences,
        _updateDirectory = updateDirectory,
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now {
+    if (cacheKeyPrefix.trim().isEmpty) {
+      throw ArgumentError.value(
+        cacheKeyPrefix,
+        'cacheKeyPrefix',
+        'Cannot be empty',
+      );
+    }
+    if (downloadUserAgent.trim().isEmpty ||
+        downloadUserAgent.contains(RegExp(r'[\r\n]'))) {
+      throw ArgumentError.value(
+        downloadUserAgent,
+        'downloadUserAgent',
+        'Invalid HTTP user agent',
+      );
+    }
+    if (maxApkBytes <= 0) {
+      throw ArgumentError.value(maxApkBytes, 'maxApkBytes', 'Must be positive');
+    }
+  }
 
-  static const _lastCheckKey = 'update.lastCheckAt';
-  static const _cachedUpdateKey = 'update.available';
-
-  static Future<UpdateController> production() async {
+  static Future<UpdateController> production({
+    required String repository,
+    required String userAgent,
+    String cacheKeyPrefix = 'releaseUpdater',
+    String apiBaseUrl = 'https://api.github.com',
+    Duration checkInterval = const Duration(hours: 6),
+    int maxApkBytes = defaultMaxApkBytes,
+    ApkAssetMatcher? apkAssetMatcher,
+  }) async {
     final packageInfo = await PackageInfo.fromPlatform();
     final preferences = await SharedPreferences.getInstance();
     final supportDirectory = await getApplicationSupportDirectory();
     final releaseClient = http.Client();
+    final downloadClient = http.Client();
     return UpdateController(
       installedVersion: packageInfo.version,
-      releaseService: GitHubReleaseService(client: releaseClient),
+      releaseService: GitHubReleaseService(
+        client: releaseClient,
+        repository: repository,
+        userAgent: userAgent,
+        apiBaseUrl: apiBaseUrl,
+        apkAssetMatcher: apkAssetMatcher,
+      ),
       installer: MethodChannelApkInstaller(),
-      downloadClient: http.Client(),
+      downloadClient: downloadClient,
       preferences: preferences,
-      updateDirectory: Directory('${supportDirectory.path}/updates'),
-    ).._ownedReleaseClient = releaseClient;
+      updateDirectory: Directory(
+        '${supportDirectory.path}/flutter_release_updater',
+      ),
+      cacheKeyPrefix: cacheKeyPrefix,
+      downloadUserAgent: userAgent,
+      checkInterval: checkInterval,
+      maxApkBytes: maxApkBytes,
+    ).._ownedClients = [releaseClient, downloadClient];
   }
 
   final String installedVersion;
+  final String cacheKeyPrefix;
+  final String downloadUserAgent;
+  final Duration checkInterval;
+  final int maxApkBytes;
   final ReleaseService _releaseService;
   final ApkInstaller _installer;
   final http.Client _downloadClient;
   final SharedPreferences _preferences;
   final Directory _updateDirectory;
   final DateTime Function() _now;
-  final Duration checkInterval;
 
-  http.Client? _ownedReleaseClient;
+  List<http.Client> _ownedClients = const [];
   UpdateStatus _status = UpdateStatus.idle;
   AppUpdate? _availableUpdate;
   DateTime? _lastCheckAt;
@@ -68,6 +122,9 @@ final class UpdateController extends ChangeNotifier {
   String? _downloadedApkPath;
   bool _started = false;
   bool _disposed = false;
+
+  String get _lastCheckKey => '$cacheKeyPrefix.lastCheckAt';
+  String get _cachedUpdateKey => '$cacheKeyPrefix.available';
 
   UpdateStatus get status => _status;
   AppUpdate? get availableUpdate => _availableUpdate;
@@ -101,29 +158,20 @@ final class UpdateController extends ChangeNotifier {
         currentVersion: installedVersion,
       );
       _lastCheckAt = _now();
-      await _preferences.setString(
-        _lastCheckKey,
-        _lastCheckAt!.toUtc().toIso8601String(),
-      );
+      await _persistLastCheck();
       _availableUpdate = result.update;
       _errorMessage = '';
       _downloadedApkPath = null;
       if (result.update == null) {
-        await _preferences.remove(_cachedUpdateKey);
+        await _removeCachedUpdate();
         _setStatus(UpdateStatus.upToDate);
       } else {
-        await _preferences.setString(
-          _cachedUpdateKey,
-          jsonEncode(result.update!.toJson()),
-        );
+        await _persistUpdate(result.update!);
         _setStatus(UpdateStatus.available);
       }
     } on UpdateCheckException catch (error) {
       _lastCheckAt = _now();
-      await _preferences.setString(
-        _lastCheckKey,
-        _lastCheckAt!.toUtc().toIso8601String(),
-      );
+      await _persistLastCheck();
       _fail(error.message);
     } on Object {
       _fail('暂时无法检查更新');
@@ -150,7 +198,7 @@ final class UpdateController extends ChangeNotifier {
       await _deleteIfPresent(completed);
 
       final request = http.Request('GET', Uri.parse(update.apkUrl));
-      request.headers['User-Agent'] = 'Gamebox-update-download';
+      request.headers['User-Agent'] = downloadUserAgent;
       final response = await _downloadClient
           .send(request)
           .timeout(const Duration(seconds: 20));
@@ -179,7 +227,7 @@ final class UpdateController extends ChangeNotifier {
             if (progress - lastReported >= 0.01 || progress == 1) {
               lastReported = progress;
               _downloadProgress = progress;
-              notifyListeners();
+              if (!_disposed) notifyListeners();
             }
           }
         }
@@ -191,7 +239,7 @@ final class UpdateController extends ChangeNotifier {
       }
       final digest = await sha256.bind(partial.openRead()).first;
       if (digest.toString() != update.sha256) {
-        await partial.delete();
+        await _deleteIfPresent(partial);
         throw const UpdateDownloadException('APK 校验失败，请重新下载');
       }
       await partial.rename(completed.path);
@@ -234,25 +282,54 @@ final class UpdateController extends ChangeNotifier {
   }
 
   void _restoreCache() {
-    final lastCheckValue = _preferences.getString(_lastCheckKey);
-    _lastCheckAt = lastCheckValue == null
-        ? null
-        : DateTime.tryParse(lastCheckValue)?.toLocal();
-    final cachedValue = _preferences.getString(_cachedUpdateKey);
-    if (cachedValue == null) return;
     try {
-      _availableUpdate = AppUpdate.fromJson(jsonDecode(cachedValue) as Object?);
-      final cachedUpdate = _availableUpdate;
+      final lastCheckValue = _preferences.getString(_lastCheckKey);
+      _lastCheckAt = lastCheckValue == null
+          ? null
+          : DateTime.tryParse(lastCheckValue)?.toLocal();
+      final cachedValue = _preferences.getString(_cachedUpdateKey);
+      if (cachedValue == null) return;
+      final cachedUpdate = AppUpdate.fromJson(jsonDecode(cachedValue));
       if (cachedUpdate != null &&
           VersionComparator.isNewer(cachedUpdate.version, installedVersion)) {
+        _availableUpdate = cachedUpdate;
         _status = UpdateStatus.available;
       } else {
-        _availableUpdate = null;
-        unawaited(_preferences.remove(_cachedUpdateKey));
+        unawaited(_removeCachedUpdate());
       }
-    } on FormatException {
+    } on Object {
       _availableUpdate = null;
-      unawaited(_preferences.remove(_cachedUpdateKey));
+      unawaited(_removeCachedUpdate());
+    }
+  }
+
+  Future<void> _persistLastCheck() async {
+    try {
+      await _preferences.setString(
+        _lastCheckKey,
+        _lastCheckAt!.toUtc().toIso8601String(),
+      );
+    } on Object {
+      // Cache failures must not turn a successful network check into a failure.
+    }
+  }
+
+  Future<void> _persistUpdate(AppUpdate update) async {
+    try {
+      await _preferences.setString(
+        _cachedUpdateKey,
+        jsonEncode(update.toJson()),
+      );
+    } on Object {
+      // The next application launch can perform a fresh check.
+    }
+  }
+
+  Future<void> _removeCachedUpdate() async {
+    try {
+      await _preferences.remove(_cachedUpdateKey);
+    } on Object {
+      // A stale cache is revalidated before it is shown on the next launch.
     }
   }
 
@@ -269,8 +346,10 @@ final class UpdateController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _downloadClient.close();
-    _ownedReleaseClient?.close();
+    _releaseService.dispose();
+    for (final client in _ownedClients) {
+      client.close();
+    }
     super.dispose();
   }
 }

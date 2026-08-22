@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-
-import 'app_update.dart';
-import 'update_controller.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 
 final class UpdateActionButton extends StatelessWidget {
   const UpdateActionButton({super.key, required this.controller});
@@ -151,6 +149,25 @@ final class _UpdateState extends StatelessWidget {
   }
 }
 
+final class _DownloadProgress extends StatelessWidget {
+  const _DownloadProgress({required this.progress});
+
+  final double? progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = progress;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(value == null ? '正在下载 APK...' : '正在下载 ${(value * 100).round()}%'),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(value: value),
+      ],
+    );
+  }
+}
+
 final class _ProgressMessage extends StatelessWidget {
   const _ProgressMessage({required this.message});
 
@@ -166,25 +183,6 @@ final class _ProgressMessage extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Expanded(child: Text(message)),
-      ],
-    );
-  }
-}
-
-final class _DownloadProgress extends StatelessWidget {
-  const _DownloadProgress({required this.progress});
-
-  final double? progress;
-
-  @override
-  Widget build(BuildContext context) {
-    final value = progress;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(value == null ? '正在下载 APK...' : '正在下载 ${(value * 100).round()}%'),
-        const SizedBox(height: 8),
-        LinearProgressIndicator(value: value),
       ],
     );
   }

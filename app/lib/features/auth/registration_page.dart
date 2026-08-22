@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 
 import '../../core/api/api_error.dart';
 import '../update/update_action.dart';
-import '../update/update_controller.dart';
 import 'session_controller.dart';
 
 final class RegistrationPage extends StatefulWidget {

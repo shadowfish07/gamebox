@@ -4,6 +4,10 @@
 app/build/
 app/android/build/
 app/.dart_tool/
+packages/*/.dart_tool/
+packages/*/.flutter-plugins-dependencies
+packages/*/build/
+packages/*/pubspec.lock
 game_runtime/.godot/
 server/data/
 artifacts/
