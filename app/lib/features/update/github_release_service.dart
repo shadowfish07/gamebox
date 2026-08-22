@@ -19,10 +19,10 @@ final class UpdateCheckException implements Exception {
 
 final class GitHubReleaseService implements ReleaseService {
   GitHubReleaseService({
-    required http.Client client,
+    required this._client,
     this.repository = 'shadowfish07/gamebox',
     this.apiBaseUrl = 'https://api.github.com',
-  }) : _client = client;
+  });
 
   final http.Client _client;
   final String repository;
@@ -132,9 +132,8 @@ final class GitHubReleaseService implements ReleaseService {
       throw const UpdateCheckException('APK 校验文件异常过大');
     }
     for (final line in const LineSplitter().convert(response.body)) {
-      final match = RegExp(
-        r'^([0-9a-fA-F]{64})\s+\*?(.+)$',
-      ).firstMatch(line.trim());
+      final match = RegExp(r'^([0-9a-fA-F]{64})\s+\*?(.+)$')
+          .firstMatch(line.trim());
       if (match != null && match.group(2) == apkName) {
         return match.group(1)!.toLowerCase();
       }

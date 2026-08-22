@@ -26,7 +26,7 @@ chat, spectating, push notifications, public deployment, or account migration.
 
 ## Required development tools
 
-- Flutter 3.35.1 with its Dart 3.9 SDK
+- Flutter 3.47.1 with its Dart 3.13 SDK
 - Go 1.25
 - Godot 4.7 (set `GODOT_BIN` when it is not installed as the macOS app)
 - JDK 17 or newer

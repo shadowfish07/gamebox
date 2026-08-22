@@ -34,7 +34,7 @@ void main() {
     );
     expect(
       gameSemantics,
-      containsSemantics(
+      isSemantics(
         identifier: 'game-gomoku',
         label: '五子棋\n2 人对战',
         isHeader: true,
@@ -42,7 +42,7 @@ void main() {
     );
     expect(
       tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'choose-opponent',
         label: '选择对手',
         isButton: true,
@@ -70,7 +70,7 @@ void main() {
     expect(find.byKey(const Key('cancel-match')), findsNothing);
     expect(
       tester.getSemantics(find.byKey(const Key('continue-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'continue-match',
         label: '继续对局',
         isButton: true,
@@ -94,7 +94,7 @@ void main() {
     expect(find.text('取消未开始对局'), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'cancel-match',
         label: '取消未开始对局',
         isButton: true,
@@ -143,7 +143,7 @@ void main() {
 
     expect(
       tester.getSemantics(find.byKey(const Key('continue-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'continue-match',
         isButton: true,
         isEnabled: false,
@@ -152,7 +152,7 @@ void main() {
     );
     expect(
       tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'cancel-match',
         label: '取消未开始对局',
         isButton: true,
@@ -188,7 +188,7 @@ void main() {
 
     expect(
       tester.getSemantics(find.byKey(const Key('continue-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'continue-match',
         label: '继续对局',
         isButton: true,
@@ -198,7 +198,7 @@ void main() {
     );
     expect(
       tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'cancel-match',
         isButton: true,
         isEnabled: false,
@@ -281,7 +281,7 @@ void main() {
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'choose-opponent',
         label: '选择对手',
         isButton: true,
@@ -323,7 +323,7 @@ void main() {
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('retry-home'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'retry-home',
         label: '重试',
         isButton: true,

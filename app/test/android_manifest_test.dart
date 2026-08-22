@@ -4,9 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('Android application explicitly disables credential backup', () {
-    final manifest = File(
-      'android/app/src/main/AndroidManifest.xml',
-    ).readAsStringSync();
+    final manifest = File('android/app/src/main/AndroidManifest.xml')
+        .readAsStringSync();
 
     expect(manifest, contains('android:allowBackup="false"'));
     expect(
@@ -21,9 +20,8 @@ void main() {
   test(
     'Android application declares its constrained APK installer surface',
     () {
-      final manifest = File(
-        'android/app/src/main/AndroidManifest.xml',
-      ).readAsStringSync();
+      final manifest = File('android/app/src/main/AndroidManifest.xml')
+          .readAsStringSync();
       expect(manifest, contains('android.permission.REQUEST_INSTALL_PACKAGES'));
       expect(manifest, contains('androidx.core.content.FileProvider'));
       expect(manifest, contains(r'${applicationId}.fileprovider'));
@@ -33,9 +31,8 @@ void main() {
 
   test('Android release keeps the Godot JNI bridge names intact', () {
     final buildScript = File('android/app/build.gradle.kts').readAsStringSync();
-    final proguardRules = File(
-      'android/app/proguard-rules.pro',
-    ).readAsStringSync();
+    final proguardRules = File('android/app/proguard-rules.pro')
+        .readAsStringSync();
 
     expect(buildScript, contains('"proguard-rules.pro"'));
     expect(
@@ -45,9 +42,8 @@ void main() {
   });
 
   test('Android game process uses a private disposable task', () {
-    final manifest = File(
-      'android/app/src/main/AndroidManifest.xml',
-    ).readAsStringSync();
+    final manifest = File('android/app/src/main/AndroidManifest.xml')
+        .readAsStringSync();
     final gameActivity = RegExp(
       r'<activity\b(?=[^>]*android:name="\.GameActivity")[^>]*>',
       dotAll: true,

@@ -117,10 +117,8 @@ void main() {
 
   test('error envelopes require exact canonical keys', () async {
     final cases = {
-      'unknown root':
-          '{"error":{"code":"unauthorized","message":"失败","details":{}},"extra":1}',
-      'unknown error key':
-          '{"error":{"code":"unauthorized","message":"失败","details":{},"extra":1}}',
+      'unknown root': '{"error":{"code":"unauthorized","message":"失败","details":{}},"extra":1}',
+      'unknown error key': '{"error":{"code":"unauthorized","message":"失败","details":{},"extra":1}}',
       'missing details': '{"error":{"code":"unauthorized","message":"失败"}}',
       'escaped root alias':
           r'{"err\u006fr":{"code":"unauthorized","message":"失败","details":{}}}',
@@ -143,44 +141,41 @@ void main() {
     }
   });
 
-  test(
-    'authorized GET refreshes once and retries with the rotated token',
-    () async {
-      var accessToken = 'access-old';
-      var calls = 0;
-      var refreshCalls = 0;
-      final client = ApiClient(
-        httpClient: MockClient((request) async {
-          calls += 1;
-          if (calls == 1) {
-            expect(request.headers['authorization'], 'Bearer access-old');
-            return _jsonResponse(
-              '{"error":{"code":"unauthorized","message":"身份验证失败","details":{}}}',
-              401,
-            );
-          }
-          expect(request.headers['authorization'], 'Bearer access-new');
-          return _jsonResponse('{"user":{"nickname":"小鱼"}}', 200);
-        }),
-        baseUri: Uri.parse('https://gamebox.test'),
-      );
+  test('authorized GET refreshes once and retries with the rotated token', () async {
+    var accessToken = 'access-old';
+    var calls = 0;
+    var refreshCalls = 0;
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        calls += 1;
+        if (calls == 1) {
+          expect(request.headers['authorization'], 'Bearer access-old');
+          return _jsonResponse(
+            '{"error":{"code":"unauthorized","message":"身份验证失败","details":{}}}',
+            401,
+          );
+        }
+        expect(request.headers['authorization'], 'Bearer access-new');
+        return _jsonResponse('{"user":{"nickname":"小鱼"}}', 200);
+      }),
+      baseUri: Uri.parse('https://gamebox.test'),
+    );
 
-      final result = await client.getJson(
-        '/v1/me',
-        accessToken: () => accessToken,
-        onUnauthorized: (failedToken) async {
-          expect(failedToken, 'access-old');
-          refreshCalls += 1;
-          accessToken = 'access-new';
-          return true;
-        },
-      );
+    final result = await client.getJson(
+      '/v1/me',
+      accessToken: () => accessToken,
+      onUnauthorized: (failedToken) async {
+        expect(failedToken, 'access-old');
+        refreshCalls += 1;
+        accessToken = 'access-new';
+        return true;
+      },
+    );
 
-      expect(result['user'], isA<Map<String, Object?>>());
-      expect(calls, 2);
-      expect(refreshCalls, 1);
-    },
-  );
+    expect(result['user'], isA<Map<String, Object?>>());
+    expect(calls, 2);
+    expect(refreshCalls, 1);
+  });
 
   test('authorized POST invokes refresh but never replays its body', () async {
     var calls = 0;
