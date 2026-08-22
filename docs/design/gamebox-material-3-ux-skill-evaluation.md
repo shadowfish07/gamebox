@@ -269,9 +269,11 @@ already correctly withheld `complete`. The GREEN samples prove that the skill
 reliably preserves the same target-runtime/evidence conclusion while requiring
 the structured acceptance output.
 
-### Full cross-runtime audit observation (Scenario A)
+### Selected verbatim cross-runtime audit excerpts (Scenario A)
 
-`eval-green-a.md` observed the following (full observation):
+`eval-green-a.md` supplied the selected verbatim excerpts below. Each omitted
+source section is marked explicitly; the source transcript remains the
+provenance record.
 
 > 不要因为 `useMaterial3: true` 判定合格：它目前只启用了 Flutter 组件能力，并没有落实跨 Flutter/Godot 的 Material 3 契约。最值得立刻实施的统一方向是「固定 Gamebox Teal 的语义化设计令牌 + Flutter 轻量应用壳 + 五子棋 Lightweight Board」：Flutter 负责注册、目录、对手选择和启动/返回状态；Godot 保持棋盘为主视觉，只共享返回、连接状态、加载、错误、危险操作确认与结果语义。两端共享令牌的名称、含义和生成值，不共享渲染代码。
 >
@@ -282,19 +284,14 @@ the structured acceptance output.
 > - `gomoku_controller.gd` 的“认输”会立即发送服务器请求，缺少“认输并结束本局”这类后果命名确认；这是阻塞发布的危险操作问题。
 > - 五子棋没有可见的确认/取消流程；控件也没有可审计的可访问名称、角色、顺序或 live-region 元数据。仅靠静态场景无法证明 Godot Android 的 `AccessibilityServer.is_supported()` 与 TalkBack 可用。
 >
-> Flutter 页应使用 16dp 页边距、24dp 内容组和至少 48dp 控件目标，并验证放大字体下主操作不裁切；目录加载、空、失败、重连和启动失败应保留稳定布局并提供重试。选定五子棋 `Lightweight Board` 后，应在游戏接入说明中记录默认方向、令牌扩展、输入、状态截图矩阵与所有 SHOULD 偏离。
->
-> 保留五子棋自己的木纹棋盘、棋子和对局 HUD，不强制套 Flutter 可见壳；顶层只有游戏目录时不新增 `NavigationBar`，使用小型 Material 3 Top App Bar 即可。
->
-> 本次按要求未运行应用，因此没有测试或 Android 运行时证据。实施后需要令牌 schema/生成一致性检查、Flutter widget/flow 覆盖及 Godot 场景/流程覆盖；再在实际 Android Flutter App 和打包 Godot 游戏中验证默认方向、可见 Back 与系统 Back 一致且不会隐式认输、TalkBack/字体缩放/安全区和 Godot `AccessibilityServer.is_supported()`。
->
-> 当前缺失截图。实施后应以无敏感信息的测试数据截取注册默认/字段错误/提交中，目录加载/失败/继续对局启动中与失败重试，及五子棋正常、落子 pending、重连、认输确认与取消后、结果及返回。
+> [Omitted: Scenario A 的 SHOULD 发现、MAY 决策、测试与目标运行时、截图矩阵和拟修改文件列表；请参阅 `eval-green-a.md` 原始转录。]
 >
 > Verdict: incomplete。应立即以共享令牌和危险操作语义为第一批改造；现有 `useMaterial3` 不足以判定 Material 3 或跨运行时 UX 合格，且未运行目标 Android 运行时，视觉与可访问性验收仍未完成。
 
-### Full Godot shell observation (Scenario B)
+### Selected verbatim Godot shell excerpts (Scenario B)
 
-`eval-green-b.md` observed the following (full observation):
+`eval-green-b.md` supplied the selected verbatim excerpts below. The title and
+section headings are omitted; all omitted source material is marked explicitly.
 
 > 范围仅为 Godot 五子棋的用户界面与交互呈现。采用 **Lightweight Board**（五子棋适用的可选 Profile）：棋盘保持主视觉，使用轻量返回控件、连接状态、回合/身份、认输确认、结果与返回大厅面板。不要把统一可见 AppBar、导航和按钮布局强加给现在或未来所有游戏；共享的是 Material 3 语义 token、状态语义和无障碍规则。沉浸式等游戏可只遵守 Core Contract 而不显示此壳。
 >
@@ -306,15 +303,9 @@ the structured acceptance output.
 > - 落子请求必须继续先画为 `piece_pending`，服务器确认后才成为正式棋子；拒绝、版本过期和重连快照必须移除或按权威快照重建。pending 时显示明确进度并阻止重复提交，而非仅禁用。
 > - 为返回、认输、棋盘及自定义交互补齐 Godot 无障碍名称、描述、角色/动作、焦点顺序和必要 live-region 更新；验证对比度、安全区、放大文本与 reduced motion。Android 导出还必须验证 `AccessibilityServer.is_supported()` 和真实 TalkBack，元数据本身不能视为完成。
 >
-> 默认采用轻量浮动栏而非完整 AppBar，以维持棋盘主导；这是 Lightweight Board 的推荐做法。若产品决定保留当前文字“返回”而非图标，仍须满足 48dp 触达、焦点与 Back 同路径，并在五子棋 onboarding 记录该偏离及替代无障碍措施。
+> [Omitted: Scenario B 的 SHOULD 发现与 MAY 决策；请参阅 `eval-green-b.md` 原始转录。]
 >
-> 五子棋选择 Lightweight Board；其他游戏按各自类型选择 Lightweight Board、Immersive 或仅 Core Contract，不复用一个强制可见壳。可用 tonal surface、圆角状态 chip、轻微按下缩放或触感反馈；结果可用“结果 + 返回大厅”面板呈现，棋盘、棋子、落子动画和音效仍由五子棋模块拥有。
->
-> 实现后运行现有 Godot 场景/流程测试及仓库验证门禁；在打包的 Android 五子棋中，以声明的默认方向实际验证：连接/同步、轮到我、待确认落子、接受/拒绝、断线重连及快照恢复、认输弹窗取消/确认、结果、可见返回与系统 Back 一致、后台恢复和 Activity 退出。联机玩法仍需真实双设备验证；假服务只能证明状态接线。
->
-> 在实际 Android 导出中截图（无邀请码、token、内部 URL、revision 或私人信息）：默认棋盘与轻量栏、连接/同步、待确认落子、重连、错误恢复、认输确认、认输取消后的棋局、结果与返回大厅，以及明/暗方案和放大文字下的关键界面。必要时多张截图覆盖全部状态。
->
-> Verdict: incomplete。这是可实施的改造说明，尚未运行打包 Android 游戏或取得目标运行时截图；视觉和无障碍验收仍不完整。
+> [Omitted: Scenario B 的测试与目标运行时、截图矩阵和结论；请参阅 `eval-green-b.md` 原始转录。]
 
 ### Full Flutter routing observation (Scenario D)
 
