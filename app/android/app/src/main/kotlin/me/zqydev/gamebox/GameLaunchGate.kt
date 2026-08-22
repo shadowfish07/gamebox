@@ -7,16 +7,16 @@ internal class GameLaunchGate {
         @Synchronized get() = state != State.IDLE
 
     @Synchronized
-    fun tryBeginLaunch(gameProcessRunning: Boolean): Boolean {
+    fun requestLaunch(gameProcessRunning: Boolean): Decision {
         if (gameProcessRunning) {
             state = State.ACTIVE
-            return false
+            return Decision.RESUME_ACTIVE
         }
         if (state == State.STARTING) {
-            return false
+            return Decision.REJECT
         }
         state = State.STARTING
-        return true
+        return Decision.START_NEW
     }
 
     @Synchronized
@@ -33,5 +33,11 @@ internal class GameLaunchGate {
         IDLE,
         STARTING,
         ACTIVE,
+    }
+
+    enum class Decision {
+        START_NEW,
+        RESUME_ACTIVE,
+        REJECT,
     }
 }

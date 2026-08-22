@@ -1,34 +1,53 @@
 package me.zqydev.gamebox
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GameLaunchGateTest {
     @Test
-    fun `overlap is rejected until a real return`() {
+    fun `running game is resumed without starting a second engine`() {
         val gate = GameLaunchGate()
 
-        assertTrue(gate.tryBeginLaunch(gameProcessRunning = false))
-        assertFalse(gate.tryBeginLaunch(gameProcessRunning = false))
+        assertEquals(
+            GameLaunchGate.Decision.START_NEW,
+            gate.requestLaunch(gameProcessRunning = false),
+        )
+        assertEquals(
+            GameLaunchGate.Decision.REJECT,
+            gate.requestLaunch(gameProcessRunning = false),
+        )
         assertTrue(gate.isActive)
 
         gate.onHostResumed(gameProcessRunning = true)
-        assertFalse(gate.tryBeginLaunch(gameProcessRunning = true))
+        assertEquals(
+            GameLaunchGate.Decision.RESUME_ACTIVE,
+            gate.requestLaunch(gameProcessRunning = true),
+        )
 
         gate.onHostResumed(gameProcessRunning = false)
-        assertTrue(gate.tryBeginLaunch(gameProcessRunning = false))
+        assertEquals(
+            GameLaunchGate.Decision.START_NEW,
+            gate.requestLaunch(gameProcessRunning = false),
+        )
     }
 
     @Test
     fun `failed start releases launch gate`() {
         val gate = GameLaunchGate()
 
-        assertTrue(gate.tryBeginLaunch(gameProcessRunning = false))
+        assertEquals(
+            GameLaunchGate.Decision.START_NEW,
+            gate.requestLaunch(gameProcessRunning = false),
+        )
         gate.onLaunchFailed()
 
         assertFalse(gate.isActive)
-        assertTrue(gate.tryBeginLaunch(gameProcessRunning = false))
+        assertEquals(
+            GameLaunchGate.Decision.START_NEW,
+            gate.requestLaunch(gameProcessRunning = false),
+        )
     }
 
     @Test
@@ -38,7 +57,10 @@ class GameLaunchGateTest {
         recreatedGate.onHostResumed(gameProcessRunning = true)
 
         assertTrue(recreatedGate.isActive)
-        assertFalse(recreatedGate.tryBeginLaunch(gameProcessRunning = true))
+        assertEquals(
+            GameLaunchGate.Decision.RESUME_ACTIVE,
+            recreatedGate.requestLaunch(gameProcessRunning = true),
+        )
     }
 
     @Test
@@ -46,6 +68,9 @@ class GameLaunchGateTest {
         val gate = GameLaunchGate()
         gate.onHostResumed(gameProcessRunning = true)
 
-        assertTrue(gate.tryBeginLaunch(gameProcessRunning = false))
+        assertEquals(
+            GameLaunchGate.Decision.START_NEW,
+            gate.requestLaunch(gameProcessRunning = false),
+        )
     }
 }

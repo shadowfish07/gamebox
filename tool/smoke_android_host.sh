@@ -21,7 +21,7 @@ readonly TEST_CLASS="me.zqydev.gamebox.HostSmokeClickTest"
 readonly CLICK_SMOKE_TEST="$TEST_CLASS#clickHostSmokeLaunchByAccessibilityDescription"
 readonly CLICK_CANARY_TEST="$TEST_CLASS#clickNormalLaunchCanaryByAccessibilityDescription"
 readonly CLICK_COLLISION_CANARY_TEST="$TEST_CLASS#clickCollisionLaunchCanaryByAccessibilityDescription"
-readonly EXPECT_OVERLAP_TEST="$TEST_CLASS#clickHostSmokeAndExpectActiveLaunchRejection"
+readonly RESUME_ACTIVE_TEST="$TEST_CLASS#clickHostSmokeToResumeActiveGame"
 readonly PRESS_BACK_TEST="$TEST_CLASS#pressBackToActiveGame"
 readonly READY_MARKER="GAMEBOX_GODOT_READY"
 readonly EXITING_MARKER="GAMEBOX_GODOT_EXITING"
@@ -292,6 +292,12 @@ main_is_resumed() {
     | grep -F "$PACKAGE/.MainActivity" >/dev/null
 }
 
+game_is_resumed() {
+  "${ADB[@]}" shell dumpsys activity activities 2>/dev/null \
+    | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity' \
+    | grep -F "$PACKAGE/.GameActivity" >/dev/null
+}
+
 wait_for_log_marker() {
   local boundary="$1"
   local marker="$2"
@@ -334,6 +340,17 @@ wait_for_main_resume() {
   local deadline=$((SECONDS + 20))
   while ((SECONDS < deadline)); do
     if main_is_resumed; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+wait_for_game_resume() {
+  local deadline=$((SECONDS + 20))
+  while ((SECONDS < deadline)); do
+    if game_is_resumed; then
       return 0
     fi
     sleep 0.2
@@ -423,7 +440,7 @@ assert_no_crash_or_anr "$canary_logs" "$canary_game_pid"
 recreated_main_pid="$initial_pid"
 if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
   # Kill only the main process while the game stays alive, then verify the kernel-held
-  # lease reconstructs the launch gate in the new main process. Release builds are
+  # lease lets the recreated main process foreground that same game. Release builds are
   # intentionally not debuggable, so Android rejects the run-as step there.
   old_main_pid="$initial_pid"
   "${ADB[@]}" shell run-as "$PACKAGE" kill -9 "$old_main_pid" >/dev/null \
@@ -434,28 +451,26 @@ if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
     || fail "targeted main-process kill changed the active game PID"
   "${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
     || fail "could not recreate MainActivity while the game stayed active"
-  wait_for_main_resume || fail "MainActivity did not resume for overlap verification"
+  wait_for_main_resume || fail "MainActivity did not resume for active-game recovery"
   recreated_main_pid="$(main_pid)"
   [[ -n "$recreated_main_pid" && "$recreated_main_pid" != "$old_main_pid" ]] \
     || fail "Flutter main process was not recreated with a new PID"
-  [[ "$(game_pid)" == "$canary_game_pid" ]] || fail "canary game PID changed before overlap attempt"
-  run_instrumentation "$EXPECT_OVERLAP_TEST" \
-    || fail "recreated main process did not return the deterministic overlap rejection"
-  [[ "$(game_pid)" == "$canary_game_pid" ]] || fail "overlap attempt created or replaced the game process"
+  [[ "$(game_pid)" == "$canary_game_pid" ]] || fail "canary game PID changed before resume attempt"
+  run_instrumentation "$RESUME_ACTIVE_TEST" \
+    || fail "recreated main process could not request the active game"
+  wait_for_game_resume || fail "existing GameActivity did not return to the foreground"
+  [[ "$(game_pid)" == "$canary_game_pid" ]] || fail "resume attempt created or replaced the game process"
   canary_logs="$(logs_since_boundary "$canary_boundary")"
   normal_ready_count="$(grep -F -c "$NORMAL_READY_MARKER" <<<"$canary_logs" || true)"
-  [[ "$normal_ready_count" -eq 1 ]] || fail "overlap produced $normal_ready_count normal Godot ready markers"
-  run_instrumentation "$PRESS_BACK_TEST" || fail "could not return from overlap UI to the active game"
+  [[ "$normal_ready_count" -eq 1 ]] || fail "resume produced $normal_ready_count normal Godot ready markers"
 fi
 
-# UI Automator back navigation closes only the Gamebox canary and returns to the existing Flutter host.
+# UI Automator back navigation closes only the disposable game task and must reveal Flutter automatically.
 run_instrumentation "$PRESS_BACK_TEST" || fail "could not request normal canary exit"
 wait_for_log_marker "$canary_boundary" "$GODOT_TERMINATING_MARKER" \
   || fail "normal canary did not enter Godot's controlled termination path"
 wait_for_game_exit || fail "normal canary $GAME_PROCESS did not exit after back"
-"${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
-  || fail "could not restore MainActivity after normal canary exit"
-wait_for_main_resume || fail "MainActivity did not resume after normal canary exit"
+wait_for_main_resume || fail "MainActivity did not resume automatically after normal canary exit"
 [[ "$(main_pid)" == "$recreated_main_pid" ]] || fail "normal canary exit restarted recreated Flutter"
 canary_logs="$(logs_since_boundary "$canary_boundary")"
 if grep -F "$CANARY_TICKET" <<<"$canary_logs" >/dev/null; then
@@ -464,9 +479,9 @@ fi
 assert_no_crash_or_anr "$canary_logs" "$canary_game_pid"
 initial_pid="$recreated_main_pid"
 if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
-  echo "normal canary passed: ticket absent from all-buffer logs, game PID $canary_game_pid survived main PID $old_main_pid -> $recreated_main_pid recreation, overlap rejected, clean marked exit"
+  echo "normal canary passed: ticket absent from all-buffer logs, game PID $canary_game_pid survived main PID $old_main_pid -> $recreated_main_pid recreation, resumed without restart, and returned to Flutter automatically"
 else
-  echo "normal canary passed: release Godot JNI initialized, ticket absent from all-buffer logs, and the game exited cleanly"
+  echo "normal canary passed: release Godot JNI initialized, ticket absent from all-buffer logs, and the game returned to Flutter automatically"
 fi
 
 # A key-shaped gameId must never redirect ticket privatization to the wrong slot.
@@ -488,9 +503,7 @@ run_instrumentation "$PRESS_BACK_TEST" || fail "could not request collision cana
 wait_for_log_marker "$collision_boundary" "$GODOT_TERMINATING_MARKER" \
   || fail "collision canary did not enter Godot's controlled termination path"
 wait_for_game_exit || fail "collision canary $GAME_PROCESS did not exit after back"
-"${ADB[@]}" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null \
-  || fail "could not restore MainActivity after collision canary exit"
-wait_for_main_resume || fail "MainActivity did not resume after collision canary exit"
+wait_for_main_resume || fail "MainActivity did not resume automatically after collision canary exit"
 [[ "$(main_pid)" == "$initial_pid" ]] || fail "collision canary exit restarted Flutter"
 collision_logs="$(logs_since_boundary "$collision_boundary")"
 if grep -F "$CANARY_TICKET" <<<"$collision_logs" >/dev/null; then
