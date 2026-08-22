@@ -6,6 +6,7 @@ if [[ -z "${GODOT_BIN:-}" ]] && command -v godot >/dev/null 2>&1; then
   GODOT_BIN="$(command -v godot)"
 fi
 
+bash tool/verify_design_system.sh
 (cd server && go test ./...)
 (cd app && flutter analyze && flutter test)
 bash -n tool/worktree.sh tool/lib/android_lease.sh tool/test_android_lease.sh \
