@@ -2841,7 +2841,7 @@ board_cell_visual_difference() {
   local width height center_x center_y sample_side sample_left sample_top
   read -r width height <<<"$(ruby -e '
     header = File.binread(ARGV[0], 24)
-    exit 1 unless header.start_with?("\\x89PNG".b)
+    exit 1 unless header.start_with?("\x89PNG".b)
     puts header.byteslice(16, 8).unpack("N2").join(" ")
   ' "$before")" || return 1
   [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ && "$width" == "$height" ]] || return 1
