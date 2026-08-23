@@ -126,6 +126,7 @@ func _process(_delta: float) -> void:
 
 
 func _exit_tree() -> void:
+	print("GAMEBOX_GODOT_BACK exit_tree returning=%s" % str(_returning))
 	_dispose_client()
 
 
@@ -141,6 +142,7 @@ func _on_cell_pressed(x: int, y: int) -> void:
 func _on_resign_pressed() -> void:
 	if not _can_offer_resign():
 		return
+	print("GAMEBOX_GODOT_BACK resign_dialog popup_centered")
 	$ResignDialog.popup_centered()
 
 
@@ -157,11 +159,14 @@ func _on_resign_confirmed() -> void:
 
 func _on_back_pressed() -> void:
 	if $ResignDialog.visible:
+		print("GAMEBOX_GODOT_BACK back_pressed hide_dialog")
 		$ResignDialog.hide()
 		return
 	if _returning:
+		print("GAMEBOX_GODOT_BACK back_pressed already_returning")
 		return
 	_returning = true
+	print("GAMEBOX_GODOT_BACK back_pressed quitting")
 	_dispose_client()
 	if _quit_callback.is_valid():
 		_quit_callback.call()
@@ -174,13 +179,16 @@ func _notification(what: int) -> void:
 		# Android hardware Back is delivered as a go-back window event (the
 		# raw Key::BACK input never maps to ui_cancel). Route it through the
 		# same resign-dialog-aware handler as keyboard Escape.
+		print("GAMEBOX_GODOT_BACK go_back_request dialog_visible=%s" % str($ResignDialog.visible))
 		_on_back_requested()
 
 
 func _on_back_requested() -> void:
 	if $ResignDialog.visible:
+		print("GAMEBOX_GODOT_BACK branch=hide_dialog")
 		$ResignDialog.hide()
 	else:
+		print("GAMEBOX_GODOT_BACK branch=quit_on_back")
 		_on_back_pressed()
 
 
