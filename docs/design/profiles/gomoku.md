@@ -42,7 +42,7 @@ The full capture combinations and sensitive-data rules are authoritative in `doc
 
 ## Final Screenshot List
 
-Captured on clean HEAD `6510d0d` by `bash tool/e2e_android.sh` (run 11), two API-36 AVDs: A = light / large (1080×2400), B = dark / narrow (720×1600), normal system text size. Artifacts root: `artifacts/e2e/20260823T060802Z-51809/`. All captures are non-sensitive; none contain invite codes, tokens, credentials, or connection internals.
+Captured on the final clean HEAD `3404008` by `bash tool/e2e_android.sh` (final run), two API-36 AVDs: A = light / large (1080×2400), B = dark / narrow (720×1600), normal system text size. Artifacts root: `artifacts/e2e/20260823T065045Z-66739/`. All captures are non-sensitive; none contain invite codes, tokens, credentials, or connection internals.
 
 | State | Screenshot (relative to artifacts root) |
 | --- | --- |

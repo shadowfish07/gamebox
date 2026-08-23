@@ -162,7 +162,7 @@ The current implementation has valuable authority, reconnect, recovery, Back, an
 
 ## Post-change Closure Evidence
 
-Verified against clean HEAD `6510d0d` (after the Task 9 APK asset gate commit), with test counts **Flutter 189/189**, **Godot 111/111**. The unified repository gate (`bash tool/verify.sh`) and the E2E self-test (`bash tool/e2e_android.sh --self-test`) both exit 0. Actual two-AVD Android evidence is in `artifacts/e2e/20260823T060802Z-51809/` (`summary.json.status=passed`).
+Verified against the final clean HEAD `3404008` (the closing docs commit, after the Task 9 APK asset gate commit `6510d0d`), with test counts **Flutter 189/189**, **Godot 111/111**. The unified repository gate (`bash tool/verify.sh`) and the E2E self-test (`bash tool/e2e_android.sh --self-test`) both exit 0. Actual two-AVD Android evidence is in `artifacts/e2e/20260823T065045Z-66739/` (`summary.json.status=passed`, `sourceRevision=3404008`).
 
 | Finding | Closure test command | Closure commits | Evidence artifact |
 | --- | --- | --- | --- |
@@ -172,7 +172,7 @@ Verified against clean HEAD `6510d0d` (after the Task 9 APK asset gate commit), 
 | M4 Godot safe-area/scalable shell | `bash tool/verify_godot_tests.sh`; E2E on narrow+large viewports | `36bf7d6`, `219ed06`, `7d94594` | `screenshots/gomoku-initial-light.png`, `gomoku-terminal-light.png` (both viewports exercised on-device) |
 | M5 dense-board pressed state | `game_runtime/test/test_gomoku_board.gd` (pressed→pending→accepted) | `7d94594` | `screenshots/gomoku-pending-light.png` |
 | M6 background recovery / Back parity | E2E recovery leg + `0281b90` Back-debounce on-device log | `7ef6c45`, `79dadb8`, `0281b90`, `4f7f347` | `pre-recovery-*.png`, `recovered-*.png`, `post-server-restart-*.png`, `screenshots/gomoku-reconnecting.png`, `gomoku-connection-failed.png` |
-| M7 runtime/screenshot evidence | `bash tool/e2e_android.sh` run 11 (two API-36 AVDs, light A / dark B) | `316c3b4`, `d2420ad`, `4f7f347` | `artifacts/e2e/20260823T060802Z-51809/screenshots/*.png` (13/13 required, `summary.json.uiEvidence`) |
+| M7 runtime/screenshot evidence | `bash tool/e2e_android.sh` final run on `3404008` (two API-36 AVDs, light A / dark B) | `316c3b4`, `d2420ad`, `4f7f347` | `artifacts/e2e/20260823T065045Z-66739/screenshots/*.png` (13/13 required, `summary.json.uiEvidence`) |
 | M8 update feedback dialog | `(cd app && flutter test test/features/update/update_action_test.dart)` | `f9dfcd5`, `8b97650` | `screenshots/update-dialog-dark.png` |
 
 SHOULD deviations are closed as recorded: S1–S4 were implemented (field-local invite/nickname errors, tokenized card typography, opponent status treatment, stable async regions); S5's steady-connected collapse is recorded as a Gomoku profile deviation in `docs/design/profiles/gomoku.md#should-deviations`. The APK asset gate now also asserts every `design_system/**` generated/component path is packaged (`6510d0d`).
