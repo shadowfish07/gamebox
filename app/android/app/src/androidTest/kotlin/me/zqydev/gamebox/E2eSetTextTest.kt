@@ -61,7 +61,21 @@ class E2eSetTextTest {
         } finally {
             clipboard.clearPrimaryClip()
         }
-        val refreshed = device.findObject(By.res(target))
+        // On short screens the open keyboard can push the just-filled field
+        // below the visible viewport (the submit footer stays pinned), hiding
+        // it from the accessibility tree and breaking the round-trip re-find.
+        // Dismiss the keyboard first so the field returns to view.
+        val keyboardShown = device.executeShellCommand("dumpsys input_method")
+            .lineSequence()
+            .any { it.contains("mInputShown=true") }
+        if (keyboardShown) {
+            device.pressBack()
+            device.waitForIdle()
+        }
+        val refreshed = device.wait(
+            Until.findObject(By.res(target)),
+            SELECTOR_TIMEOUT_MS,
+        )
         val refreshedEditable = refreshed?.children?.singleOrNull()
             ?.takeIf { child -> child.className == EDIT_TEXT_CLASS }
         if (refreshedEditable?.text != decoded) {
