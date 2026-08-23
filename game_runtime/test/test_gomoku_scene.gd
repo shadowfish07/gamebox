@@ -25,6 +25,7 @@ static func cases() -> Array:
 		{"name": "gomoku scene gates resign and keeps back non-destructive", "run": _gates_resign_and_back},
 		{"name": "gomoku keyboard Escape closes resign before returning", "run": _escape_cancel_closes_dialog_first},
 		{"name": "gomoku Android go-back closes resign before returning", "run": _android_go_back_closes_dialog_first},
+		{"name": "gomoku collapses Android Back double-delivery without a dialog", "run": _android_go_back_double_delivery_without_dialog},
 		{"name": "gomoku terminal return stays non-destructive", "run": _terminal_return_is_non_destructive},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
@@ -416,8 +417,39 @@ static func _android_go_back_closes_dialog_first() -> bool:
 		or not _check(client.resign_requests == 0, "Android go-back submitted resignation"):
 		return _cleanup(scene)
 	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
-	var result := _check(quit_calls.size() == 1, "second Android go-back did not return exactly once") \
+	if not _check(quit_calls.is_empty(), "one Back press double-delivered a quit") \
+		or not _check(not dialog.visible, "suppressed duplicate go-back reopened the confirmation") \
+		or not _check(client.resign_requests == 0, "duplicate go-back submitted resignation"):
+		return _cleanup(scene)
+	scene._go_back_debounce_ms = 1
+	await (Engine.get_main_loop() as SceneTree).create_timer(0.05).timeout
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	var result := _check(quit_calls.size() == 1, "genuine later Android go-back did not return exactly once") \
 		and _check(client.resign_requests == 0, "ordinary Android go-back return submitted resignation")
+	return _cleanup(scene, result)
+
+
+static func _android_go_back_double_delivery_without_dialog() -> bool:
+	# Godot 4.7 delivers one physical Android Back press as two
+	# GO_BACK_REQUEST notifications (activity back dispatcher + render view
+	# key event, ~7ms apart). The controller must collapse them so a single
+	# press with no dialog open still returns exactly once.
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResignDialog"), "Android go-back confirmation path is missing"):
+		return _cleanup(scene)
+	var one_stone := _empty_board()
+	one_stone[0] = 1
+	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
+	if not _check(not (scene.get_node("ResignDialog") as ConfirmationDialog).visible,
+		"resign dialog unexpectedly visible before go-back"):
+		return _cleanup(scene)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	var result := _check(quit_calls.size() == 1, "double-delivered Back without dialog did not return exactly once") \
+		and _check(client.resign_requests == 0, "double-delivered Back submitted resignation")
 	return _cleanup(scene, result)
 
 

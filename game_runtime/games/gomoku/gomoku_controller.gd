@@ -20,6 +20,8 @@ const SAFE_ERROR_COPY := {
 	"connection_failed": "连接失败，请返回大厅",
 }
 
+const GO_BACK_DEBOUNCE_MS := 150
+
 var ready_marker_emitted: bool:
 	get:
 		return _ready_marker_emitted
@@ -54,6 +56,8 @@ var _ready_marker_callback := Callable()
 var _ready_marker_emitted := false
 var _ready_marker_text := ""
 var _resign_submitted := false
+var _last_go_back_time_ms := -100000
+var _go_back_debounce_ms := GO_BACK_DEBOUNCE_MS
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -190,6 +194,17 @@ func _notification(what: int) -> void:
 		# raw Key::BACK input never maps to ui_cancel). Route it through the
 		# same resign-dialog-aware handler as keyboard Escape.
 		print("GAMEBOX_GODOT_BACK go_back_request dialog_visible=%s" % str($ResignDialog.visible))
+		var now := Time.get_ticks_msec()
+		if now - _last_go_back_time_ms < _go_back_debounce_ms:
+			# Godot 4.7 forwards one physical Android Back press as two
+			# GO_BACK_REQUEST notifications: the activity back dispatcher and
+			# the render view's key event each send it, ~7ms apart. Acting on
+			# both closes the resign dialog and quits in a single press, so
+			# ignore the immediate duplicate — only a later, deliberate press
+			# returns.
+			print("GAMEBOX_GODOT_BACK go_back_duplicate_suppressed")
+			return
+		_last_go_back_time_ms = now
 		_on_back_requested()
 
 
