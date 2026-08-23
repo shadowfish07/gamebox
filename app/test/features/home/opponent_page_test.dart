@@ -71,7 +71,7 @@ void main() {
     expect(find.byType(CircleAvatar), findsNWidgets(4));
     expect(
       tester.getSemantics(find.byKey(const Key('opponent-$bobId'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'opponent-$bobId',
         label: '小猫\n在线 · 游戏中',
         isButton: true,
@@ -81,7 +81,7 @@ void main() {
     );
     expect(
       tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'opponent-$carolId',
         label: '小鸟\n离线 · 游戏中',
         isButton: true,
@@ -139,7 +139,7 @@ void main() {
     expect(loadingSemantics.label, contains('离线 · 可邀请'));
     expect(
       loadingSemantics,
-      containsSemantics(
+      isSemantics(
         identifier: 'opponent-$carolId',
         isButton: true,
         isEnabled: false,
@@ -196,7 +196,7 @@ void main() {
       expect(find.bySemanticsIdentifier('opponent-error'), findsOneWidget);
       expect(
         tester.getSemantics(find.byKey(const Key('opponent-$carolId'))),
-        containsSemantics(
+        isSemantics(
           identifier: 'opponent-$carolId',
           label: '小鸟\n离线 · 游戏中',
           isButton: true,

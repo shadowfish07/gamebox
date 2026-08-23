@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "brand": {
     "seed": "#006B60",
-    "schemeSource": "flutter-3.35.1-dart-3.9.0-tonal-spot-contrast-0.0"
+    "schemeSource": "flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0"
   },
   "colorSchemes": {
     "light": {
       "primary": "#006B60",
       "onPrimary": "#FFFFFF",
       "primaryContainer": "#9EF2E3",
-      "onPrimaryContainer": "#00201C",
+      "onPrimaryContainer": "#005048",
       "primaryFixed": "#9EF2E3",
       "primaryFixedDim": "#82D5C7",
       "onPrimaryFixed": "#00201C",
@@ -18,7 +18,7 @@
       "secondary": "#4A635E",
       "onSecondary": "#FFFFFF",
       "secondaryContainer": "#CCE8E2",
-      "onSecondaryContainer": "#05201C",
+      "onSecondaryContainer": "#334B47",
       "secondaryFixed": "#CCE8E2",
       "secondaryFixedDim": "#B1CCC6",
       "onSecondaryFixed": "#05201C",
@@ -26,7 +26,7 @@
       "tertiary": "#456179",
       "onTertiary": "#FFFFFF",
       "tertiaryContainer": "#CCE5FF",
-      "onTertiaryContainer": "#001E31",
+      "onTertiaryContainer": "#2D4960",
       "tertiaryFixed": "#CCE5FF",
       "tertiaryFixedDim": "#ADCAE5",
       "onTertiaryFixed": "#001E31",
@@ -34,7 +34,7 @@
       "error": "#BA1A1A",
       "onError": "#FFFFFF",
       "errorContainer": "#FFDAD6",
-      "onErrorContainer": "#410002",
+      "onErrorContainer": "#93000A",
       "surface": "#F4FBF8",
       "onSurface": "#161D1B",
       "surfaceDim": "#D5DBD9",
@@ -115,21 +115,81 @@
     "pendingOverlayAlpha": 0.56
   },
   "typography": {
-    "displayLarge": { "fontSize": 57, "fontWeight": 400, "lineHeight": 64 },
-    "displayMedium": { "fontSize": 45, "fontWeight": 400, "lineHeight": 52 },
-    "displaySmall": { "fontSize": 36, "fontWeight": 400, "lineHeight": 44 },
-    "headlineLarge": { "fontSize": 32, "fontWeight": 400, "lineHeight": 40 },
-    "headlineMedium": { "fontSize": 28, "fontWeight": 400, "lineHeight": 36 },
-    "headlineSmall": { "fontSize": 24, "fontWeight": 400, "lineHeight": 32 },
-    "titleLarge": { "fontSize": 22, "fontWeight": 400, "lineHeight": 28 },
-    "titleMedium": { "fontSize": 16, "fontWeight": 500, "lineHeight": 24 },
-    "titleSmall": { "fontSize": 14, "fontWeight": 500, "lineHeight": 20 },
-    "bodyLarge": { "fontSize": 16, "fontWeight": 400, "lineHeight": 24 },
-    "bodyMedium": { "fontSize": 14, "fontWeight": 400, "lineHeight": 20 },
-    "bodySmall": { "fontSize": 12, "fontWeight": 400, "lineHeight": 16 },
-    "labelLarge": { "fontSize": 14, "fontWeight": 500, "lineHeight": 20 },
-    "labelMedium": { "fontSize": 12, "fontWeight": 500, "lineHeight": 16 },
-    "labelSmall": { "fontSize": 11, "fontWeight": 500, "lineHeight": 16 }
+    "displayLarge": {
+      "fontSize": 57,
+      "fontWeight": 400,
+      "lineHeight": 64
+    },
+    "displayMedium": {
+      "fontSize": 45,
+      "fontWeight": 400,
+      "lineHeight": 52
+    },
+    "displaySmall": {
+      "fontSize": 36,
+      "fontWeight": 400,
+      "lineHeight": 44
+    },
+    "headlineLarge": {
+      "fontSize": 32,
+      "fontWeight": 400,
+      "lineHeight": 40
+    },
+    "headlineMedium": {
+      "fontSize": 28,
+      "fontWeight": 400,
+      "lineHeight": 36
+    },
+    "headlineSmall": {
+      "fontSize": 24,
+      "fontWeight": 400,
+      "lineHeight": 32
+    },
+    "titleLarge": {
+      "fontSize": 22,
+      "fontWeight": 400,
+      "lineHeight": 28
+    },
+    "titleMedium": {
+      "fontSize": 16,
+      "fontWeight": 500,
+      "lineHeight": 24
+    },
+    "titleSmall": {
+      "fontSize": 14,
+      "fontWeight": 500,
+      "lineHeight": 20
+    },
+    "bodyLarge": {
+      "fontSize": 16,
+      "fontWeight": 400,
+      "lineHeight": 24
+    },
+    "bodyMedium": {
+      "fontSize": 14,
+      "fontWeight": 400,
+      "lineHeight": 20
+    },
+    "bodySmall": {
+      "fontSize": 12,
+      "fontWeight": 400,
+      "lineHeight": 16
+    },
+    "labelLarge": {
+      "fontSize": 14,
+      "fontWeight": 500,
+      "lineHeight": 20
+    },
+    "labelMedium": {
+      "fontSize": 12,
+      "fontWeight": 500,
+      "lineHeight": 16
+    },
+    "labelSmall": {
+      "fontSize": 11,
+      "fontWeight": 500,
+      "lineHeight": 16
+    }
   },
   "spacing": {
     "base": 4,

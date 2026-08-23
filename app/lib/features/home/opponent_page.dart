@@ -172,30 +172,35 @@ final class _OpponentPageState extends State<OpponentPage> {
         !_loading &&
         _creatingOpponentId == null &&
         opponent.availability == OpponentAvailability.idle;
-    return MergeSemantics(
+    final onTap = enabled ? () => _choose(opponent) : null;
+    return Semantics(
       key: Key('opponent-${opponent.id}'),
-      child: Semantics(
-        identifier: 'opponent-${opponent.id}',
-        button: true,
-        child: ListTile(
-          enabled: enabled,
-          leading: const CircleAvatar(child: Icon(Icons.person_outline)),
-          title: Text(opponent.nickname),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(_availabilityText(opponent)),
-              if (creating) const Text('正在创建对局'),
-            ],
-          ),
-          trailing: creating
-              ? SizedBox.square(
-                  dimension: GameboxTokens.components.smallProgressSize,
-                  child: const CircularProgressIndicator(),
-                )
-              : null,
-          onTap: enabled ? () => _choose(opponent) : null,
+      identifier: 'opponent-${opponent.id}',
+      label: creating
+          ? '${opponent.nickname}\n${_availabilityText(opponent)}\n正在创建对局'
+          : '${opponent.nickname}\n${_availabilityText(opponent)}',
+      button: true,
+      enabled: enabled,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: ListTile(
+        enabled: enabled,
+        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        title: Text(opponent.nickname),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_availabilityText(opponent)),
+            if (creating) const Text('正在创建对局'),
+          ],
         ),
+        trailing: creating
+            ? SizedBox.square(
+                dimension: GameboxTokens.components.smallProgressSize,
+                child: const CircularProgressIndicator(),
+              )
+            : null,
+        onTap: onTap,
       ),
     );
   }

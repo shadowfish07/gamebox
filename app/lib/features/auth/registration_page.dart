@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 
 import '../../core/api/api_error.dart';
 import '../../design_system/components/gamebox_async_panel.dart';
@@ -6,7 +7,6 @@ import '../../design_system/components/gamebox_page_body.dart';
 import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../update/update_action.dart';
-import '../update/update_controller.dart';
 import 'session_controller.dart';
 
 final class RegistrationPage extends StatefulWidget {

@@ -33,7 +33,7 @@ Status: Validated
   `deploy/**`）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
   `https://staging.gamebox.zqydev.me`）。
 - `concurrency: cancel-in-progress: true`，只保留最新一次构建。
-- 工具链对齐现有 CI/release：Java 17、Flutter 3.35.1、Godot 4.7.0、接受 Android
+- 工具链对齐现有 CI/release：Java 17、Flutter 3.47.1、Godot 4.7.0、接受 Android
   licenses。
 - 构建前执行 `godot --headless --path game_runtime --import` 导入 Godot 资产
   （生成 `.godot/imported/`，APK 需要打包）。

@@ -282,7 +282,9 @@ fi
 bash tool/bootstrap.sh --build-only
 bash tool/verify_fast.sh
 
-(cd app/android && ./gradlew :app:testDebugUnitTest)
+(cd app/android && ./gradlew \
+  :app:testDebugUnitTest \
+  :flutter_release_updater:testDebugUnitTest)
 (cd app && flutter build apk --debug)
 
 readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
@@ -290,6 +292,29 @@ readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
   printf 'Debug APK was not produced at %s\n' "$APK" >&2
   exit 1
 }
+
+merged_manifests="$(find "$ROOT_DIR/app/build/app/intermediates/merged_manifests" \
+  -type f -name AndroidManifest.xml -path '*debug*' 2>/dev/null || true)"
+readonly merged_manifests
+[[ -n "$merged_manifests" ]] || {
+  printf 'No merged debug Android manifest was produced.\n' >&2
+  exit 1
+}
+while IFS= read -r merged_manifest; do
+  install_permission_count="$({
+    grep -oF 'android.permission.REQUEST_INSTALL_PACKAGES' "$merged_manifest" || true
+  } | wc -l | tr -d ' ')"
+  if [[ "$install_permission_count" != "1" ]]; then
+    printf 'Merged debug manifest must contain one updater permission (found %s): %s\n' \
+      "$install_permission_count" "$merged_manifest" >&2
+    exit 1
+  fi
+  if grep -F 'android.permission.INSTALL_PACKAGES' "$merged_manifest" >/dev/null; then
+    printf 'Merged debug manifest requests privileged silent installation: %s\n' \
+      "$merged_manifest" >&2
+    exit 1
+  fi
+done <<<"$merged_manifests"
 
 apk_entries="$(unzip -Z1 "$APK")"
 readonly apk_entries

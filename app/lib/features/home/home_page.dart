@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 
 import '../../core/api/api_error.dart';
 import '../../design_system/components/gamebox_async_panel.dart';
@@ -7,7 +8,6 @@ import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
 import '../update/update_action.dart';
-import '../update/update_controller.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
 import 'opponent_page.dart';

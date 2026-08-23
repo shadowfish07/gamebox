@@ -101,9 +101,8 @@ void main() {
           },
         }),
         'wrong root case': jsonEncode({'Session': base['session']}),
-        'escaped root alias': jsonEncode(
-          base,
-        ).replaceFirst('"session"', r'"sess\u0069on"'),
+        'escaped root alias': jsonEncode(base)
+            .replaceFirst('"session"', r'"sess\u0069on"'),
         'unknown user key': jsonEncode({
           'session': {
             ...base['session']! as Map<String, Object?>,

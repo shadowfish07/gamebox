@@ -36,11 +36,10 @@ final class _TimerScheduledCall implements HomeScheduledCall {
 
 final class HomeController extends ChangeNotifier {
   HomeController({
-    required GomokuRepository repository,
+    required this._repository,
     HomePollScheduler? scheduler,
     DateTime Function()? now,
-  }) : _repository = repository,
-       _scheduler = scheduler ?? const TimerHomePollScheduler(),
+  }) : _scheduler = scheduler ?? const TimerHomePollScheduler(),
        _now = now ?? DateTime.now;
 
   static const pollInterval = Duration(seconds: 10);

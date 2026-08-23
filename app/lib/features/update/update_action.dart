@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_release_updater/flutter_release_updater.dart';
+
 import '../../design_system/generated/gamebox_tokens.g.dart';
-import 'app_update.dart';
-import 'update_controller.dart';
 
 final class UpdateActionButton extends StatelessWidget {
   const UpdateActionButton({super.key, required this.controller});

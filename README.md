@@ -26,7 +26,7 @@ chat, spectating, push notifications, public deployment, or account migration.
 
 ## Required development tools
 
-- Flutter 3.35.1 with its Dart 3.9 SDK
+- Flutter 3.47.1 with its Dart 3.13 SDK
 - Go 1.25
 - Godot 4.7 (set `GODOT_BIN` when it is not installed as the macOS app)
 - JDK 17 or newer
@@ -142,12 +142,23 @@ never credential plaintext.
 
 The Android app checks the latest stable GitHub Release at startup, with a
 six-hour local cache. The update button in the app bar can bypass that cache.
-When a newer semantic version is available, Gamebox downloads the release APK
-into app-private storage, verifies its SHA-256 checksum, verifies the package
-name, signing certificate, and increasing Android version code, then opens the
-Android package installer. Android always requires a system confirmation; on
-Android 8 and newer the user may first need to allow Gamebox to install unknown
-apps. Network or update failures do not block registration or gameplay.
+When a newer semantic version is available, Gamebox downloads the APK into its
+private application-support directory, verifies its SHA-256 digest, then asks
+Android's system package installer to install it. The native bridge also rejects
+APKs with the wrong package name, a non-incrementing version code, or a different
+signing certificate. Network or update failures do not block registration or
+gameplay.
+
+The reusable implementation lives in the independent
+[`flutter_release_updater`](https://github.com/shadowfish07/flutter_release_updater)
+repository and is pinned here through the `v0.1.2` Git tag. Other Android
+Flutter applications can pin the same tag and provide their own update UI. The
+plugin contributes
+`REQUEST_INSTALL_PACKAGES` through manifest merging because Android requires
+that special access for a normal application that installs its own downloaded
+APK; it never requests the signature-only `INSTALL_PACKAGES` permission or
+attempts silent installation. Store-hosted update APIs can avoid this access
+only by moving download and installation ownership to the store.
 
 The release workflow is `.github/workflows/release.yml`. Configure these
 repository Actions secrets before the first release:
@@ -176,8 +187,9 @@ git push origin v1.0.1
 
 The workflow checks that the tag and pubspec versions match, runs the complete
 repository verification gate, builds signed APK and AAB files, verifies the APK
-signature, generates `checksums.txt`, and publishes all three files to GitHub
-Releases. A manually dispatched run requires an already-existing matching tag.
+signature, generates `checksums.txt` for manual verification, and publishes all
+three files to GitHub Releases. A manually dispatched run requires an
+already-existing matching tag.
 GitHub's `releases/latest` endpoint excludes drafts and prereleases, so only a
 stable published release is offered automatically to normal installations.
 

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 const _outputPath = String.fromEnvironment('GAMEBOX_SCHEME_OUTPUT');
 
 void main() {
-  test('exports and locks the Flutter 3.35.1 tonal spot color schemes', () {
+  test('exports and locks the Flutter 3.47.1 tonal spot color schemes', () {
     final derived = <String, Object?>{
       'light': _scheme(Brightness.light),
       'dark': _scheme(Brightness.dark),

@@ -40,7 +40,7 @@ void main() {
       expect(find.bySemanticsIdentifier('choose-opponent'), findsOneWidget);
       expect(
         tester.getSemantics(find.bySemanticsIdentifier('choose-opponent')),
-        containsSemantics(
+        isSemantics(
           identifier: 'choose-opponent',
           isButton: true,
           hasTapAction: true,
@@ -51,7 +51,7 @@ void main() {
       );
       expect(
         gameSemantics,
-        containsSemantics(
+        isSemantics(
           identifier: 'game-gomoku',
           label: '五子棋\n2 人 · 回合制',
           isHeader: true,
@@ -93,7 +93,7 @@ void main() {
     expect(find.bySemanticsIdentifier('continue-match'), findsOneWidget);
     expect(
       tester.getSemantics(find.bySemanticsIdentifier('continue-match')),
-      containsSemantics(
+      isSemantics(
         identifier: 'continue-match',
         isButton: true,
         hasTapAction: true,
@@ -125,7 +125,7 @@ void main() {
     expect(find.text('取消未开始对局'), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      containsSemantics(
+      isSemantics(
         identifier: 'cancel-match',
         label: '取消未开始对局',
         isButton: true,

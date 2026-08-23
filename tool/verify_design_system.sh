@@ -19,9 +19,9 @@ command -v flutter >/dev/null 2>&1 || {
 
 sdk_metadata="$(flutter --version --machine)"
 if ! jq -e \
-  '.frameworkVersion == "3.35.1" and (.dartSdkVersion | startswith("3.9.0"))' \
+  '.frameworkVersion == "3.47.1" and (.dartSdkVersion | startswith("3.13.1"))' \
   >/dev/null <<<"$sdk_metadata"; then
-  echo "Design tokens require Flutter 3.35.1 and Dart 3.9.0." >&2
+  echo "Design tokens require Flutter 3.47.1 and Dart 3.13.1." >&2
   exit 1
 fi
 
