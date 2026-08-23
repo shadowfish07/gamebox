@@ -34,6 +34,7 @@ val stageGameRuntimeAssets by tasks.registering(Sync::class) {
             "main.gd.uid",
             "main.tscn",
             "core/**",
+            "design_system/**",
             "games/**",
             ".godot/imported/**",
         )

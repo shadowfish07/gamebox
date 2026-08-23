@@ -2366,7 +2366,11 @@ readonly APK
 [[ -f "$APK" ]] || fail "debug APK was not produced"
 packaged_abis="$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | paste -sd ' ' -)"
 [[ "$packaged_abis" == "arm64-v8a" ]] || fail "APK ABI set is '${packaged_abis:-empty}', expected arm64-v8a only"
-for required_asset in assets/games/gomoku/gomoku_scene.tscn assets/games/gomoku/gomoku_board.gd; do
+for required_asset in \
+  assets/games/gomoku/gomoku_scene.tscn \
+  assets/games/gomoku/gomoku_board.gd \
+  assets/design_system/components/gamebox_back_button.tscn \
+  assets/design_system/gamebox_theme.gd; do
   unzip -Z1 "$APK" | grep -Fx "$required_asset" >/dev/null || fail "APK is missing $required_asset"
 done
 APK_SHA256="$(shasum -a 256 "$APK" | awk '{print $1}')"
