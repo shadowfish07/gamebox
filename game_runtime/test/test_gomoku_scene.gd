@@ -23,7 +23,8 @@ static func cases() -> Array:
 		{"name": "gomoku scene keeps reconnect locked until authoritative snapshot", "run": _keeps_reconnect_locked},
 		{"name": "gomoku scene locks immediately when real client requests snapshot recovery", "run": _locks_real_snapshot_recovery},
 		{"name": "gomoku scene gates resign and keeps back non-destructive", "run": _gates_resign_and_back},
-		{"name": "gomoku Android cancel closes resign before returning", "run": _android_cancel_closes_dialog_first},
+		{"name": "gomoku keyboard Escape closes resign before returning", "run": _escape_cancel_closes_dialog_first},
+		{"name": "gomoku Android go-back closes resign before returning", "run": _android_go_back_closes_dialog_first},
 		{"name": "gomoku terminal return stays non-destructive", "run": _terminal_return_is_non_destructive},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
@@ -367,28 +368,56 @@ static func _gates_resign_and_back() -> bool:
 	return _cleanup(scene, result)
 
 
-static func _android_cancel_closes_dialog_first() -> bool:
+static func _escape_cancel_closes_dialog_first() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	var quit_calls: Array[int] = harness["quit_calls"]
-	if not _check(scene.has_node("ResignDialog"), "Android cancel confirmation path is missing"):
+	if not _check(scene.has_node("ResignDialog"), "keyboard Escape confirmation path is missing"):
 		return _cleanup(scene)
 	var one_stone := _empty_board()
 	one_stone[0] = 1
 	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
 	scene._on_resign_pressed()
 	var dialog := scene.get_node("ResignDialog") as ConfirmationDialog
-	if not _check(dialog.visible, "resign confirmation did not open before Android cancel"):
+	if not _check(dialog.visible, "resign confirmation did not open before keyboard Escape"):
 		return _cleanup(scene)
 	scene._unhandled_key_input(_action("ui_cancel"))
-	if not _check(not dialog.visible, "first Android cancel did not close the visible confirmation") \
-		or not _check(quit_calls.is_empty(), "first Android cancel returned while confirmation was visible") \
-		or not _check(client.resign_requests == 0, "Android cancel submitted resignation"):
+	if not _check(not dialog.visible, "first keyboard Escape did not close the visible confirmation") \
+		or not _check(quit_calls.is_empty(), "first keyboard Escape returned while confirmation was visible") \
+		or not _check(client.resign_requests == 0, "keyboard Escape submitted resignation"):
 		return _cleanup(scene)
 	scene._unhandled_key_input(_action("ui_cancel"))
-	var result := _check(quit_calls.size() == 1, "second Android cancel did not return exactly once") \
-		and _check(client.resign_requests == 0, "ordinary Android return submitted resignation")
+	var result := _check(quit_calls.size() == 1, "second keyboard Escape did not return exactly once") \
+		and _check(client.resign_requests == 0, "ordinary keyboard return submitted resignation")
+	return _cleanup(scene, result)
+
+
+static func _android_go_back_closes_dialog_first() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResignDialog"), "Android go-back confirmation path is missing"):
+		return _cleanup(scene)
+	if not _check(not (Engine.get_main_loop() as SceneTree).quit_on_go_back,
+		"Android go-back is not user-managed"):
+		return _cleanup(scene)
+	var one_stone := _empty_board()
+	one_stone[0] = 1
+	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
+	scene._on_resign_pressed()
+	var dialog := scene.get_node("ResignDialog") as ConfirmationDialog
+	if not _check(dialog.visible, "resign confirmation did not open before Android go-back"):
+		return _cleanup(scene)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	if not _check(not dialog.visible, "first Android go-back did not close the visible confirmation") \
+		or not _check(quit_calls.is_empty(), "first Android go-back returned while confirmation was visible") \
+		or not _check(client.resign_requests == 0, "Android go-back submitted resignation"):
+		return _cleanup(scene)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	var result := _check(quit_calls.size() == 1, "second Android go-back did not return exactly once") \
+		and _check(client.resign_requests == 0, "ordinary Android go-back return submitted resignation")
 	return _cleanup(scene, result)
 
 

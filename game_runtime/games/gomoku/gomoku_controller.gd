@@ -169,13 +169,25 @@ func _on_back_pressed() -> void:
 		get_tree().quit()
 
 
+func _notification(what: int) -> void:
+	if what == Node.NOTIFICATION_WM_GO_BACK_REQUEST:
+		# Android hardware Back is delivered as a go-back window event (the
+		# raw Key::BACK input never maps to ui_cancel). Route it through the
+		# same resign-dialog-aware handler as keyboard Escape.
+		_on_back_requested()
+
+
+func _on_back_requested() -> void:
+	if $ResignDialog.visible:
+		$ResignDialog.hide()
+	else:
+		_on_back_pressed()
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and not event.is_echo():
 		get_viewport().set_input_as_handled()
-		if $ResignDialog.visible:
-			$ResignDialog.hide()
-		else:
-			_on_back_pressed()
+		_on_back_requested()
 
 
 func _on_connection_state_changed(next_state: String) -> void:
