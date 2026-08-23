@@ -148,6 +148,54 @@ void main() {
     );
   }
 
+  testWidgets(
+    'register button stays within the visible viewport when the keyboard is open',
+    (tester) async {
+      // Match the on-device E2E condition (1080x2400 @ DPR 3.5): the previous
+      // layout put register as the last lazy ListView child, so opening the
+      // keyboard shrank the viewport below the button and Android's a11y tree
+      // (which only exposes viewport-visible nodes) lost it entirely.
+      tester.view.devicePixelRatio = 3.5;
+      tester.view.physicalSize = const Size(1080, 2400);
+      addTearDown(tester.view.reset);
+      final fixture = await _RegistrationFixture.create(now);
+      await tester.pumpWidget(
+        MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+      );
+      await tester.pump();
+
+      // Focus the nickname field, as the E2E harness does before tapping
+      // register, then open the keyboard.
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('nickname')),
+          matching: find.byType(TextField),
+        ),
+      );
+      await tester.pump();
+      tester.view.viewInsets = FakeViewPadding(bottom: 1050); // ~300 logical
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump();
+
+      final register = find.byKey(const Key('register'));
+      expect(
+        register,
+        findsOneWidget,
+        reason: 'register must survive the keyboard shrinking the viewport',
+      );
+      final registerRect = tester.getRect(register);
+      final logicalHeight = tester.view.physicalSize.height /
+          tester.view.devicePixelRatio;
+      final logicalInset = tester.view.viewInsets.bottom /
+          tester.view.devicePixelRatio;
+      expect(
+        registerRect.bottom,
+        lessThanOrEqualTo(logicalHeight - logicalInset),
+        reason: 'register must stay tappable above the keyboard',
+      );
+    },
+  );
+
   testWidgets('registration controls expose stable semantics labels', (
     tester,
   ) async {

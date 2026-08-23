@@ -118,6 +118,22 @@ final class _RegistrationPageState extends State<RegistrationPage> {
     return Scaffold(
       appBar: _appBar(),
       body: GameboxPageBody(
+        footer: Semantics(
+          key: const Key('register'),
+          identifier: 'register',
+          label: 'register',
+          button: true,
+          enabled: canSubmit,
+          onTap: canSubmit ? _submit : null,
+          excludeSemantics: true,
+          child: GameboxPendingButton(
+            identifier: 'register',
+            label: '注册并登录',
+            pendingLabel: '正在注册',
+            isPending: submitting,
+            onPressed: canSubmit ? _submit : null,
+          ),
+        ),
         children: [
           Column(
             children: [
@@ -191,22 +207,6 @@ final class _RegistrationPageState extends State<RegistrationPage> {
                       ),
                     ),
                   ),
-          ),
-          Semantics(
-            key: const Key('register'),
-            identifier: 'register',
-            label: 'register',
-            button: true,
-            enabled: canSubmit,
-            onTap: canSubmit ? _submit : null,
-            excludeSemantics: true,
-            child: GameboxPendingButton(
-              identifier: 'register',
-              label: '注册并登录',
-              pendingLabel: '正在注册',
-              isPending: submitting,
-              onPressed: canSubmit ? _submit : null,
-            ),
           ),
         ],
       ),
