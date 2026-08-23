@@ -161,9 +161,10 @@ Back up the keystore and passwords outside the repository. Every published APK
 must use the same release key. Losing or replacing it prevents installed copies
 from accepting future in-app updates.
 
-Release builds use `https://gamebox.zqydev.me` as their API origin. Debug builds
-retain the emulator-friendly `http://10.0.2.2:8080` default unless overridden
-with `GAMEBOX_API_BASE_URL`.
+Release builds use `https://gamebox.zqydev.me` as their API origin. Local debug
+builds retain the emulator-friendly `http://10.0.2.2:8080` default unless
+overridden with `GAMEBOX_API_BASE_URL`. CI-published debug builds use the
+staging origin `https://staging.gamebox.zqydev.me` (see below).
 
 For a stable release, update `app/pubspec.yaml` to the intended version, commit
 and push it, then create and push the matching tag:
@@ -179,6 +180,21 @@ signature, generates `checksums.txt`, and publishes all three files to GitHub
 Releases. A manually dispatched run requires an already-existing matching tag.
 GitHub's `releases/latest` endpoint excludes drafts and prereleases, so only a
 stable published release is offered automatically to normal installations.
+
+## Debug artifact distribution
+
+`.github/workflows/debug.yml` builds a debug APK on every push to `main` that
+touches app or runtime sources, and on manual `workflow_dispatch`. It publishes
+to a rolling pre-release tagged `debug-latest`; each run overwrites
+`gamebox-debug.apk`, so the asset link stays constant while the release notes
+record the commit, version, and API origin.
+
+The published debug build uses the independent application id
+`me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment
+variable in `app/android/app/build.gradle.kts`), so it installs and runs
+alongside a release install on the same device and is labeled `gamebox debug`.
+It targets the staging server `https://staging.gamebox.zqydev.me` by default;
+`workflow_dispatch` can override the API origin.
 
 ## macOS backend deployment
 
@@ -197,6 +213,28 @@ curl --fail --silent http://127.0.0.1:18080/healthz
 The Cloudflare Tunnel public hostname `gamebox.zqydev.me` must route to
 `http://127.0.0.1:18080`. The installer manages a dedicated Gamebox Tunnel
 LaunchAgent so failures or configuration changes do not affect other hostnames.
+
+### Staging server
+
+`deploy/macos/install-staging.sh` installs a second, fully isolated server
+instance on the same machine for staging use. It shares the release binaries
+and the production Cloudflare Tunnel, but keeps its own port
+(`127.0.0.1:18081`), SQLite database, Keychain secrets, and launchd agents, and
+is published at `https://staging.gamebox.zqydev.me`. Rerun it after pulling the
+latest `main` to refresh staging with current server code:
+
+```bash
+git pull
+zsh deploy/macos/install-staging.sh
+curl --fail --silent http://127.0.0.1:18081/healthz
+```
+
+The tunnel ingress for the staging hostname lives in
+`deploy/macos/cloudflared-config.yml` (shared with the production tunnel). It
+requires the one-time DNS record `staging.gamebox.zqydev.me` pointing at the
+tunnel, which `cloudflared tunnel route dns <tunnel-id>
+staging.gamebox.zqydev.me` creates. Debug builds distributed through the
+`debug-latest` release target this staging server.
 
 ## Verification
 
