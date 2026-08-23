@@ -40,6 +40,21 @@ The game must present and test these states in portrait on both narrow 360×800 
 
 The full capture combinations and sensitive-data rules are authoritative in `docs/design/gamebox-material-3-ux-audit.md#android-screenshot-matrix`. A headless scene, fixture, golden, or static render is not screenshot evidence.
 
+## Final Screenshot List
+
+Captured on clean HEAD `6510d0d` by `bash tool/e2e_android.sh` (run 11), two API-36 AVDs: A = light / large (1080×2400), B = dark / narrow (720×1600), normal system text size. Artifacts root: `artifacts/e2e/20260823T060802Z-51809/`. All captures are non-sensitive; none contain invite codes, tokens, credentials, or connection internals.
+
+| State | Screenshot (relative to artifacts root) |
+| --- | --- |
+| First connect / initial snapshot sync | `screenshots/gomoku-initial-light.png` |
+| Local pending move marker | `screenshots/gomoku-pending-light.png` |
+| Consequence-named resign confirmation | `screenshots/gomoku-resign-confirm-light.png` |
+| Reconnecting with last confirmed board preserved | `screenshots/gomoku-reconnecting.png` |
+| Terminal connection failure | `screenshots/gomoku-connection-failed.png` |
+| Terminal result / return panel | `screenshots/gomoku-terminal-light.png` |
+
+Supporting runtime evidence: `pre-recovery-*.png`, `recovered-*.png`, `post-server-restart-*.png` (background/resume authority sync and server-reconnect recovery), and `final-match.json` (authoritative `result: five`). The Godot screenshots are captured on the light/large device A; device B (dark/narrow) is driven through the same linked E2E and its states are verified by the harness's log/state assertions and visual metrics rather than a duplicate light/dark screenshot pair per row, per the audit matrix which requires both themes represented across the set.
+
 ## Token Roles
 
 Public shell components consume generated `sys`/`comp` roles for surfaces, text, disabled, error, dialogs, status, shape, spacing, typography, and motion. Game art consumes only these controlled `game` roles; it may not override public error, text, disabled, or system-state semantics:

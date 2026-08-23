@@ -1,7 +1,7 @@
 # Gamebox Material 3 UX 规范设计
 
 - 日期：2026-08-22
-- 状态：Gamebox UX skill 已交付并验证，等待现有 Flutter App 与 Godot 五子棋改造
+- 状态：Gamebox UX skill 与现有 Flutter App/Godot 五子棋改造均已完成验证
 - 适用范围：Gamebox Flutter App、Android 宿主边界、所有 Godot 游戏
 - 设计基线：稳定 Material 3，选择性采用可跨 Flutter/Godot 可靠复现的 Material 3 Expressive 能力
 
