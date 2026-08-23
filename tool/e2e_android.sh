@@ -2866,18 +2866,39 @@ wait_for_pending_board_marker() {
   local cell_y="$3"
   local before="$4"
   local after="$TEMP_DIR/pending-board-after.png"
-  local deadline=$((SECONDS + WAIT_SECONDS)) score=""
+  # TEMPORARY diagnostics (removed after the marker-detection fix is
+  # confirmed on device): persist the baseline and every in-run crop and
+  # score to the artifact directory so the loop can be examined post-run.
+  local diagnostics="$ARTIFACT_DIR/pending-diagnostics"
+  mkdir -p "$diagnostics" 2>/dev/null || true
+  cp "$before" "$diagnostics/before.png" 2>/dev/null || true
+  cp "$before.full.png" "$diagnostics/before-full.png" 2>/dev/null || true
+  local deadline=$((SECONDS + WAIT_SECONDS)) score="" iteration=0 before_wh after_wh
   while ((SECONDS < deadline)); do
+    iteration=$((iteration + 1))
     if capture_board_crop "$serial" "$after"; then
+      cp "$after" "$diagnostics/after-it${iteration}.png" 2>/dev/null || true
+      cp "$after.full.png" "$diagnostics/after-it${iteration}-full.png" 2>/dev/null || true
+      before_wh="$(ruby -e 'h=File.binread(ARGV[0],24); exit 1 unless h.start_with?("\x89PNG".b); puts h.byteslice(16,8).unpack("N2").join("x")' "$before" 2>/dev/null || printf ERR)"
+      after_wh="$(ruby -e 'h=File.binread(ARGV[0],24); exit 1 unless h.start_with?("\x89PNG".b); puts h.byteslice(16,8).unpack("N2").join("x")' "$after" 2>/dev/null || printf ERR)"
       score="$(board_cell_visual_difference "$before" "$after" "$cell_x" "$cell_y")" || score=""
+      printf 'PENDING_DIAG iteration=%d before=%s(%sB) after=%s(%sB) score=%q\n' \
+        "$iteration" "$before_wh" "$(stat -f %z "$before" 2>/dev/null)" \
+        "$after_wh" "$(stat -f %z "$after" 2>/dev/null)" "$score" \
+        | tee -a "$diagnostics/loop.log"
       if [[ -n "$score" ]] \
         && ruby -e 'exit(Float(ARGV[0]) >= 1.0 ? 0 : 1)' "$score"; then
         printf 'Observed local pending marker delta: %s\n' "$score"
         return 0
       fi
+    else
+      printf 'PENDING_DIAG iteration=%d capture_board_crop FAILED\n' "$iteration" \
+        | tee -a "$diagnostics/loop.log"
     fi
     sleep 1
   done
+  cp "$after" "$diagnostics/after-final.png" 2>/dev/null || true
+  cp "$after.full.png" "$diagnostics/after-final-full.png" 2>/dev/null || true
   return 1
 }
 
