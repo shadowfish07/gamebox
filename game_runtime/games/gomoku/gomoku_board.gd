@@ -142,6 +142,8 @@ static func design_rect_to_viewport(rect: Rect2, design_size: Vector2, viewport_
 
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		print("GAMEBOX_BOARD_GUI pos=%s interactable=%s rect=%s" % [event.position, _interactable, board_rect()])
 	if not _interactable:
 		return
 	if event is InputEventScreenTouch:
@@ -161,6 +163,7 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 			_blocked_touches[event.index] = true
 		elif _blocked_touches.is_empty():
 			var start_cell := pixel_to_cell(event.position, board_rect())
+			print("GAMEBOX_BOARD_DOWN pos=%s cell=%s active=%d" % [event.position, start_cell, _active_touch])
 			if start_cell != INVALID_CELL:
 				_active_touch = event.index
 				_touch_start_cell = start_cell
@@ -175,6 +178,8 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 			var release_cell := pixel_to_cell(event.position, board_rect())
 			var should_submit := not event.canceled and not _touch_cancelled and release_cell == _touch_start_cell
 			var submitted_cell := _touch_start_cell
+			print("GAMEBOX_BOARD_UP pos=%s cell=%s start=%s cancel=%s touch_cancelled=%s submit=%s" \
+				% [event.position, release_cell, _touch_start_cell, event.canceled, _touch_cancelled, should_submit])
 			_reset_active_touch()
 			if should_submit:
 				cell_pressed.emit(submitted_cell.x, submitted_cell.y)

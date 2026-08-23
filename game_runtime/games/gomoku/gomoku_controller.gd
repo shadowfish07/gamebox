@@ -125,16 +125,26 @@ func _process(_delta: float) -> void:
 		_client.poll()
 
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		print("GAMEBOX_INPUT_TOUCH index=%d pressed=%s pos=%s" % [event.index, event.pressed, event.position])
+
+
 func _exit_tree() -> void:
 	print("GAMEBOX_GODOT_BACK exit_tree returning=%s" % str(_returning))
 	_dispose_client()
 
 
 func _on_cell_pressed(x: int, y: int) -> void:
+	var can_request: bool = _state != null and _state.can_request_move(x, y, _client.local_user_id)
+	print("GAMEBOX_BOARD_CELL x=%d y=%d started=%s disposed=%s await_snap=%s state=%s can=%s conn=%s" \
+		% [x, y, _started, _disposed, _awaiting_snapshot, _state != null, can_request, _connection_state])
 	if not _started or _disposed or _awaiting_snapshot or _state == null \
 		or not _state.can_request_move(x, y, _client.local_user_id):
 		return
-	if not _client.request_move(x, y).is_empty():
+	var result: String = _client.request_move(x, y)
+	print("GAMEBOX_BOARD_MOVE x=%d y=%d result=%s" % [x, y, result])
+	if not result.is_empty():
 		_error_text = ""
 		_refresh_ui()
 
@@ -292,6 +302,9 @@ func _refresh_ui() -> void:
 		and _state.status == "active" and _state.pending_action.is_empty() \
 		and _local_color(local_user_id) == _state.next_color
 	board.set_interactable(can_move)
+	print("GAMEBOX_BOARD_CANMOVE can=%s conn=%s await=%s status=%s pend_empty=%s next=%s local=%s" \
+		% [can_move, _connection_state, _awaiting_snapshot, _state.status if has_state else "?", \
+			_state.pending_action.is_empty() if has_state else "?", _state.next_color if has_state else "?", _local_color(local_user_id)])
 	_log_safe_state(has_state)
 
 
