@@ -1943,6 +1943,8 @@ MATCH_ID=""
 SECOND_MATCH_ID=""
 THIRD_MATCH_ID=""
 LOADING_MATCH_ID=""
+LOADING_WATCH_PID=""
+LOADING_WATCH_FILE=""
 RECOVERY_SERIAL=""
 PREVIOUS_BOARD_HASH=""
 VISUAL_METRICS="$TEMP_DIR/visual-metrics.tsv"
@@ -2046,6 +2048,7 @@ cleanup() {
   local finalized_exit_code
   trap - EXIT INT TERM ERR
   set +e
+  stop_first_connect_loading_watch || cleanup_ok=0
   terminate_registered_bounded_children
   cleanup_registered_evidence_remote_dumps || cleanup_ok=0
   if [[ -n "$SERIAL_A" ]]; then
@@ -2597,17 +2600,52 @@ wait_for_new_ready_match_id() {
   return 1
 }
 
+start_first_connect_loading_watch() {
+  local serial="$1"
+  local boundary
+  [[ -z "$LOADING_WATCH_PID" ]] || return 2
+  boundary="$(boundary_for_serial "$serial")"
+  LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
+  rm -f -- "$LOADING_WATCH_FILE"
+  (
+    "$ADB_BIN" -s "$serial" logcat -b all -v threadtime 2>/dev/null \
+      | awk -v marker="$boundary" '
+          index($0, marker) {
+            found = 1
+            next
+          }
+          found && $0 ~ /GAMEBOX_GODOT_STATE match=[0-9a-f-]+ revision=-1 status=loading connection=/ {
+            line = $0
+            sub(/^.*GAMEBOX_GODOT_STATE match=/, "", line)
+            sub(/ revision=-1.*$/, "", line)
+            print line
+            fflush()
+            exit
+          }
+        '
+  ) >"$LOADING_WATCH_FILE" &
+  LOADING_WATCH_PID=$!
+}
+
+stop_first_connect_loading_watch() {
+  if [[ -n "$LOADING_WATCH_PID" ]]; then
+    kill "$LOADING_WATCH_PID" 2>/dev/null || true
+    wait "$LOADING_WATCH_PID" 2>/dev/null || true
+    LOADING_WATCH_PID=""
+  fi
+  return 0
+}
+
 wait_for_first_connect_loading_and_pause() {
   local serial="$1"
   local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
   while ((SECONDS < deadline)); do
-    candidate="$(
-      game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
-        | sed -E -n 's/.*GAMEBOX_GODOT_STATE match=([0-9a-f-]{36}) revision=-1 status=loading connection=.*/\1/p' \
-        | tail -n 1
-    )"
+    if [[ -s "$LOADING_WATCH_FILE" ]]; then
+      candidate="$(tail -n 1 "$LOADING_WATCH_FILE")"
+    fi
     if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
       LOADING_MATCH_ID="$candidate"
+      stop_first_connect_loading_watch
       pause_e2e_server || return 1
       sleep 0.2
       if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
@@ -2617,8 +2655,9 @@ wait_for_first_connect_loading_and_pause() {
       fi
       return 0
     fi
-    sleep 0.05
+    sleep 0.01
   done
+  stop_first_connect_loading_watch
   return 1
 }
 
@@ -2692,6 +2731,8 @@ USER_ID_B="${opponent_identifier#opponent-}"
 readonly USER_ID_B
 refresh_game_log_boundaries first-gomoku-loading \
   || fail "could not establish first-connect loading log boundaries"
+start_first_connect_loading_watch "$SERIAL_A" \
+  || fail "could not start the first-connect loading event watcher"
 tap_identifier "$SERIAL_A" "$opponent_identifier"
 
 wait_for_first_connect_loading_and_pause "$SERIAL_A" \
