@@ -4,7 +4,7 @@
 class_name GameboxTokens
 extends RefCounted
 
-const VERSION := "1.0.0"
+const VERSION := "2.0.0"
 const BRAND_SEED := "#006B60"
 
 const LIGHT := {
@@ -222,6 +222,7 @@ const MOTION := {
 }
 
 const COMPONENT := {
+    "dialog_scrim_opacity": 0.32,
     "minimum_touch_target": 48,
     "page_max_width": 560,
     "page_padding": 16,

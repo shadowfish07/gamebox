@@ -216,6 +216,7 @@ const _spacingRoles = {
 const _shapeRoles = {'input', 'card', 'floating', 'dialog', 'full'};
 const _motionRoles = {'fast', 'standard', 'slow', 'pageEnter'};
 const _componentRoles = {
+  'dialogScrimOpacity',
   'minimumTouchTarget',
   'pageMaxWidth',
   'pagePadding',

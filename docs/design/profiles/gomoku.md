@@ -9,7 +9,7 @@ inputMethods: [touch, android-back]
 gameThemeRoles: [board, grid, blackPiece, whitePiece, whitePieceOutline, lastMove, pendingMove]
 ```
 
-This onboarding declaration targets Gamebox design-system version `1.0.0`. Gomoku selects the optional **Lightweight Board** profile because it is a light, turn-based, fixed-board game. The visible return/title/status shell is a Gomoku choice, not the default for another current or future game. Another game must independently select its profile or Core Contract only.
+This onboarding declaration targets Gamebox design-system version `2.0.0`. Gomoku selects the optional **Lightweight Board** profile because it is a light, turn-based, fixed-board game. The visible return/title/status shell is a Gomoku choice, not the default for another current or future game. Another game must independently select its profile or Core Contract only.
 
 ## Shell and Dense Playfield
 

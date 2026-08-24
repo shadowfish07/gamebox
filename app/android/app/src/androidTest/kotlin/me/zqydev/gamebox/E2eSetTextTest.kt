@@ -58,7 +58,17 @@ class E2eSetTextTest {
         // process avoids exposing it through adb arguments or clipboard state.
         focusedEditable.text = decoded
         device.waitForIdle()
-        val refreshed = device.findObject(By.res(target))
+        // On narrow screens the IME can resize Flutter enough to remove a
+        // sibling field from the semantics tree. Close only a confirmed-open
+        // keyboard before the host performs its round-trip lookup.
+        val keyboardShown = device.executeShellCommand("dumpsys input_method")
+            .lineSequence()
+            .any { it.contains("mInputShown=true") }
+        if (keyboardShown) {
+            device.pressBack()
+            device.waitForIdle()
+        }
+        val refreshed = device.wait(Until.findObject(By.res(target)), SELECTOR_TIMEOUT_MS)
         val refreshedEditable = refreshed?.let(::findEditable)
         if (refreshedEditable?.text != decoded) {
             throw AssertionError("E2E text field did not round-trip")

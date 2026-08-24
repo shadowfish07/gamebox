@@ -51,11 +51,29 @@ static func create(dark: bool) -> Theme:
 	theme.set_type_variation("GameboxSnackbarError", "PanelContainer")
 	theme.set_type_variation("GameboxLoadingOverlay", "PanelContainer")
 	theme.set_type_variation("GameboxResultPanel", "PanelContainer")
+	theme.set_type_variation("GameboxDialogScrim", "PanelContainer")
+	theme.set_type_variation("GameboxConfirmationDialog", "PanelContainer")
+	theme.set_type_variation("GameboxDialogTitle", "Label")
+	theme.set_type_variation("GameboxDialogContent", "VBoxContainer")
+	theme.set_type_variation("GameboxDialogActions", "HBoxContainer")
+	theme.set_type_variation("GameboxDialogCancelButton", "Button")
 	theme.set_stylebox("panel", "GameboxConnectionBanner", _style_box(colors["secondary_container"], card_radius))
 	theme.set_stylebox("panel", "GameboxSnackbar", _style_box(colors["inverse_surface"], card_radius))
 	theme.set_stylebox("panel", "GameboxSnackbarError", _style_box(colors["error_container"], card_radius))
 	theme.set_stylebox("panel", "GameboxLoadingOverlay", _style_box(colors["surface_container_high"], card_radius))
 	theme.set_stylebox("panel", "GameboxResultPanel", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
+	theme.set_stylebox("panel", "GameboxDialogScrim", _solid_style_box(Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])))
+	theme.set_stylebox("panel", "GameboxConfirmationDialog", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
+	theme.set_color("font_color", "GameboxDialogTitle", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxDialogTitle", title_size)
+	theme.set_constant("separation", "GameboxDialogContent", _scaled(GameboxTokens.SPACING["section"]))
+	theme.set_constant("separation", "GameboxDialogActions", _scaled(GameboxTokens.SPACING["layout"]))
+	theme.set_color("font_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
+	theme.set_color("font_hover_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
+	theme.set_color("font_pressed_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
+	theme.set_stylebox("normal", "GameboxDialogCancelButton", _style_box(colors["secondary_container"], GameboxTokens.SHAPE["full"]))
+	theme.set_stylebox("hover", "GameboxDialogCancelButton", _style_box(colors["secondary_fixed_dim"], GameboxTokens.SHAPE["full"]))
+	theme.set_stylebox("pressed", "GameboxDialogCancelButton", _style_box(colors["secondary_container"], GameboxTokens.SHAPE["full"]))
 	return theme
 
 
@@ -89,4 +107,10 @@ static func _style_box(fill: Color, radius: float, border: Variant = null) -> St
 		box.border_width_top = border_width
 		box.border_width_right = border_width
 		box.border_width_bottom = border_width
+	return box
+
+
+static func _solid_style_box(fill: Color) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
 	return box

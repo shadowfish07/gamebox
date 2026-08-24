@@ -32,17 +32,20 @@ readonly -a UI_EVIDENCE_FLUTTER_PATHS=(
   "screenshots/registration-dark-narrow.png"
   "screenshots/lobby-idle-light.png"
   "screenshots/lobby-active-dark-narrow.png"
+  "screenshots/lobby-resumable-light.png"
   "screenshots/opponents-light.png"
   "screenshots/cancel-match-dialog-dark-narrow.png"
   "screenshots/update-dialog-dark.png"
 )
 readonly -a UI_EVIDENCE_GODOT_PATHS=(
+  "screenshots/gomoku-loading-light.png"
   "screenshots/gomoku-initial-light.png"
   "screenshots/gomoku-pending-light.png"
   "screenshots/gomoku-resign-confirm-light.png"
   "screenshots/gomoku-reconnecting.png"
   "screenshots/gomoku-connection-failed.png"
   "screenshots/gomoku-terminal-light.png"
+  "screenshots/gomoku-resigned-light.png"
 )
 
 ADB_BIN="${GAMEBOX_E2E_ADB_BIN:-adb}"
@@ -850,7 +853,7 @@ dump_ui_remote() {
 
 valid_evidence_slug() {
   case "$1" in
-    registration-light|registration-dark-narrow|lobby-idle-light|lobby-active-dark-narrow|opponents-light|cancel-match-dialog-dark-narrow|update-dialog-dark|gomoku-initial-light|gomoku-pending-light|gomoku-resign-confirm-light|gomoku-reconnecting|gomoku-connection-failed|gomoku-terminal-light)
+    registration-light|registration-dark-narrow|lobby-idle-light|lobby-active-dark-narrow|lobby-resumable-light|opponents-light|cancel-match-dialog-dark-narrow|update-dialog-dark|gomoku-loading-light|gomoku-initial-light|gomoku-pending-light|gomoku-resign-confirm-light|gomoku-reconnecting|gomoku-connection-failed|gomoku-terminal-light|gomoku-resigned-light)
       return 0
       ;;
     *) return 1 ;;
@@ -1751,22 +1754,25 @@ self_test() {
     screenshots/registration-dark-narrow.png \
     screenshots/lobby-idle-light.png \
     screenshots/lobby-active-dark-narrow.png \
+    screenshots/lobby-resumable-light.png \
     screenshots/opponents-light.png \
     screenshots/cancel-match-dialog-dark-narrow.png \
     screenshots/update-dialog-dark.png \
+    screenshots/gomoku-loading-light.png \
     screenshots/gomoku-initial-light.png \
     screenshots/gomoku-pending-light.png \
     screenshots/gomoku-resign-confirm-light.png \
     screenshots/gomoku-reconnecting.png \
     screenshots/gomoku-connection-failed.png \
-    screenshots/gomoku-terminal-light.png; do
+    screenshots/gomoku-terminal-light.png \
+    screenshots/gomoku-resigned-light.png; do
     printf 'fixture png\n' >"$evidence_fixture/$evidence_relative"
   done
   local evidence_manifest
   evidence_manifest="$(ui_evidence_manifest_json "$evidence_fixture")" \
     || { printf 'complete relative UI evidence manifest was rejected\n' >&2; return 1; }
   jq -e '
-    (.flutter | length) == 7 and (.godot | length) == 6 and
+    (.flutter | length) == 8 and (.godot | length) == 8 and
     .themes == ["light", "dark"] and .viewports == ["narrow", "large"] and
     ([.flutter[], .godot[]] | all(startswith("screenshots/") and (startswith("/") | not) and (contains("..") | not)))
   ' <<<"$evidence_manifest" >/dev/null \
@@ -1935,6 +1941,8 @@ LOG_BOUNDARY_A=""
 LOG_BOUNDARY_B=""
 MATCH_ID=""
 SECOND_MATCH_ID=""
+THIRD_MATCH_ID=""
+LOADING_MATCH_ID=""
 RECOVERY_SERIAL=""
 PREVIOUS_BOARD_HASH=""
 VISUAL_METRICS="$TEMP_DIR/visual-metrics.tsv"
@@ -2589,6 +2597,31 @@ wait_for_new_ready_match_id() {
   return 1
 }
 
+wait_for_first_connect_loading_and_pause() {
+  local serial="$1"
+  local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
+  while ((SECONDS < deadline)); do
+    candidate="$(
+      game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+        | sed -E -n 's/.*GAMEBOX_GODOT_STATE match=([0-9a-f-]{36}) revision=-1 status=loading connection=.*/\1/p' \
+        | tail -n 1
+    )"
+    if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
+      LOADING_MATCH_ID="$candidate"
+      pause_e2e_server || return 1
+      sleep 0.2
+      if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+        | grep -F "$GAMEBOX_STATE_MARKER match=$candidate revision=0" >/dev/null; then
+        resume_e2e_server || true
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
 JWT_SECRET="$(openssl rand -hex 32)"
 TOKEN_PEPPER="$(openssl rand -hex 32)"
 : >"$SERVER_LOG"
@@ -2657,11 +2690,22 @@ USER_ID_B="${opponent_identifier#opponent-}"
 [[ "$USER_ID_B" =~ $uuid_pattern && "$opponent_identifier" == "opponent-$USER_ID_B" ]] \
   || fail "A opponent resource-id did not contain B's canonical user ID"
 readonly USER_ID_B
+refresh_game_log_boundaries first-gomoku-loading \
+  || fail "could not establish first-connect loading log boundaries"
 tap_identifier "$SERIAL_A" "$opponent_identifier"
+
+wait_for_first_connect_loading_and_pause "$SERIAL_A" \
+  || fail "could not hold the real first-connect loading state before its initial snapshot"
+capture_ui_evidence "$SERIAL_A" gomoku-loading-light "$SECRETS_ON_UI_A" \
+  || fail "could not safely capture the real first-connect loading state"
+resume_e2e_server \
+  || fail "could not resume the E2E server after first-connect loading evidence"
 
 MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "A did not emit exactly one first-match ready ID within ${WAIT_SECONDS}s"
 [[ "$MATCH_ID" =~ $uuid_pattern ]] || fail "first Godot ready marker did not contain a canonical match ID"
+[[ "$MATCH_ID" == "$LOADING_MATCH_ID" ]] \
+  || fail "first-connect loading evidence did not belong to the ready match"
 
 match_show() {
   "$CTL_BIN" match show --id "$1" --db "$DB_PATH" --json
@@ -3021,6 +3065,14 @@ tap_godot_resign() {
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
 
+tap_godot_confirm_resign() {
+  local serial="$1"
+  local point x y
+  point="$(design_point_for_serial "$serial" 640 980)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
 capture_resign_confirmation() {
   local serial="$1"
   local before after expected_revision
@@ -3037,6 +3089,33 @@ capture_resign_confirmation() {
   [[ "$(jq -r '.revision' <<<"$after")" == "$expected_revision" \
     && "$(jq -r '.status' <<<"$after")" == "active" ]] \
     || fail "cancelling resign changed the authoritative match"
+}
+
+exercise_active_system_back() {
+  local serial="$1"
+  local expected_revision="$2"
+  local before after
+  before="$(match_show "$MATCH_ID")" || fail "could not read the active match before Android Back"
+  refresh_game_log_boundaries active-system-back \
+    || fail "could not establish active Android Back log boundaries"
+  adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
+    || fail "could not send Android Back during the active match"
+  wait_for_identifier "$serial" continue-match >/dev/null \
+    || fail "active Android Back did not return to a resumable lobby"
+  capture_ui_evidence "$serial" lobby-resumable-light "$SECRETS_ON_UI_A" \
+    || fail "could not safely capture the resumable lobby after Android Back"
+  after="$(match_show "$MATCH_ID")" || fail "could not read the active match after Android Back"
+  [[ "$(jq -r '.revision' <<<"$after")" == "$expected_revision" \
+    && "$(jq -r '.status' <<<"$after")" == "active" \
+    && "$(jq -S '.board' <<<"$after")" == "$(jq -S '.board' <<<"$before")" ]] \
+    || fail "Android Back changed or discarded the authoritative active match"
+  tap_identifier "$serial" continue-match
+  wait_for_log_marker "$serial" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
+    || fail "active match did not relaunch after Android Back"
+  wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$expected_revision status=active connection=connected" \
+    || fail "active match did not resynchronize after Android Back"
+  PREVIOUS_BOARD_HASH=""
+  assert_both_render_revision "$expected_revision" post-active-system-back
 }
 
 recover_both_clients_after_server_restart() {
@@ -3100,6 +3179,7 @@ else
   perform_move "$WHITE_SERIAL" 3 5 2 2 ""
 fi
 capture_connection_recovery_states 2
+exercise_active_system_back "$SERIAL_A" 2
 perform_move "$BLACK_SERIAL" 4 3 3 1 pre-recovery
 
 RECOVERY_SERIAL="$WHITE_SERIAL"
@@ -3196,6 +3276,71 @@ tap_design_back "$SERIAL_A" || fail "could not leave the cancelled second match"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after second cancellation"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after second cancellation"
 
+refresh_game_log_boundaries third-match \
+  || fail "could not establish third-match log boundaries"
+tap_identifier "$SERIAL_A" choose-opponent
+third_opponent_identifier="$(wait_for_opponent_identifier "$SERIAL_A")" \
+  || fail "A could not select B for the resignation match"
+[[ "$third_opponent_identifier" == "opponent-$USER_ID_B" ]] \
+  || fail "third opponent resource-id did not identify B"
+tap_identifier "$SERIAL_A" "$third_opponent_identifier"
+THIRD_MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
+  || fail "A did not emit exactly one resignation-match ready ID within ${WAIT_SECONDS}s"
+[[ "$THIRD_MATCH_ID" =~ $uuid_pattern ]] \
+  || fail "resignation-match ready marker did not contain a canonical match ID"
+wait_for_identifier "$SERIAL_B" continue-match >/dev/null \
+  || fail "B did not expose the resignation match"
+tap_identifier "$SERIAL_B" continue-match
+wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$THIRD_MATCH_ID" \
+  || fail "B did not launch the resignation match"
+
+third_match_json="$(wait_for_match_snapshot "$THIRD_MATCH_ID")" \
+  || fail "resignation match was not readable"
+third_black_user_id="$(jq -er '.players[] | select(.color == "black") | .userId' <<<"$third_match_json")"
+if [[ "$third_black_user_id" == "$USER_ID_A" ]]; then
+  THIRD_BLACK_SERIAL="$SERIAL_A"
+elif [[ "$third_black_user_id" == "$USER_ID_B" ]]; then
+  THIRD_BLACK_SERIAL="$SERIAL_B"
+else
+  fail "resignation match black player did not map to a registered user"
+fi
+
+FIRST_MATCH_ID="$MATCH_ID"
+MATCH_ID="$THIRD_MATCH_ID"
+PREVIOUS_BOARD_HASH=""
+assert_both_render_revision 0 resignation-initial
+perform_move "$THIRD_BLACK_SERIAL" 7 7 1 1 ""
+tap_godot_resign "$SERIAL_A" || fail "A could not open resignation confirmation in the resignation match"
+sleep 1
+tap_godot_confirm_resign "$SERIAL_A" || fail "A could not confirm resignation"
+resign_deadline=$((SECONDS + WAIT_SECONDS))
+while ((SECONDS < resign_deadline)); do
+  resigned_snapshot="$(match_show "$THIRD_MATCH_ID" 2>/dev/null || true)"
+  if [[ "$(jq -r '.status // ""' <<<"$resigned_snapshot" 2>/dev/null)" == "finished" \
+    && "$(jq -r '.result // ""' <<<"$resigned_snapshot" 2>/dev/null)" == "resignation" \
+    && "$(jq -r '.revision // -1' <<<"$resigned_snapshot" 2>/dev/null)" == "2" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ -z "${resigned_snapshot:-}" ]] \
+  || ! jq -e --arg resigner "$USER_ID_A" \
+    '.status == "finished" and .result == "resignation" and .revision == 2 and .winnerUserId != $resigner' \
+    <<<"$resigned_snapshot" >/dev/null; then
+  fail "confirmed resignation did not produce exactly one authoritative resignation result"
+fi
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+  wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$THIRD_MATCH_ID result=resignation" \
+    || fail "$serial did not observe the authoritative resignation result"
+done
+capture_ui_evidence "$SERIAL_A" gomoku-resigned-light "$SECRETS_ON_UI_A" \
+  || fail "could not safely capture the authoritative resignation result"
+tap_design_back "$SERIAL_A" || fail "A could not leave the resignation result"
+tap_design_back "$SERIAL_B" || fail "B could not leave the resignation result"
+wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after resignation"
+wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after resignation"
+MATCH_ID="$FIRST_MATCH_ID"
+
 restore_selected_device_visuals \
   || fail "could not restore both selected devices to their original ui mode and display override"
 [[ "$UI_MODE_MUTATED_A" == "0" && "$UI_MODE_MUTATED_B" == "0" \
@@ -3232,6 +3377,7 @@ jq -n \
   --argjson devices "$devices_json" \
   --arg matchId "$MATCH_ID" \
   --arg secondMatchId "$SECOND_MATCH_ID" \
+  --arg thirdMatchId "$THIRD_MATCH_ID" \
   --arg recoverySerial "$RECOVERY_SERIAL" \
   --argjson recoveryBefore 3 \
   --argjson recoveryAfter 3 \
@@ -3247,12 +3393,14 @@ jq -n \
     firstMatch:{id:$matchId,revisions:[0,1,2,3,4,5,6,7,8,9],status:"finished",result:"five"},
     recovery:{serial:$recoverySerial,beforeRevision:$recoveryBefore,afterRevision:$recoveryAfter,eventLoss:false},
     secondMatch:{id:$secondMatchId,revision:1,status:"cancelled",slotsReleased:true},
+    thirdMatch:{id:$thirdMatchId,revision:2,status:"finished",result:"resignation",slotsReleased:true},
     uiEvidence:$uiEvidence,
     assertions:[
       "resource-id-only-ui-driving","two-registered-users","random-color-mapping",
       "revision-and-board-after-each-move","two-authoritative-board-crops-with-ssim",
       "force-stop-auto-login-resume","shared-five-result","lobby-idle",
       "second-match-created","cancel-confirmed-once","zero-step-cancelled","slots-released",
+      "active-system-back-resumable","confirmed-resignation-once","authoritative-resignation-result",
       "pending-before-authoritative-ack","real-reconnecting-and-failed-states",
       "exact-owned-server-pause-stop-restart","ui-mode-and-display-restored",
       "selected-device-semantics-integration","clean-build-provenance",

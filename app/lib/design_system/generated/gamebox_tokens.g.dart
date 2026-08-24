@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 
 abstract final class GameboxTokens {
-  static const version = '1.0.0';
+  static const version = '2.0.0';
   static const brandSeed = Color(0xFF006B60);
 
   static const lightColorScheme = ColorScheme(
@@ -208,6 +208,7 @@ abstract final class GameboxTokens {
     standard: Duration(milliseconds: 200),
   );
   static const components = GameboxComponentTokens(
+    dialogScrimOpacity: 0.32,
     minimumTouchTarget: 48.0,
     pageMaxWidth: 560.0,
     pagePadding: 16.0,
@@ -329,6 +330,7 @@ final class GameboxMotion {
 
 final class GameboxComponentTokens {
   const GameboxComponentTokens({
+    required this.dialogScrimOpacity,
     required this.minimumTouchTarget,
     required this.pageMaxWidth,
     required this.pagePadding,
@@ -336,6 +338,7 @@ final class GameboxComponentTokens {
     required this.smallProgressSize,
   });
 
+  final double dialogScrimOpacity;
   final double minimumTouchTarget;
   final double pageMaxWidth;
   final double pagePadding;

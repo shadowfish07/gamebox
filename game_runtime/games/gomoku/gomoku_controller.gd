@@ -156,8 +156,8 @@ func _on_cell_pressed(x: int, y: int) -> void:
 func _on_resign_pressed() -> void:
 	if not _can_offer_resign():
 		return
-	print("GAMEBOX_GODOT_BACK resign_dialog popup_centered")
-	$ResignDialog.popup_centered()
+	print("GAMEBOX_GODOT_BACK resign_dialog open")
+	$ResignDialog.open()
 
 
 func _on_resign_confirmed() -> void:
@@ -174,7 +174,7 @@ func _on_resign_confirmed() -> void:
 func _on_back_pressed() -> void:
 	if $ResignDialog.visible:
 		print("GAMEBOX_GODOT_BACK back_pressed hide_dialog")
-		$ResignDialog.hide()
+		$ResignDialog.close()
 		return
 	if _returning:
 		print("GAMEBOX_GODOT_BACK back_pressed already_returning")
@@ -211,7 +211,7 @@ func _notification(what: int) -> void:
 func _on_back_requested() -> void:
 	if $ResignDialog.visible:
 		print("GAMEBOX_GODOT_BACK branch=hide_dialog")
-		$ResignDialog.hide()
+		$ResignDialog.close()
 	else:
 		print("GAMEBOX_GODOT_BACK branch=quit_on_back")
 		_on_back_pressed()
@@ -304,11 +304,13 @@ func _refresh_ui() -> void:
 	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
 
 	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
+	$StatusLabel.visible = _force_return or (has_state and _connection_state == "connected" \
+		and not _awaiting_snapshot and not terminal)
 	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
 	$ResignButton.visible = can_resign and not terminal and not _resign_submitted
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot
 	if terminal:
-		$ResignDialog.hide()
+		$ResignDialog.close()
 		$ResultPanel.present(_result_panel_status(), _state.winner_user_id == local_user_id)
 	else:
 		$ResultPanel.present("", false)

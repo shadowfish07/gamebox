@@ -169,6 +169,7 @@
       "$ref": "#/$defs/positiveTokenMap",
       "additionalProperties": false,
       "required": [
+        "dialogScrimOpacity",
         "minimumTouchTarget",
         "pageMaxWidth",
         "pagePadding",
@@ -176,6 +177,11 @@
         "smallProgressSize"
       ],
       "properties": {
+        "dialogScrimOpacity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
         "minimumTouchTarget": { "$ref": "#/$defs/positiveNumber" },
         "pageMaxWidth": { "$ref": "#/$defs/positiveNumber" },
         "pagePadding": { "$ref": "#/$defs/positiveNumber" },

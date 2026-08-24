@@ -54,9 +54,9 @@ vertical_alignment = 1
 
 [node name="ConnectionLabel" parent="." instance=ExtResource("4_connection")]
 offset_left = 48.0
-offset_top = 272.0
+offset_top = 256.0
 offset_right = 1032.0
-offset_bottom = 336.0
+offset_bottom = 320.0
 
 [node name="Board" type="Control" parent="."]
 offset_left = 60.0
@@ -103,6 +103,6 @@ offset_bottom = 1320.0
 
 [node name="ResultPanel" parent="." instance=ExtResource("8_result")]
 offset_left = 240.0
-offset_top = 1418.0
+offset_top = 1438.0
 offset_right = 840.0
-offset_bottom = 1760.0
+offset_bottom = 1692.0

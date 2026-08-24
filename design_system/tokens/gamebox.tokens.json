@@ -1,6 +1,6 @@
 {
   "$schema": "../schema/tokens.schema.json",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "brand": {
     "seed": "#006B60",
     "schemeSource": "flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0"
@@ -215,6 +215,7 @@
     "pageEnter": 400
   },
   "component": {
+    "dialogScrimOpacity": 0.32,
     "minimumTouchTarget": 48,
     "pageMaxWidth": 560,
     "pagePadding": 16,

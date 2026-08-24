@@ -17,8 +17,9 @@ void main() {
 
   test('accepts the canonical version and seed', () {
     final tokens = DesignTokenDocument.fromJson(canonicalFixture);
-    expectEqual(tokens.version, '1.0.0');
+    expectEqual(tokens.version, '2.0.0');
     expectEqual(tokens.brandSeed, '#006B60');
+    expectEqual(tokens.components['dialogScrimOpacity'], 0.32);
   });
 
   test('rejects a missing on-color role', () {
@@ -273,8 +274,8 @@ void main() {
     expectEqual(gdscriptA, renderGdscript(tokens));
     expectTrue(dartA.endsWith('\n') && !dartA.endsWith('\n\n'));
     expectTrue(gdscriptA.endsWith('\n') && !gdscriptA.endsWith('\n\n'));
-    expectContains(dartA, "static const version = '1.0.0';");
-    expectContains(gdscriptA, 'const VERSION := "1.0.0"');
+    expectContains(dartA, "static const version = '2.0.0';");
+    expectContains(gdscriptA, 'const VERSION := "2.0.0"');
     expectContains(dartA, '0xFF006B60');
     expectContains(gdscriptA, '"#006B60"');
   });

@@ -178,29 +178,45 @@ static func _confirmation_contract() -> bool:
 	var result := true
 	for dark in [false, true]:
 		var colors: Dictionary = GameboxTokens.DARK if dark else GameboxTokens.LIGHT
-		var dialog := ConfirmationDialogScene.instantiate() as ConfirmationDialog
+		var dialog := ConfirmationDialogScene.instantiate()
 		dialog.theme = GameboxTheme.create(dark)
-		tree.root.add_child(dialog)
-		dialog.popup_centered(Vector2i(720, 480))
+		var host := Control.new()
+		host.size = Vector2(1080.0, 1920.0)
+		tree.root.add_child(host)
+		host.add_child(dialog)
+		dialog.open()
 		await tree.process_frame
 		await tree.process_frame
-		var ok_button := dialog.get_ok_button()
-		var cancel_button := dialog.get_cancel_button()
-		var panel := dialog.get_theme_stylebox("panel", "Window") as StyleBoxFlat
+		var ok_button := dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button
+		var cancel_button := dialog.get_node("Dialog/Content/Actions/CancelButton") as Button
+		var panel := dialog.get_node("Dialog") as PanelContainer
+		var panel_style := panel.get_theme_stylebox("panel") as StyleBoxFlat
+		var scrim := dialog.get_node("Scrim") as PanelContainer
+		var scrim_style := scrim.get_theme_stylebox("panel") as StyleBoxFlat
+		var confirmed_calls: Array[int] = []
+		var cancelled_calls: Array[int] = []
+		dialog.confirmed.connect(func() -> void: confirmed_calls.append(1))
+		dialog.cancelled.connect(func() -> void: cancelled_calls.append(1))
 		result = result and _check(dialog.name == "GameboxConfirmationDialog", "confirmation root path changed") \
-			and _check(dialog.dialog_text == "认输后本局立即结束，确认认输吗？", "danger copy changed") \
-			and _check(dialog.ok_button_text == "确认认输", "danger confirmation action changed") \
-			and _check(dialog.cancel_button_text == "继续对局", "danger cancellation action changed") \
-			and _check(dialog.get_theme_color("title_color", "Window") == colors["on_surface"], "confirmation title color drifted") \
-			and _check(dialog.get_theme_font_size("title_font_size", "Window") == 48, "confirmation title size drifted") \
-			and _check(dialog.get_theme_constant("buttons_min_width", "AcceptDialog") == 96, "confirmation button minimum width drifted") \
-			and _check(dialog.get_theme_constant("buttons_min_height", "AcceptDialog") == 96, "confirmation button minimum height drifted") \
-			and _check(dialog.get_theme_constant("buttons_separation", "AcceptDialog") == 16, "confirmation button separation drifted") \
-			and _check(panel != null and panel.bg_color == colors["surface_container_high"], "confirmation panel surface drifted") \
+			and _check(not (dialog is Window), "confirmation still renders native Window chrome") \
+			and _check(dialog.visible and dialog.size == host.size, "confirmation modal does not cover the gameplay viewport") \
+			and _check((dialog.get_node("Dialog/Content/Title") as Label).text == "确认认输", "danger title changed") \
+			and _check((dialog.get_node("Dialog/Content/Message") as Label).text == "认输后本局立即结束，确认认输吗？", "danger copy changed") \
+			and _check(ok_button.text == "确认认输", "danger confirmation action changed") \
+			and _check(cancel_button.text == "继续对局", "danger cancellation action changed") \
+			and _check(panel_style != null and panel_style.bg_color == colors["surface_container_high"], "confirmation panel surface drifted") \
+			and _check(scrim_style != null and scrim_style.bg_color == Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"]), "confirmation scrim drifted") \
 			and _check(ok_button.size.x >= 96.0 and ok_button.size.y >= 96.0, "confirmation action rendered below minimum target") \
 			and _check(cancel_button.size.x >= 96.0 and cancel_button.size.y >= 96.0, "confirmation cancel rendered below minimum target")
-		dialog.hide()
-		dialog.free()
+		cancel_button.pressed.emit()
+		await tree.process_frame
+		result = result and _check(not dialog.visible and cancelled_calls.size() == 1, "confirmation cancel did not close exactly once") \
+			and _check(confirmed_calls.is_empty(), "confirmation cancel emitted confirm")
+		dialog.open()
+		ok_button.pressed.emit()
+		await tree.process_frame
+		result = result and _check(not dialog.visible and confirmed_calls.size() == 1, "confirmation accept did not close exactly once")
+		host.free()
 	return result
 
 
