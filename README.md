@@ -229,11 +229,12 @@ LaunchAgent so failures or configuration changes do not affect other hostnames.
 ### Staging server
 
 `deploy/macos/install-staging.sh` installs a second, fully isolated server
-instance on the same machine for staging use. It shares the release binaries
-and the production Cloudflare Tunnel, but keeps its own port
-(`127.0.0.1:18081`), SQLite database, Keychain secrets, and launchd agents, and
-is published at `https://staging-gamebox.zqydev.me`. Rerun it after pulling the
-latest `main` to refresh staging with current server code:
+instance on the same machine for staging use. It keeps an executable prefix
+(`~/.local/libexec/gamebox-staging`) separate from production, shares the
+production Cloudflare Tunnel, and keeps its own port (`127.0.0.1:18081`), SQLite
+database, Keychain secrets, and launchd agents. It is published at
+`https://staging-gamebox.zqydev.me`. Rerun it after pulling the latest `main` to
+refresh staging with current server code:
 
 ```bash
 git pull

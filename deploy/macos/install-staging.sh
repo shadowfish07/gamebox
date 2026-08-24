@@ -3,16 +3,16 @@ set -euo pipefail
 umask 077
 
 # Installs a second, fully isolated Gamebox server instance for staging use.
-# It shares the release binaries and the production Cloudflare Tunnel, but keeps
-# its own port, SQLite database, Keychain secrets, logs, and launchd agents, and
-# is published at https://staging-gamebox.zqydev.me.
+# It uses an isolated executable prefix and shares the production Cloudflare
+# Tunnel, but keeps its own port, SQLite database, Keychain secrets, logs, and
+# launchd agents, and is published at https://staging-gamebox.zqydev.me.
 #
 # Run after pulling the latest main to refresh staging with current server code:
 #   zsh deploy/macos/install-staging.sh
 
 readonly script_dir="${0:A:h}"
 readonly repo_root="${script_dir:h:h}"
-readonly service_prefix="${HOME}/.local/libexec/gamebox"
+readonly service_prefix="${HOME}/.local/libexec/gamebox-staging"
 readonly config_dir="${HOME}/.config/gamebox"
 readonly data_dir="${HOME}/Library/Application Support/Gamebox/server-staging"
 readonly log_dir="${HOME}/Library/Logs/Gamebox/staging"

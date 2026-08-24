@@ -15,6 +15,8 @@ bash tool/verify_design_system.sh
 bash -n tool/worktree.sh tool/lib/android_lease.sh tool/test_android_lease.sh \
   tool/e2e_android.sh tool/ensure_test_avds.sh \
   tool/smoke_android_host.sh tool/smoke_android_release_apk.sh
+zsh -n deploy/macos/install.sh deploy/macos/install-staging.sh
+bash tool/test_macos_deploy.sh
 bash tool/test_android_lease.sh
 bash tool/verify_godot_tests.sh
 bash tool/test_android_smoke_log.sh
