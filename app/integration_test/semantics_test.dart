@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
@@ -255,6 +256,13 @@ final class _FakeAuthApi implements AuthApi {
 
   @override
   Future<Session> refresh(String refreshToken) async => _session('Alice');
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) async => SessionUser(id: _aliceId, nickname: nickname);
 
   static Session _session(String nickname) {
     final now = DateTime.now().toUtc();

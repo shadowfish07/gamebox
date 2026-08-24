@@ -20,6 +20,7 @@ import (
 
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/store"
+	"me.zqydev/gamebox/server/internal/users"
 )
 
 const testPepper = "test-only-registration-pepper-1234"
@@ -59,6 +60,141 @@ func (fixture authFixture) addInvite(t *testing.T, plaintext string) string {
 		t.Fatalf("insert invite: %v", err)
 	}
 	return hash
+}
+
+func (fixture authFixture) addUser(t *testing.T, nickname, normalized string) string {
+	t.Helper()
+	id := uuid.NewString()
+	if _, err := fixture.db.Exec(`
+INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at)
+VALUES (?,?,?,?,?)`, id, nickname, normalized, fixture.now.Add(-time.Hour).Unix(), fixture.now.Add(-time.Hour).Unix()); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	return id
+}
+
+func TestUpdateNicknameStoresNormalizedIdentityWithoutChangingOtherAccountState(t *testing.T) {
+	fixture := newAuthFixture(t)
+	userID := fixture.addUser(t, "Alice", "alice")
+	if _, err := fixture.db.Exec(`INSERT INTO refresh_tokens(token_hash,user_id,expires_at,created_at) VALUES ('refresh-hash',?,?,?)`, userID, fixture.now.Add(time.Hour).Unix(), fixture.now.Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := fixture.service.UpdateNickname(context.Background(), userID, "\u2003New Name\u2003")
+	if err != nil {
+		t.Fatalf("UpdateNickname returned error: %v", err)
+	}
+	if updated.ID != userID || updated.Nickname != "New Name" {
+		t.Fatalf("updated user = %+v, want id %q nickname New Name", updated, userID)
+	}
+	var nickname, normalized string
+	var createdAt, updatedAt int64
+	if err := fixture.db.QueryRow(`SELECT nickname,normalized_nickname,created_at,updated_at FROM users WHERE id=?`, userID).Scan(&nickname, &normalized, &createdAt, &updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if nickname != "New Name" || normalized != "new name" || createdAt != fixture.now.Add(-time.Hour).Unix() || updatedAt != fixture.now.Unix() {
+		t.Fatalf("stored account = (%q,%q,%d,%d)", nickname, normalized, createdAt, updatedAt)
+	}
+	var refreshRows int
+	if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM refresh_tokens WHERE user_id=? AND token_hash='refresh-hash'`, userID).Scan(&refreshRows); err != nil || refreshRows != 1 {
+		t.Fatalf("refresh credentials changed: rows=%d err=%v", refreshRows, err)
+	}
+}
+
+func TestUpdateNicknameRejectsInvalidConflictAndMissingUserWithoutMutation(t *testing.T) {
+	fixture := newAuthFixture(t)
+	aliceID := fixture.addUser(t, "Alice", "alice")
+	fixture.addUser(t, "Bob", "bob")
+	tests := []struct {
+		name     string
+		userID   string
+		nickname string
+		wantErr  error
+	}{
+		{name: "invalid nickname", userID: aliceID, nickname: "x", wantErr: ErrInvalidRequest},
+		{name: "case insensitive conflict", userID: aliceID, nickname: " bOb ", wantErr: ErrNicknameTaken},
+		{name: "missing user", userID: uuid.NewString(), nickname: "Carol", wantErr: ErrUnauthorized},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			updated, err := fixture.service.UpdateNickname(context.Background(), test.userID, test.nickname)
+			if updated != (users.User{}) || !errors.Is(err, test.wantErr) || err.Error() != test.wantErr.Error() {
+				t.Fatalf("UpdateNickname = (%+v,%v), want zero user and %v", updated, err, test.wantErr)
+			}
+		})
+	}
+	var nickname, normalized string
+	if err := fixture.db.QueryRow(`SELECT nickname,normalized_nickname FROM users WHERE id=?`, aliceID).Scan(&nickname, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	if nickname != "Alice" || normalized != "alice" {
+		t.Fatalf("failed updates mutated account to (%q,%q)", nickname, normalized)
+	}
+}
+
+func TestUpdateNicknameAllowsUnchangedNickname(t *testing.T) {
+	fixture := newAuthFixture(t)
+	userID := fixture.addUser(t, "Alice", "alice")
+	updated, err := fixture.service.UpdateNickname(context.Background(), userID, "Alice")
+	if err != nil || updated.ID != userID || updated.Nickname != "Alice" {
+		t.Fatalf("unchanged UpdateNickname = (%+v,%v)", updated, err)
+	}
+}
+
+func TestUpdateNicknameCommitFailureRollsBackBothNicknameColumns(t *testing.T) {
+	fixture := newAuthFixture(t)
+	userID := fixture.addUser(t, "Alice", "alice")
+	fixture.service.commit = func(*writeTransaction) error { return errors.New("private commit failure") }
+
+	updated, err := fixture.service.UpdateNickname(context.Background(), userID, "Carol")
+	if updated != (users.User{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() {
+		t.Fatalf("commit failure = (%+v,%v), want zero user and stable ErrInternal", updated, err)
+	}
+	var nickname, normalized string
+	if err := fixture.db.QueryRow(`SELECT nickname,normalized_nickname FROM users WHERE id=?`, userID).Scan(&nickname, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	if nickname != "Alice" || normalized != "alice" {
+		t.Fatalf("commit failure persisted (%q,%q)", nickname, normalized)
+	}
+}
+
+func TestUpdateNicknameConcurrentConflictAllowsExactlyOneWinner(t *testing.T) {
+	for attempt := 0; attempt < 10; attempt++ {
+		fixture := newAuthFixture(t)
+		leftID := fixture.addUser(t, fmt.Sprintf("Left%d", attempt), fmt.Sprintf("left%d", attempt))
+		rightID := fixture.addUser(t, fmt.Sprintf("Right%d", attempt), fmt.Sprintf("right%d", attempt))
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		var calls sync.WaitGroup
+		for index, userID := range []string{leftID, rightID} {
+			index, userID := index, userID
+			calls.Add(1)
+			go func() {
+				defer calls.Done()
+				<-start
+				_, err := fixture.service.UpdateNickname(context.Background(), userID, []string{"Shared", "sHaReD"}[index])
+				results <- err
+			}()
+		}
+		close(start)
+		calls.Wait()
+		close(results)
+		successes, conflicts := 0, 0
+		for err := range results {
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrNicknameTaken):
+				conflicts++
+			default:
+				t.Fatalf("attempt %d concurrent error = %v", attempt, err)
+			}
+		}
+		if successes != 1 || conflicts != 1 {
+			t.Fatalf("attempt %d results = %d success %d conflict", attempt, successes, conflicts)
+		}
+	}
 }
 
 func TestRegisterConsumesInviteOnceAndStoresTrimmedNickname(t *testing.T) {

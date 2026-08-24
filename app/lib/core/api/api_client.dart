@@ -75,6 +75,26 @@ final class ApiClient {
     );
   }
 
+  /// Sends a JSON mutation once. A rejected credential may be refreshed for
+  /// later operations, but this request is never replayed automatically.
+  Future<Map<String, Object?>> patchJson(
+    String path,
+    Map<String, Object?> body, {
+    AccessTokenProvider? accessToken,
+    UnauthorizedHandler? onUnauthorized,
+    Set<int> expectedStatuses = const {200},
+  }) {
+    return _requestJson(
+      method: 'PATCH',
+      path: path,
+      body: body,
+      accessToken: accessToken,
+      onUnauthorized: onUnauthorized,
+      mayRetryAfterUnauthorized: false,
+      expectedStatuses: expectedStatuses,
+    );
+  }
+
   /// Sends an authenticated mutation whose only successful representation is
   /// a bodyless response. Like POST, it may rotate a rejected credential for
   /// future requests but is never replayed automatically.

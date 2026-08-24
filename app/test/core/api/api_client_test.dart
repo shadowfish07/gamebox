@@ -211,6 +211,66 @@ void main() {
     expect(refreshCalls, 1);
   });
 
+  test('PATCH sends JSON and decodes the declared success status', () async {
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        expect(request.method, 'PATCH');
+        expect(request.url.path, '/v1/me');
+        expect(request.headers['authorization'], 'Bearer access-token');
+        expect(jsonDecode(request.body), {'nickname': '新昵称'});
+        return _jsonResponse(
+          '{"user":{"id":"11111111-1111-4111-8111-111111111111","nickname":"新昵称"}}',
+          200,
+        );
+      }),
+      baseUri: Uri.parse('https://gamebox.test'),
+    );
+
+    final result = await client.patchJson('/v1/me', const {
+      'nickname': '新昵称',
+    }, accessToken: () => 'access-token');
+
+    expect(result, {
+      'user': {'id': '11111111-1111-4111-8111-111111111111', 'nickname': '新昵称'},
+    });
+  });
+
+  test('PATCH 401 refreshes for future calls but never replays', () async {
+    var calls = 0;
+    var refreshCalls = 0;
+    final client = ApiClient(
+      httpClient: MockClient((request) async {
+        calls += 1;
+        expect(request.method, 'PATCH');
+        expect(request.body, '{"nickname":"one-shot"}');
+        expect(request.headers['authorization'], 'Bearer access-old');
+        return _jsonResponse(
+          '{"error":{"code":"unauthorized","message":"身份验证失败","details":{}}}',
+          401,
+        );
+      }),
+      baseUri: Uri.parse('https://gamebox.test'),
+    );
+
+    await expectLater(
+      client.patchJson(
+        '/v1/me',
+        const {'nickname': 'one-shot'},
+        accessToken: () => 'access-old',
+        onUnauthorized: (failedToken) async {
+          expect(failedToken, 'access-old');
+          refreshCalls += 1;
+          return true;
+        },
+      ),
+      throwsA(
+        isA<ApiError>().having((error) => error.code, 'code', 'unauthorized'),
+      ),
+    );
+    expect(calls, 1);
+    expect(refreshCalls, 1);
+  });
+
   test('bodyless DELETE sends no body and accepts exact 204', () async {
     final client = ApiClient(
       httpClient: MockClient((request) async {

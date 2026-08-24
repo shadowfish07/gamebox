@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
@@ -224,6 +225,103 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     fixture.dispose();
   });
+
+  for (final code in const ['network_error', 'nickname_taken']) {
+    testWidgets(
+      '$code nickname sync keeps local greeting and public play enabled',
+      (tester) async {
+        const currentUserId = '11111111-1111-4111-8111-111111111111';
+        const opponentId = '44444444-4444-4444-8444-444444444444';
+        final fixture = await _Fixture.create(now);
+        fixture.authApi.nicknameUpdateResults.add(
+          ApiError(code: code, message: '安全同步错误'),
+        );
+        fixture.api.opponents = const [
+          GomokuOpponent(
+            id: currentUserId,
+            nickname: '服务端自己',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.online,
+          ),
+          GomokuOpponent(
+            id: opponentId,
+            nickname: '小鸟',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.online,
+          ),
+        ];
+        await fixture.profile.commitNickname('本地显示名');
+
+        await tester.pumpWidget(
+          GameboxApp(
+            gameLauncher: fixture.launcher,
+            sessionController: fixture.session,
+            profileController: fixture.profile,
+            homeController: fixture.home,
+          ),
+        );
+        await _flush(tester);
+
+        expect(fixture.authApi.nicknameUpdateCalls, 1);
+        expect(fixture.profile.status, ProfileStatus.ready);
+        expect(fixture.profile.profile?.nickname, '本地显示名');
+        expect(
+          fixture.profile.profile?.syncState,
+          code == 'nickname_taken'
+              ? ProfileSyncState.blocked
+              : ProfileSyncState.pending,
+        );
+        expect(find.text('你好，本地显示名'), findsOneWidget);
+        expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('choose-opponent')));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key('opponent-$currentUserId')), findsNothing);
+        expect(find.byKey(const Key('opponent-$opponentId')), findsOneWidget);
+        expect(fixture.api.opponentCalls, 1);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        fixture.dispose();
+      },
+    );
+  }
+
+  testWidgets(
+    'foreground retries pending nickname after the five minute cooldown',
+    (tester) async {
+      var profileNow = now;
+      final fixture = await _Fixture.create(now, profileNow: () => profileNow);
+      fixture.authApi.nicknameUpdateResults
+        ..add(const ApiError(code: 'timeout', message: '请求超时'))
+        ..add(null);
+      await fixture.profile.commitNickname('本地显示名');
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: fixture.launcher,
+          sessionController: fixture.session,
+          profileController: fixture.profile,
+          homeController: fixture.home,
+        ),
+      );
+      await _flush(tester);
+      expect(fixture.authApi.nicknameUpdateCalls, 1);
+      expect(fixture.profile.profile?.syncState, ProfileSyncState.pending);
+
+      profileNow = profileNow.add(const Duration(minutes: 5));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await _flush(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _flush(tester);
+
+      expect(fixture.authApi.nicknameUpdateCalls, 2);
+      expect(fixture.profile.profile?.syncState, ProfileSyncState.synced);
+      expect(find.text('你好，本地显示名'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      fixture.dispose();
+    },
+  );
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -243,7 +341,10 @@ final class _Fixture {
     required this.tokenStore,
   });
 
-  static Future<_Fixture> create(DateTime now) async {
+  static Future<_Fixture> create(
+    DateTime now, {
+    DateTime Function()? profileNow,
+  }) async {
     final authApi = _FakeAuthApi(now);
     final tokenStore = _MemoryTokenStore('refresh-zero');
     final session = SessionController(
@@ -275,6 +376,7 @@ final class _Fixture {
         ),
       ),
       nicknameRules: const _NicknameRules(),
+      now: profileNow,
     );
     await profile.load();
     return _Fixture(
@@ -401,6 +503,8 @@ final class _FakeAuthApi implements AuthApi {
   bool rejectRefresh = false;
   String userId = '11111111-1111-4111-8111-111111111111';
   String nickname = '自己';
+  int nicknameUpdateCalls = 0;
+  final List<ApiError?> nicknameUpdateResults = [];
 
   @override
   Future<Session> refresh(String refreshToken) async {
@@ -413,6 +517,21 @@ final class _FakeAuthApi implements AuthApi {
   @override
   Future<Session> register(String inviteCode, String nickname) async =>
       _session();
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) async {
+    nicknameUpdateCalls += 1;
+    final result = nicknameUpdateResults.isEmpty
+        ? null
+        : nicknameUpdateResults.removeAt(0);
+    if (result != null) throw result;
+    this.nickname = nickname;
+    return SessionUser(id: userId, nickname: nickname);
+  }
 
   Session _session() => Session(
     user: SessionUser(id: userId, nickname: nickname),

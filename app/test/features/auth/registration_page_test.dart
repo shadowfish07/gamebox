@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
@@ -413,6 +414,13 @@ final class _FakeAuthApi implements AuthApi {
     return onRegister?.call(inviteCode, nickname) ??
         Future<Session>.error(StateError('unexpected registration'));
   }
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) => Future<SessionUser>.error(StateError('unexpected nickname update'));
 }
 
 final class _MemoryTokenStore implements TokenStore {

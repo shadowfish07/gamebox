@@ -233,6 +233,87 @@ func (fixture apiFixture) request(t *testing.T, method, path, body, accessToken 
 	return response
 }
 
+func TestPatchMeUpdatesOnlyNicknameWithStrictContract(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "patch-me-alice", "Alice")
+	response := fixture.request(t, http.MethodPatch, "/v1/me", `{"nickname":"新昵称"}`, alice.Session.AccessToken)
+	want := `{"user":{"id":` + quote(alice.Session.User.ID) + `,"nickname":"新昵称"}` + "}\n"
+	if response.Code != http.StatusOK || response.Body.String() != want {
+		t.Fatalf("PATCH /v1/me = (%d,%q), want (200,%q)", response.Code, response.Body.String(), want)
+	}
+	var envelope map[string]any
+	decodeResponse(t, response, &envelope)
+	if len(envelope) != 1 {
+		t.Fatalf("response keys = %v, want only user", envelope)
+	}
+	user, ok := envelope["user"].(map[string]any)
+	if !ok || len(user) != 2 {
+		t.Fatalf("user shape = %#v", envelope["user"])
+	}
+	if _, ok := user["id"].(string); !ok {
+		t.Fatalf("user id type = %T", user["id"])
+	}
+	if _, ok := user["nickname"].(string); !ok {
+		t.Fatalf("nickname type = %T", user["nickname"])
+	}
+	me := fixture.request(t, http.MethodGet, "/v1/me", "", alice.Session.AccessToken)
+	if me.Code != http.StatusOK || me.Body.String() != want {
+		t.Fatalf("GET /v1/me after PATCH = (%d,%q), want (200,%q)", me.Code, me.Body.String(), want)
+	}
+	var refreshRows int
+	if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM refresh_tokens WHERE user_id=?`, alice.Session.User.ID).Scan(&refreshRows); err != nil || refreshRows != 1 {
+		t.Fatalf("PATCH rotated or revoked session: rows=%d err=%v", refreshRows, err)
+	}
+}
+
+func TestPatchMeAuthenticationValidationConflictAndUnchangedNickname(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "patch-errors-alice", "Alice")
+	fixture.register(t, "patch-errors-bob", "Bob")
+	tests := []struct {
+		name       string
+		body       string
+		token      string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "unauthenticated", body: `{"nickname":"Carol"}`, wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
+		{name: "invalid nickname", body: `{"nickname":"x"}`, token: alice.Session.AccessToken, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "unknown key", body: `{"nickname":"Carol","extra":true}`, token: alice.Session.AccessToken, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "wrong type", body: `{"nickname":7}`, token: alice.Session.AccessToken, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "case insensitive conflict", body: `{"nickname":" bOB "}`, token: alice.Session.AccessToken, wantStatus: http.StatusConflict, wantCode: "nickname_taken"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := fixture.request(t, http.MethodPatch, "/v1/me", test.body, test.token)
+			if response.Code != test.wantStatus || responseErrorCode(t, response) != test.wantCode {
+				t.Fatalf("response = (%d,%s)", response.Code, response.Body.String())
+			}
+		})
+	}
+	unchanged := fixture.request(t, http.MethodPatch, "/v1/me", `{"nickname":"Alice"}`, alice.Session.AccessToken)
+	want := `{"user":{"id":` + quote(alice.Session.User.ID) + `,"nickname":"Alice"}` + "}\n"
+	if unchanged.Code != http.StatusOK || unchanged.Body.String() != want {
+		t.Fatalf("unchanged nickname = (%d,%q), want (200,%q)", unchanged.Code, unchanged.Body.String(), want)
+	}
+}
+
+func TestPatchMeTransactionFailureRollsBackAndReturnsStableError(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "patch-rollback-alice", "Alice")
+	if _, err := fixture.db.Exec(`CREATE TRIGGER fail_patch_nickname BEFORE UPDATE OF nickname ON users BEGIN SELECT RAISE(ABORT,'private-patch-marker'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	response := fixture.request(t, http.MethodPatch, "/v1/me", `{"nickname":"Carol"}`, alice.Session.AccessToken)
+	if response.Code != http.StatusInternalServerError || responseErrorCode(t, response) != "internal_error" || strings.Contains(response.Body.String(), "private-patch-marker") {
+		t.Fatalf("transaction failure = (%d,%s)", response.Code, response.Body.String())
+	}
+	var nickname, normalized string
+	if err := fixture.db.QueryRow(`SELECT nickname,normalized_nickname FROM users WHERE id=?`, alice.Session.User.ID).Scan(&nickname, &normalized); err != nil || nickname != "Alice" || normalized != "alice" {
+		t.Fatalf("rollback account = (%q,%q) err=%v", nickname, normalized, err)
+	}
+}
+
 func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, destination any) {
 	t.Helper()
 	if response.Header().Get("Content-Type") != "application/json; charset=utf-8" {
@@ -1778,7 +1859,7 @@ func TestExtremeClocksFailClosedForLobbyAndLaunchTicket(t *testing.T) {
 func TestGetRoutesAdvertiseAndHonorHEAD(t *testing.T) {
 	fixture := newAPIFixture(t)
 	alice := fixture.register(t, "head-a", "Alice")
-	for _, path := range []string{"/healthz", "/v1/me", "/v1/games", "/v1/games/gomoku/status", "/v1/games/gomoku/opponents"} {
+	for _, path := range []string{"/healthz", "/v1/games", "/v1/games/gomoku/status", "/v1/games/gomoku/opponents"} {
 		request := httptest.NewRequest(http.MethodOptions, path, nil)
 		response := httptest.NewRecorder()
 		fixture.handler.ServeHTTP(response, request)
@@ -1809,6 +1890,10 @@ func TestGetRoutesAdvertiseAndHonorHEAD(t *testing.T) {
 	postFallback := fixture.request(t, http.MethodOptions, "/v1/auth/register", "", "")
 	if postFallback.Code != http.StatusMethodNotAllowed || postFallback.Header().Get("Allow") != http.MethodPost {
 		t.Fatalf("POST fallback=(%d Allow=%q)", postFallback.Code, postFallback.Header().Get("Allow"))
+	}
+	meFallback := fixture.request(t, http.MethodOptions, "/v1/me", "", "")
+	if meFallback.Code != http.StatusMethodNotAllowed || meFallback.Header().Get("Allow") != "GET, HEAD, PATCH" {
+		t.Fatalf("me fallback=(%d Allow=%q)", meFallback.Code, meFallback.Header().Get("Allow"))
 	}
 }
 

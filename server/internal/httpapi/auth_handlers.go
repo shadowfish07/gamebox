@@ -15,6 +15,10 @@ type refreshRequest struct {
 	RefreshToken string `json:"refreshToken"`
 }
 
+type updateNicknameRequest struct {
+	Nickname string `json:"nickname"`
+}
+
 type userResponse struct {
 	ID       string `json:"id"`
 	Nickname string `json:"nickname"`
@@ -71,6 +75,27 @@ func (router *router) me(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, struct {
 		User userResponse `json:"user"`
 	}{User: userResponse{ID: user.ID, Nickname: user.Nickname}})
+}
+
+func (router *router) patchMe(writer http.ResponseWriter, request *http.Request) {
+	user, ok := authenticatedUser(request)
+	if !ok {
+		writeAPIError(writer, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body updateNicknameRequest
+	if status, decodeErr := decodeJSONBody(request, &body, "nickname"); decodeErr != nil {
+		writeAPIError(writer, status, "invalid_request")
+		return
+	}
+	updated, updateErr := router.auth.UpdateNickname(request.Context(), user.ID, body.Nickname)
+	if updateErr != nil {
+		writeServiceError(writer, updateErr)
+		return
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		User userResponse `json:"user"`
+	}{User: userResponse{ID: updated.ID, Nickname: updated.Nickname}})
 }
 
 func encodeSession(session auth.Session) sessionEnvelope {

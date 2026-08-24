@@ -64,6 +64,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/auth/register", router.register)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refresh)
 	mux.Handle("GET /v1/me", router.authenticated(http.HandlerFunc(router.me)))
+	mux.Handle("PATCH /v1/me", router.authenticated(http.HandlerFunc(router.patchMe)))
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
@@ -75,7 +76,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/healthz", http.MethodGet)
 	registerMethodFallback(mux, "/v1/auth/register", http.MethodPost)
 	registerMethodFallback(mux, "/v1/auth/refresh", http.MethodPost)
-	registerMethodFallback(mux, "/v1/me", http.MethodGet)
+	registerMethodFallback(mux, "/v1/me", "GET, HEAD, PATCH")
 	registerMethodFallback(mux, "/v1/games", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
@@ -269,7 +270,7 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 
 func safeRequestMethod(method string) string {
 	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete, http.MethodOptions:
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions:
 		return method
 	default:
 		return "OTHER"
@@ -277,6 +278,9 @@ func safeRequestMethod(method string) string {
 }
 
 func requestAcceptsJSONBody(request *http.Request) bool {
+	if request.Method == http.MethodPatch {
+		return request.URL.Path == "/v1/me"
+	}
 	if request.Method != http.MethodPost {
 		return false
 	}

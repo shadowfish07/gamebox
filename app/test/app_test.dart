@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
@@ -179,7 +180,7 @@ void main() {
   );
 
   testWidgets(
-    'foreground retries failed pending persistence without hiding local Home',
+    'foreground retries failed persistence then syncs local winner without hiding Home',
     (tester) async {
       final now = DateTime.utc(2026, 8, 24, 12);
       final session = SessionController(
@@ -226,7 +227,8 @@ void main() {
 
       expect(find.byKey(const Key('home-shell')), findsOneWidget);
       expect(find.text('你好，本地玩家'), findsOneWidget);
-      expect(profile.profile?.lastSyncedNickname, '旧公服玩家');
+      expect(profile.profile?.lastSyncedNickname, '本地玩家');
+      expect(profile.profile?.syncState, ProfileSyncState.synced);
       expect(profile.reconciliationFailure, isNull);
     },
   );
@@ -439,6 +441,13 @@ final class _UnusedAuthApi implements AuthApi {
   @override
   Future<Session> register(String inviteCode, String nickname) =>
       Future<Session>.error(StateError('unexpected registration'));
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) => Future<SessionUser>.error(StateError('unexpected nickname update'));
 }
 
 final class _PendingTokenStore implements TokenStore {
@@ -492,6 +501,16 @@ final class _RestoredAuthApi implements AuthApi {
   @override
   Future<Session> register(String inviteCode, String nickname) =>
       Future<Session>.error(StateError('unexpected registration'));
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) async => SessionUser(
+    id: '11111111-1111-4111-8111-111111111111',
+    nickname: nickname,
+  );
 }
 
 final class _MemoryProfileStore implements AppProfileStore {

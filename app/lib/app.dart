@@ -105,7 +105,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _protectedNavigationUserId = _authenticatedUserId;
     WidgetsBinding.instance.addObserver(this);
     _syncHomeController();
-    _reconcileSessionProfile();
+    _syncSessionProfile();
     unawaited(_sessionController!.restore());
   }
 
@@ -121,23 +121,29 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     }
     _protectedNavigationUserId = currentUserId;
     _syncHomeController();
-    _reconcileSessionProfile();
+    _syncSessionProfile();
     if (mounted) {
       setState(() {});
     }
   }
 
-  void _reconcileSessionProfile() {
+  void _syncSessionProfile() {
     final sessionController = _sessionController;
     final profileController = _profileController;
     final session = sessionController?.session;
     if (profileController == null ||
-        sessionController?.status != SessionStatus.authenticated ||
+        sessionController == null ||
+        sessionController.status != SessionStatus.authenticated ||
         session == null) {
+      profileController?.disconnectPublicSession();
       return;
     }
     unawaited(
-      profileController.reconcileRestoredNickname(session.user.nickname),
+      profileController.authenticatedSessionStarted(
+        userId: session.user.id,
+        serverNickname: session.user.nickname,
+        updateNickname: sessionController.updateNickname,
+      ),
     );
   }
 
@@ -202,7 +208,8 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       return;
     }
     _syncHomeController();
-    _reconcileSessionProfile();
+    _syncSessionProfile();
+    await _profileController?.handleAppResumed();
     _homeController?.resumeForeground();
   }
 
