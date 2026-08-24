@@ -339,10 +339,11 @@ read-only match snapshot, but no invites or tokens. Each adb/UI operation and
 build has a bounded watchdog; `GAMEBOX_E2E_*_TIMEOUT_SECONDS` variables exist
 for shorter fault-injection bounds, not for removing timeouts.
 
-`summary.json.uiEvidence` lists artifact-relative paths for exactly 13 required
-screenshots: both registration layouts, idle and active lobbies, opponent
-selection, update and cancel-confirmation dialogs, plus Gomoku initial, pending,
-resign-confirmation, reconnecting, connection-failed, and terminal states. A
+`summary.json.uiEvidence` lists artifact-relative paths for exactly 16 required
+screenshots: both registration layouts, idle, active, and resumable lobbies,
+opponent selection, update and cancel-confirmation dialogs, plus Gomoku loading,
+initial, pending, resign-confirmation, reconnecting, connection-failed,
+terminal, and resigned states. A
 registration screenshot is taken before private invite input; capture is
 rejected while a secret may be on screen, every UI dump is removed from the
 device, and a missing or non-relative screenshot prevents a passed summary.

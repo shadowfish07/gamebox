@@ -90,7 +90,7 @@ dart --version
 (cd app && flutter pub get --enforce-lockfile --dry-run)
 ```
 
-Expected: the selected executables are the plan-locked tools, `flutter --version` reports Flutter 3.35.1 with Dart 3.9.0, `dart --version` reports Dart 3.9.0, and the lockfile dry-run exits 0. If any check differs, stop rather than falling back to another SDK.
+Expected: the selected executables are the plan-locked tools, `flutter --version` reports Flutter 3.47.1 with Dart 3.13.1, `dart --version` reports Dart 3.13.1, and the lockfile dry-run exits 0. If any check differs, stop rather than falling back to another SDK.
 
 Deterministic closure plan, in order:
 
@@ -162,23 +162,10 @@ The current implementation has valuable authority, reconnect, recovery, Back, an
 
 ## Post-change Closure Evidence
 
-Verified against the final clean HEAD `3404008` (the closing docs commit, after the Task 9 APK asset gate commit `6510d0d`), with test counts **Flutter 189/189**, **Godot 111/111**. The unified repository gate (`bash tool/verify.sh`) and the E2E self-test (`bash tool/e2e_android.sh --self-test`) both exit 0. Actual two-AVD Android evidence is in `artifacts/e2e/20260823T065045Z-66739/` (`summary.json.status=passed`, `sourceRevision=3404008`).
-
-| Finding | Closure test command | Closure commits | Evidence artifact |
-| --- | --- | --- | --- |
-| M1 token pipeline | `bash tool/verify_design_system.sh` (drift + hard-coded scan, wired into `verify_fast.sh:9`) | `614cc44` tokens+generator, `c2a4803` theme, `f9dfcd5`, `36bf7d6` | `design_system/tokens/gamebox.tokens.json`, generated `app/.../gamebox_tokens.g.dart`, `game_runtime/.../gamebox_tokens.gd` |
-| M2 light/dark contract | `(cd app && flutter test test/design_system)` + `verify_design_system.sh` | `614cc44`, `c2a4803`, `f9dfcd5` | `screenshots/registration-light.png`, `registration-dark-narrow.png`, `lobby-active-dark-narrow.png` |
-| M3 consequence-named confirmations | `(cd app && flutter test test/features/home/home_page_test.dart)`; `bash tool/verify_godot_tests.sh` | `f9dfcd5` (cancel dialog identifiers), `7d94594` (resign dialog) | `screenshots/cancel-match-dialog-dark-narrow.png`, `screenshots/gomoku-resign-confirm-light.png` |
-| M4 Godot safe-area/scalable shell | `bash tool/verify_godot_tests.sh`; E2E on narrow+large viewports | `36bf7d6`, `219ed06`, `7d94594` | `screenshots/gomoku-initial-light.png`, `gomoku-terminal-light.png` (both viewports exercised on-device) |
-| M5 dense-board pressed state | `game_runtime/test/test_gomoku_board.gd` (pressed→pending→accepted) | `7d94594` | `screenshots/gomoku-pending-light.png` |
-| M6 background recovery / Back parity | E2E recovery leg + `0281b90` Back-debounce on-device log | `7ef6c45`, `79dadb8`, `0281b90`, `4f7f347` | `pre-recovery-*.png`, `recovered-*.png`, `post-server-restart-*.png`, `screenshots/gomoku-reconnecting.png`, `gomoku-connection-failed.png` |
-| M7 runtime/screenshot evidence | `bash tool/e2e_android.sh` final run on `3404008` (two API-36 AVDs, light A / dark B) | `316c3b4`, `d2420ad`, `4f7f347` | `artifacts/e2e/20260823T065045Z-66739/screenshots/*.png` (13/13 required, `summary.json.uiEvidence`) |
-| M8 update feedback dialog | `(cd app && flutter test test/features/update/update_action_test.dart)` | `f9dfcd5`, `8b97650` | `screenshots/update-dialog-dark.png` |
-
-SHOULD deviations are closed as recorded: S1–S4 were implemented (field-local invite/nickname errors, tokenized card typography, opponent status treatment, stable async regions); S5's steady-connected collapse is recorded as a Gomoku profile deviation in `docs/design/profiles/gomoku.md#should-deviations`. The APK asset gate now also asserts every `design_system/**` generated/component path is packaged (`6510d0d`).
+The implementation and deterministic repository checks are present, but the final packaged-runtime evidence is not verified in this checkout. The required two-AVD run, sanitized artifact manifest, and screenshot review must complete before closure; no artifact path or passed result is recorded here.
 
 ## Post-change Verdict
 
-`complete`
+`incomplete`
 
-The Gamebox Material 3 UX skill and the retrofit of the existing Flutter App and Godot Gomoku now satisfy the token/light-dark contract, dangerous-action confirmations, Godot adaptive shell, interaction-state feedback, automation contracts, and the required actual-Android two-viewport light/dark screenshot matrix. All repository gates pass on the final clean HEAD and the real two-device E2E recorded a `passed` summary with 13 non-sensitive screenshots. Accessibility conformance remains an explicit non-goal per the recorded scope.
+The source-level UX retrofit and deterministic checks can be reviewed, but closure remains blocked on the actual Android two-device runtime and screenshot evidence. Accessibility conformance remains an explicit non-goal per the recorded scope.

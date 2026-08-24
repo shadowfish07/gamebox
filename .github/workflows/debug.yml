@@ -33,6 +33,7 @@ env:
 
 jobs:
   build-and-publish:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -103,9 +104,19 @@ jobs:
           - version: \`${pubspec_version}-dev.${short_sha}\`
           - package: \`me.zqydev.gamebox.debug\`
           - api: \`${API_BASE_URL}\`"
+          release_ref="refs/tags/${DEBUG_RELEASE_TAG}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" \
+              -F force=true >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="${release_ref}" \
+              -f sha="${GITHUB_SHA}" >/dev/null
+          fi
           if ! gh release view "${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
             gh release create "${DEBUG_RELEASE_TAG}" \
-              --target "${GITHUB_SHA}" \
+              --verify-tag \
               --prerelease \
               --title "Gamebox debug build" \
               --notes "${notes}"

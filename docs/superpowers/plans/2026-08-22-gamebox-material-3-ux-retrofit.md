@@ -6,16 +6,16 @@
 
 **Architecture:** 平台无关 JSON 是唯一可手工修改的数值令牌源；纯 Dart 生成器校验并生成 Flutter 与 GDScript 常量，两个运行时各自用原生主题和组件映射。Flutter 使用固定 Gamebox 协作青绿明暗 `ThemeData`；Godot 五子棋选择 `Lightweight Board` Profile 并组合公共反馈组件，不把该壳层强制推广到其他游戏。
 
-**Tech Stack:** Flutter 3.35.1 / Dart 3.9.0、Material 3、Godot 4.7 stable / GDScript、Android API 36、Bash、ADB/UI Automator、Flutter Widget/Integration Test、现有双 AVD E2E。
+**Tech Stack:** Flutter 3.47.1 / Dart 3.13.1、Material 3、Godot 4.7 stable / GDScript、Android API 36、Bash、ADB/UI Automator、Flutter Widget/Integration Test、现有双 AVD E2E。
 
 **Spec:** `docs/superpowers/specs/2026-08-22-gamebox-material-3-ux-design.md`
 
 ## Locked Execution Baseline
 
-本计划唯一允许的 Flutter/Dart 执行基线是已通过仓库门禁的 Flutter 3.35.1 / Dart 3.9.0，安装于 `/Users/shadowfish/flutter-backup-3.35.1-20260822-115538/bin`。默认 `PATH` 中的其他 Flutter SDK 与当前 lockfile 不兼容，不能用于生成 scheme、执行测试、构建 APK 或形成验收证据。每个新 shell、agent task 和从计划恢复的会话都必须先运行：
+本计划唯一允许的 Flutter/Dart 执行基线是已通过仓库门禁的 Flutter 3.47.1 / Dart 3.13.1，安装于 `/Users/shadowfish/flutter/bin`。默认 `PATH` 中的其他 Flutter SDK 与当前 lockfile 不兼容，不能用于生成 scheme、执行测试、构建 APK 或形成验收证据。每个新 shell、agent task 和从计划恢复的会话都必须先运行：
 
 ```bash
-export GAMEBOX_FLUTTER_SDK_ROOT=/Users/shadowfish/flutter-backup-3.35.1-20260822-115538
+export GAMEBOX_FLUTTER_SDK_ROOT=/Users/shadowfish/flutter
 export PATH="$GAMEBOX_FLUTTER_SDK_ROOT/bin:$PATH"
 test "$(command -v flutter)" = "$GAMEBOX_FLUTTER_SDK_ROOT/bin/flutter"
 flutter --version
@@ -23,7 +23,7 @@ dart --version
 (cd app && flutter pub get --enforce-lockfile --dry-run)
 ```
 
-Expected: `flutter --version` 报告 Flutter 3.35.1 和 Dart 3.9.0，`dart --version` 报告 Dart 3.9.0，lockfile dry-run exit 0。下文所有未写绝对路径的 `flutter`、`dart`、`bash tool/verify*.sh` 和 `bash tool/e2e_android.sh` 命令都继承这一已验证环境；若无法证明当前 shell 满足该基线，任务不得开始或继续。
+Expected: `flutter --version` 报告 Flutter 3.47.1 和 Dart 3.13.1，`dart --version` 报告 Dart 3.13.1，lockfile dry-run exit 0。下文所有未写绝对路径的 `flutter`、`dart`、`bash tool/verify*.sh` 和 `bash tool/e2e_android.sh` 命令都继承这一已验证环境；若无法证明当前 shell 满足该基线，任务不得开始或继续。
 
 ## Global Constraints
 
@@ -342,7 +342,7 @@ onSurfaceVariant/outline/outlineVariant/inverseSurface/onInverseSurface/inverseP
 
 所有颜色格式为 `^#[0-9A-F]{6}$`。游戏角色固定为 `board/grid/blackPiece/whitePiece/whitePieceOutline/lastMove/pressedMove/pendingMove/pendingOverlayAlpha`；排版采用 Material 3 的 15 个语义层级。首版 JSON 在本步骤定义并成为唯一数值权威：spacing 语义键为 `base/layout/compact/page/section/large/xlarge/xxlarge`，shape 为 `input/card/floating/dialog/full`，motion 为 `fast/standard/slow/pageEnter`，component 包含 `minimumTouchTarget/pageMaxWidth/pagePadding/sectionSpacing/smallProgressSize`。其首版值按已批准设计分别初始化为 `4/8/12/16/24/32/40/48`、`8/12/16/28/999`、`100/200/300/400` 和 `48/560/16/24/20`；写入后，后续 prose、测试和两端生成物只能按语义 JSON path 引用或由机械 reconciliation 校验，不能再成为独立数值权威。Godot 1080×1920 设计画布由适配器把逻辑单位按固定 `2.0` runtime scale 换算；该画布/适配比例属于 Gomoku runtime 坐标契约，不是跨运行时 token。
 
-`app/test/design_system/derive_color_scheme_test.dart` 在锁定基线中用 `ColorScheme.fromSeed(seedColor: Color(0xFF006B60), dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot, contrastLevel: 0.0)` 分别导出 light/dark 全角色 JSON。先把输出写入 `mktemp` 文件并人工/机械核对角色完整性，再复制为 canonical token 的初始 scheme；`brand.schemeSource` 必须记录 `flutter-3.35.1-dart-3.9.0-tonal-spot-contrast-0.0`。旧工具链生成的任何候选值不得沿用或标为 canonical。执行命令：
+`app/test/design_system/derive_color_scheme_test.dart` 在锁定基线中用 `ColorScheme.fromSeed(seedColor: Color(0xFF006B60), dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot, contrastLevel: 0.0)` 分别导出 light/dark 全角色 JSON。先把输出写入 `mktemp` 文件并人工/机械核对角色完整性，再复制为 canonical token 的初始 scheme；`brand.schemeSource` 必须记录 `flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0`。旧工具链生成的任何候选值不得沿用或标为 canonical。执行命令：
 
 ```bash
 scheme_artifact="$(mktemp -t gamebox-scheme.XXXXXX.json)"

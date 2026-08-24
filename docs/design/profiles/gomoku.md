@@ -42,18 +42,7 @@ The full capture combinations and sensitive-data rules are authoritative in `doc
 
 ## Final Screenshot List
 
-Captured on the final clean HEAD `3404008` by `bash tool/e2e_android.sh` (final run), two API-36 AVDs: A = light / large (1080×2400), B = dark / narrow (720×1600), normal system text size. Artifacts root: `artifacts/e2e/20260823T065045Z-66739/`. All captures are non-sensitive; none contain invite codes, tokens, credentials, or connection internals.
-
-| State | Screenshot (relative to artifacts root) |
-| --- | --- |
-| First connect / initial snapshot sync | `screenshots/gomoku-initial-light.png` |
-| Local pending move marker | `screenshots/gomoku-pending-light.png` |
-| Consequence-named resign confirmation | `screenshots/gomoku-resign-confirm-light.png` |
-| Reconnecting with last confirmed board preserved | `screenshots/gomoku-reconnecting.png` |
-| Terminal connection failure | `screenshots/gomoku-connection-failed.png` |
-| Terminal result / return panel | `screenshots/gomoku-terminal-light.png` |
-
-Supporting runtime evidence: `pre-recovery-*.png`, `recovered-*.png`, `post-server-restart-*.png` (background/resume authority sync and server-reconnect recovery), and `final-match.json` (authoritative `result: five`). The Godot screenshots are captured on the light/large device A; device B (dark/narrow) is driven through the same linked E2E and its states are verified by the harness's log/state assertions and visual metrics rather than a duplicate light/dark screenshot pair per row, per the audit matrix which requires both themes represented across the set.
+Pending the final two-AVD runtime run and screenshot review. This profile intentionally records no final clean HEAD, artifact ID, or passed capture list until that evidence exists.
 
 ## Token Roles
 

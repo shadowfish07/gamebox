@@ -24,13 +24,37 @@ void main() {
       );
     }
 
-    final canonicalFile = File('../design_system/tokens/gamebox.tokens.json');
-    if (canonicalFile.existsSync()) {
-      final canonical =
-          jsonDecode(canonicalFile.readAsStringSync()) as Map<String, Object?>;
-      expect(canonical['colorSchemes'], derived);
-    }
+    final canonicalFile = _canonicalTokenFile();
+    expect(
+      canonicalFile.existsSync(),
+      isTrue,
+      reason: 'Missing canonical Gamebox token file',
+    );
+    final canonical =
+        jsonDecode(canonicalFile.readAsStringSync()) as Map<String, Object?>;
+    expect(canonical['colorSchemes'], derived);
   });
+}
+
+File _canonicalTokenFile() {
+  var directory = File.fromUri(Platform.script).parent;
+  while (true) {
+    final candidate = File(
+      '${directory.path}${Platform.pathSeparator}design_system'
+      '${Platform.pathSeparator}tokens${Platform.pathSeparator}gamebox.tokens.json',
+    );
+    if (candidate.existsSync()) {
+      return candidate;
+    }
+    final parent = directory.parent;
+    if (parent.path == directory.path) {
+      break;
+    }
+    directory = parent;
+  }
+  throw StateError(
+    'Could not locate canonical Gamebox token file from ${Platform.script}',
+  );
 }
 
 Map<String, String> _scheme(Brightness brightness) {

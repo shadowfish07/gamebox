@@ -809,8 +809,8 @@ unregister_evidence_remote_dump() {
     retained_paths+=("${EVIDENCE_REMOTE_DUMP_PATHS[index]}")
   done
   ((found == 1)) || return 1
-  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]}")
-  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]}")
+  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]+"${retained_serials[@]}"}")
+  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]+"${retained_paths[@]}"}")
 }
 
 cleanup_registered_evidence_remote_dumps() {
@@ -831,8 +831,8 @@ cleanup_registered_evidence_remote_dumps() {
     retained_paths+=("$remote")
     status=1
   done
-  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]}")
-  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]}")
+  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]+"${retained_serials[@]}"}")
+  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]+"${retained_paths[@]}"}")
   return "$status"
 }
 
@@ -1198,6 +1198,84 @@ wait_for_e2e_server_health() {
   return 1
 }
 
+boundary_for_serial() {
+  [[ "$1" == "$SERIAL_A" ]] && printf '%s\n' "$LOG_BOUNDARY_A" || printf '%s\n' "$LOG_BOUNDARY_B"
+}
+
+start_first_connect_loading_watch() {
+  local serial="$1"
+  local boundary watcher_pid watcher_group watcher_session extra=""
+  [[ -z "${LOADING_WATCH_PID:-}" ]] || return 2
+  boundary="$(boundary_for_serial "$serial")"
+  LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
+  LOADING_WATCH_READY_FILE="$TEMP_DIR/first-connect-loading-session"
+  rm -f -- "$LOADING_WATCH_FILE"
+  rm -f -- "$LOADING_WATCH_READY_FILE"
+  {
+    "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
+      "$ADB_BIN" -s "$serial" logcat -b all -v threadtime 2>/dev/null \
+      | awk -v marker="$boundary" '
+          index($0, marker) {
+            found = 1
+            next
+          }
+          found && $0 ~ /GAMEBOX_GODOT_STATE match=[0-9a-f-]+ revision=-1 status=loading connection=/ {
+            line = $0
+            sub(/^.*GAMEBOX_GODOT_STATE match=/, "", line)
+            sub(/ revision=-1.*$/, "", line)
+            print line
+            fflush()
+            exit
+          }
+        '
+  } >"$LOADING_WATCH_FILE" 2>/dev/null &
+  LOADING_WATCH_PID=$!
+  local handshake_deadline=$((SECONDS + 2))
+  while [[ ! -s "$LOADING_WATCH_READY_FILE" ]] \
+    && kill -0 "$LOADING_WATCH_PID" 2>/dev/null; do
+    ((SECONDS < handshake_deadline)) || break
+    sleep 0.05
+  done
+  if [[ ! -s "$LOADING_WATCH_READY_FILE" ]] \
+    || ! read -r watcher_pid watcher_group watcher_session extra <"$LOADING_WATCH_READY_FILE" \
+    || [[ -n "$extra" ]] \
+    || ! session_numbers_are_safe "$watcher_pid" "$watcher_group" "$watcher_session"; then
+    stop_first_connect_loading_watch
+    return 1
+  fi
+  LOADING_WATCH_LEADER_PID="$watcher_pid"
+  LOADING_WATCH_PROCESS_GROUP="$watcher_group"
+  LOADING_WATCH_SESSION="$watcher_session"
+  if ! session_identity_is_safe \
+    "$LOADING_WATCH_LEADER_PID" "$LOADING_WATCH_PROCESS_GROUP" "$LOADING_WATCH_SESSION"; then
+    stop_first_connect_loading_watch
+    return 1
+  fi
+}
+
+stop_first_connect_loading_watch() {
+  local cleanup_status=0
+  if [[ -n "${LOADING_WATCH_LEADER_PID:-}" \
+    && -n "${LOADING_WATCH_PROCESS_GROUP:-}" \
+    && -n "${LOADING_WATCH_SESSION:-}" ]]; then
+    terminate_owned_session_group \
+      "$LOADING_WATCH_LEADER_PID" "$LOADING_WATCH_PROCESS_GROUP" "$LOADING_WATCH_SESSION" \
+      "$TIMEOUT_KILL_GRACE_SECONDS" || cleanup_status=1
+  fi
+  if [[ -n "${LOADING_WATCH_PID:-}" ]]; then
+    kill "$LOADING_WATCH_PID" 2>/dev/null || true
+    wait "$LOADING_WATCH_PID" 2>/dev/null || true
+  fi
+  [[ -z "${LOADING_WATCH_READY_FILE:-}" ]] \
+    || rm -f -- "$LOADING_WATCH_READY_FILE"
+  LOADING_WATCH_PID=""
+  LOADING_WATCH_LEADER_PID=""
+  LOADING_WATCH_PROCESS_GROUP=""
+  LOADING_WATCH_SESSION=""
+  LOADING_WATCH_READY_FILE=""
+  return "$cleanup_status"
+}
+
 self_test() {
   local fixture_dir
   fixture_dir="$(mktemp -d)"
@@ -1457,6 +1535,38 @@ self_test() {
   export FAKE_DEVICE_ROOT="$fake_device_root"
   export FAKE_ADB_PID_FILE="$fake_pid_file"
   ADB_BIN="$fake_adb"
+  local loading_watch_pid_file="$fixture_dir/loading-watch.pid"
+  : >"$loading_watch_pid_file"
+  export FAKE_ADB_PID_FILE="$loading_watch_pid_file"
+  export FAKE_ADB_LOG_BOUNDARY='watch-boundary'
+  export FAKE_ADB_MODE=loading-watch
+  TEMP_DIR="$fixture_dir"
+  SERIAL_A='fixture-A'
+  LOG_BOUNDARY_A='watch-boundary'
+  LOADING_WATCH_PID=""
+  LOADING_WATCH_FILE=""
+  LOADING_WATCH_LEADER_PID=""
+  LOADING_WATCH_PROCESS_GROUP=""
+  LOADING_WATCH_SESSION=""
+  LOADING_WATCH_READY_FILE=""
+  local loading_watch_wait_index loading_watch_adb_pid
+  start_first_connect_loading_watch fixture-A \
+    || { printf 'loading watcher could not start in fixture\n' >&2; return 1; }
+  for loading_watch_wait_index in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [[ -s "$loading_watch_pid_file" ]] && break
+    sleep 0.05
+  done
+  [[ -s "$loading_watch_pid_file" ]] \
+    || { printf 'loading watcher fixture did not start adb logcat\n' >&2; return 1; }
+  loading_watch_adb_pid="$(<"$loading_watch_pid_file")"
+  stop_first_connect_loading_watch \
+    || { printf 'loading watcher fixture did not stop\n' >&2; return 1; }
+  if kill -0 "$loading_watch_adb_pid" 2>/dev/null; then
+    kill -KILL "$loading_watch_adb_pid" 2>/dev/null || true
+    printf 'loading watcher left adb logcat alive\n' >&2
+    return 1
+  fi
+  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
@@ -1715,6 +1825,13 @@ self_test() {
     && "${EVIDENCE_REMOTE_DUMP_SERIALS[0]}" == "fixture-A" \
     && "${EVIDENCE_REMOTE_DUMP_PATHS[0]}" == "$interrupted_remote" ]] \
     || { printf 'failed evidence UI dump was not retained for EXIT cleanup\n' >&2; return 1; }
+  unregister_evidence_remote_dump fixture-A "$interrupted_remote" \
+    || { printf 'single evidence UI dump unregister fixture failed\n' >&2; return 1; }
+  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "0" \
+    && "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" == "0" ]] \
+    || { printf 'single evidence UI dump unregister did not clear the registry\n' >&2; return 1; }
+  register_evidence_remote_dump fixture-A "$interrupted_remote" \
+    || { printf 'single evidence UI dump could not be restored for cleanup\n' >&2; return 1; }
   local second_interrupted_remote='/data/local/tmp/gamebox-e2e-evidence-opponents-light-fixture-run.xml'
   register_evidence_remote_dump fixture-B "$second_interrupted_remote" \
     || { printf 'second evidence UI dump could not be registered\n' >&2; return 1; }
@@ -1947,6 +2064,10 @@ THIRD_MATCH_ID=""
 LOADING_MATCH_ID=""
 LOADING_WATCH_PID=""
 LOADING_WATCH_FILE=""
+LOADING_WATCH_LEADER_PID=""
+LOADING_WATCH_PROCESS_GROUP=""
+LOADING_WATCH_SESSION=""
+LOADING_WATCH_READY_FILE=""
 RECOVERY_SERIAL=""
 PREVIOUS_BOARD_HASH=""
 VISUAL_METRICS="$TEMP_DIR/visual-metrics.tsv"
@@ -2451,10 +2572,6 @@ LOG_BOUNDARY_B="GAMEBOX_E2E_B_$RUN_ID"
 adb_for "$SERIAL_A" shell log -p i -t GameboxE2E "$LOG_BOUNDARY_A" >/dev/null
 adb_for "$SERIAL_B" shell log -p i -t GameboxE2E "$LOG_BOUNDARY_B" >/dev/null
 
-boundary_for_serial() {
-  [[ "$1" == "$SERIAL_A" ]] && printf '%s\n' "$LOG_BOUNDARY_A" || printf '%s\n' "$LOG_BOUNDARY_B"
-}
-
 logs_after_boundary() {
   local serial="$1"
   local boundary="$2"
@@ -2602,42 +2719,6 @@ wait_for_new_ready_match_id() {
     sleep 1
   done
   return 1
-}
-
-start_first_connect_loading_watch() {
-  local serial="$1"
-  local boundary
-  [[ -z "$LOADING_WATCH_PID" ]] || return 2
-  boundary="$(boundary_for_serial "$serial")"
-  LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
-  rm -f -- "$LOADING_WATCH_FILE"
-  (
-    "$ADB_BIN" -s "$serial" logcat -b all -v threadtime 2>/dev/null \
-      | awk -v marker="$boundary" '
-          index($0, marker) {
-            found = 1
-            next
-          }
-          found && $0 ~ /GAMEBOX_GODOT_STATE match=[0-9a-f-]+ revision=-1 status=loading connection=/ {
-            line = $0
-            sub(/^.*GAMEBOX_GODOT_STATE match=/, "", line)
-            sub(/ revision=-1.*$/, "", line)
-            print line
-            fflush()
-            exit
-          }
-        '
-  ) >"$LOADING_WATCH_FILE" &
-  LOADING_WATCH_PID=$!
-}
-
-stop_first_connect_loading_watch() {
-  if [[ -n "$LOADING_WATCH_PID" ]]; then
-    kill "$LOADING_WATCH_PID" 2>/dev/null || true
-    wait "$LOADING_WATCH_PID" 2>/dev/null || true
-    LOADING_WATCH_PID=""
-  fi
-  return 0
 }
 
 wait_for_first_connect_loading_and_pause() {

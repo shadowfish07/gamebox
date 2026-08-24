@@ -25,6 +25,7 @@ design_system_asset_is_allowed() {
     | assets/design_system/components/gamebox_snackbar.tscn \
     | assets/design_system/components/gamebox_snackbar.gd \
     | assets/design_system/components/gamebox_confirmation_dialog.tscn \
+    | assets/design_system/components/gamebox_confirmation_dialog.gd \
     | assets/design_system/components/gamebox_loading_overlay.tscn \
     | assets/design_system/components/gamebox_loading_overlay.gd \
     | assets/design_system/components/gamebox_result_panel.tscn \
@@ -182,6 +183,7 @@ verify_asset_path_fixtures() {
     assets/design_system/components/gamebox_snackbar.tscn
     assets/design_system/components/gamebox_snackbar.gd
     assets/design_system/components/gamebox_confirmation_dialog.tscn
+    assets/design_system/components/gamebox_confirmation_dialog.gd
     assets/design_system/components/gamebox_loading_overlay.tscn
     assets/design_system/components/gamebox_loading_overlay.gd
     assets/design_system/components/gamebox_result_panel.tscn
@@ -342,6 +344,7 @@ for required_asset in \
   assets/design_system/components/gamebox_snackbar.tscn \
   assets/design_system/components/gamebox_snackbar.gd \
   assets/design_system/components/gamebox_confirmation_dialog.tscn \
+  assets/design_system/components/gamebox_confirmation_dialog.gd \
   assets/design_system/components/gamebox_loading_overlay.tscn \
   assets/design_system/components/gamebox_loading_overlay.gd \
   assets/design_system/components/gamebox_result_panel.tscn \

@@ -61,12 +61,16 @@ class E2eSetTextTest {
         // On narrow screens the IME can resize Flutter enough to remove a
         // sibling field from the semantics tree. Close only a confirmed-open
         // keyboard before the host performs its round-trip lookup.
-        val keyboardShown = device.executeShellCommand("dumpsys input_method")
-            .lineSequence()
-            .any { it.contains("mInputShown=true") }
-        if (keyboardShown) {
-            device.pressBack()
-            device.waitForIdle()
+        when (parseKeyboardVisibility(device.executeShellCommand("dumpsys input_method"))) {
+            KeyboardVisibility.SHOWN -> {
+                device.pressBack()
+                device.waitForIdle()
+            }
+            KeyboardVisibility.HIDDEN -> Unit
+            KeyboardVisibility.UNKNOWN -> throw AssertionError(
+                "Could not determine keyboard visibility: "
+                    + "dumpsys input_method omitted mInputShown",
+            )
         }
         val refreshed = device.wait(Until.findObject(By.res(target)), SELECTOR_TIMEOUT_MS)
         val refreshedEditable = refreshed?.let(::findEditable)
