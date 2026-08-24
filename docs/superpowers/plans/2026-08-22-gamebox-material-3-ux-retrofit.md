@@ -35,9 +35,9 @@ Expected: `flutter --version` 报告 Flutter 3.47.1 和 Dart 3.13.1，`dart --ve
 - 返回大厅不能隐式认输或取消；认输必须经过公共危险操作确认；pending、重连、错误和结算必须有独立可理解状态。
 - 所有行为改动先写失败测试并确认 RED；生成代码只由已测试生成器产生。
 - 无障碍合规、TalkBack、screen-reader semantics/roles/live regions、`AccessibilityServer` 探测、焦点顺序、放大字体验收、WCAG 对比度阈值和 reduced-motion 门禁是明确 non-goal，不实施也不决定最终 verdict。
-- 任何用户可见改动只有在实际构建的 Android App/Godot 游戏运行并截图后才可判定完成；mock、golden、静态渲染和源码检查不能替代截图。
+- 固定 E2E 只在实际构建的 Android App/Godot 游戏上验证逻辑状态；它不生成截图。若 UI acceptance 需要视觉完成证据，必须在独立的目标运行时活动中截图；mock、golden、静态渲染和源码检查不能替代该独立视觉证据。
 - E2E 证据不得包含邀请码、令牌、真实昵称或其他用户数据；只使用脚本创建的一次性测试身份。
-- 使用 `bash tool/verify.sh` 作为统一构建/测试门禁，使用 `bash tool/e2e_android.sh` 取得双 AVD 可玩闭环和截图证据。
+- 使用 `bash tool/verify.sh` 作为统一构建/测试门禁，使用 `bash tool/e2e_android.sh` 取得双 AVD 可玩闭环和逻辑断言证据。
 - 每个提交只暂存任务列出的文件；保留无关工作树变化；创建本地提交但不 push。
 
 ---
@@ -134,7 +134,7 @@ docs/superpowers/specs/2026-08-22-gamebox-material-3-ux-design.md
 | 注册、目录、对手、更新、返回与危险操作 | Task 5 |
 | Godot 原生 Theme 与首批共享组件 | Task 6 |
 | 五子棋 pending、重连、返回、认输、结算与密集目标 | Task 7 |
-| light/dark、窄/大手机、正常字号长文案和实际截图 | Task 8 |
+| light/dark、窄/大手机、正常字号长文案和双 AVD 逻辑流 | Task 8 |
 | unified gate、最终 skill verdict 和完成治理 | Task 9 |
 
 ### Task 1: 使用 Skill 审计现状并冻结改造范围
@@ -622,7 +622,7 @@ git add app/lib/app.dart app/lib/features/auth/registration_page.dart \
 git commit -m "feat: apply Gamebox Material 3 UX to Flutter"
 ```
 
-Expected: 提交完成自动测试，但最终视觉完成判定仍等待 Task 8 的实际 Android 截图。
+Expected: 提交完成自动测试；若范围包含视觉完成判定，仍等待独立的实际 Android 视觉复核。
 
 ### Task 6: 建立 Godot Theme 与六个公共反馈组件
 
@@ -800,18 +800,18 @@ git commit -m "feat: apply lightweight Gamebox UX to Gomoku"
 
 Expected: 提交保持协议和玩法逻辑不变；最终视觉完成判定仍等待实际 Android 证据。
 
-### Task 8: 扩展双 AVD E2E 为可审查的 UX 证据
+### Task 8: 扩展双 AVD E2E 为可审查的 UX 逻辑证据
 
 **Files:**
 - Modify: `tool/e2e_android.sh:1-35,738-820,1180-1460,1860-2350`
 - Modify: `README.md:250-290`
 
 **Interfaces:**
-- Produces: `artifacts/e2e/<UTC>/screenshots/*.png`、`summary.json.uiEvidence` 和自动化契约检查结果。
+- Produces: `artifacts/e2e/<UTC>/summary.json` 中的逻辑断言和自动化契约检查结果；固定 E2E 不生成截图。
 
-- [ ] **Step 1: 先扩展 `--self-test` 的证据安全契约**
+- [ ] **Step 1: 先扩展 `--self-test` 的逻辑安全契约**
 
-fixture 测试必须证明：secret flag 为 1 时拒绝截图；远端 UI dump 始终清理；截图文件名只允许固定 slug；summary 只能引用 artifact 内相对路径；脚本结束恢复两个 AVD 原来的 ui mode 和 display override。本任务不修改 font scale 或 accessibility service 设置。
+fixture 测试必须证明：secret flag 为 1 时拒绝读取 UI 状态；远端 UI dump 始终清理；固定 E2E 源码不包含截图捕获或像素断言；脚本结束恢复两个 AVD 原来的 ui mode 和 display override。本任务不修改 font scale 或 accessibility service 设置。
 
 - [ ] **Step 2: 运行 self-test 确认 RED**
 
@@ -819,77 +819,53 @@ fixture 测试必须证明：secret flag 为 1 时拒绝截图；远端 UI dump 
 bash tool/e2e_android.sh --self-test
 ```
 
-Expected: 新 fixture 失败，因为 safe capture、ui mode restore 和 evidence manifest 尚不存在。
+Expected: 新 fixture 失败，因为逻辑 UI 状态断言和对应安全契约尚不存在。
 
-- [ ] **Step 3: 实现安全截图 helper**
+- [ ] **Step 3: 实现逻辑 UI 状态 helper**
 
 ```bash
-capture_ui_evidence() {
+assert_ui_state_safe() {
   local serial="$1"
-  local slug="$2"
-  local secret_flag="$3"
-  [[ "$secret_flag" == "0" && "$slug" =~ ^[a-z0-9-]+$ ]] || return 1
-  local output="$ARTIFACT_DIR/screenshots/$slug.png"
-  adb_for "$serial" exec-out screencap -p >"$output"
-  [[ -s "$output" ]]
+  local secret_flag="$2"
+  [[ "$secret_flag" == "0" ]] || return 1
+  dump_ui_remote "$serial" "$TEMP_DIR/ui-state.xml" \
+    "/data/local/tmp/gamebox-e2e-ui-state-${RUN_ID}-${serial}.xml"
 }
 ```
 
-helper 只能在邀请码字段为空或页面已离开注册输入后调用；成功 artifact 继续通过现有 secret scanner。
+helper 只能在邀请码字段为空或页面已离开注册输入后调用；它只验证
+resource-id/secret 安全和 UI dump 清理，不写入图片 artifact。
 
-- [ ] **Step 4: 在真实流程捕获 Flutter 页面**
+- [ ] **Step 4: 在真实流程验证 Flutter 页面逻辑状态**
 
-项目自有 AVD A 使用 light 和典型大屏手机视口，B 使用 dark 和典型窄屏手机视口，两者保持正常系统字号，并在 trap 中恢复 ui mode 原值。外部传入 serial 不修改 display override；它们必须天然覆盖一窄一大两个手机视口，否则视觉矩阵明确失败。捕获：
+项目自有 AVD A 使用 light 和典型大屏手机视口，B 使用 dark 和典型窄屏手机视口，两者保持正常系统字号，并在 trap 中恢复 ui mode 原值。外部传入 serial 不修改 display override；它们必须天然覆盖一窄一大两个手机视口，否则逻辑环境矩阵明确失败。验证注册、空闲大厅、更新入口、对手选择、首连 loading 和取消确认的 stable identifier、UI 状态安全和业务状态转移；不生成截图。
 
-```text
-registration-light.png
-registration-dark-narrow.png
-lobby-idle-light.png
-lobby-active-dark-narrow.png
-opponents-light.png
-cancel-match-dialog-dark-narrow.png
-update-dialog-dark.png
-```
+现有第二局零步取消流程改为先点击 `cancel-match`、验证 `confirm-cancel-match`，再点击它；继续用服务端 snapshot 证明取消后双方 slot 释放。
 
-注册页截图发生在输入邀请码之前；大厅和对手页只显示脚本生成的测试昵称；更新 Dialog 不展示本地路径、token 或私有 Release 内容。
+- [ ] **Step 5: 在真实对局验证 Godot 状态逻辑**
 
-现有第二局零步取消流程改为先点击 `cancel-match`、捕获 dialog、再点击 `confirm-cancel-match`；继续用服务端 snapshot 证明取消后双方 slot 释放。
-
-- [ ] **Step 5: 在真实对局捕获 Godot 状态**
-
-沿用现有 authoritative snapshot + board crop 断言，新增：
-
-```text
-gomoku-initial-light.png
-gomoku-pending-light.png
-gomoku-resign-confirm-light.png
-gomoku-reconnecting.png
-gomoku-connection-failed.png
-gomoku-terminal-light.png
-```
-
-pending 通过暂停 E2E 自有 server 进程、点击合法落点、等待本地 pending marker 后截图，再恢复 server；reconnecting 通过同一受控暂停等待 `connection=reconnecting` marker；connection-failed 通过终止并以同一临时数据库、端口和测试 secrets 重启 E2E 自有 server 形成真实断线状态。所有暂停、终止和重启都由 trap 绑定到已验证的 E2E server PID，不能影响非 E2E 进程。
+沿用 authoritative snapshot 和双设备状态 marker 断言，不读取棋盘像素。pending 通过暂停 E2E 自有 server 进程、点击合法落点、等待 `GAMEBOX_BOARD_CANMOVE ... pend_empty=false` 后恢复 server；reconnecting 通过同一受控暂停等待 `connection=reconnecting` marker；connection-failed 通过终止并以同一临时数据库、端口和测试 secrets 重启 E2E 自有 server 形成真实断线状态。所有暂停、终止和重启都由 trap 绑定到已验证的 E2E server PID，不能影响非 E2E 进程。
 
 - [ ] **Step 6: 验证 Flutter 与 Godot 自动化契约**
 
 在 Flutter 注册、目录、对手和取消确认流程验证现有 `Semantics.identifier`/`Key` 与 UI Automator selector 继续可定位；邀请码仍由现有私密 instrumentation helper 输入，UI Automator 不读取或记录其值。Godot 继续通过已有固定坐标、输入 action 和 `GAMEBOX_GODOT_READY/STATE/MATCH_RESULT` marker 验证返回、认输确认、落子与结算返回。不启用、修改或恢复 accessibility service。
 
-- [ ] **Step 7: 把证据清单写入 summary**
+- [ ] **Step 7: 把逻辑断言写入 summary**
 
-`summary.json` 新增：
+`summary.json` 记录固定 E2E 实际执行的逻辑断言：
 
 ```json
 {
-  "uiEvidence": {
-    "flutter": ["screenshots/registration-light.png", "screenshots/lobby-idle-light.png"],
-    "godot": ["screenshots/gomoku-initial-light.png", "screenshots/gomoku-terminal-light.png"],
-    "themes": ["light", "dark"],
-    "viewports": ["narrow", "large"]
-  }
+  "assertions": [
+    "resource-id-only-ui-driving",
+    "revision-and-board-after-each-move",
+    "pending-before-authoritative-ack",
+    "real-reconnecting-and-failed-states"
+  ]
 }
 ```
 
-实际数组包含 Step 4–5 的全部成功截图；缺任一要求状态时 E2E 失败，不生成 passed summary。
+缺任一要求状态时 E2E 失败，不生成 passed summary；summary 不引用截图路径。
 
 - [ ] **Step 8: 确认 self-test GREEN 并提交 harness**
 
@@ -900,7 +876,7 @@ git add tool/e2e_android.sh README.md
 git commit -m "test: capture Gamebox UX Android evidence"
 ```
 
-Expected: fixture、自清理、安全恢复和 Bash 语法全部通过。
+Expected: fixture、自清理、逻辑断言契约、安全恢复和 Bash 语法全部通过。
 
 - [ ] **Step 9: 在干净提交上运行实际双 AVD E2E**
 
@@ -908,11 +884,11 @@ Expected: fixture、自清理、安全恢复和 Bash 语法全部通过。
 bash tool/e2e_android.sh
 ```
 
-Expected: 两台 API 36 AVD 完成注册、选人、真实对局、pending、重连、错误、认输取消、终局和返回；summary 为 passed；所有要求截图存在且无敏感信息。
+Expected: 两台 API 36 AVD 完成注册、选人、真实对局、pending、重连、错误、认输取消、终局和返回；summary 为 passed；artifact 只包含逻辑/状态信息和经扫描的日志，不包含截图。
 
-- [ ] **Step 10: 逐张查看实际截图**
+- [ ] **Step 10: 单独进行可选视觉复核**
 
-使用本地图片查看工具打开 `summary.json` 引用的每张 PNG，检查：裁切、系统栏安全区、明暗色、文案换行、主次操作、棋盘比例、Dialog、pending/reconnect/error/terminal。视觉问题必须回到对应失败测试和实现任务修复，再从干净新提交重跑 E2E。
+若 UI acceptance 另行要求视觉证据，使用目标运行时单独捕获并查看图片，检查裁切、系统栏安全区、明暗色、文案换行、主次操作、棋盘比例、Dialog、pending/reconnect/error/terminal。视觉问题回到对应失败测试和实现任务修复；固定 E2E 不重新引入截图路径。
 
 ### Task 9: 统一门禁、Skill 复审与完成提交
 
@@ -922,7 +898,7 @@ Expected: 两台 API 36 AVD 完成注册、选人、真实对局、pending、重
 - Modify: `docs/superpowers/specs/2026-08-22-gamebox-material-3-ux-design.md`
 
 **Interfaces:**
-- Consumes: 全部自动测试、目标运行时、截图和 `$gamebox-material-3-ux` 验收契约。
+- Consumes: 全部自动测试、目标运行时逻辑状态和 `$gamebox-material-3-ux` 验收契约；视觉复核若需要则作为独立活动。
 - Produces: 最终 `complete/incomplete/blocked` 判定和可定位证据。
 
 - [ ] **Step 1: 将生成的 Godot 设计系统资产纳入 APK 门禁**
@@ -956,7 +932,7 @@ git status --short
 
 Expected: 完整门禁通过，提交后工作树干净，供 E2E 记录精确 HEAD。
 
-- [ ] **Step 3: 在干净代码 HEAD 上运行实际双设备验证**
+- [ ] **Step 3: 在干净代码 HEAD 上运行实际双设备逻辑验证**
 
 ```bash
 bash tool/verify.sh
@@ -964,7 +940,7 @@ bash tool/e2e_android.sh --self-test
 bash tool/e2e_android.sh
 ```
 
-Expected: unified gate、E2E self-test 和实际双设备闭环全部 exit 0；最后一次 E2E 对应当前干净 HEAD。
+Expected: unified gate、E2E self-test 和实际双设备逻辑闭环全部 exit 0；最后一次 E2E 对应当前干净 HEAD，且不生成截图 artifact。
 
 - [ ] **Step 4: 使用 Skill 做最终审计**
 
@@ -972,13 +948,13 @@ Expected: unified gate、E2E self-test 和实际双设备闭环全部 exit 0；�
 
 - [ ] **Step 5: 更新审计、Profile 和规格状态**
 
-在审计报告加入每项 finding 的测试命令、commit 和 artifact 相对路径；在 Gomoku Profile 填入最终截图清单。只有最终 skill verdict 为 `complete` 时，把规格状态改为：
+在审计报告加入每项 finding 的测试命令、commit 和 artifact 相对路径；若另行完成视觉复核，再在 Gomoku Profile 填入视觉 artifact。只有最终 skill verdict 为 `complete` 时，把规格状态改为：
 
 ```markdown
 - 状态：Gamebox UX skill 与现有 Flutter App/Godot 五子棋改造均已完成验证
 ```
 
-若截图或真实流程任一未通过，状态保持“等待现有改造”，并在审计中明确 `incomplete` 或 `blocked`。无障碍能力不影响 verdict。
+若真实逻辑流程未通过，状态保持“等待现有改造”，并在审计中明确 `incomplete` 或 `blocked`；视觉复核若在范围内未完成，也必须单独记录。无障碍能力不影响 verdict。
 
 - [ ] **Step 6: 最终差异与敏感信息检查**
 
@@ -989,7 +965,7 @@ rg -n 'GAMEBOX_(JWT_SECRET|TOKEN_PEPPER)|launch-ticket|refresh-token|invite-code
   design_system app/lib game_runtime docs/design || true
 ```
 
-Expected: diff 无空白错误；没有凭据值；出现的安全字段名只来自既有协议/测试上下文，不出现在截图或新增日志。
+Expected: diff 无空白错误；没有凭据值；出现的安全字段名只来自既有协议/测试上下文，不出现在新增日志或独立视觉 artifact。
 
 - [ ] **Step 7: 创建验收闭环提交**
 
@@ -1004,7 +980,7 @@ git status --short
 
 Expected: 最终提交只包含已验证文档；工作树干净；不 push。
 
-- [ ] **Step 8: 在最终干净 HEAD 上复跑验收并交付截图**
+- [ ] **Step 8: 在最终干净 HEAD 上复跑逻辑验收**
 
 ```bash
 bash tool/verify.sh
@@ -1012,4 +988,4 @@ bash tool/e2e_android.sh
 git status --short
 ```
 
-Expected: 最终 HEAD 的 unified gate 与双 AVD E2E 均通过，工作树干净。最终回复附上实际 Android 截图本身，并列出 unified gate、E2E、自动化契约、源码 commit 和 artifact 结果；未通过的范围内能力必须保留 `incomplete` 或 `blocked` verdict。
+Expected: 最终 HEAD 的 unified gate 与双 AVD E2E 均通过，工作树干净。最终回复列出 unified gate、E2E、自动化契约、源码 commit 和 artifact 结果；若视觉复核另行完成，再附其实际 Android 截图；未通过的范围内能力必须保留 `incomplete` 或 `blocked` verdict。

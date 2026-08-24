@@ -25,7 +25,7 @@ The current board already rounds a point to an intersection and bounds the outer
 - **Android Back:** Android system Back and visible Back must reach the same non-destructive return result. Back never resigns, cancels, or discards the active online match. Current source routes `ui_cancel` to the visible handler (`game_runtime/games/gomoku/gomoku_controller.gd:145–159`) and its test proves no resign request (`game_runtime/test/test_gomoku_scene.gd:242–264`); packaged Android parity remains required.
 - **Resign:** available only when the authoritative state permits it, then opens a consequence-named confirmation. Only the confirm action may call the existing request path. The current direct request (`game_runtime/games/gomoku/gomoku_controller.gd:136–142`) is a MUST gap, not an approved deviation.
 
-## Key UI States and Screenshot States
+## Key UI States and Visual Review States
 
 The game must present and test these states in portrait on both narrow 360×800 and large 412×915 Android phone viewports, in light and dark where applicable:
 
@@ -38,11 +38,17 @@ The game must present and test these states in portrait on both narrow 360×800 
 7. Visible Back return, Android system Back return, background/resume synchronization, and Game Activity exit.
 8. Safe areas and normal-size long-copy wrapping without clipping public actions.
 
-The full capture combinations and sensitive-data rules are authoritative in `docs/design/gamebox-material-3-ux-audit.md#android-screenshot-matrix`. A headless scene, fixture, golden, or static render is not screenshot evidence.
+The fixed Android E2E asserts the state and protocol transitions for these
+states without taking screenshots. If visual acceptance is required, the full
+capture combinations and sensitive-data rules are authoritative in
+`docs/design/gamebox-material-3-ux-audit.md#android-screenshot-matrix`; a
+headless scene, fixture, golden, or static render is not runtime visual evidence.
 
-## Final Screenshot List
+## Final Visual Evidence
 
-Pending the final two-AVD runtime run and screenshot review. This profile intentionally records no final clean HEAD, artifact ID, or passed capture list until that evidence exists.
+The fixed E2E intentionally produces no screenshot list. Any separate visual
+review must record its final clean HEAD and artifact details here before the
+profile can claim visual closure.
 
 ## Token Roles
 

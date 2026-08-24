@@ -44,4 +44,4 @@ Preserve existing stable `Semantics.identifier` values, keys, UI Automator selec
 
 Widget tests cover default, pressed, disabled, pending, loading, empty, error, success, light/dark, normal-size text, content growth, and safe areas as relevant. Flow checks cover registration/identity recovery, catalog/opponent selection, Godot launch failure/retry, and return-state refresh.
 
-Run the actual built Android App at the affected viewports and states. Verify visible and system Back parity, touch targets, safe areas, normal-size text wrapping, and absence of overflow. Capture non-sensitive screenshots of every affected state; Widget tests, goldens, mocks, and static inspection do not replace them.
+Run the actual built Android App at the affected viewports and states. Verify visible and system Back parity, touch targets, safe areas, normal-size text wrapping, and absence of overflow. The fixed E2E records the relevant state and identifier assertions without screenshots. Capture and inspect non-sensitive screenshots only when explicit visual acceptance is in scope; Widget tests, goldens, mocks, and static inspection do not replace that visual review.

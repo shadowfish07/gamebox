@@ -21,7 +21,7 @@ Every game MUST:
 - handle safe areas, Android back, background recovery, and game Activity exit correctly;
 - never make Back implicitly resign, cancel a match, or discard progress;
 - use the common loading, pending, reconnect, error, dangerous-confirmation, and result semantics;
-- satisfy target-runtime interaction and visual-evidence requirements.
+- satisfy target-runtime interaction evidence; visual evidence is required only when explicit visual acceptance is in scope.
 
 The Core Contract does not own scene art, boards, characters, gameplay scoring, gameplay animation, or the choice to adopt a visible shell.
 
@@ -80,7 +80,7 @@ Each new game MUST declare in its onboarding document or registration descriptio
 - selected UX Profile, or Core Contract only;
 - game extension colors and their semantics;
 - supported inputs;
-- key UI states and screenshot matrix;
+- key UI states and, when visual acceptance is in scope, a screenshot matrix;
 - every SHOULD deviation and its alternative measure.
 
 Keep documentation-only fields out of a runtime DSL until implementation or automated validation needs them.

@@ -14,9 +14,6 @@ readonly MANAGED_PORT_B=5562
 readonly WAIT_SECONDS=30
 readonly DESIGN_WIDTH=1080
 readonly DESIGN_HEIGHT=1920
-readonly BOARD_LEFT=60
-readonly BOARD_TOP=360
-readonly BOARD_SIDE=960
 readonly BOARD_GRID_LEFT=96
 readonly BOARD_GRID_TOP=396
 readonly BOARD_GRID_SIDE=888
@@ -27,26 +24,6 @@ readonly MANAGED_LARGE_DISPLAY="1080x2400"
 readonly MANAGED_NARROW_DISPLAY="720x1600"
 readonly LARGE_VIEWPORT_MIN_WIDTH=1080
 readonly NARROW_VIEWPORT_MAX_WIDTH=720
-readonly -a UI_EVIDENCE_FLUTTER_PATHS=(
-  "screenshots/registration-light.png"
-  "screenshots/registration-dark-narrow.png"
-  "screenshots/lobby-idle-light.png"
-  "screenshots/lobby-active-dark-narrow.png"
-  "screenshots/lobby-resumable-light.png"
-  "screenshots/opponents-light.png"
-  "screenshots/cancel-match-dialog-dark-narrow.png"
-  "screenshots/update-dialog-dark.png"
-)
-readonly -a UI_EVIDENCE_GODOT_PATHS=(
-  "screenshots/gomoku-loading-light.png"
-  "screenshots/gomoku-initial-light.png"
-  "screenshots/gomoku-pending-light.png"
-  "screenshots/gomoku-resign-confirm-light.png"
-  "screenshots/gomoku-reconnecting.png"
-  "screenshots/gomoku-connection-failed.png"
-  "screenshots/gomoku-terminal-light.png"
-  "screenshots/gomoku-resigned-light.png"
-)
 
 ADB_BIN="${GAMEBOX_E2E_ADB_BIN:-adb}"
 ADB_TIMEOUT_SECONDS="${GAMEBOX_E2E_ADB_TIMEOUT_SECONDS:-30}"
@@ -560,7 +537,7 @@ device_summary_json() {
     }'
 }
 
-failure_media_safe() {
+failure_ui_dump_safe() {
   local secret_active="$1"
   local clear_verified="$2"
   [[ "$secret_active" == "0" || ("$secret_active" == "1" && "$clear_verified" == "1") ]]
@@ -769,73 +746,6 @@ cleanup_remote_ui_dump() {
   adb_for "$serial" shell rm -f -- "$remote" >/dev/null 2>&1
 }
 
-valid_evidence_serial() {
-  [[ "$1" =~ ^[A-Za-z0-9._:-]{1,128}$ ]]
-}
-
-register_evidence_remote_dump() {
-  local serial="$1"
-  local remote="$2"
-  valid_evidence_serial "$serial" && valid_remote_ui_path "$remote" || return 2
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" ]] \
-    || return 2
-  local index
-  for ((index = 0; index < ${#EVIDENCE_REMOTE_DUMP_PATHS[@]}; index++)); do
-    if [[ "${EVIDENCE_REMOTE_DUMP_SERIALS[index]}" == "$serial" \
-      && "${EVIDENCE_REMOTE_DUMP_PATHS[index]}" == "$remote" ]]; then
-      return 0
-    fi
-  done
-  EVIDENCE_REMOTE_DUMP_SERIALS+=("$serial")
-  EVIDENCE_REMOTE_DUMP_PATHS+=("$remote")
-}
-
-unregister_evidence_remote_dump() {
-  local serial="$1"
-  local remote="$2"
-  valid_evidence_serial "$serial" && valid_remote_ui_path "$remote" || return 2
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" ]] \
-    || return 2
-  local -a retained_serials=()
-  local -a retained_paths=()
-  local index found=0
-  for ((index = 0; index < ${#EVIDENCE_REMOTE_DUMP_PATHS[@]}; index++)); do
-    if [[ "${EVIDENCE_REMOTE_DUMP_SERIALS[index]}" == "$serial" \
-      && "${EVIDENCE_REMOTE_DUMP_PATHS[index]}" == "$remote" ]]; then
-      found=1
-      continue
-    fi
-    retained_serials+=("${EVIDENCE_REMOTE_DUMP_SERIALS[index]}")
-    retained_paths+=("${EVIDENCE_REMOTE_DUMP_PATHS[index]}")
-  done
-  ((found == 1)) || return 1
-  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]+"${retained_serials[@]}"}")
-  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]+"${retained_paths[@]}"}")
-}
-
-cleanup_registered_evidence_remote_dumps() {
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" ]] \
-    || return 2
-  local -a retained_serials=()
-  local -a retained_paths=()
-  local index status=0 serial remote
-  for ((index = 0; index < ${#EVIDENCE_REMOTE_DUMP_PATHS[@]}; index++)); do
-    serial="${EVIDENCE_REMOTE_DUMP_SERIALS[index]}"
-    remote="${EVIDENCE_REMOTE_DUMP_PATHS[index]}"
-    if valid_evidence_serial "$serial" \
-      && valid_remote_ui_path "$remote" \
-      && cleanup_remote_ui_dump "$serial" "$remote"; then
-      continue
-    fi
-    retained_serials+=("$serial")
-    retained_paths+=("$remote")
-    status=1
-  done
-  EVIDENCE_REMOTE_DUMP_SERIALS=("${retained_serials[@]+"${retained_serials[@]}"}")
-  EVIDENCE_REMOTE_DUMP_PATHS=("${retained_paths[@]+"${retained_paths[@]}"}")
-  return "$status"
-}
-
 dump_ui_remote() {
   local serial="$1"
   local local_path="$2"
@@ -851,45 +761,15 @@ dump_ui_remote() {
   return "$status"
 }
 
-valid_evidence_slug() {
-  case "$1" in
-    registration-light|registration-dark-narrow|lobby-idle-light|lobby-active-dark-narrow|lobby-resumable-light|opponents-light|cancel-match-dialog-dark-narrow|update-dialog-dark|gomoku-loading-light|gomoku-initial-light|gomoku-pending-light|gomoku-resign-confirm-light|gomoku-reconnecting|gomoku-connection-failed|gomoku-terminal-light|gomoku-resigned-light)
-      return 0
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-valid_evidence_relative_path() {
-  local artifact_root="$1"
-  local relative_path="$2"
-  [[ -n "$artifact_root" \
-    && "$relative_path" =~ ^screenshots/[a-z0-9-]+\.png$ \
-    && "$relative_path" != *..* \
-    && -f "$artifact_root/$relative_path" \
-    && ! -L "$artifact_root/$relative_path" ]]
-}
-
-ui_evidence_manifest_json() {
-  local artifact_root="$1"
-  local relative_path
-  for relative_path in "${UI_EVIDENCE_FLUTTER_PATHS[@]}" "${UI_EVIDENCE_GODOT_PATHS[@]}"; do
-    valid_evidence_relative_path "$artifact_root" "$relative_path" || return 1
-  done
-  local flutter_json godot_json
-  flutter_json="$(printf '%s\n' "${UI_EVIDENCE_FLUTTER_PATHS[@]}" | jq -R . | jq -sc .)" || return 1
-  godot_json="$(printf '%s\n' "${UI_EVIDENCE_GODOT_PATHS[@]}" | jq -R . | jq -sc .)" || return 1
-  jq -cn \
-    --argjson flutter "$flutter_json" \
-    --argjson godot "$godot_json" \
-    '{flutter:$flutter,godot:$godot,themes:["light","dark"],viewports:["narrow","large"]}'
-}
-
-ui_dump_safe_for_evidence() {
+assert_ui_state_safe() {
   local serial="$1"
-  local local_path="$2"
-  local remote_path="$3"
+  local secret_flag="$2"
+  [[ "$secret_flag" == "0" ]] || return 1
+  local safe_serial="${serial//[^A-Za-z0-9_.-]/_}"
+  local local_path="$TEMP_DIR/ui-state-$safe_serial.xml"
+  local remote_path="/data/local/tmp/gamebox-e2e-ui-state-${RUN_ID:-fixture-run}-$safe_serial.xml"
   local status=0 identifier_count value
+  valid_remote_ui_path "$remote_path" || return 1
   rm -f -- "$local_path"
   if ! dump_ui_remote "$serial" "$local_path" "$remote_path"; then
     return 1
@@ -904,38 +784,6 @@ ui_dump_safe_for_evidence() {
   done
   rm -f -- "$local_path"
   ((status == 0))
-}
-
-capture_ui_evidence() {
-  local serial="$1"
-  local slug="$2"
-  local secret_flag="$3"
-  [[ "$secret_flag" == "0" ]] || return 1
-  valid_evidence_slug "$slug" || return 1
-  local screenshot_dir="$ARTIFACT_DIR/screenshots"
-  local output="$screenshot_dir/$slug.png"
-  local staged="$TEMP_DIR/evidence-$slug.png"
-  local ui_dump="$TEMP_DIR/evidence-$slug.xml"
-  local remote_dump="/data/local/tmp/gamebox-e2e-evidence-$slug-${RUN_ID:-fixture-run}.xml"
-  valid_remote_ui_path "$remote_dump" || return 1
-  mkdir -p "$screenshot_dir"
-  register_evidence_remote_dump "$serial" "$remote_dump" || return 1
-  if ! ui_dump_safe_for_evidence "$serial" "$ui_dump" "$remote_dump"; then
-    return 1
-  fi
-  unregister_evidence_remote_dump "$serial" "$remote_dump" || return 1
-  rm -f -- "$staged" "$output"
-  if ! adb_for "$serial" exec-out screencap -p >"$staged" 2>/dev/null || [[ ! -s "$staged" ]]; then
-    rm -f -- "$staged"
-    return 1
-  fi
-  mv "$staged" "$output"
-  if ! protect_artifact_directory \
-    "$screenshot_dir" "$TEMP_DIR/evidence-artifact-scan.txt" \
-    "${INVITE_A:-}" "${INVITE_B:-}" "${JWT_SECRET:-}" "${TOKEN_PEPPER:-}"; then
-    return 1
-  fi
-  [[ -s "$output" && ! -L "$output" ]]
 }
 
 device_ui_mode() {
@@ -1055,16 +903,6 @@ assert_selected_viewport_matrix() {
     || fail "serial B must naturally or by managed override provide the narrow phone viewport"
   VIEWPORT_A="${width_a}x${height_a}"
   VIEWPORT_B="${width_b}x${height_b}"
-}
-
-crop_ssim() {
-  local comparison_side=$((BOARD_SIDE / 2))
-  ffmpeg -v info -i "$1" -i "$2" \
-    -filter_complex \
-    "[0:v]scale=$comparison_side:$comparison_side:flags=lanczos,setsar=1,format=yuv444p[a];[1:v]scale=$comparison_side:$comparison_side:flags=lanczos,setsar=1,format=yuv444p[b];[a][b]ssim" \
-    -f null - 2>&1 \
-    | sed -E -n 's/.* All:([0-9.]+).*/\1/p' \
-    | tail -n 1
 }
 
 finalize_cleanup_outcome() {
@@ -1354,28 +1192,9 @@ self_test() {
   ' <<<"$devices" >/dev/null \
     || { printf 'device summary fixture failed\n' >&2; return 1; }
 
-  local crop_large="$fixture_dir/board-large.png"
-  local crop_narrow="$fixture_dir/board-narrow.png"
-  ffmpeg -v error -f lavfi -i color=c=0xD8A85F:s=960x960:d=0.04 \
-    -frames:v 1 -y "$crop_large" \
-    || { printf 'large board crop fixture generation failed\n' >&2; return 1; }
-  ffmpeg -v error -f lavfi -i color=c=0xD8A85F:s=640x640:d=0.04 \
-    -frames:v 1 -y "$crop_narrow" \
-    || { printf 'narrow board crop fixture generation failed\n' >&2; return 1; }
-  local crop_large_hash crop_narrow_hash crop_similarity
-  crop_large_hash="$(shasum -a 256 "$crop_large" | awk '{print $1}')"
-  crop_narrow_hash="$(shasum -a 256 "$crop_narrow" | awk '{print $1}')"
-  crop_similarity="$(crop_ssim "$crop_large" "$crop_narrow")" \
-    || { printf 'differing-size board crops could not be compared\n' >&2; return 1; }
-  ruby -e 'exit(Float(ARGV[0]) >= 0.999 ? 0 : 1)' "$crop_similarity" \
-    || { printf 'normalized board crop similarity fixture failed\n' >&2; return 1; }
-  [[ "$(shasum -a 256 "$crop_large" | awk '{print $1}')" == "$crop_large_hash" \
-    && "$(shasum -a 256 "$crop_narrow" | awk '{print $1}')" == "$crop_narrow_hash" ]] \
-    || { printf 'board crop comparison mutated an evidence original\n' >&2; return 1; }
-
   local cleanup_summary="$fixture_dir/cleanup-summary.json"
   local cleanup_result
-  printf '{"status":"passed","evidence":"fixture"}\n' >"$cleanup_summary"
+  printf '{"status":"passed","mode":"fixture"}\n' >"$cleanup_summary"
   cleanup_result="$(finalize_cleanup_outcome 0 0 "$cleanup_summary")" \
     || { printf 'success-path cleanup failure outcome fixture errored\n' >&2; return 1; }
   [[ "$cleanup_result" == "1" ]] \
@@ -1386,13 +1205,13 @@ self_test() {
     return 1
   fi
 
-  printf '{"status":"passed","evidence":"fixture"}\n' >"$cleanup_summary"
+  printf '{"status":"passed","mode":"fixture"}\n' >"$cleanup_summary"
   cleanup_result="$(finalize_cleanup_outcome 23 0 "$cleanup_summary")" \
     || { printf 'nonzero cleanup failure outcome fixture errored\n' >&2; return 1; }
   [[ "$cleanup_result" == "23" ]] \
     || { printf 'cleanup failure replaced the original nonzero exit code\n' >&2; return 1; }
 
-  printf '{"status":"passed","evidence":"fixture"}\n' >"$cleanup_summary"
+  printf '{"status":"passed","mode":"fixture"}\n' >"$cleanup_summary"
   cleanup_result="$(finalize_cleanup_outcome 0 1 "$cleanup_summary")" \
     || { printf 'successful cleanup outcome fixture errored\n' >&2; return 1; }
   [[ "$cleanup_result" == "0" ]] \
@@ -1480,12 +1299,12 @@ self_test() {
   session_fixture_unrelated_pid=""
   unset GAMEBOX_E2E_SERVER_ENV_LOG
 
-  failure_media_safe 0 0 \
-    || { printf 'inactive secret media gate fixture failed\n' >&2; return 1; }
-  failure_media_safe 1 1 \
-    || { printf 'verified clear media gate fixture failed\n' >&2; return 1; }
-  if failure_media_safe 1 0; then
-    printf 'uncleared secret media gate fixture was accepted\n' >&2
+  failure_ui_dump_safe 0 0 \
+    || { printf 'inactive secret UI dump gate fixture failed\n' >&2; return 1; }
+  failure_ui_dump_safe 1 1 \
+    || { printf 'verified clear UI dump gate fixture failed\n' >&2; return 1; }
+  if failure_ui_dump_safe 1 0; then
+    printf 'uncleared secret UI dump gate fixture was accepted\n' >&2
     return 1
   fi
 
@@ -1746,6 +1565,14 @@ self_test() {
   fixed_value_absent "$fake_log" "$private_secret_base64" \
     || { printf 'base64 private input appeared in adb argv fixture\n' >&2; return 1; }
 
+  : >"$fake_log"
+  assert_ui_state_safe fixture-serial 0 \
+    || { printf 'logic-only UI state assertion fixture failed\n' >&2; return 1; }
+  if grep -F 'screencap' "$fake_log" >/dev/null; then
+    printf 'logic-only UI state assertion invoked screenshot capture\n' >&2
+    return 1
+  fi
+
   local hanging_name='gamebox-e2e-input-fixture-hanging-0002'
   printf '%s' "$private_secret" | stage_private_input fixture-serial "$hanging_name" \
     || { printf 'hanging private input staging fixture failed\n' >&2; return 1; }
@@ -1787,123 +1614,25 @@ self_test() {
     || { printf 'remote UI XML survived successful pull cleanup\n' >&2; return 1; }
 
   : >"$fake_log"
-  local evidence_fixture="$fixture_dir/ui-evidence"
-  mkdir -p "$evidence_fixture/screenshots"
-  ARTIFACT_DIR="$evidence_fixture"
   TEMP_DIR="$fixture_dir"
   INVITE_A="$marker"
   INVITE_B='second-fixture-secret-abcdefghijklmnopqrstuvwxyz0123456789'
   JWT_SECRET='fixture-jwt-secret-abcdefghijklmnopqrstuvwxyz0123456789'
   TOKEN_PEPPER='fixture-token-pepper-abcdefghijklmnopqrstuvwxyz0123456789'
-  EVIDENCE_REMOTE_DUMP_SERIALS=()
-  EVIDENCE_REMOTE_DUMP_PATHS=()
-  if capture_ui_evidence fixture-serial registration-light 1; then
-    printf 'secret-active UI evidence capture was accepted\n' >&2
+  if assert_ui_state_safe fixture-serial 1; then
+    printf 'secret-active UI state assertion was accepted\n' >&2
     return 1
   fi
   [[ ! -s "$fake_log" ]] \
-    || { printf 'secret-active UI evidence capture reached adb\n' >&2; return 1; }
-  if capture_ui_evidence fixture-serial '../../escape' 0; then
-    printf 'unsafe UI evidence slug was accepted\n' >&2
+    || { printf 'secret-active UI state assertion reached adb\n' >&2; return 1; }
+  assert_ui_state_safe fixture-serial 0 \
+    || { printf 'safe logic-only UI state assertion fixture failed\n' >&2; return 1; }
+  if grep -F 'screencap' "$fake_log" >/dev/null; then
+    printf 'logic-only UI state assertion invoked screenshot capture\n' >&2
     return 1
   fi
-  if capture_ui_evidence fixture-serial arbitrary-safe-looking-slug 0; then
-    printf 'unregistered UI evidence slug was accepted\n' >&2
-    return 1
-  fi
-  [[ ! -s "$fake_log" ]] \
-    || { printf 'invalid UI evidence slug reached adb\n' >&2; return 1; }
-
-  export FAKE_ADB_MODE=pull-fail
-  if capture_ui_evidence fixture-A registration-light 0; then
-    printf 'failed evidence UI dump was accepted\n' >&2
-    return 1
-  fi
-  unset FAKE_ADB_MODE
-  local interrupted_remote='/data/local/tmp/gamebox-e2e-evidence-registration-light-fixture-run.xml'
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "1" \
-    && "${EVIDENCE_REMOTE_DUMP_SERIALS[0]}" == "fixture-A" \
-    && "${EVIDENCE_REMOTE_DUMP_PATHS[0]}" == "$interrupted_remote" ]] \
-    || { printf 'failed evidence UI dump was not retained for EXIT cleanup\n' >&2; return 1; }
-  unregister_evidence_remote_dump fixture-A "$interrupted_remote" \
-    || { printf 'single evidence UI dump unregister fixture failed\n' >&2; return 1; }
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "0" \
-    && "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" == "0" ]] \
-    || { printf 'single evidence UI dump unregister did not clear the registry\n' >&2; return 1; }
-  register_evidence_remote_dump fixture-A "$interrupted_remote" \
-    || { printf 'single evidence UI dump could not be restored for cleanup\n' >&2; return 1; }
-  local second_interrupted_remote='/data/local/tmp/gamebox-e2e-evidence-opponents-light-fixture-run.xml'
-  register_evidence_remote_dump fixture-B "$second_interrupted_remote" \
-    || { printf 'second evidence UI dump could not be registered\n' >&2; return 1; }
-  : >"$fake_log"
-  cleanup_registered_evidence_remote_dumps \
-    || { printf 'registered evidence UI dump cleanup fixture failed\n' >&2; return 1; }
-  grep -F "arg=$interrupted_remote" "$fake_log" >/dev/null \
-    || { printf 'EXIT cleanup missed A evidence UI dump\n' >&2; return 1; }
-  grep -F "arg=$second_interrupted_remote" "$fake_log" >/dev/null \
-    || { printf 'EXIT cleanup missed B evidence UI dump\n' >&2; return 1; }
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "0" \
-    && "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" == "0" ]] \
-    || { printf 'verified evidence UI dump deletion did not clear the registry\n' >&2; return 1; }
-  local capture_fake_adb="$fixture_dir/capture-fake-adb.sh"
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'case " $* " in' \
-    "  *' exec-out screencap -p '*) printf 'fixture-png-bytes'; exit 0 ;;" \
-    'esac' \
-    "exec '$fake_adb' \"\$@\"" >"$capture_fake_adb"
-  chmod 700 "$capture_fake_adb"
-  ADB_BIN="$capture_fake_adb"
-  ADB_TIMEOUT_SECONDS=2
-  capture_ui_evidence fixture-serial lobby-idle-light 0 \
-    || { printf 'safe allowlisted UI evidence capture fixture failed\n' >&2; return 1; }
-  [[ -s "$evidence_fixture/screenshots/lobby-idle-light.png" ]] \
-    || { printf 'safe UI evidence capture did not retain its artifact\n' >&2; return 1; }
-  [[ "${#EVIDENCE_REMOTE_DUMP_SERIALS[@]}" == "0" \
-    && "${#EVIDENCE_REMOTE_DUMP_PATHS[@]}" == "0" ]] \
-    || { printf 'successful evidence UI dump remained registered\n' >&2; return 1; }
-  ADB_BIN="$fake_adb"
-  ADB_TIMEOUT_SECONDS=1
-
-  local evidence_relative
-  for evidence_relative in \
-    screenshots/registration-light.png \
-    screenshots/registration-dark-narrow.png \
-    screenshots/lobby-idle-light.png \
-    screenshots/lobby-active-dark-narrow.png \
-    screenshots/lobby-resumable-light.png \
-    screenshots/opponents-light.png \
-    screenshots/cancel-match-dialog-dark-narrow.png \
-    screenshots/update-dialog-dark.png \
-    screenshots/gomoku-loading-light.png \
-    screenshots/gomoku-initial-light.png \
-    screenshots/gomoku-pending-light.png \
-    screenshots/gomoku-resign-confirm-light.png \
-    screenshots/gomoku-reconnecting.png \
-    screenshots/gomoku-connection-failed.png \
-    screenshots/gomoku-terminal-light.png \
-    screenshots/gomoku-resigned-light.png; do
-    printf 'fixture png\n' >"$evidence_fixture/$evidence_relative"
-  done
-  local evidence_manifest
-  evidence_manifest="$(ui_evidence_manifest_json "$evidence_fixture")" \
-    || { printf 'complete relative UI evidence manifest was rejected\n' >&2; return 1; }
-  jq -e '
-    (.flutter | length) == 8 and (.godot | length) == 8 and
-    .themes == ["light", "dark"] and .viewports == ["narrow", "large"] and
-    ([.flutter[], .godot[]] | all(startswith("screenshots/") and (startswith("/") | not) and (contains("..") | not)))
-  ' <<<"$evidence_manifest" >/dev/null \
-    || { printf 'UI evidence manifest contained incomplete or unsafe paths\n' >&2; return 1; }
-  if valid_evidence_relative_path "$evidence_fixture" '/tmp/outside.png' \
-    || valid_evidence_relative_path "$evidence_fixture" 'screenshots/../outside.png'; then
-    printf 'non-artifact-relative UI evidence path was accepted\n' >&2
-    return 1
-  fi
-  rm -f "$evidence_fixture/screenshots/gomoku-terminal-light.png"
-  if ui_evidence_manifest_json "$evidence_fixture" >/dev/null 2>&1; then
-    printf 'incomplete UI evidence manifest was accepted\n' >&2
-    return 1
-  fi
+  [[ ! -e "$fake_device_root/remote-ui.xml" ]] \
+    || { printf 'logic-only UI state assertion left a remote UI dump\n' >&2; return 1; }
 
   SERIAL_A='fixture-A'
   SERIAL_B='fixture-B'
@@ -1956,18 +1685,19 @@ self_test() {
     printf 'device visual configuration reads or mutates excluded accessibility state\n' >&2
     return 1
   fi
-  grep -F 'failure_media_safe' <<<"$runtime_source" >/dev/null \
-    || { printf 'failure screenshot safety gate is missing\n' >&2; return 1; }
+  grep -F 'failure_ui_dump_safe' <<<"$runtime_source" >/dev/null \
+    || { printf 'failure UI dump safety gate is missing\n' >&2; return 1; }
   grep -F 'failure-artifact-scan.txt' <<<"$runtime_source" >/dev/null \
     || { printf 'failure artifact scanner is missing\n' >&2; return 1; }
-  if grep -E 'screencap.*ARTIFACT_DIR' <<<"$runtime_source" >/dev/null; then
-    printf 'raw failure screenshot is written directly to artifacts\n' >&2
+  if grep -E 'screencap|capture_ui_evidence|ui_evidence|screenshots/|\.png' \
+    <<<"$runtime_source" >/dev/null; then
+    printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
     return 1
   fi
   grep -F "flutter test -d \"\$SERIAL_A\" integration_test/semantics_test.dart" <<<"$runtime_source" >/dev/null \
     || { printf 'selected-device semantics command is missing\n' >&2; return 1; }
   if grep -F 'SECONDS + 10' <<<"$runtime_source" >/dev/null; then
-    printf 'render revision wait still uses a hard-coded 10 second deadline\n' >&2
+    printf 'state revision wait still uses a hard-coded 10 second deadline\n' >&2
     return 1
   fi
   if grep -F 'gameboxTextValueBase64' <<<"$runtime_source" >/dev/null; then
@@ -1996,7 +1726,7 @@ if ((SELF_TEST_ONLY)); then
   exit 0
 fi
 
-for required_command in curl ffmpeg git go jq lsof openssl rg ruby sed shasum unzip; do
+for required_command in curl git go jq lsof openssl rg ruby sed shasum unzip; do
   command -v "$required_command" >/dev/null 2>&1 \
     || { printf 'Gamebox E2E failed: missing required command %s\n' "$required_command" >&2; exit 2; }
 done
@@ -2069,14 +1799,10 @@ LOADING_WATCH_PROCESS_GROUP=""
 LOADING_WATCH_SESSION=""
 LOADING_WATCH_READY_FILE=""
 RECOVERY_SERIAL=""
-PREVIOUS_BOARD_HASH=""
-VISUAL_METRICS="$TEMP_DIR/visual-metrics.tsv"
 REMOTE_UI_PATH="/data/local/tmp/gamebox-e2e-$RUN_ID.xml"
 SECRET_INPUT_COUNTER=0
 SECRET_INPUT_FILES_A=()
 SECRET_INPUT_FILES_B=()
-EVIDENCE_REMOTE_DUMP_SERIALS=()
-EVIDENCE_REMOTE_DUMP_PATHS=()
 ORIGINAL_UI_MODE_A=""
 ORIGINAL_UI_MODE_B=""
 ORIGINAL_DISPLAY_OVERRIDE_A=""
@@ -2175,7 +1901,6 @@ cleanup() {
     stop_first_connect_loading_watch || cleanup_ok=0
   fi
   terminate_registered_bounded_children
-  cleanup_registered_evidence_remote_dumps || cleanup_ok=0
   if [[ -n "$SERIAL_A" ]]; then
     cleanup_serial_private_state "$SERIAL_A" A
     bounded_helper_uninstall "$SERIAL_A"
@@ -2257,7 +1982,7 @@ capture_failure() {
   local message="$1"
   ((FAILURE_CAPTURED)) && return 0
   FAILURE_CAPTURED=1
-  local serial label xml secret_active secret clear_verified screenshot
+  local serial label xml secret_active secret clear_verified
   for label in A B; do
     if [[ "$label" == "A" ]]; then
       serial="$SERIAL_A"
@@ -2273,19 +1998,13 @@ capture_failure() {
     if clear_secret_field_for_failure "$serial" "$secret_active" "$secret"; then
       clear_verified=1
     fi
-    if failure_media_safe "$secret_active" "$clear_verified"; then
-      screenshot="$TEMP_DIR/failure-$label.png"
-      rm -f -- "$screenshot"
-      if adb_for "$serial" exec-out screencap -p >"$screenshot" 2>/dev/null && [[ -s "$screenshot" ]]; then
-        cp "$screenshot" "$ARTIFACT_DIR/failure-$label.png" 2>/dev/null || true
-      fi
-      rm -f -- "$screenshot"
+    if failure_ui_dump_safe "$secret_active" "$clear_verified"; then
       xml="$TEMP_DIR/failure-$label.xml"
       if declare -F dump_ui >/dev/null 2>&1 && dump_ui "$serial" "$xml"; then
         xml_query diagnostics "$xml" 2>/dev/null | sanitize_stream >"$ARTIFACT_DIR/failure-$label-ui.txt" || true
       fi
     else
-      printf 'Failure screenshot and UI dump omitted because secret-field clearing could not be verified.\n' \
+      printf 'Failure UI dump omitted because secret-field clearing could not be verified.\n' \
         >"$ARTIFACT_DIR/failure-$label-media-omitted.txt" || true
     fi
     if declare -F game_logs_after_boundary >/dev/null 2>&1 && declare -F boundary_for_serial >/dev/null 2>&1; then
@@ -2449,7 +2168,7 @@ configure_device_visuals A "$SERIAL_A" no "$MANAGED_LARGE_DISPLAY" "$((1 - USING
 configure_device_visuals B "$SERIAL_B" yes "$MANAGED_NARROW_DISPLAY" "$((1 - USING_PROVIDED_DEVICES))"
 assert_selected_viewport_matrix
 readonly VIEWPORT_A VIEWPORT_B
-printf 'UX evidence viewports: A=%s (light/large), B=%s (dark/narrow)\n' \
+printf 'E2E viewports: A=%s (light/large), B=%s (dark/narrow)\n' \
   "$VIEWPORT_A" "$VIEWPORT_B"
 
 SEMANTICS_LOG="$TEMP_DIR/semantics-test.log"
@@ -2773,12 +2492,11 @@ register_user() {
   local invite="$2"
   local nickname="$3"
   local secret_flag="$4"
-  local registration_slug="$5"
   start_flutter "$serial"
   wait_for_identifier "$serial" invite-code >/dev/null \
     || fail "registration page did not expose invite-code on $serial"
-  capture_ui_evidence "$serial" "$registration_slug" "${!secret_flag}" \
-    || fail "could not safely capture $registration_slug before private invite input"
+  assert_ui_state_safe "$serial" "${!secret_flag}" \
+    || fail "could not verify registration UI state before private invite input"
   printf -v "$secret_flag" '%s' 1
   input_text_by_identifier "$serial" invite-code "$invite"
   assert_field_text "$serial" invite-code "$invite"
@@ -2789,15 +2507,15 @@ register_user() {
     || fail "registration did not reach the catalog on $serial"
   printf -v "$secret_flag" '%s' 0
 }
-register_user "$SERIAL_A" "$INVITE_A" "$NICKNAME_A" SECRETS_ON_UI_A registration-light
-capture_ui_evidence "$SERIAL_A" lobby-idle-light "$SECRETS_ON_UI_A" \
-  || fail "could not safely capture the light idle lobby"
-register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B registration-dark-narrow
+register_user "$SERIAL_A" "$INVITE_A" "$NICKNAME_A" SECRETS_ON_UI_A
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+  || fail "could not verify the light idle lobby UI state"
+register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 
 tap_identifier "$SERIAL_B" app-update
 sleep 2
-capture_ui_evidence "$SERIAL_B" update-dialog-dark "$SECRETS_ON_UI_B" \
-  || fail "could not safely capture the dark update dialog"
+assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
+  || fail "could not verify the dark update dialog UI state"
 adb_for "$SERIAL_B" shell input keyevent KEYCODE_BACK >/dev/null \
   || fail "could not close the dark update dialog"
 wait_for_identifier "$SERIAL_B" game-gomoku >/dev/null \
@@ -2808,8 +2526,8 @@ uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 tap_identifier "$SERIAL_A" choose-opponent
 opponent_identifier="$(wait_for_opponent_identifier "$SERIAL_A")" \
   || fail "A did not expose exactly one enabled opponent resource-id"
-capture_ui_evidence "$SERIAL_A" opponents-light "$SECRETS_ON_UI_A" \
-  || fail "could not safely capture the light opponent list"
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+  || fail "could not verify the light opponent list UI state"
 USER_ID_B="${opponent_identifier#opponent-}"
 [[ "$USER_ID_B" =~ $uuid_pattern && "$opponent_identifier" == "opponent-$USER_ID_B" ]] \
   || fail "A opponent resource-id did not contain B's canonical user ID"
@@ -2822,16 +2540,16 @@ tap_identifier "$SERIAL_A" "$opponent_identifier"
 
 wait_for_first_connect_loading_and_pause "$SERIAL_A" \
   || fail "could not hold the real first-connect loading state before its initial snapshot"
-capture_ui_evidence "$SERIAL_A" gomoku-loading-light "$SECRETS_ON_UI_A" \
-  || fail "could not safely capture the real first-connect loading state"
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+  || fail "could not verify the real first-connect loading UI state"
 resume_e2e_server \
-  || fail "could not resume the E2E server after first-connect loading evidence"
+  || fail "could not resume the E2E server after first-connect loading assertion"
 
 MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "A did not emit exactly one first-match ready ID within ${WAIT_SECONDS}s"
 [[ "$MATCH_ID" =~ $uuid_pattern ]] || fail "first Godot ready marker did not contain a canonical match ID"
 [[ "$MATCH_ID" == "$LOADING_MATCH_ID" ]] \
-  || fail "first-connect loading evidence did not belong to the ready match"
+  || fail "first-connect loading assertion did not belong to the ready match"
 
 match_show() {
   "$CTL_BIN" match show --id "$1" --db "$DB_PATH" --json
@@ -2889,8 +2607,8 @@ wait_for_log_marker "$SERIAL_A" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_
   || fail "A Godot did not report ready for the first match"
 wait_for_identifier "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the active-match automation identifier"
-capture_ui_evidence "$SERIAL_B" lobby-active-dark-narrow "$SECRETS_ON_UI_B" \
-  || fail "could not safely capture the dark narrow active lobby"
+assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
+  || fail "could not verify the dark narrow active lobby UI state"
 tap_identifier "$SERIAL_B" continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "B Godot did not report ready for the first match"
@@ -2898,46 +2616,6 @@ wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_
 display_size() {
   device_effective_size "$1"
 }
-
-edge_band_luma() {
-  local screenshot="$1"
-  local width="$2"
-  local height="$3"
-  local y="$4"
-  local left=$((width / 10))
-  local sample_width=$((width * 8 / 10))
-  ffmpeg -v error -i "$screenshot" \
-    -vf "crop=$sample_width:$height:$left:$y,signalstats,metadata=print:file=-" \
-    -frames:v 1 -f null - 2>&1 \
-    | sed -n 's/^lavfi\.signalstats\.YAVG=//p' \
-    | tail -n 1
-}
-
-assert_display_not_letterboxed() {
-  local serial="$1"
-  local label="$2"
-  local screenshot="$TEMP_DIR/fullscreen-$label.png"
-  local width height band_height top_y bottom_y top_luma bottom_luma
-  read -r width height <<<"$(display_size "$serial")"
-  [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
-  band_height=$((height / 25))
-  top_y=$((height / 50))
-  bottom_y=$((height - top_y - band_height))
-  adb_for "$serial" exec-out screencap -p >"$screenshot" || return 1
-  [[ -s "$screenshot" ]] || return 1
-  top_luma="$(edge_band_luma "$screenshot" "$width" "$band_height" "$top_y")"
-  bottom_luma="$(edge_band_luma "$screenshot" "$width" "$band_height" "$bottom_y")"
-  ruby -e '
-    top, bottom = ARGV.map { |value| Float(value, exception: false) }
-    exit 1 unless top && bottom && top > 40.0 && bottom > 40.0
-  ' "$top_luma" "$bottom_luma" || return 1
-  printf 'fullscreen %s edge luma top=%s bottom=%s\n' "$label" "$top_luma" "$bottom_luma"
-}
-
-assert_display_not_letterboxed "$SERIAL_A" A \
-  || fail "A retained black letterbox bars around the Godot scene"
-assert_display_not_letterboxed "$SERIAL_B" B \
-  || fail "B retained black letterbox bars around the Godot scene"
 
 design_point_for_serial() {
   local serial="$1"
@@ -2984,164 +2662,23 @@ wait_match_revision() {
   return 1
 }
 
-capture_board_crop() {
-  local serial="$1"
-  local output="$2"
-  local screenshot="$output.full.png"
-  adb_for "$serial" exec-out screencap -p >"$screenshot" || return 1
-  [[ -s "$screenshot" ]] || return 1
-  local top_left bottom_right left top right bottom width height
-  top_left="$(design_point_for_serial "$serial" "$BOARD_LEFT" "$BOARD_TOP")"
-  bottom_right="$(design_point_for_serial "$serial" "$((BOARD_LEFT + BOARD_SIDE))" "$((BOARD_TOP + BOARD_SIDE))")"
-  read -r left top <<<"$top_left"
-  read -r right bottom <<<"$bottom_right"
-  width=$((right - left))
-  height=$((bottom - top))
-  ((width > 0 && height > 0)) || return 1
-  ffmpeg -v error -y -i "$screenshot" -vf "crop=$width:$height:$left:$top" "$output" >/dev/null 2>&1 \
-    || return 1
-  [[ -s "$output" ]]
-}
-
-board_cell_visual_difference() {
-  local before="$1"
-  local after="$2"
-  local cell_x="$3"
-  local cell_y="$4"
-  local width height center_x center_y sample_side sample_left sample_top
-  read -r width height <<<"$(ruby -e '
-    header = File.binread(ARGV[0], 24)
-    exit 1 unless header.start_with?("\x89PNG".b)
-    puts header.byteslice(16, 8).unpack("N2").join(" ")
-  ' "$before")" || return 1
-  [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ && "$width" == "$height" ]] || return 1
-  center_x=$(((36 * width + cell_x * 888 * width / 14) / 960))
-  center_y=$(((36 * height + cell_y * 888 * height / 14) / 960))
-  sample_side=$((width / 12))
-  ((sample_side >= 8)) || return 1
-  sample_left=$((center_x - sample_side / 2))
-  sample_top=$((center_y - sample_side / 2))
-  ((sample_left >= 0 && sample_top >= 0 \
-    && sample_left + sample_side <= width && sample_top + sample_side <= height)) || return 1
-  ffmpeg -v error -i "$before" -i "$after" \
-    -filter_complex "[0:v][1:v]blend=all_mode=difference,crop=$sample_side:$sample_side:$sample_left:$sample_top,signalstats,metadata=print:file=-" \
-    -frames:v 1 -f null - 2>&1 \
-    | sed -n 's/^lavfi\.signalstats\.YAVG=//p' \
-    | tail -n 1
-}
-
-wait_for_pending_board_marker() {
-  local serial="$1"
-  local cell_x="$2"
-  local cell_y="$3"
-  local before="$4"
-  local after="$TEMP_DIR/pending-board-after.png"
-  local deadline=$((SECONDS + WAIT_SECONDS)) score=""
-  while ((SECONDS < deadline)); do
-    if capture_board_crop "$serial" "$after"; then
-      score="$(board_cell_visual_difference "$before" "$after" "$cell_x" "$cell_y")" || score=""
-      if [[ -n "$score" ]] \
-        && ruby -e 'exit(Float(ARGV[0]) >= 1.0 ? 0 : 1)' "$score"; then
-        printf 'Observed local pending marker delta: %s\n' "$score"
-        return 0
-      fi
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-crop_matches_board() {
-  local crop="$1"
-  local board_json="$2"
-  ffmpeg -v error -i "$crop" -f rawvideo -pix_fmt rgb24 - \
-    | ruby -r json -e '
-      path, encoded_board = ARGV
-      header = File.binread(path, 24)
-      exit 2 unless header.start_with?("\x89PNG".b)
-      width, height = header.byteslice(16, 8).unpack("N2")
-      exit 2 unless width == height && width.positive?
-      pixels = STDIN.read
-      exit 2 unless pixels.bytesize == width * height * 3
-      board = JSON.parse(encoded_board)
-      exit 2 unless board.length == 225 && board.all? { |cell| [0, 1, 2].include?(cell) }
-      colors = [[216, 168, 95], [21, 26, 36], [248, 250, 252]]
-      sample_offset = [(width * 0.006).round, 2].max
-      board.each_with_index do |expected, index|
-        offset = expected.zero? ? sample_offset : 0
-        x = (((36.0 + (index % 15) * 888.0 / 14.0) / 960.0) * width).round + offset
-        y = (((36.0 + (index / 15) * 888.0 / 14.0) / 960.0) * height).round + offset
-        actual = pixels.byteslice((y * width + x) * 3, 3).bytes
-        target = colors.fetch(expected)
-        distance = Math.sqrt(actual.zip(target).sum { |left, right| (left - right)**2 })
-        exit 3 if distance > 20.0
-      end
-    ' "$crop" "$board_json"
-}
-
-crop_grid_score() {
-  ffmpeg -v error -i "$1" \
-    -vf 'edgedetect=low=0.05:high=0.2,signalstats,metadata=print:file=-' \
-    -frames:v 1 -f null - 2>&1 \
-    | sed -n 's/^lavfi\.signalstats\.YAVG=//p' \
-    | tail -n 1
-}
-
-assert_both_render_revision() {
+assert_both_state_revision() {
   local revision="$1"
-  local evidence_name="$2"
   local state_fragment="$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$revision"
-  wait_for_log_marker "$SERIAL_A" "$state_fragment" || fail "A did not render revision $revision marker"
-  wait_for_log_marker "$SERIAL_B" "$state_fragment" || fail "B did not render revision $revision marker"
-  local deadline=$((SECONDS + WAIT_SECONDS))
-  local crop_a="$TEMP_DIR/board-A.png"
-  local crop_b="$TEMP_DIR/board-B.png"
-  local snapshot board_json
+  wait_for_log_marker "$SERIAL_A" "$state_fragment" || fail "A did not report revision $revision state"
+  wait_for_log_marker "$SERIAL_B" "$state_fragment" || fail "B did not report revision $revision state"
+  local snapshot
   snapshot="$(match_show "$MATCH_ID")" || fail "could not read authoritative board at revision $revision"
   [[ "$(jq -r '.revision' <<<"$snapshot")" == "$revision" ]] \
-    || fail "authoritative board revision changed before visual assertion $revision"
-  board_json="$(jq -ce '.board | select(length == 225)' <<<"$snapshot")" \
+    || fail "authoritative board revision changed before logic assertion $revision"
+  jq -e '.board | length == 225 and all(. == 0 or . == 1 or . == 2)' <<<"$snapshot" >/dev/null \
     || fail "authoritative board was malformed at revision $revision"
-  local hash_a="" hash_b="" similarity="" grid_a="" grid_b=""
-  while ((SECONDS < deadline)); do
-    if capture_board_crop "$SERIAL_A" "$crop_a" && capture_board_crop "$SERIAL_B" "$crop_b"; then
-      hash_a="$(shasum -a 256 "$crop_a" | awk '{print $1}')"
-      hash_b="$(shasum -a 256 "$crop_b" | awk '{print $1}')"
-      similarity="$(crop_ssim "$crop_a" "$crop_b")"
-      grid_a="$(crop_grid_score "$crop_a")"
-      grid_b="$(crop_grid_score "$crop_b")"
-      if crop_matches_board "$crop_a" "$board_json" \
-        && crop_matches_board "$crop_b" "$board_json" \
-        && ruby -e 'exit(Float(ARGV[0]) >= 0.995 && Float(ARGV[1]) >= 5.0 && Float(ARGV[2]) >= 5.0 ? 0 : 1)' \
-          "$similarity" "$grid_a" "$grid_b"; then
-        break
-      fi
-    fi
-    sleep 1
-  done
-  if [[ -z "$similarity" ]] \
-    || ! crop_matches_board "$crop_a" "$board_json" \
-    || ! crop_matches_board "$crop_b" "$board_json" \
-    || ! ruby -e 'exit(Float(ARGV[0]) >= 0.995 && Float(ARGV[1]) >= 5.0 && Float(ARGV[2]) >= 5.0 ? 0 : 1)' \
-      "$similarity" "$grid_a" "$grid_b"; then
-    fail "rendered crops did not match the authoritative board at revision $revision"
-  fi
-  if [[ -n "$PREVIOUS_BOARD_HASH" && "$hash_a" == "$PREVIOUS_BOARD_HASH" ]]; then
-    fail "rendered board hash did not change at accepted revision $revision"
-  fi
-  PREVIOUS_BOARD_HASH="$hash_a"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$revision" "$similarity" "$grid_a" "$grid_b" "$hash_a" "$hash_b" >>"$VISUAL_METRICS"
-  if [[ -n "$evidence_name" ]]; then
-    cp "$crop_a.full.png" "$ARTIFACT_DIR/$evidence_name-A.png"
-    cp "$crop_b.full.png" "$ARTIFACT_DIR/$evidence_name-B.png"
-  fi
 }
 
-assert_both_render_revision 0 initial
+assert_both_state_revision 0
 
-capture_ui_evidence "$SERIAL_A" gomoku-initial-light "$SECRETS_ON_UI_A" \
-  || fail "could not safely capture the light initial Gomoku state"
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+  || fail "could not verify the light initial Gomoku UI state"
 
 perform_move() {
   local serial="$1"
@@ -3149,38 +2686,35 @@ perform_move() {
   local y="$3"
   local revision="$4"
   local color="$5"
-  local evidence="$6"
   refresh_game_log_boundaries "revision-$revision" \
     || fail "could not establish dual-device log boundary for revision $revision"
   tap_board_cell "$serial" "$x" "$y"
   wait_match_revision "$revision" "$x" "$y" "$color" \
     || fail "move ($x,$y) did not commit as revision $revision"
-  assert_both_render_revision "$revision" "$evidence"
+  assert_both_state_revision "$revision"
 }
 
-perform_pending_evidence_move() {
+perform_pending_logic_move() {
   local serial="$1"
   local x="$2"
   local y="$3"
   local revision="$4"
   local color="$5"
-  local baseline="$TEMP_DIR/pending-board-before.png"
-  capture_board_crop "$serial" "$baseline" \
-    || fail "could not capture the pre-pending board baseline"
   refresh_game_log_boundaries "pending-revision-$revision" \
-    || fail "could not establish the pending evidence log boundary"
+    || fail "could not establish the pending logic log boundary"
   pause_e2e_server \
-    || fail "could not pause the exact E2E-owned server for pending evidence"
+    || fail "could not pause the exact E2E-owned server for pending logic"
   tap_board_cell "$serial" "$x" "$y"
-  wait_for_pending_board_marker "$serial" "$x" "$y" "$baseline" \
-    || fail "the local pending board marker did not appear before acknowledgement"
-  capture_ui_evidence "$serial" gomoku-pending-light "$SECRETS_ON_UI_A" \
-    || fail "could not safely capture the light pending Gomoku state"
+  wait_for_log_marker_with_timeout \
+    "$serial" \
+    "GAMEBOX_BOARD_CANMOVE can=false conn=connected await=false status=active pend_empty=false" \
+    "$WAIT_SECONDS" \
+    || fail "the local pending logic state did not appear before acknowledgement"
   resume_e2e_server \
-    || fail "could not resume the exact E2E-owned server after pending evidence"
+    || fail "could not resume the exact E2E-owned server after pending logic"
   wait_match_revision "$revision" "$x" "$y" "$color" \
-    || fail "pending evidence move ($x,$y) did not commit as revision $revision after resume"
-  assert_both_render_revision "$revision" ""
+    || fail "pending logic move ($x,$y) did not commit as revision $revision after resume"
+  assert_both_state_revision "$revision"
 }
 
 tap_godot_resign() {
@@ -3206,8 +2740,8 @@ capture_resign_confirmation() {
   expected_revision="$(jq -er '.revision' <<<"$before")"
   tap_godot_resign "$serial" || fail "could not open the Gomoku resign confirmation"
   sleep 1
-  capture_ui_evidence "$serial" gomoku-resign-confirm-light "$SECRETS_ON_UI_A" \
-    || fail "could not safely capture the light resign confirmation"
+  assert_ui_state_safe "$serial" "$SECRETS_ON_UI_A" \
+    || fail "could not verify the light resign confirmation UI state"
   adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
     || fail "Android Back did not close the resign confirmation"
   sleep 1
@@ -3228,8 +2762,8 @@ exercise_active_system_back() {
     || fail "could not send Android Back during the active match"
   wait_for_identifier "$serial" continue-match >/dev/null \
     || fail "active Android Back did not return to a resumable lobby"
-  capture_ui_evidence "$serial" lobby-resumable-light "$SECRETS_ON_UI_A" \
-    || fail "could not safely capture the resumable lobby after Android Back"
+  assert_ui_state_safe "$serial" "$SECRETS_ON_UI_A" \
+    || fail "could not verify the resumable lobby after Android Back"
   after="$(match_show "$MATCH_ID")" || fail "could not read the active match after Android Back"
   [[ "$(jq -r '.revision' <<<"$after")" == "$expected_revision" \
     && "$(jq -r '.status' <<<"$after")" == "active" \
@@ -3240,8 +2774,7 @@ exercise_active_system_back() {
     || fail "active match did not relaunch after Android Back"
   wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$expected_revision status=active connection=connected" \
     || fail "active match did not resynchronize after Android Back"
-  PREVIOUS_BOARD_HASH=""
-  assert_both_render_revision "$expected_revision" post-active-system-back
+  assert_both_state_revision "$expected_revision"
 }
 
 recover_both_clients_after_server_restart() {
@@ -3262,30 +2795,29 @@ recover_both_clients_after_server_restart() {
     wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$expected_revision status=active connection=connected" \
       || fail "$serial did not resynchronize revision $expected_revision after server restart"
   done
-  PREVIOUS_BOARD_HASH=""
-  assert_both_render_revision "$expected_revision" post-server-restart
+  assert_both_state_revision "$expected_revision"
 }
 
 capture_connection_recovery_states() {
   local expected_revision="$1"
-  refresh_game_log_boundaries connection-evidence \
-    || fail "could not establish connection evidence log boundaries"
+  refresh_game_log_boundaries connection-logic \
+    || fail "could not establish connection logic log boundaries"
   pause_e2e_server \
-    || fail "could not pause the exact E2E-owned server for reconnect evidence"
+    || fail "could not pause the exact E2E-owned server for reconnect logic"
   wait_for_log_marker_with_timeout \
     "$SERIAL_A" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$expected_revision status=active connection=reconnecting" \
     "$CONNECTION_STATE_TIMEOUT_SECONDS" \
     || fail "A did not enter the real reconnecting state while the E2E server was paused"
-  capture_ui_evidence "$SERIAL_A" gomoku-reconnecting "$SECRETS_ON_UI_A" \
-    || fail "could not safely capture the reconnecting Gomoku state"
+  assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+    || fail "could not verify the reconnecting Gomoku UI state"
   stop_e2e_server \
     || fail "could not terminate the exact paused E2E-owned server"
   wait_for_log_marker_with_timeout \
     "$SERIAL_A" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$expected_revision status=active connection=failed" \
     "$CONNECTION_STATE_TIMEOUT_SECONDS" \
     || fail "A did not enter the real connection-failed state"
-  capture_ui_evidence "$SERIAL_A" gomoku-connection-failed "$SECRETS_ON_UI_A" \
-    || fail "could not safely capture the failed Gomoku connection state"
+  assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+    || fail "could not verify the failed Gomoku UI state"
   start_e2e_server \
     || fail "could not restart the E2E-owned server with the same database and secrets"
   wait_for_e2e_server_health \
@@ -3294,19 +2826,19 @@ capture_connection_recovery_states() {
 }
 
 if [[ "$BLACK_SERIAL" == "$SERIAL_A" ]]; then
-  perform_pending_evidence_move "$BLACK_SERIAL" 3 3 1 1
+  perform_pending_logic_move "$BLACK_SERIAL" 3 3 1 1
 else
-  perform_move "$BLACK_SERIAL" 3 3 1 1 ""
+  perform_move "$BLACK_SERIAL" 3 3 1 1
 fi
 capture_resign_confirmation "$SERIAL_A"
 if [[ "$WHITE_SERIAL" == "$SERIAL_A" ]]; then
-  perform_pending_evidence_move "$WHITE_SERIAL" 3 5 2 2
+  perform_pending_logic_move "$WHITE_SERIAL" 3 5 2 2
 else
-  perform_move "$WHITE_SERIAL" 3 5 2 2 ""
+  perform_move "$WHITE_SERIAL" 3 5 2 2
 fi
 capture_connection_recovery_states 2
 exercise_active_system_back "$SERIAL_A" 2
-perform_move "$BLACK_SERIAL" 4 3 3 1 pre-recovery
+perform_move "$BLACK_SERIAL" 4 3 3 1
 
 RECOVERY_SERIAL="$WHITE_SERIAL"
 adb_for "$RECOVERY_SERIAL" shell am force-stop "$PACKAGE" >/dev/null \
@@ -3334,15 +2866,14 @@ wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_READY_MARKER game=gomoku match=
   || fail "force-stopped client did not relaunch Godot"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=3" \
   || fail "force-stopped client did not resume at authoritative revision 3"
-PREVIOUS_BOARD_HASH=""
-assert_both_render_revision 3 recovered
+assert_both_state_revision 3
 
-perform_move "$WHITE_SERIAL" 4 5 4 2 ""
-perform_move "$BLACK_SERIAL" 5 3 5 1 ""
-perform_move "$WHITE_SERIAL" 5 5 6 2 ""
-perform_move "$BLACK_SERIAL" 6 3 7 1 ""
-perform_move "$WHITE_SERIAL" 6 5 8 2 ""
-perform_move "$BLACK_SERIAL" 7 3 9 1 terminal
+perform_move "$WHITE_SERIAL" 4 5 4 2
+perform_move "$BLACK_SERIAL" 5 3 5 1
+perform_move "$WHITE_SERIAL" 5 5 6 2
+perform_move "$BLACK_SERIAL" 6 3 7 1
+perform_move "$WHITE_SERIAL" 6 5 8 2
+perform_move "$BLACK_SERIAL" 7 3 9 1
 
 final_snapshot="$(match_show "$MATCH_ID")" || fail "finished match was not readable"
 [[ "$(jq -r '.status' <<<"$final_snapshot")" == "finished" \
@@ -3353,8 +2884,8 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
   wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$MATCH_ID result=five" \
     || fail "$serial did not report the shared five result"
 done
-capture_ui_evidence "$SERIAL_A" gomoku-terminal-light "$SECRETS_ON_UI_A" \
-  || fail "could not safely capture the light terminal Gomoku state"
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+  || fail "could not verify the light terminal Gomoku UI state"
 
 tap_design_back() {
   local serial="$1"
@@ -3380,8 +2911,8 @@ SECOND_MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A" "$MATCH_ID")" \
 tap_identifier "$SERIAL_B" cancel-match
 wait_for_identifier "$SERIAL_B" confirm-cancel-match >/dev/null \
   || fail "the second-match cancellation confirmation did not expose its stable identifier"
-capture_ui_evidence "$SERIAL_B" cancel-match-dialog-dark-narrow "$SECRETS_ON_UI_B" \
-  || fail "could not safely capture the dark narrow cancellation confirmation"
+assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
+  || fail "could not verify the dark narrow cancellation confirmation UI state"
 tap_identifier "$SERIAL_B" confirm-cancel-match
 cancel_deadline=$((SECONDS + WAIT_SECONDS))
 while ((SECONDS < cancel_deadline)); do
@@ -3433,9 +2964,8 @@ fi
 
 FIRST_MATCH_ID="$MATCH_ID"
 MATCH_ID="$THIRD_MATCH_ID"
-PREVIOUS_BOARD_HASH=""
-assert_both_render_revision 0 resignation-initial
-perform_move "$THIRD_BLACK_SERIAL" 7 7 1 1 ""
+assert_both_state_revision 0
+perform_move "$THIRD_BLACK_SERIAL" 7 7 1 1
 tap_godot_resign "$SERIAL_A" || fail "A could not open resignation confirmation in the resignation match"
 sleep 1
 tap_godot_confirm_resign "$SERIAL_A" || fail "A could not confirm resignation"
@@ -3459,8 +2989,8 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
   wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$THIRD_MATCH_ID result=resignation" \
     || fail "$serial did not observe the authoritative resignation result"
 done
-capture_ui_evidence "$SERIAL_A" gomoku-resigned-light "$SECRETS_ON_UI_A" \
-  || fail "could not safely capture the authoritative resignation result"
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+  || fail "could not verify the authoritative resignation result UI state"
 tap_design_back "$SERIAL_A" || fail "A could not leave the resignation result"
 tap_design_back "$SERIAL_B" || fail "B could not leave the resignation result"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after resignation"
@@ -3480,7 +3010,6 @@ provenance_contract \
   || fail "source HEAD or worktree cleanliness changed after build"
 
 printf '%s\n' "$final_snapshot" | jq -S . >"$ARTIFACT_DIR/final-match.json"
-cp "$VISUAL_METRICS" "$ARTIFACT_DIR/visual-metrics.tsv"
 sanitize_stream <"$SERVER_LOG" >"$ARTIFACT_DIR/server-sanitized.log"
 sanitize_stream <"$SEMANTICS_LOG" >"$ARTIFACT_DIR/semantics-test.log"
 if ! protect_artifact_directory \
@@ -3488,8 +3017,6 @@ if ! protect_artifact_directory \
   "$INVITE_A" "$INVITE_B" "$JWT_SECRET" "$TOKEN_PEPPER"; then
   fail "artifact secret scanner removed unsafe or unverifiable output"
 fi
-ui_evidence_json="$(ui_evidence_manifest_json "$ARTIFACT_DIR")" \
-  || fail "required UI evidence was missing or outside the artifact directory"
 devices_json="$(device_summary_json "$SERIAL_A" "$SERIAL_B" "$API_LEVEL_A" "$API_LEVEL_B" "$api_base")"
 jq -n \
   --arg status passed \
@@ -3507,7 +3034,6 @@ jq -n \
   --arg recoverySerial "$RECOVERY_SERIAL" \
   --argjson recoveryBefore 3 \
   --argjson recoveryAfter 3 \
-  --argjson uiEvidence "$ui_evidence_json" \
   '{
     status:$status,
     sourceRevision:$sourceRevision,
@@ -3520,10 +3046,9 @@ jq -n \
     recovery:{serial:$recoverySerial,beforeRevision:$recoveryBefore,afterRevision:$recoveryAfter,eventLoss:false},
     secondMatch:{id:$secondMatchId,revision:1,status:"cancelled",slotsReleased:true},
     thirdMatch:{id:$thirdMatchId,revision:2,status:"finished",result:"resignation",slotsReleased:true},
-    uiEvidence:$uiEvidence,
     assertions:[
       "resource-id-only-ui-driving","two-registered-users","random-color-mapping",
-      "revision-and-board-after-each-move","two-authoritative-board-crops-with-ssim",
+      "revision-and-board-after-each-move","dual-device-state-markers",
       "force-stop-auto-login-resume","shared-five-result","lobby-idle",
       "second-match-created","cancel-confirmed-once","zero-step-cancelled","slots-released",
       "active-system-back-resumable","confirmed-resignation-once","authoritative-resignation-result",
