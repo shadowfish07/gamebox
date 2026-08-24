@@ -85,6 +85,46 @@ void main() {
   );
 
   test(
+    'oversized UTF-8 payload is rejected before file access or publication',
+    () async {
+      final initial = LocalAppProfileStore(
+        supportDirectory: () async => directory,
+      );
+      await initial.write(
+        const AppProfile(
+          schemaVersion: 1,
+          nickname: '已提交',
+          syncState: ProfileSyncState.pending,
+        ),
+      );
+      final profileFile = File('${directory.path}/gamebox-profile.json');
+      final committedBytes = await profileFile.readAsBytes();
+      var supportDirectoryCalls = 0;
+      final store = LocalAppProfileStore(
+        supportDirectory: () async {
+          supportDirectoryCalls += 1;
+          return directory;
+        },
+      );
+
+      await expectLater(
+        store.write(
+          AppProfile(
+            schemaVersion: 1,
+            nickname: List.filled(22000, '界').join(),
+            syncState: ProfileSyncState.pending,
+          ),
+        ),
+        throwsA(isA<ProfileStoreFailure>()),
+      );
+
+      expect(supportDirectoryCalls, 0);
+      expect(await profileFile.readAsBytes(), committedBytes);
+      expect(directory.listSync().whereType<File>(), hasLength(1));
+    },
+  );
+
+  test(
     'corrupt profile is recoverable failure and bytes stay quarantined',
     () async {
       final profileFile = File('${directory.path}/gamebox-profile.json');

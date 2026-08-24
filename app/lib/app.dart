@@ -202,6 +202,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       return;
     }
     _syncHomeController();
+    _reconcileSessionProfile();
     _homeController?.resumeForeground();
   }
 

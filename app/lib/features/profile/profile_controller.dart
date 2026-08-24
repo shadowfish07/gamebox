@@ -12,6 +12,8 @@ enum ProfileStatus { loading, needsNickname, saving, ready, loadFailure }
 
 enum ProfileCommitFailure { invalidNickname, unavailable }
 
+enum ProfileReconciliationFailure { unavailable }
+
 final class ProfileController extends ChangeNotifier {
   ProfileController({
     required AppProfileStore store,
@@ -25,14 +27,16 @@ final class ProfileController extends ChangeNotifier {
   ProfileStatus _status = ProfileStatus.loading;
   AppProfile? _profile;
   ProfileLoadFailure? _loadFailure;
+  ProfileReconciliationFailure? _reconciliationFailure;
   Future<void> _writeTail = Future<void>.value();
-  String? _restoredWhileLoading;
-  var _localCommitSerial = 0;
+  String? _restoredServerNickname;
   var _disposed = false;
 
   ProfileStatus get status => _status;
   AppProfile? get profile => _profile;
   ProfileLoadFailure? get loadFailure => _loadFailure;
+  ProfileReconciliationFailure? get reconciliationFailure =>
+      _reconciliationFailure;
 
   Future<void> load() async {
     if (_disposed) return;
@@ -45,20 +49,16 @@ final class ProfileController extends ChangeNotifier {
       _setStatus(
         profile == null ? ProfileStatus.needsNickname : ProfileStatus.ready,
       );
-      final restored = _restoredWhileLoading;
-      _restoredWhileLoading = null;
-      if (restored != null) await reconcileRestoredNickname(restored);
+      await retryReconciliation();
     } on ProfileLoadFailure catch (failure) {
       if (_disposed) return;
       _profile = null;
       _loadFailure = failure;
-      _restoredWhileLoading = null;
       _setStatus(ProfileStatus.loadFailure);
     }
   }
 
   Future<ProfileCommitFailure?> commitNickname(String raw) {
-    _localCommitSerial += 1;
     return _enqueue(() async {
       if (_disposed ||
           (_status != ProfileStatus.needsNickname &&
@@ -107,31 +107,38 @@ final class ProfileController extends ChangeNotifier {
   }
 
   Future<void> reconcileRestoredNickname(String serverNickname) async {
-    if (_disposed || _status == ProfileStatus.loadFailure) return;
-    if (_status == ProfileStatus.loading) {
-      _restoredWhileLoading = serverNickname;
+    if (_disposed) return;
+    _restoredServerNickname = serverNickname;
+    await retryReconciliation();
+  }
+
+  Future<void> retryReconciliation() async {
+    if (_disposed ||
+        _restoredServerNickname == null ||
+        _status == ProfileStatus.loading ||
+        _status == ProfileStatus.loadFailure) {
       return;
     }
-    final commitSerialAtCall = _localCommitSerial;
     await _enqueue(() async {
       if (_disposed || _status == ProfileStatus.loadFailure) return;
+      final serverNickname = _restoredServerNickname;
+      if (serverNickname == null) return;
       final String normalizedServer;
       try {
         normalizedServer = await _nicknameRules.normalize(serverNickname);
       } on Object {
+        _surfaceReconciliationFailure();
         return;
       }
       final current = _profile;
       late final AppProfile next;
-      if (current == null && _localCommitSerial == commitSerialAtCall) {
+      if (current == null) {
         next = AppProfile(
           schemaVersion: AppProfile.currentSchemaVersion,
           nickname: normalizedServer,
           syncState: ProfileSyncState.synced,
           lastSyncedNickname: normalizedServer,
         );
-      } else if (current == null) {
-        return;
       } else if (current.nickname == normalizedServer) {
         next = AppProfile(
           schemaVersion: AppProfile.currentSchemaVersion,
@@ -152,16 +159,40 @@ final class ProfileController extends ChangeNotifier {
               : null,
         );
       }
-      if (next == current) return;
+      if (next == current) {
+        _clearReconciliationFailure();
+        return;
+      }
       try {
         await _store.write(next);
       } on Object {
+        _surfaceReconciliationFailure();
         return;
       }
       _profile = next;
       _loadFailure = null;
+      _reconciliationFailure = null;
       _setStatus(ProfileStatus.ready);
     });
+  }
+
+  void _surfaceReconciliationFailure() {
+    _reconciliationFailure = ProfileReconciliationFailure.unavailable;
+    if (_profile == null) {
+      _loadFailure = const ProfileLoadFailure.unavailable();
+      _setStatus(ProfileStatus.loadFailure);
+    } else {
+      _setStatus(ProfileStatus.ready);
+    }
+  }
+
+  void _clearReconciliationFailure() {
+    if (_reconciliationFailure == null) return;
+    _reconciliationFailure = null;
+    _loadFailure = null;
+    _setStatus(
+      _profile == null ? ProfileStatus.needsNickname : ProfileStatus.ready,
+    );
   }
 
   Future<T> _enqueue<T>(Future<T> Function() operation) {

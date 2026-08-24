@@ -5,9 +5,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.lang.reflect.InvocationTargetException
 
 @RunWith(AndroidJUnit4::class)
 class NicknameRulesAarTest {
@@ -37,6 +39,29 @@ class NicknameRulesAarTest {
             val result = normalize.invoke(companion, testCase.getString("input")) as String?
             val expected = testCase.getString("display").takeIf { testCase.getBoolean("valid") }
             assertEquals(testCase.getString("name"), expected, result)
+        }
+    }
+
+    @Test
+    fun malformedNativeJsonReachesTheStableUnavailableMapping() {
+        val context = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = context.createPackageContext(
+            "me.zqydev.gamebox",
+            Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY,
+        )
+        val channelClass = targetContext.classLoader.loadClass(
+            "me.zqydev.gamebox.AppProfileChannel",
+        )
+        val companion = channelClass.getDeclaredField("Companion").get(null)
+        val decode = companion.javaClass
+            .getDeclaredMethod("decodeNormalizationResponse", String::class.java)
+            .apply { isAccessible = true }
+
+        try {
+            decode.invoke(companion, "{")
+            fail("malformed native JSON was accepted")
+        } catch (error: InvocationTargetException) {
+            assertEquals("JSONException", error.cause?.javaClass?.simpleName)
         }
     }
 }

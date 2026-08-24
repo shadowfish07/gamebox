@@ -140,6 +140,98 @@ void main() {
   });
 
   testWidgets(
+    'profile retry migrates retained authenticated nickname after load failure',
+    (tester) async {
+      final now = DateTime.utc(2026, 8, 24, 12);
+      final session = SessionController(
+        authApi: _RestoredAuthApi(now),
+        tokenStore: _ValueTokenStore('refresh-old'),
+        now: () => now,
+      );
+      final store = _MemoryProfileStore()
+        ..readError = const ProfileLoadFailure.unavailable();
+      final profile = ProfileController(
+        store: store,
+        nicknameRules: const _FixtureNicknameRules(),
+      );
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: _FakeGameLauncher(),
+          sessionController: session,
+          profileController: profile,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('profile-load-retry')), findsOneWidget);
+      expect(session.status, SessionStatus.authenticated);
+      store.readError = null;
+
+      await tester.tap(find.byKey(const Key('profile-load-retry')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const Key('nickname-page')), findsNothing);
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(find.text('你好，旧公服玩家'), findsOneWidget);
+      expect(profile.profile?.syncState, ProfileSyncState.synced);
+    },
+  );
+
+  testWidgets(
+    'foreground retries failed pending persistence without hiding local Home',
+    (tester) async {
+      final now = DateTime.utc(2026, 8, 24, 12);
+      final session = SessionController(
+        authApi: _RestoredAuthApi(now),
+        tokenStore: _ValueTokenStore('refresh-old'),
+        now: () => now,
+      );
+      final store = _MemoryProfileStore()
+        ..value = const AppProfile(
+          schemaVersion: 1,
+          nickname: '本地玩家',
+          syncState: ProfileSyncState.pending,
+        )
+        ..failWrites = true;
+      final profile = ProfileController(
+        store: store,
+        nicknameRules: const _FixtureNicknameRules(),
+      );
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: _FakeGameLauncher(),
+          sessionController: session,
+          profileController: profile,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(find.text('你好，本地玩家'), findsOneWidget);
+      expect(profile.profile?.lastSyncedNickname, isNull);
+      expect(
+        profile.reconciliationFailure,
+        ProfileReconciliationFailure.unavailable,
+      );
+      store.failWrites = false;
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(find.text('你好，本地玩家'), findsOneWidget);
+      expect(profile.profile?.lastSyncedNickname, '旧公服玩家');
+      expect(profile.reconciliationFailure, isNull);
+    },
+  );
+
+  testWidgets(
     'editing an existing profile keeps its route through atomic save',
     (tester) async {
       final session = SessionController(
@@ -405,6 +497,7 @@ final class _RestoredAuthApi implements AuthApi {
 final class _MemoryProfileStore implements AppProfileStore {
   AppProfile? value;
   Object? readError;
+  bool failWrites = false;
   Completer<void>? writeBarrier;
   final writes = <AppProfile>[];
 
@@ -418,6 +511,7 @@ final class _MemoryProfileStore implements AppProfileStore {
   Future<void> write(AppProfile profile) async {
     writes.add(profile);
     await writeBarrier?.future;
+    if (failWrites) throw const ProfileStoreFailure();
     value = profile;
   }
 }

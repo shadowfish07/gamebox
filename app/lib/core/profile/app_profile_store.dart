@@ -91,6 +91,18 @@ final class LocalAppProfileStore implements AppProfileStore {
   @override
   Future<void> write(AppProfile profile) async {
     if (!_isValidProfile(profile)) throw ArgumentError('Invalid app profile');
+    final bytes = utf8.encode(
+      jsonEncode(<String, Object?>{
+        'schemaVersion': profile.schemaVersion,
+        'nickname': profile.nickname,
+        'syncState': profile.syncState.name,
+        'lastSyncedNickname': profile.lastSyncedNickname,
+        'blockingSyncCode': profile.blockingSyncCode,
+      }),
+    );
+    if (bytes.length > _maximumProfileBytes) {
+      throw const ProfileStoreFailure();
+    }
     File? temporary;
     RandomAccessFile? output;
     try {
@@ -99,15 +111,6 @@ final class LocalAppProfileStore implements AppProfileStore {
       temporary = File(
         '${destination.parent.path}/.$_profileFilename.'
         '${DateTime.now().microsecondsSinceEpoch}.$sequence.tmp',
-      );
-      final bytes = utf8.encode(
-        jsonEncode(<String, Object?>{
-          'schemaVersion': profile.schemaVersion,
-          'nickname': profile.nickname,
-          'syncState': profile.syncState.name,
-          'lastSyncedNickname': profile.lastSyncedNickname,
-          'blockingSyncCode': profile.blockingSyncCode,
-        }),
       );
       final opened = await temporary.open(mode: FileMode.write);
       output = opened;

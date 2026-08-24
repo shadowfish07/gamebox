@@ -3,6 +3,7 @@ package me.zqydev.gamebox
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import lanengine.Lanengine
+import org.json.JSONException
 import org.json.JSONObject
 
 internal class AppProfileChannel(messenger: BinaryMessenger) : AutoCloseable {
@@ -27,6 +28,8 @@ internal class AppProfileChannel(messenger: BinaryMessenger) : AutoCloseable {
                 } else {
                     result.success(mapOf(NICKNAME_ARGUMENT to nickname))
                 }
+            } catch (_: JSONException) {
+                result.error(PROFILE_UNAVAILABLE_CODE, PROFILE_UNAVAILABLE_MESSAGE, null)
             } catch (_: RuntimeException) {
                 result.error(PROFILE_UNAVAILABLE_CODE, PROFILE_UNAVAILABLE_MESSAGE, null)
             }
@@ -47,9 +50,13 @@ internal class AppProfileChannel(messenger: BinaryMessenger) : AutoCloseable {
         const val PROFILE_UNAVAILABLE_MESSAGE = "Nickname rules are unavailable"
 
         fun normalizeNickname(raw: String): String? {
-            val response = JSONObject(Lanengine.normalizeNickname(raw))
-            if (!response.getBoolean("valid")) return null
-            return response.getString("display").takeIf { it.isNotEmpty() }
+            return decodeNormalizationResponse(Lanengine.normalizeNickname(raw))
+        }
+
+        fun decodeNormalizationResponse(response: String): String? {
+            val payload = JSONObject(response)
+            if (!payload.getBoolean("valid")) return null
+            return payload.getString("display").takeIf { it.isNotEmpty() }
         }
     }
 }
