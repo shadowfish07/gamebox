@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -51,13 +52,17 @@ type router struct {
 	games     *games.Registry
 	publisher MatchEventPublisher
 	hub       *matches.Hub
+	logger    *log.Logger
 }
 
 func NewRouter(config RouterConfig) (http.Handler, error) {
 	if config.Auth == nil || config.Matches == nil || config.Games == nil || nilInterface(config.Publisher) || config.Hub == nil || config.Logger == nil || config.RequestIDs == nil {
 		return nil, ErrInvalidConfiguration
 	}
-	router := &router{auth: config.Auth, matches: config.Matches, games: config.Games, publisher: config.Publisher, hub: config.Hub}
+	router := &router{
+		auth: config.Auth, matches: config.Matches, games: config.Games,
+		publisher: config.Publisher, hub: config.Hub, logger: config.Logger,
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", router.health)
@@ -235,6 +240,8 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 				return
 			}
 			writer.Header().Set("X-Request-ID", requestID)
+			request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey{}, requestID))
+			startedAt := time.Now()
 			// MaxBytesReader must receive the server's original writer so its
 			// private requestTooLarge signal can close an oversized HTTP/1.x
 			// connection. responseCapture deliberately stays outside this call.
@@ -248,7 +255,7 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 						writeAPIError(capture, http.StatusInternalServerError, "internal_error")
 					}
 				}
-				logger.Printf("request_id=%s method=%s path=%s status=%d panic=%t", requestID, safeRequestMethod(request.Method), safeRequestPattern(request.Pattern), capture.status, panicked)
+				logger.Printf("request_id=%s method=%s path=%s status=%d panic=%t duration_ms=%d", requestID, safeRequestMethod(request.Method), safeRequestPattern(request.Pattern), capture.status, panicked, time.Since(startedAt).Milliseconds())
 			}()
 			if !requestAcceptsJSONBody(request) {
 				if requestDeclaresBody(request) {
@@ -328,12 +335,50 @@ func (router *router) authenticated(next http.Handler) http.Handler {
 		}
 		user, authErr := router.auth.Authenticate(request.Context(), credential)
 		if authErr != nil {
+			router.logServiceError(request, "authenticate", authErr)
 			writeServiceError(writer, authErr)
 			return
 		}
 		contextWithUser := context.WithValue(request.Context(), authenticatedUserContextKey{}, user)
 		next.ServeHTTP(writer, request.WithContext(contextWithUser))
 	})
+}
+
+type requestIDContextKey struct{}
+
+func requestIDFrom(request *http.Request) string {
+	if request == nil {
+		return "unavailable"
+	}
+	requestID, _ := request.Context().Value(requestIDContextKey{}).(string)
+	if !canonicalRequestID(requestID) {
+		return "unavailable"
+	}
+	return requestID
+}
+
+func (router *router) logServiceError(request *http.Request, phase string, err error) {
+	if router == nil || router.logger == nil || phase == "" || err == nil {
+		return
+	}
+	router.logger.Printf("event=service_error request_id=%s phase=%s category=%s", requestIDFrom(request), phase, safeServiceErrorCategory(err))
+}
+
+func safeServiceErrorCategory(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context_deadline"
+	case errors.Is(err, auth.ErrUnauthorized):
+		return "unauthorized"
+	case errors.Is(err, auth.ErrInvalidRequest), errors.Is(err, matches.ErrInvalidRequest):
+		return "invalid_request"
+	case errors.Is(err, matches.ErrInternal), errors.Is(err, auth.ErrInternal):
+		return "internal"
+	default:
+		return "unknown"
+	}
 }
 
 func authenticatedUser(request *http.Request) (users.User, bool) {

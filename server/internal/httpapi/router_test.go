@@ -422,6 +422,36 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 }
 
+func TestGomokuStatusFailureWritesAIsolatedDiagnosticLog(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "diagnostic-a", "Alice")
+	bob := fixture.register(t, "diagnostic-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	if _, err := fixture.db.Exec(`UPDATE matches SET revision=revision+1 WHERE id=?`, matchBody.Match.ID); err != nil {
+		t.Fatalf("corrupt active match for diagnostic test: %v", err)
+	}
+
+	response := fixture.request(t, http.MethodGet, "/v1/games/gomoku/status", "", alice.Session.AccessToken)
+	if response.Code != http.StatusInternalServerError || responseErrorCode(t, response) != "internal_error" {
+		t.Fatalf("status=(%d,%s)", response.Code, response.Body.String())
+	}
+	logged := fixture.logs.String()
+	if !strings.Contains(logged, "event=service_error") ||
+		!strings.Contains(logged, "phase=gomoku_status") ||
+		!strings.Contains(logged, "category=internal") {
+		t.Fatalf("missing isolated status diagnostic: %s", logged)
+	}
+	if strings.Contains(logged, "diagnostic-a") || strings.Contains(logged, alice.Session.AccessToken) {
+		t.Fatalf("diagnostic log leaked user data or credential: %s", logged)
+	}
+}
+
 func authTokenBytes(token string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(token)
 }

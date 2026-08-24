@@ -85,6 +85,7 @@ func (router *router) gomokuStatus(writer http.ResponseWriter, request *http.Req
 	}
 	active, statusErr := router.matches.CurrentMatch(request.Context(), gomoku.GameID, user.ID)
 	if statusErr != nil {
+		router.logServiceError(request, "gomoku_status", statusErr)
 		writeServiceError(writer, statusErr)
 		return
 	}

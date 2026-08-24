@@ -405,12 +405,12 @@ func (writer *componentLogWriter) writeLine(line string) {
 		}
 		switch key {
 		case "event":
-			if value == "websocket_connected" || value == "websocket_closed" || value == "hub_closed" {
+			if value == "service_error" || value == "websocket_connected" || value == "websocket_closed" || value == "hub_closed" {
 				event = value
 			}
-		case "request_id", "method", "path", "connection_id", "match_id", "user_id":
+		case "request_id", "method", "path", "connection_id", "match_id", "user_id", "phase", "category":
 			fields[key] = value
-		case "status":
+		case "status", "duration_ms":
 			if status, err := strconv.Atoi(value); err == nil {
 				fields[key] = status
 			}
@@ -420,7 +420,7 @@ func (writer *componentLogWriter) writeLine(line string) {
 			}
 		}
 	}
-	if _, request := fields["request_id"]; request {
+	if _, request := fields["request_id"]; request && event == "component" {
 		event = "http_request"
 	}
 	writer.logger.write(event, fields)
