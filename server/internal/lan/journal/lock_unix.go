@@ -30,14 +30,27 @@ func acquireJournalRootLock(root string) (*os.File, error) {
 	return file, nil
 }
 
-func releaseJournalRootLock(file *os.File) error {
-	unlockErr := unix.Flock(int(file.Fd()), unix.LOCK_UN)
-	closeErr := file.Close()
-	if unlockErr != nil {
-		return fmt.Errorf("unlock journal root: %w", unlockErr)
+type journalLockReleaseOps struct {
+	unlock func(int) error
+	close  func(*os.File) error
+}
+
+func releaseJournalRootLock(file *os.File) lockReleaseOutcome {
+	return releaseJournalRootLockWithOps(file, journalLockReleaseOps{
+		unlock: func(descriptor int) error { return unix.Flock(descriptor, unix.LOCK_UN) },
+		close:  func(file *os.File) error { return file.Close() },
+	})
+}
+
+func releaseJournalRootLockWithOps(file *os.File, ops journalLockReleaseOps) lockReleaseOutcome {
+	if file == nil || ops.unlock == nil || ops.close == nil {
+		return lockReleaseOutcome{err: errors.New("invalid journal lock release")}
 	}
-	if closeErr != nil {
-		return fmt.Errorf("close journal lock: %w", closeErr)
+	if err := ops.unlock(int(file.Fd())); err != nil {
+		return lockReleaseOutcome{err: fmt.Errorf("unlock journal root: %w", err)}
 	}
-	return nil
+	if err := ops.close(file); err != nil {
+		return lockReleaseOutcome{ownershipReleased: true, err: fmt.Errorf("close journal lock: %w", err)}
+	}
+	return lockReleaseOutcome{ownershipReleased: true}
 }

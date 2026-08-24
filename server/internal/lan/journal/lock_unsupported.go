@@ -13,4 +13,6 @@ func acquireJournalRootLock(string) (*os.File, error) {
 	return nil, errors.New("journal root locking is unsupported on this platform")
 }
 
-func releaseJournalRootLock(*os.File) error { return nil }
+func releaseJournalRootLock(*os.File) lockReleaseOutcome {
+	return lockReleaseOutcome{ownershipReleased: true}
+}

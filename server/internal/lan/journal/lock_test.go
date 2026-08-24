@@ -11,7 +11,86 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
+
+func TestReleaseJournalRootLockUnlockFailureRetainsDescriptorForRetry(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "journal-lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	unlockFailure := errors.New("unlock failed")
+	unlockCalls := 0
+	closeCalls := 0
+	ops := journalLockReleaseOps{
+		unlock: func(int) error {
+			unlockCalls++
+			if unlockCalls == 1 {
+				return unlockFailure
+			}
+			return unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		},
+		close: func(file *os.File) error {
+			closeCalls++
+			return file.Close()
+		},
+	}
+
+	first := releaseJournalRootLockWithOps(file, ops)
+	if first.ownershipReleased || !errors.Is(first.err, unlockFailure) {
+		t.Fatalf("first release = %#v, want retained unlock failure", first)
+	}
+	if closeCalls != 0 {
+		t.Fatalf("close calls after unlock failure = %d, want 0", closeCalls)
+	}
+	if _, err := file.Stat(); err != nil {
+		t.Fatalf("retained descriptor is not retryable: %v", err)
+	}
+
+	second := releaseJournalRootLockWithOps(file, ops)
+	if !second.ownershipReleased || second.err != nil {
+		t.Fatalf("second release = %#v, want released success", second)
+	}
+	if unlockCalls != 2 || closeCalls != 1 {
+		t.Fatalf("release calls unlock=%d close=%d, want 2/1", unlockCalls, closeCalls)
+	}
+}
+
+func TestReleaseJournalRootLockCloseErrorReportsReleasedAfterOneClose(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "journal-lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	closeFailure := errors.New("close failed after ownership release")
+	closeCalls := 0
+	outcome := releaseJournalRootLockWithOps(file, journalLockReleaseOps{
+		unlock: func(descriptor int) error { return unix.Flock(descriptor, unix.LOCK_UN) },
+		close: func(file *os.File) error {
+			closeCalls++
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return closeFailure
+		},
+	})
+
+	if !outcome.ownershipReleased || !errors.Is(outcome.err, closeFailure) {
+		t.Fatalf("release = %#v, want released close failure", outcome)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want exactly 1", closeCalls)
+	}
+	if _, err := file.Stat(); err == nil {
+		t.Fatal("close-error fixture did not actually close the descriptor")
+	}
+}
 
 func TestOpenExclusivelyLocksRootUntilClose(t *testing.T) {
 	root := t.TempDir()

@@ -693,12 +693,12 @@ func TestStoreCloseFailureRetainsLockOwnerAndRetries(t *testing.T) {
 	calls := 0
 	store := &Store{
 		lockFile: lockFile,
-		releaseLock: func(file *os.File) error {
+		releaseLock: func(file *os.File) lockReleaseOutcome {
 			calls++
 			if calls == 1 {
-				return transient
+				return lockReleaseOutcome{err: transient}
 			}
-			return file.Close()
+			return lockReleaseOutcome{ownershipReleased: true, err: file.Close()}
 		},
 	}
 
@@ -713,6 +713,46 @@ func TestStoreCloseFailureRetainsLockOwnerAndRetries(t *testing.T) {
 	}
 	if calls != 2 || !store.closed || store.lockFile != nil {
 		t.Fatalf("retry state calls=%d closed=%v lock=%v", calls, store.closed, store.lockFile)
+	}
+}
+
+func TestStoreCloseErrorAfterOwnershipReleaseIsTerminalAndRejectsMutations(t *testing.T) {
+	root := t.TempDir()
+	ops := &recordingFileOps{root: root}
+	store, _, err := Open(root, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeFailure := errors.New("close failed after unlock")
+	releaseCalls := 0
+	store.releaseLock = func(file *os.File) lockReleaseOutcome {
+		releaseCalls++
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return lockReleaseOutcome{ownershipReleased: true, err: closeFailure}
+	}
+
+	if err := store.Close(); !errors.Is(err, closeFailure) {
+		t.Fatalf("first Close error = %v, want close failure", err)
+	}
+	if !store.closed || store.lockFile != nil {
+		t.Fatalf("released ownership state closed=%v lock=%v", store.closed, store.lockFile)
+	}
+	if _, err := store.Append(context.Background(), Draft{Type: "room.created", Payload: json.RawMessage(`{"createdAt":1}`)}); !errors.Is(err, ErrJournalClosed) {
+		t.Fatalf("Append after released close error = %v, want ErrJournalClosed", err)
+	}
+	if err := store.WriteManifestProjection("room-1", "gomoku", "192.168.1.7:49152", 1); !errors.Is(err, ErrJournalClosed) {
+		t.Fatalf("manifest after released close error = %v, want ErrJournalClosed", err)
+	}
+	if len(ops.calls) != 0 {
+		t.Fatalf("terminal mutations reached file operations: %v", ops.calls)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("second Close error = %v", err)
+	}
+	if releaseCalls != 1 {
+		t.Fatalf("released descriptor was touched %d times, want once", releaseCalls)
 	}
 }
 

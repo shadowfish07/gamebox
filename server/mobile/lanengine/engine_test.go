@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/lan/room"
 	"me.zqydev/gamebox/server/internal/protocol"
 )
 
@@ -672,6 +673,52 @@ func TestEngineStopFailureRetainsOwnerAndAuthorityUntilRetrySucceeds(t *testing.
 	}
 	if err := engine.DeleteActiveRoom(); err != nil {
 		t.Fatalf("DeleteActiveRoom after successful retry error = %v", err)
+	}
+}
+
+func TestEngineRetriesFailedTerminalServiceCloseBeforeCleanup(t *testing.T) {
+	root := t.TempDir()
+	active := filepath.Join(root, "active_room")
+	if err := os.MkdirAll(active, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(active, "0000000000000001.json")
+	if err := os.WriteFile(journalPath, []byte("recoverable-authority"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := NewEngine(root)
+	engine.service = &room.Service{}
+	closeFailure := errors.New("terminal store close failure")
+	closeCalls := 0
+	engine.closeService = func(*room.Service) error {
+		closeCalls++
+		if closeCalls == 1 {
+			return closeFailure
+		}
+		return nil
+	}
+
+	if err := engine.Stop(); !errors.Is(err, ErrInternal) {
+		t.Fatalf("first Stop error = %v, want ErrInternal", err)
+	}
+	if engine.service == nil || closeCalls != 1 {
+		t.Fatalf("failed service owner state service=%v calls=%d", engine.service, closeCalls)
+	}
+	if err := engine.DeleteActiveRoom(); !errors.Is(err, ErrCleanupNotReady) {
+		t.Fatalf("DeleteActiveRoom after close failure = %v, want ErrCleanupNotReady", err)
+	}
+	if _, err := os.Stat(journalPath); err != nil {
+		t.Fatalf("journal changed after first close failure: %v", err)
+	}
+
+	if err := engine.Stop(); err != nil {
+		t.Fatalf("retry Stop error = %v", err)
+	}
+	if engine.service != nil || closeCalls != 2 {
+		t.Fatalf("service retry state service=%v calls=%d", engine.service, closeCalls)
+	}
+	if err := engine.DeleteActiveRoom(); err != nil {
+		t.Fatalf("DeleteActiveRoom after retry error = %v", err)
 	}
 }
 

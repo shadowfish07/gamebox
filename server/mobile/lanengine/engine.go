@@ -70,6 +70,7 @@ type Engine struct {
 	router          *httpapi.Router
 	server          *http.Server
 	listener        net.Listener
+	closeService    func(*room.Service) error
 	secrets         roomSecrets
 	port            int
 	endpointChanged bool
@@ -128,7 +129,7 @@ func NewEngine(root string) (*Engine, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, ErrInvalidConfiguration
 	}
-	return &Engine{root: filepath.Clean(root)}, nil
+	return &Engine{root: filepath.Clean(root), closeService: func(service *room.Service) error { return service.Close() }}, nil
 }
 
 func (engine *Engine) Start(roomSecretsJSON string) (string, error) {
@@ -417,7 +418,11 @@ func (engine *Engine) stopLocked() error {
 		}
 	}
 	if engine.service != nil {
-		if engine.service.Close() != nil {
+		closeService := engine.closeService
+		if closeService == nil {
+			closeService = func(service *room.Service) error { return service.Close() }
+		}
+		if closeService(engine.service) != nil {
 			failed = true
 		} else {
 			engine.service = nil

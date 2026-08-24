@@ -35,6 +35,11 @@ type FileOps interface {
 
 type committedRecordReader func(root, name string, limit int) ([]byte, error)
 
+type lockReleaseOutcome struct {
+	ownershipReleased bool
+	err               error
+}
+
 // Store is safe for concurrent use. A directory-sync failure poisons it because
 // the rename may already have made a record visible after the caller saw error.
 type Store struct {
@@ -45,7 +50,7 @@ type Store struct {
 	poisoned    bool
 	closed      bool
 	lockFile    *os.File
-	releaseLock func(*os.File) error
+	releaseLock func(*os.File) lockReleaseOutcome
 }
 
 // Open acquires the lifetime root lock before removing only uncommitted journal
@@ -212,11 +217,17 @@ func (store *Store) Close() error {
 	if releaseLock == nil {
 		releaseLock = releaseJournalRootLock
 	}
-	if err := releaseLock(lockFile); err != nil {
-		return err
+	outcome := releaseLock(lockFile)
+	if outcome.ownershipReleased {
+		store.lockFile = nil
+		store.closed = true
 	}
-	store.lockFile = nil
-	store.closed = true
+	if outcome.err != nil {
+		return outcome.err
+	}
+	if !outcome.ownershipReleased {
+		return errors.New("journal lock release retained ownership without an error")
+	}
 	return nil
 }
 
