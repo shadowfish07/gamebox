@@ -45,7 +45,7 @@ final class ProfileController extends ChangeNotifier {
   DateTime? _lastAutomaticAttemptAt;
   var _profileIntentGeneration = 0;
   var _publicSessionGeneration = 0;
-  final Set<(int, int)> _activeSyncAttempts = {};
+  final Map<int, Future<void>> _publicSyncTails = {};
   var _disposed = false;
 
   ProfileStatus get status => _status;
@@ -287,10 +287,58 @@ final class ProfileController extends ChangeNotifier {
         now.difference(lastAutomaticAttemptAt) < _automaticRetryCooldown) {
       return;
     }
-    final intentGeneration = _profileIntentGeneration;
     final sessionGeneration = _publicSessionGeneration;
-    final attemptKey = (sessionGeneration, intentGeneration);
-    if (!_activeSyncAttempts.add(attemptKey)) return;
+    final previous = _publicSyncTails[sessionGeneration];
+    final scheduled = previous == null
+        ? _runPublicSyncAttempt(
+            automatic: automatic,
+            expectedSessionGeneration: sessionGeneration,
+          )
+        : previous.then(
+            (_) => _runPublicSyncAttempt(
+              automatic: automatic,
+              expectedSessionGeneration: sessionGeneration,
+            ),
+          );
+    _publicSyncTails[sessionGeneration] = scheduled;
+    try {
+      await scheduled;
+    } finally {
+      if (identical(_publicSyncTails[sessionGeneration], scheduled)) {
+        _publicSyncTails.remove(sessionGeneration);
+      }
+    }
+  }
+
+  Future<void> _runPublicSyncAttempt({
+    required bool automatic,
+    required int expectedSessionGeneration,
+  }) async {
+    if (_disposed ||
+        expectedSessionGeneration != _publicSessionGeneration ||
+        _status == ProfileStatus.loading ||
+        _status == ProfileStatus.loadFailure) {
+      return;
+    }
+    final current = _profile;
+    final updater = _updatePublicNickname;
+    final publicUserId = _publicUserId;
+    if (current == null ||
+        updater == null ||
+        publicUserId == null ||
+        automatic && current.syncState != ProfileSyncState.pending ||
+        !automatic && current.syncState == ProfileSyncState.synced) {
+      return;
+    }
+    final now = _now();
+    final lastAutomaticAttemptAt = _lastAutomaticAttemptAt;
+    if (automatic &&
+        _lastAutomaticNickname == current.nickname &&
+        lastAutomaticAttemptAt != null &&
+        now.difference(lastAutomaticAttemptAt) < _automaticRetryCooldown) {
+      return;
+    }
+    final intentGeneration = _profileIntentGeneration;
     if (automatic) {
       _lastAutomaticNickname = current.nickname;
       _lastAutomaticAttemptAt = now;
@@ -302,12 +350,10 @@ final class ProfileController extends ChangeNotifier {
       failure = error;
     } on Object {
       failure = const ApiError(code: 'internal_error', message: '昵称同步失败，请稍后重试');
-    } finally {
-      _activeSyncAttempts.remove(attemptKey);
     }
     if (!_isCurrentSync(
       intentGeneration,
-      sessionGeneration,
+      expectedSessionGeneration,
       publicUserId,
       current.nickname,
     )) {
@@ -324,7 +370,7 @@ final class ProfileController extends ChangeNotifier {
     await _enqueue(() async {
       if (!_isCurrentSync(
         intentGeneration,
-        sessionGeneration,
+        expectedSessionGeneration,
         publicUserId,
         current.nickname,
       )) {
@@ -359,7 +405,7 @@ final class ProfileController extends ChangeNotifier {
       }
       if (!_isCurrentSync(
         intentGeneration,
-        sessionGeneration,
+        expectedSessionGeneration,
         publicUserId,
         current.nickname,
       )) {
@@ -415,7 +461,7 @@ final class ProfileController extends ChangeNotifier {
     _publicSessionGeneration += 1;
     _publicUserId = null;
     _updatePublicNickname = null;
-    _activeSyncAttempts.clear();
+    _publicSyncTails.clear();
     super.dispose();
   }
 }

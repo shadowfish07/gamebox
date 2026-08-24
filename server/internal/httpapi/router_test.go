@@ -1872,7 +1872,11 @@ func TestGetRoutesAdvertiseAndHonorHEAD(t *testing.T) {
 	for _, test := range []struct {
 		path  string
 		token string
-	}{{path: "/healthz"}, {path: "/v1/games", token: alice.Session.AccessToken}} {
+	}{
+		{path: "/healthz"},
+		{path: "/v1/me", token: alice.Session.AccessToken},
+		{path: "/v1/games", token: alice.Session.AccessToken},
+	} {
 		request, _ := http.NewRequest(http.MethodHead, server.URL+test.path, nil)
 		if test.token != "" {
 			request.Header.Set("Authorization", "Bearer "+test.token)

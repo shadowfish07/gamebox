@@ -507,6 +507,102 @@ void main() {
     },
   );
 
+  test('public nickname mutations are serialized so an older completion cannot win', () async {
+    final server = _DelayedPublicNicknameServer(nickname: '服务器玩家');
+    final controller = ProfileController(
+      store: _MemoryProfileStore(),
+      nicknameRules: const _FixtureRules(),
+    );
+    await controller.load();
+    await controller.authenticatedSessionStarted(
+      userId: '11111111-1111-4111-8111-111111111111',
+      serverNickname: server.nickname,
+      updateNickname: server.update,
+    );
+
+    await controller.commitNickname('第一版本');
+    await server.started('第一版本');
+    await controller.commitNickname('第二版本');
+    server.complete('第二版本');
+    await _drainAsync();
+    server.complete('第一版本');
+    await _drainAsync();
+
+    expect(server.calls, ['第一版本', '第二版本']);
+    expect(server.maximumInFlight, 1);
+    expect(server.nickname, '第二版本');
+    expect(controller.profile?.nickname, '第二版本');
+    expect(controller.profile?.syncState, ProfileSyncState.synced);
+    expect(controller.profile?.lastSyncedNickname, '第二版本');
+  });
+
+  test(
+    'queued nickname intents coalesce to one PATCH of the newest value',
+    () async {
+      final server = _DelayedPublicNicknameServer(nickname: '服务器玩家');
+      final controller = ProfileController(
+        store: _MemoryProfileStore(),
+        nicknameRules: const _FixtureRules(),
+      );
+      await controller.load();
+      await controller.authenticatedSessionStarted(
+        userId: '11111111-1111-4111-8111-111111111111',
+        serverNickname: server.nickname,
+        updateNickname: server.update,
+      );
+
+      await controller.commitNickname('占位版本');
+      await server.started('占位版本');
+      await controller.commitNickname('第一版本');
+      await controller.commitNickname('第二版本');
+      server.complete('第一版本');
+      server.complete('第二版本');
+      server.complete('占位版本');
+      await _drainAsync();
+
+      expect(server.calls, ['占位版本', '第二版本']);
+      expect(server.maximumInFlight, 1);
+      expect(server.nickname, '第二版本');
+      expect(controller.profile?.nickname, '第二版本');
+      expect(controller.profile?.syncState, ProfileSyncState.synced);
+    },
+  );
+
+  test(
+    'queued newest nickname still runs after the older PATCH fails',
+    () async {
+      final server = _DelayedPublicNicknameServer(nickname: '服务器玩家')
+        ..failures['第一版本'] = const ApiError(
+          code: 'network_error',
+          message: '暂时失败',
+        );
+      final controller = ProfileController(
+        store: _MemoryProfileStore(),
+        nicknameRules: const _FixtureRules(),
+      );
+      await controller.load();
+      await controller.authenticatedSessionStarted(
+        userId: '11111111-1111-4111-8111-111111111111',
+        serverNickname: server.nickname,
+        updateNickname: server.update,
+      );
+
+      await controller.commitNickname('第一版本');
+      await server.started('第一版本');
+      await controller.commitNickname('第二版本');
+      server.complete('第一版本');
+      await server.started('第二版本');
+      server.complete('第二版本');
+      await _drainAsync();
+
+      expect(server.calls, ['第一版本', '第二版本']);
+      expect(server.maximumInFlight, 1);
+      expect(server.nickname, '第二版本');
+      expect(controller.profile?.nickname, '第二版本');
+      expect(controller.profile?.syncState, ProfileSyncState.synced);
+    },
+  );
+
   test(
     'stale blocking failure cannot overwrite a newer successful nickname',
     () async {
@@ -688,5 +784,35 @@ final class _DelayedRules implements NicknameRules {
   Future<String> normalize(String raw) {
     (_started[raw] ??= Completer<void>()).complete();
     return (_results[raw] ??= Completer<String>()).future;
+  }
+}
+
+final class _DelayedPublicNicknameServer {
+  _DelayedPublicNicknameServer({required this.nickname});
+
+  String nickname;
+  final failures = <String, ApiError>{};
+  final calls = <String>[];
+  final _started = <String, Completer<void>>{};
+  final _completions = <String, Completer<void>>{};
+  var _inFlight = 0;
+  var maximumInFlight = 0;
+
+  Future<void> started(String nickname) =>
+      (_started[nickname] ??= Completer<void>()).future;
+
+  void complete(String nickname) =>
+      (_completions[nickname] ??= Completer<void>()).complete();
+
+  Future<ApiError?> update(String nextNickname) async {
+    calls.add(nextNickname);
+    _inFlight += 1;
+    if (_inFlight > maximumInFlight) maximumInFlight = _inFlight;
+    (_started[nextNickname] ??= Completer<void>()).complete();
+    await (_completions[nextNickname] ??= Completer<void>()).future;
+    final failure = failures[nextNickname];
+    if (failure == null) nickname = nextNickname;
+    _inFlight -= 1;
+    return failure;
   }
 }
