@@ -14,7 +14,7 @@ on:
       api_base_url:
         description: API base URL baked into this debug build
         required: false
-        default: 'https://staging.gamebox.zqydev.me'
+        default: 'https://staging-gamebox.zqydev.me'
         type: string
 
 permissions:
@@ -29,7 +29,7 @@ env:
   JAVA_VERSION: "17"
   GODOT_VERSION: "4.7.0"
   DEBUG_RELEASE_TAG: "debug-latest"
-  DEBUG_API_BASE_URL: "https://staging.gamebox.zqydev.me"
+  DEBUG_API_BASE_URL: "https://staging-gamebox.zqydev.me"
 
 jobs:
   build-and-publish:

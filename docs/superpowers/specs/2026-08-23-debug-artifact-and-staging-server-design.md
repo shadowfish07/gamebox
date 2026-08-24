@@ -20,7 +20,7 @@ Status: Validated
 | Debug 包发布方式 | 每次 push 到 `main` 自动构建 → 滚动 pre-release（固定 tag `debug-latest`，资产每次 `--clobber` 覆盖） |
 | 包名后缀范围 | 仅 CI 发布的包加 `.debug`（通过 `GAMEBOX_DEBUG_ARTIFACT` 环境变量控制），本地 `flutter run`、`verify.sh`、smoke/E2E 脚本零影响 |
 | Staging 部署机制 | `deploy/macos/install-staging.sh` 手动脚本，在 Mac 上运行；需要更新服务端代码时 `git pull` 后重跑 |
-| Staging 域名 | `staging.gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
+| Staging 域名 | `staging-gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
 | Staging 网络 | 复用正式服的 Cloudflare Tunnel，在 tunnel ingress 中加一条 hostname |
 
 ## Architecture
@@ -31,7 +31,7 @@ Status: Validated
 
 - 触发：push 到 `main`（`paths` 过滤到 `app/**`、`game_runtime/**`、`tool/**`、
   `deploy/**`）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
-  `https://staging.gamebox.zqydev.me`）。
+  `https://staging-gamebox.zqydev.me`）。
 - `concurrency: cancel-in-progress: true`，只保留最新一次构建。
 - 工具链对齐现有 CI/release：Java 17、Flutter 3.47.1、Godot 4.7.0、接受 Android
   licenses。
@@ -71,7 +71,7 @@ Status: Validated
 | 日志 | `~/Library/Logs/Gamebox/` | `~/Library/Logs/Gamebox/staging/` |
 | Keychain 密钥 | `me.zqydev.gamebox.jwt-secret` / `.token-pepper` | `me.zqydev.gamebox.staging.jwt-secret` / `.token-pepper` |
 | launchd 标签 | `me.zqydev.gamebox.server` | `me.zqydev.gamebox.staging.server` |
-| 公网地址 | `https://gamebox.zqydev.me` | `https://staging.gamebox.zqydev.me` |
+| 公网地址 | `https://gamebox.zqydev.me` | `https://staging-gamebox.zqydev.me` |
 
 - `run-server.sh` 参数化：新增 `GAMEBOX_JWT_SERVICE` / `GAMEBOX_TOKEN_PEPPER_SERVICE`
   环境变量（缺省指向正式服密钥服务名，向后兼容）；staging 的 launchd plist 传入
@@ -80,15 +80,20 @@ Status: Validated
   plist 传不同的 `GAMEBOX_LOCAL_HEALTH_URL` / `GAMEBOX_PUBLIC_HEALTH_URL` /
   `GAMEBOX_DATA_DIR` / `GAMEBOX_DB_PATH` / `GAMEBOX_BACKUP_DIR`。
 - `cloudflared-config.yml` 增加一条 ingress：
-  `staging.gamebox.zqydev.me → http://127.0.0.1:18081`。两个安装脚本都从该模板
+  `staging-gamebox.zqydev.me → http://127.0.0.1:18081`。两个安装脚本都从该模板
   生成合并配置；`install-staging.sh` 重新生成配置并 kick 现有 tunnel agent
   （改配置对正式服无影响，staging hostname 未配置前只是 404）。
 - Staging 独立随机密钥：`openssl rand -base64 48` 生成存入 Keychain。
 
 ### DNS（已完成）
 
+> **域名必须是单级子域**：Cloudflare 免费 Universal SSL 通配符只覆盖
+> `*.zqydev.me` 一层。最初选的 `staging.gamebox.zqydev.me` 是两级子域，边缘
+> 无证书导致公网 TLS 握手失败，因此改为单级 `staging-gamebox.zqydev.me`。
+> 若需要两级子域必须付费 Advanced Certificate，勿改回。
+
 - `cloudflared tunnel route dns 498bfaa8-584d-4111-a4fa-13e7deec223c
-  staging.gamebox.zqydev.me` 已创建 CNAME（proxied），DoH 已解析到 Cloudflare
+  staging-gamebox.zqydev.me` 已创建 CNAME（proxied），DoH 已解析到 Cloudflare
   代理 IP。
 
 ## Files changed
@@ -104,7 +109,7 @@ Status: Validated
 ## One-time manual step
 
 Cloudflare Dashboard → Zero Trust → Tunnels → gamebox tunnel → Public Hostname，
-添加 `staging.gamebox.zqydev.me`（DNS 记录已由 `cloudflared tunnel route dns`
+添加 `staging-gamebox.zqydev.me`（DNS 记录已由 `cloudflared tunnel route dns`
 创建，若 Dashboard 未自动关联，可在 Public Hostname 处补一次以完善隧道管理视图；
 路由最终由本地 `cloudflared-config.yml` ingress 控制）。
 

@@ -175,7 +175,7 @@ from accepting future in-app updates.
 Release builds use `https://gamebox.zqydev.me` as their API origin. Local debug
 builds retain the emulator-friendly `http://10.0.2.2:8080` default unless
 overridden with `GAMEBOX_API_BASE_URL`. CI-published debug builds use the
-staging origin `https://staging.gamebox.zqydev.me` (see below).
+staging origin `https://staging-gamebox.zqydev.me` (see below).
 
 For a stable release, update `app/pubspec.yaml` to the intended version, commit
 and push it, then create and push the matching tag:
@@ -205,7 +205,7 @@ The published debug build uses the independent application id
 `me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment
 variable in `app/android/app/build.gradle.kts`), so it installs and runs
 alongside a release install on the same device and is labeled `gamebox debug`.
-It targets the staging server `https://staging.gamebox.zqydev.me` by default;
+It targets the staging server `https://staging-gamebox.zqydev.me` by default;
 `workflow_dispatch` can override the API origin.
 
 ## macOS backend deployment
@@ -232,7 +232,7 @@ LaunchAgent so failures or configuration changes do not affect other hostnames.
 instance on the same machine for staging use. It shares the release binaries
 and the production Cloudflare Tunnel, but keeps its own port
 (`127.0.0.1:18081`), SQLite database, Keychain secrets, and launchd agents, and
-is published at `https://staging.gamebox.zqydev.me`. Rerun it after pulling the
+is published at `https://staging-gamebox.zqydev.me`. Rerun it after pulling the
 latest `main` to refresh staging with current server code:
 
 ```bash
@@ -243,9 +243,9 @@ curl --fail --silent http://127.0.0.1:18081/healthz
 
 The tunnel ingress for the staging hostname lives in
 `deploy/macos/cloudflared-config.yml` (shared with the production tunnel). It
-requires the one-time DNS record `staging.gamebox.zqydev.me` pointing at the
+requires the one-time DNS record `staging-gamebox.zqydev.me` pointing at the
 tunnel, which `cloudflared tunnel route dns <tunnel-id>
-staging.gamebox.zqydev.me` creates. Debug builds distributed through the
+staging-gamebox.zqydev.me` creates. Debug builds distributed through the
 `debug-latest` release target this staging server.
 
 ## Verification

@@ -5,7 +5,7 @@ umask 077
 # Installs a second, fully isolated Gamebox server instance for staging use.
 # It shares the release binaries and the production Cloudflare Tunnel, but keeps
 # its own port, SQLite database, Keychain secrets, logs, and launchd agents, and
-# is published at https://staging.gamebox.zqydev.me.
+# is published at https://staging-gamebox.zqydev.me.
 #
 # Run after pulling the latest main to refresh staging with current server code:
 #   zsh deploy/macos/install-staging.sh
@@ -24,7 +24,7 @@ readonly server_label="me.zqydev.gamebox.staging.server"
 readonly health_label="me.zqydev.gamebox.staging.health"
 readonly backup_label="me.zqydev.gamebox.staging.backup"
 readonly tunnel_label="me.zqydev.gamebox.tunnel" # owned by install.sh
-readonly public_health_url="${GAMEBOX_PUBLIC_HEALTH_URL:-https://staging.gamebox.zqydev.me/healthz}"
+readonly public_health_url="${GAMEBOX_PUBLIC_HEALTH_URL:-https://staging-gamebox.zqydev.me/healthz}"
 readonly local_health_url="${GAMEBOX_LOCAL_HEALTH_URL:-http://127.0.0.1:18081/healthz}"
 
 temporary_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/gamebox-staging-deploy.XXXXXX")"
