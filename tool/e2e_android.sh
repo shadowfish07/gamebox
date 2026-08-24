@@ -1828,6 +1828,8 @@ self_test() {
     || { printf 'EXIT cleanup no longer restores selected device visuals\n' >&2; return 1; }
   grep -F 'stop_e2e_server' <<<"$cleanup_source" >/dev/null \
     || { printf 'EXIT cleanup no longer stops the exact owned server\n' >&2; return 1; }
+  grep -F 'declare -F stop_first_connect_loading_watch' <<<"$cleanup_source" >/dev/null \
+    || { printf 'early EXIT cleanup calls an unavailable loading watcher\n' >&2; return 1; }
   local visual_configuration_source
   visual_configuration_source="$(
     sed -n '/^configure_device_visuals() {/,/^}/p' "${BASH_SOURCE[0]}"
@@ -2048,7 +2050,9 @@ cleanup() {
   local finalized_exit_code
   trap - EXIT INT TERM ERR
   set +e
-  stop_first_connect_loading_watch || cleanup_ok=0
+  if declare -F stop_first_connect_loading_watch >/dev/null; then
+    stop_first_connect_loading_watch || cleanup_ok=0
+  fi
   terminate_registered_bounded_children
   cleanup_registered_evidence_remote_dumps || cleanup_ok=0
   if [[ -n "$SERIAL_A" ]]; then
