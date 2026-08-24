@@ -45,7 +45,7 @@ final class ProfileController extends ChangeNotifier {
   DateTime? _lastAutomaticAttemptAt;
   var _profileIntentGeneration = 0;
   var _publicSessionGeneration = 0;
-  final Map<int, Future<void>> _publicSyncTails = {};
+  final Map<String, Future<void>> _publicSyncTails = {};
   var _disposed = false;
 
   ProfileStatus get status => _status;
@@ -288,7 +288,7 @@ final class ProfileController extends ChangeNotifier {
       return;
     }
     final sessionGeneration = _publicSessionGeneration;
-    final previous = _publicSyncTails[sessionGeneration];
+    final previous = _publicSyncTails[publicUserId];
     final scheduled = previous == null
         ? _runPublicSyncAttempt(
             automatic: automatic,
@@ -300,12 +300,12 @@ final class ProfileController extends ChangeNotifier {
               expectedSessionGeneration: sessionGeneration,
             ),
           );
-    _publicSyncTails[sessionGeneration] = scheduled;
+    _publicSyncTails[publicUserId] = scheduled;
     try {
       await scheduled;
     } finally {
-      if (identical(_publicSyncTails[sessionGeneration], scheduled)) {
-        _publicSyncTails.remove(sessionGeneration);
+      if (identical(_publicSyncTails[publicUserId], scheduled)) {
+        _publicSyncTails.remove(publicUserId);
       }
     }
   }

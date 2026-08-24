@@ -536,6 +536,110 @@ void main() {
     expect(controller.profile?.lastSyncedNickname, '第二版本');
   });
 
+  test('same public account stays serialized across disconnect and reauthentication', () async {
+    const userId = '11111111-1111-4111-8111-111111111111';
+    final server = _DelayedAccountNicknameServer()..nicknames[userId] = '服务器玩家';
+    final controller = ProfileController(
+      store: _MemoryProfileStore(),
+      nicknameRules: const _FixtureRules(),
+    );
+    await controller.load();
+    await controller.authenticatedSessionStarted(
+      userId: userId,
+      serverNickname: server.nicknames[userId]!,
+      updateNickname: (nickname) => server.update(
+        accountId: userId,
+        updaterId: 'old-session',
+        nickname: nickname,
+      ),
+    );
+
+    await controller.commitNickname('第一版本');
+    await server.started(userId, 'old-session', '第一版本');
+    await controller.commitNickname('排队旧版本');
+    controller.disconnectPublicSession();
+    final reauthenticated = controller.authenticatedSessionStarted(
+      userId: userId,
+      serverNickname: '服务器玩家',
+      updateNickname: (nickname) => server.update(
+        accountId: userId,
+        updaterId: 'new-session',
+        nickname: nickname,
+      ),
+    );
+    await _drainAsync();
+    await controller.commitNickname('第二版本');
+
+    // Try to let the new session finish first. A per-account queue must keep
+    // it behind the old session's already-issued network mutation.
+    server.complete(userId, 'new-session', '第二版本');
+    server.complete(userId, 'new-session', '排队旧版本');
+    server.complete(userId, 'old-session', '排队旧版本');
+    await _drainAsync();
+    expect(server.calls, ['old-session:第一版本']);
+    server.complete(userId, 'old-session', '第一版本');
+    await server.started(userId, 'new-session', '第二版本');
+    await reauthenticated;
+    await _drainAsync();
+
+    expect(server.calls, ['old-session:第一版本', 'new-session:第二版本']);
+    expect(server.maximumInFlightFor(userId), 1);
+    expect(server.nicknames[userId], '第二版本');
+    expect(controller.profile?.nickname, '第二版本');
+    expect(controller.profile?.syncState, ProfileSyncState.synced);
+    expect(controller.profile?.lastSyncedNickname, '第二版本');
+  });
+
+  test(
+    'different public accounts do not share a nickname mutation queue',
+    () async {
+      const firstUserId = '11111111-1111-4111-8111-111111111111';
+      const secondUserId = '22222222-2222-4222-8222-222222222222';
+      final server = _DelayedAccountNicknameServer()
+        ..nicknames[firstUserId] = '第一账号'
+        ..nicknames[secondUserId] = '第二账号';
+      final controller = ProfileController(
+        store: _MemoryProfileStore(),
+        nicknameRules: const _FixtureRules(),
+      );
+      await controller.load();
+      await controller.authenticatedSessionStarted(
+        userId: firstUserId,
+        serverNickname: server.nicknames[firstUserId]!,
+        updateNickname: (nickname) => server.update(
+          accountId: firstUserId,
+          updaterId: 'first-session',
+          nickname: nickname,
+        ),
+      );
+
+      await controller.commitNickname('本地玩家');
+      await server.started(firstUserId, 'first-session', '本地玩家');
+      controller.disconnectPublicSession();
+      final reauthenticated = controller.authenticatedSessionStarted(
+        userId: secondUserId,
+        serverNickname: server.nicknames[secondUserId]!,
+        updateNickname: (nickname) => server.update(
+          accountId: secondUserId,
+          updaterId: 'second-session',
+          nickname: nickname,
+        ),
+      );
+
+      await server.started(secondUserId, 'second-session', '本地玩家');
+      expect(server.maximumInFlightFor(firstUserId), 1);
+      expect(server.maximumInFlightFor(secondUserId), 1);
+      server.complete(secondUserId, 'second-session', '本地玩家');
+      await reauthenticated;
+      server.complete(firstUserId, 'first-session', '本地玩家');
+      await _drainAsync();
+
+      expect(controller.profile?.nickname, '本地玩家');
+      expect(controller.profile?.syncState, ProfileSyncState.synced);
+      expect(controller.profile?.lastSyncedNickname, '本地玩家');
+    },
+  );
+
   test(
     'queued nickname intents coalesce to one PATCH of the newest value',
     () async {
@@ -814,5 +918,52 @@ final class _DelayedPublicNicknameServer {
     if (failure == null) nickname = nextNickname;
     _inFlight -= 1;
     return failure;
+  }
+}
+
+final class _DelayedAccountNicknameServer {
+  final nicknames = <String, String>{};
+  final calls = <String>[];
+  final _started = <String, Completer<void>>{};
+  final _completions = <String, Completer<void>>{};
+  final _inFlightByAccount = <String, int>{};
+  final _maximumInFlightByAccount = <String, int>{};
+
+  String _requestKey(String accountId, String updaterId, String nickname) =>
+      '$accountId|$updaterId|$nickname';
+
+  Future<void> started(String accountId, String updaterId, String nickname) =>
+      (_started[_requestKey(accountId, updaterId, nickname)] ??=
+              Completer<void>())
+          .future;
+
+  void complete(String accountId, String updaterId, String nickname) {
+    final completion =
+        _completions[_requestKey(accountId, updaterId, nickname)] ??=
+            Completer<void>();
+    if (!completion.isCompleted) completion.complete();
+  }
+
+  int maximumInFlightFor(String accountId) =>
+      _maximumInFlightByAccount[accountId] ?? 0;
+
+  Future<ApiError?> update({
+    required String accountId,
+    required String updaterId,
+    required String nickname,
+  }) async {
+    final requestKey = _requestKey(accountId, updaterId, nickname);
+    calls.add('$updaterId:$nickname');
+    final inFlight = (_inFlightByAccount[accountId] ?? 0) + 1;
+    _inFlightByAccount[accountId] = inFlight;
+    final previousMaximum = _maximumInFlightByAccount[accountId] ?? 0;
+    if (inFlight > previousMaximum) {
+      _maximumInFlightByAccount[accountId] = inFlight;
+    }
+    (_started[requestKey] ??= Completer<void>()).complete();
+    await (_completions[requestKey] ??= Completer<void>()).future;
+    nicknames[accountId] = nickname;
+    _inFlightByAccount[accountId] = inFlight - 1;
+    return null;
   }
 }
