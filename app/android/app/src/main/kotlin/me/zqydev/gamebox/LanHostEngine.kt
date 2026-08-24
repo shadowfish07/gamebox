@@ -141,6 +141,12 @@ internal class LanHostCoordinator(
     @Synchronized
     fun stop() = engine.stop()
 
+    @Synchronized
+    fun discardCorruptAuthority(deleteAuthority: () -> Unit) {
+        engine.stop()
+        deleteAuthority()
+    }
+
     override fun toString(): String = "LanHostCoordinator(engine=<redacted>, persistence=<redacted>)"
 
     private fun checkedJoinExpiry(): Long {

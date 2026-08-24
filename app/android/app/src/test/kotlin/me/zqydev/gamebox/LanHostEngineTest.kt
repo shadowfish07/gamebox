@@ -111,6 +111,26 @@ class LanHostEngineTest {
         assertEquals(existing, store.current)
     }
 
+    @Test
+    fun `corrupt discard never deletes authority when engine stop fails`() {
+        val engine = FakeEngine().apply { stopError = LanEngineException("internal_error") }
+        val coordinator = LanHostCoordinator(engine, FakePersistence())
+        var deleted = false
+
+        val failure = assertThrows(LanEngineException::class.java) {
+            coordinator.discardCorruptAuthority { deleted = true }
+        }
+
+        assertEquals("internal_error", failure.code)
+        assertEquals(1, engine.stopCalls)
+        assertFalse(deleted)
+
+        engine.stopError = null
+        coordinator.discardCorruptAuthority { deleted = true }
+        assertEquals(2, engine.stopCalls)
+        assertTrue(deleted)
+    }
+
     private fun fixtureSecrets() = LanRoomSecrets(
         schemaVersion = 1,
         roomId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -151,6 +171,8 @@ class LanHostEngineTest {
         val closeModes = mutableListOf<String>()
         val cleanupPolicies = mutableListOf<Boolean>()
         var deleteCalls = 0
+        var stopCalls = 0
+        var stopError: RuntimeException? = null
 
         override fun createRoom(requestJson: String): String {
             order?.add("create")
@@ -183,6 +205,9 @@ class LanHostEngineTest {
             deleteCalls++
         }
 
-        override fun stop() = Unit
+        override fun stop() {
+            stopCalls++
+            stopError?.let { throw it }
+        }
     }
 }

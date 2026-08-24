@@ -96,8 +96,15 @@ class LanHostServiceTest {
         val commands = start(context)
         commands.createRoom("Host")
         stopForRecovery(context, commands)
+        val activeRoom = activeRoom(context)
+        val manifest = File(activeRoom, "manifest.json")
+        val journal = requireNotNull(
+            activeRoom.listFiles()?.singleOrNull { it.name.matches(Regex("[0-9]{16}\\.json")) },
+        )
+        val manifestBytes = manifest.readBytes()
+        val journalBytes = journal.readBytes()
         secretFile(context).writeBytes(byteArrayOf(1, 2, 3))
-        val hostile = File(activeRoom(context), "hostile-fifo")
+        val hostile = File(activeRoom, "hostile-fifo")
         Os.mkfifo(hostile.path, 0x180)
 
         val recovered = start(context)
@@ -107,6 +114,8 @@ class LanHostServiceTest {
         assertEquals("internal_error", failure.code)
         assertTrue(secretFile(context).exists())
         assertTrue(hostile.exists())
+        assertTrue(manifestBytes.contentEquals(manifest.readBytes()))
+        assertTrue(journalBytes.contentEquals(journal.readBytes()))
 
         Os.remove(hostile.path)
         recovered.closeRoom("discard_corrupt")

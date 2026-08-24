@@ -631,12 +631,67 @@ func TestEngineDeleteActiveRoomRequiresStoppedEngineAndRemovesOnlyResolvedTree(t
 	}
 }
 
+func TestEngineStopFailureRetainsOwnerAndAuthorityUntilRetrySucceeds(t *testing.T) {
+	root := t.TempDir()
+	active := filepath.Join(root, "active_room")
+	if err := os.MkdirAll(active, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(active, "0000000000000001.json")
+	wantJournal := []byte("recoverable-authority")
+	if err := os.WriteFile(journalPath, wantJournal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := NewEngine(root)
+	listener := &failOnceListener{closeError: errors.New("close failed")}
+	engine.listener = listener
+	engine.secrets = roomSecrets{RoomID: engineRoomID, HostResumeToken: engineHostResume}
+	engine.port = minimumLANPort
+
+	if err := engine.Stop(); !errors.Is(err, ErrInternal) {
+		t.Fatalf("first Stop error = %v, want ErrInternal", err)
+	}
+	if listener.closeCalls != 1 || engine.listener != listener {
+		t.Fatalf("failed listener ownership was lost: calls=%d owner=%T", listener.closeCalls, engine.listener)
+	}
+	if engine.secrets.RoomID != engineRoomID || engine.port != minimumLANPort {
+		t.Fatal("recoverable authority was cleared after ambiguous stop failure")
+	}
+	if err := engine.DeleteActiveRoom(); !errors.Is(err, ErrCleanupNotReady) {
+		t.Fatalf("DeleteActiveRoom after failed Stop error = %v, want ErrCleanupNotReady", err)
+	}
+	if got, err := os.ReadFile(journalPath); err != nil || !bytes.Equal(got, wantJournal) {
+		t.Fatalf("journal changed after failed Stop: data=%q err=%v", got, err)
+	}
+
+	if err := engine.Stop(); err != nil {
+		t.Fatalf("retry Stop error = %v", err)
+	}
+	if listener.closeCalls != 2 || engine.listener != nil {
+		t.Fatalf("failed listener was not retried exactly once: calls=%d owner=%T", listener.closeCalls, engine.listener)
+	}
+	if err := engine.DeleteActiveRoom(); err != nil {
+		t.Fatalf("DeleteActiveRoom after successful retry error = %v", err)
+	}
+}
+
 func TestEngineDeleteActiveRoomRejectsSymlinkAndFIFOWithoutTouchingOutside(t *testing.T) {
 	for _, hostile := range []string{"symlink", "fifo"} {
 		t.Run(hostile, func(t *testing.T) {
 			root := t.TempDir()
 			active := filepath.Join(root, "active_room")
-			if err := os.MkdirAll(active, 0o700); err != nil {
+			nested := filepath.Join(active, "journal")
+			if err := os.MkdirAll(nested, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(active, "manifest.json")
+			manifestBytes := []byte("manifest-authority")
+			journalPath := filepath.Join(nested, "0000000000000001.json")
+			journalBytes := []byte("journal-authority")
+			if err := os.WriteFile(manifestPath, manifestBytes, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(journalPath, journalBytes, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			outside := filepath.Join(t.TempDir(), "outside")
@@ -663,6 +718,12 @@ func TestEngineDeleteActiveRoomRejectsSymlinkAndFIFOWithoutTouchingOutside(t *te
 			if _, err := os.Lstat(hostilePath); err != nil {
 				t.Fatalf("hostile evidence was removed: %v", err)
 			}
+			if data, err := os.ReadFile(manifestPath); err != nil || !bytes.Equal(data, manifestBytes) {
+				t.Fatalf("manifest changed before hostile preflight failed: data=%q err=%v", data, err)
+			}
+			if data, err := os.ReadFile(journalPath); err != nil || !bytes.Equal(data, journalBytes) {
+				t.Fatalf("journal changed before hostile preflight failed: data=%q err=%v", data, err)
+			}
 		})
 	}
 }
@@ -677,14 +738,36 @@ func TestOpenedDirectoryMustMatchInitialIdentityBeforeReadingChildren(t *testing
 		"owner":  {Dev: 11, Ino: 22, Mode: unix.S_IFDIR | 0o700, Uid: 502},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := requireSameDirectoryIdentity(initial, opened); err == nil {
+			if err := requireSameDirectoryIdentity(initial, opened, 501); err == nil {
 				t.Fatal("requireSameDirectoryIdentity() error = nil")
 			}
 		})
 	}
 
-	if err := requireSameDirectoryIdentity(initial, initial); err != nil {
+	if err := requireSameDirectoryIdentity(initial, initial, 501); err != nil {
 		t.Fatalf("requireSameDirectoryIdentity() error = %v", err)
+	}
+	foreign := initial
+	foreign.Uid = 502
+	if err := requireSameDirectoryIdentity(foreign, foreign, 501); err == nil {
+		t.Fatal("consistently foreign-owned directory was accepted")
+	}
+}
+
+func TestUnlinkIdentityRequiresExpectedOwnerForRegularFiles(t *testing.T) {
+	initial := unix.Stat_t{Dev: 11, Ino: 22, Mode: unix.S_IFREG | 0o600, Uid: 501}
+	if err := requireSameOwnedEntryIdentity(initial, initial, 501); err != nil {
+		t.Fatalf("owned regular identity error = %v", err)
+	}
+	foreign := initial
+	foreign.Uid = 502
+	if err := requireSameOwnedEntryIdentity(foreign, foreign, 501); err == nil {
+		t.Fatal("consistently foreign-owned regular file was accepted")
+	}
+	changedOwner := initial
+	changedOwner.Uid = 502
+	if err := requireSameOwnedEntryIdentity(initial, changedOwner, 501); err == nil {
+		t.Fatal("regular file owner change was accepted")
 	}
 }
 
@@ -751,6 +834,21 @@ type engineLaunch struct {
 type engineJoin struct {
 	PlayerID     string `json:"playerId"`
 	LaunchTicket string `json:"launchTicket"`
+}
+
+type failOnceListener struct {
+	closeCalls int
+	closeError error
+}
+
+func (*failOnceListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
+func (*failOnceListener) Addr() net.Addr            { return &net.TCPAddr{} }
+func (listener *failOnceListener) Close() error {
+	listener.closeCalls++
+	if listener.closeCalls == 1 {
+		return listener.closeError
+	}
+	return nil
 }
 
 func createJSON() string {

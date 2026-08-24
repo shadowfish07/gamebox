@@ -36,6 +36,7 @@ type Service struct {
 	credentialRandom io.Reader
 	tokenPepper      string
 	closed           bool
+	closeStore       func(*journal.Store) error
 }
 
 func (service *Service) String() string {
@@ -80,7 +81,7 @@ func Open(config Config) (*Service, error) {
 		_ = store.Close()
 		return nil, replayErr
 	}
-	return &Service{store: store, state: state, clock: config.Clock, colorRandom: config.ColorRandom, playerRandom: config.PlayerRandom, credentialRandom: config.CredentialRandom, tokenPepper: config.TokenPepper}, nil
+	return &Service{store: store, state: state, clock: config.Clock, colorRandom: config.ColorRandom, playerRandom: config.PlayerRandom, credentialRandom: config.CredentialRandom, tokenPepper: config.TokenPepper, closeStore: func(store *journal.Store) error { return store.Close() }}, nil
 }
 
 // Close releases the journal lifetime lock. It is idempotent.
@@ -93,8 +94,15 @@ func (service *Service) Close() error {
 	if service.closed {
 		return nil
 	}
+	closeStore := service.closeStore
+	if closeStore == nil {
+		closeStore = func(store *journal.Store) error { return store.Close() }
+	}
+	if err := closeStore(service.store); err != nil {
+		return err
+	}
 	service.closed = true
-	return service.store.Close()
+	return nil
 }
 
 func (service *Service) Create(ctx context.Context, request CreateRequest) (CreatedRoom, error) {

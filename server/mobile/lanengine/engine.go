@@ -393,29 +393,40 @@ func (engine *Engine) DeleteActiveRoom() error {
 
 func (engine *Engine) stopLocked() error {
 	var failed bool
-	if engine.server != nil && engine.server.Close() != nil {
-		failed = true
+	if engine.server != nil {
+		if engine.server.Close() != nil {
+			failed = true
+		} else {
+			engine.server = nil
+		}
 	}
 	if engine.router != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		if engine.router.Close(ctx) != nil {
 			failed = true
+		} else {
+			engine.router = nil
 		}
 		cancel()
 	}
 	if engine.listener != nil {
 		if err := engine.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			failed = true
+		} else {
+			engine.listener = nil
 		}
 	}
-	if engine.service != nil && engine.service.Close() != nil {
-		failed = true
+	if engine.service != nil {
+		if engine.service.Close() != nil {
+			failed = true
+		} else {
+			engine.service = nil
+		}
 	}
-	engine.service, engine.router, engine.server, engine.listener = nil, nil, nil, nil
-	engine.secrets, engine.port, engine.endpointChanged, engine.corrupt = roomSecrets{}, 0, false, false
 	if failed {
 		return ErrInternal
 	}
+	engine.secrets, engine.port, engine.endpointChanged, engine.corrupt = roomSecrets{}, 0, false, false
 	return nil
 }
 

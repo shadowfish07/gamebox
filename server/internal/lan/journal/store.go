@@ -38,13 +38,14 @@ type committedRecordReader func(root, name string, limit int) ([]byte, error)
 // Store is safe for concurrent use. A directory-sync failure poisons it because
 // the rename may already have made a record visible after the caller saw error.
 type Store struct {
-	mu       sync.RWMutex
-	root     string
-	ops      FileOps
-	records  []Record
-	poisoned bool
-	closed   bool
-	lockFile *os.File
+	mu          sync.RWMutex
+	root        string
+	ops         FileOps
+	records     []Record
+	poisoned    bool
+	closed      bool
+	lockFile    *os.File
+	releaseLock func(*os.File) error
 }
 
 // Open acquires the lifetime root lock before removing only uncommitted journal
@@ -129,7 +130,7 @@ func openWithCommittedRecordReader(root string, ops FileOps, readRecord committe
 		}
 		records = append(records, record)
 	}
-	store := &Store{root: root, ops: ops, records: records, lockFile: lockFile}
+	store := &Store{root: root, ops: ops, records: records, lockFile: lockFile, releaseLock: releaseJournalRootLock}
 	opened = true
 	return store, cloneRecords(records), nil
 }
@@ -202,13 +203,21 @@ func (store *Store) Close() error {
 	if store.closed {
 		return nil
 	}
-	store.closed = true
 	lockFile := store.lockFile
-	store.lockFile = nil
 	if lockFile == nil {
+		store.closed = true
 		return nil
 	}
-	return releaseJournalRootLock(lockFile)
+	releaseLock := store.releaseLock
+	if releaseLock == nil {
+		releaseLock = releaseJournalRootLock
+	}
+	if err := releaseLock(lockFile); err != nil {
+		return err
+	}
+	store.lockFile = nil
+	store.closed = true
+	return nil
 }
 
 // WriteManifestProjection atomically persists non-authoritative room location

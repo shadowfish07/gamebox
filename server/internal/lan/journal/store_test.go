@@ -684,6 +684,38 @@ func TestAppendRejectsCanceledContextBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestStoreCloseFailureRetainsLockOwnerAndRetries(t *testing.T) {
+	lockFile, err := os.CreateTemp(t.TempDir(), "journal-lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transient := errors.New("transient release failure")
+	calls := 0
+	store := &Store{
+		lockFile: lockFile,
+		releaseLock: func(file *os.File) error {
+			calls++
+			if calls == 1 {
+				return transient
+			}
+			return file.Close()
+		},
+	}
+
+	if err := store.Close(); !errors.Is(err, transient) {
+		t.Fatalf("first Close error = %v, want transient failure", err)
+	}
+	if store.closed || store.lockFile != lockFile {
+		t.Fatal("failed Close discarded the journal lock owner")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("retry Close error = %v", err)
+	}
+	if calls != 2 || !store.closed || store.lockFile != nil {
+		t.Fatalf("retry state calls=%d closed=%v lock=%v", calls, store.closed, store.lockFile)
+	}
+}
+
 func stringPtr(value string) *string { return &value }
 
 func cleanupStore(t *testing.T, store *Store) {

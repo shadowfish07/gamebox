@@ -21,6 +21,34 @@ import (
 	"me.zqydev/gamebox/server/internal/protocol"
 )
 
+func TestServiceCloseFailureRetainsJournalOwnerAndRetries(t *testing.T) {
+	transient := errors.New("transient journal close failure")
+	calls := 0
+	service := &Service{
+		store: &journal.Store{},
+		closeStore: func(*journal.Store) error {
+			calls++
+			if calls == 1 {
+				return transient
+			}
+			return nil
+		},
+	}
+
+	if err := service.Close(); !errors.Is(err, transient) {
+		t.Fatalf("first Close error = %v, want transient failure", err)
+	}
+	if service.closed {
+		t.Fatal("failed Close marked service closed")
+	}
+	if err := service.Close(); err != nil {
+		t.Fatalf("retry Close error = %v", err)
+	}
+	if calls != 2 || !service.closed {
+		t.Fatalf("retry state calls=%d closed=%v", calls, service.closed)
+	}
+}
+
 const (
 	testRoomID       = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	testHostID       = "11111111-1111-4111-8111-111111111111"

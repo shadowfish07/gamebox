@@ -105,20 +105,18 @@ internal class LanHostService : Service(), LanHostCommands {
         checkNotDestroyed()
         if (mode == "discard_corrupt") {
             if (startupFailure) {
-                try {
-                    coordinator?.stop()
-                } catch (_: RuntimeException) {
-                    // No listener or lock was activated when startup failed.
-                }
                 val result = corruptRoomId?.let(::corruptStatus) ?: emptyStatus()
-                deleteResolvedRoomAndSecrets()
+                requireCoordinator().discardCorruptAuthority {
+                    deleteResolvedRoomAndSecrets()
+                }
                 removeForegroundAndStop()
                 return result
             }
             val status = getStatus()
             if (status["state"] != "corrupt") throw LanEngineException("invalid_configuration")
-            requireCoordinator().stop()
-            deleteResolvedRoomAndSecrets()
+            requireCoordinator().discardCorruptAuthority {
+                deleteResolvedRoomAndSecrets()
+            }
             removeForegroundAndStop()
             return status
         }
