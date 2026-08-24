@@ -12,6 +12,7 @@ import java.util.concurrent.Executors
 import org.godotengine.godot.GodotActivity
 
 class MainActivity : FlutterActivity() {
+    private var appProfileChannel: AppProfileChannel? = null
     private var lanHostChannel: LanHostChannel? = null
     private var lanHostWorker: ExecutorService? = null
     private var localNetworkPermissionRequested = false
@@ -28,6 +29,9 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        appProfileChannel = AppProfileChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
         val worker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "lan-host-command")
         }
@@ -95,6 +99,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        appProfileChannel?.close()
+        appProfileChannel = null
         lanHostChannel?.close()
         lanHostChannel = null
         lanHostWorker?.shutdownNow()

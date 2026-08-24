@@ -183,7 +183,7 @@ final class SessionController extends ChangeNotifier {
     }
   }
 
-  Future<ApiError?> register(String inviteCode, String nickname) {
+  Future<ApiError?> register(String inviteCode, String localNickname) {
     final existing = _registrationInFlight;
     if (existing != null) {
       return existing;
@@ -196,7 +196,7 @@ final class SessionController extends ChangeNotifier {
     final generation = ++_generation;
     _transition(SessionStatus.submitting);
     late final Future<ApiError?> operation;
-    operation = _performRegistration(inviteCode, nickname, generation)
+    operation = _performRegistration(inviteCode, localNickname, generation)
         .whenComplete(() {
           if (identical(_registrationInFlight, operation)) {
             _registrationInFlight = null;

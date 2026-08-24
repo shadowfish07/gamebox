@@ -8,12 +8,16 @@ import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/core/profile/app_profile.dart';
+import 'package:gamebox/core/profile/app_profile_store.dart';
+import 'package:gamebox/core/profile/nickname_rules.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
+import 'package:gamebox/features/profile/profile_controller.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
@@ -27,6 +31,7 @@ void main() {
       GameboxApp(
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
+        profileController: fixture.profile,
         homeController: fixture.home,
       ),
     );
@@ -49,6 +54,7 @@ void main() {
       GameboxApp(
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
+        profileController: fixture.profile,
         homeController: fixture.home,
       ),
     );
@@ -80,6 +86,7 @@ void main() {
         GameboxApp(
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
+          profileController: fixture.profile,
           homeController: fixture.home,
         ),
       );
@@ -92,7 +99,7 @@ void main() {
         expect(await fixture.session.refresh(), isFalse);
         await _flush(tester);
 
-        expect(find.byKey(const Key('home-shell')), findsNothing);
+        expect(find.byKey(const Key('home-shell')), findsOneWidget);
         expect(fixture.scheduler.activeCount, 0);
         final callsWhileLoggedOut = fixture.api.statusCalls;
         fixture.scheduler.fireAllIncludingCancelled();
@@ -131,6 +138,7 @@ void main() {
         GameboxApp(
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
+          profileController: fixture.profile,
           homeController: fixture.home,
         ),
       );
@@ -167,7 +175,7 @@ void main() {
       await _flush(tester);
 
       expect(find.byKey(const Key('home-shell')), findsOneWidget);
-      expect(find.text('你好，新用户'), findsOneWidget);
+      expect(find.text('你好，自己'), findsOneWidget);
       expect(find.text('选择对手'), findsOneWidget);
       expect(find.byKey(const Key('opponent-$opponentId')), findsNothing);
       expect(await tester.binding.handlePopRoute(), isFalse);
@@ -197,6 +205,7 @@ void main() {
       GameboxApp(
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
+        profileController: fixture.profile,
         homeController: fixture.home,
       ),
     );
@@ -226,6 +235,7 @@ final class _Fixture {
   _Fixture({
     required this.session,
     required this.home,
+    required this.profile,
     required this.api,
     required this.scheduler,
     required this.launcher,
@@ -255,9 +265,22 @@ final class _Fixture {
       scheduler: scheduler,
       now: () => now,
     );
+    final profile = ProfileController(
+      store: _MemoryProfileStore(
+        const AppProfile(
+          schemaVersion: 1,
+          nickname: '自己',
+          syncState: ProfileSyncState.synced,
+          lastSyncedNickname: '自己',
+        ),
+      ),
+      nicknameRules: const _NicknameRules(),
+    );
+    await profile.load();
     return _Fixture(
       session: session,
       home: home,
+      profile: profile,
       api: api,
       scheduler: scheduler,
       launcher: launcher,
@@ -268,6 +291,7 @@ final class _Fixture {
 
   final SessionController session;
   final HomeController home;
+  final ProfileController profile;
   final _FakeHomeApi api;
   final _FakeScheduler scheduler;
   final _FakeLauncher launcher;
@@ -276,8 +300,28 @@ final class _Fixture {
 
   void dispose() {
     home.dispose();
+    profile.dispose();
     session.dispose();
   }
+}
+
+final class _MemoryProfileStore implements AppProfileStore {
+  _MemoryProfileStore(this.value);
+
+  AppProfile? value;
+
+  @override
+  Future<AppProfile?> read() async => value;
+
+  @override
+  Future<void> write(AppProfile profile) async => value = profile;
+}
+
+final class _NicknameRules implements NicknameRules {
+  const _NicknameRules();
+
+  @override
+  Future<String> normalize(String raw) async => raw.trim();
 }
 
 final class _FakeScheduler implements HomePollScheduler {

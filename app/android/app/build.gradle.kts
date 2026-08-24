@@ -149,6 +149,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    sourceSets.getByName("androidTest").assets.srcDir(
+        rootProject.file("../../protocol/fixtures"),
+    )
+
     signingConfigs {
         if (signingPropertiesFile.isFile) {
             create("release") {

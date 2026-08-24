@@ -11,15 +11,19 @@ import 'opponent_page.dart';
 final class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
-    required this.controller,
-    required this.currentUserId,
     required this.nickname,
+    this.controller,
+    this.currentUserId,
+    this.publicSection,
+    this.onEditNickname,
     this.updateController,
   });
 
-  final HomeController controller;
-  final String currentUserId;
+  final HomeController? controller;
+  final String? currentUserId;
   final String nickname;
+  final Widget? publicSection;
+  final VoidCallback? onEditNickname;
   final UpdateController? updateController;
 
   @override
@@ -30,17 +34,17 @@ final class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_changed);
-    widget.controller.start();
+    widget.controller?.addListener(_changed);
+    widget.controller?.start();
   }
 
   @override
   void didUpdateWidget(HomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_changed);
-      widget.controller.addListener(_changed);
-      widget.controller.start();
+      oldWidget.controller?.removeListener(_changed);
+      widget.controller?.addListener(_changed);
+      widget.controller?.start();
     }
   }
 
@@ -50,29 +54,31 @@ final class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    widget.controller.removeListener(_changed);
+    widget.controller?.removeListener(_changed);
     super.dispose();
   }
 
   Future<void> _chooseOpponent() async {
+    final controller = widget.controller;
+    final currentUserId = widget.currentUserId;
+    if (controller == null || currentUserId == null) return;
     final error = await Navigator.of(context).push<ApiError?>(
       MaterialPageRoute<ApiError?>(
-        builder: (_) => OpponentPage(
-          controller: widget.controller,
-          currentUserId: widget.currentUserId,
-        ),
+        settings: const RouteSettings(name: 'public/opponents'),
+        builder: (_) =>
+            OpponentPage(controller: controller, currentUserId: currentUserId),
       ),
     );
     if (mounted && error != null) _showError(error);
   }
 
   Future<void> _continueMatch() async {
-    final error = await widget.controller.openActiveMatch();
+    final error = await widget.controller?.openActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
   Future<void> _cancelMatch() async {
-    final error = await widget.controller.cancelActiveMatch();
+    final error = await widget.controller?.cancelActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -85,43 +91,66 @@ final class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    return Scaffold(
+    return Semantics(
       key: const Key('home-shell'),
-      appBar: AppBar(
-        title: const Text('Gamebox'),
-        actions: [
-          if (widget.updateController case final controller?)
-            UpdateActionButton(controller: controller),
-        ],
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(24),
-          children: [
-            Text(
-              '你好，${widget.nickname}',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 20),
-            if (controller.status == null && controller.isLoading)
-              const Center(child: CircularProgressIndicator())
-            else if (controller.status == null && controller.lastError != null)
-              _HomeError(
-                message: controller.lastError!.message,
-                onRetry: controller.refresh,
-              )
-            else if (controller.status == null)
-              const Center(child: CircularProgressIndicator())
-            else
-              _GomokuCard(
-                status: controller.status!,
-                isLaunching: controller.isLaunching,
-                isMutating: controller.isMutating,
-                onChoose: _chooseOpponent,
-                onContinue: _continueMatch,
-                onCancel: _cancelMatch,
+      label: 'home-shell',
+      container: true,
+      explicitChildNodes: true,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Gamebox'),
+          actions: [
+            if (widget.onEditNickname != null)
+              IconButton(
+                key: const Key('edit-local-nickname'),
+                tooltip: '编辑昵称',
+                onPressed: widget.onEditNickname,
+                icon: const Icon(Icons.edit_outlined),
               ),
+            if (widget.updateController case final controller?)
+              UpdateActionButton(controller: controller),
           ],
+        ),
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.all(24),
+            children: [
+              Text(
+                '你好，${widget.nickname}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 20),
+              if (widget.publicSection case final publicSection?)
+                Card(
+                  key: const Key('public-section'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: publicSection,
+                  ),
+                )
+              else if (controller == null)
+                const SizedBox.shrink()
+              else if (controller.status == null && controller.isLoading)
+                const Center(child: CircularProgressIndicator())
+              else if (controller.status == null &&
+                  controller.lastError != null)
+                _HomeError(
+                  message: controller.lastError!.message,
+                  onRetry: controller.refresh,
+                )
+              else if (controller.status == null)
+                const Center(child: CircularProgressIndicator())
+              else
+                _GomokuCard(
+                  status: controller.status!,
+                  isLaunching: controller.isLaunching,
+                  isMutating: controller.isMutating,
+                  onChoose: _chooseOpponent,
+                  onContinue: _continueMatch,
+                  onCancel: _cancelMatch,
+                ),
+            ],
+          ),
         ),
       ),
     );

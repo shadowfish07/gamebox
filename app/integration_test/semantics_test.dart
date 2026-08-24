@@ -5,12 +5,16 @@ import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/core/profile/app_profile.dart';
+import 'package:gamebox/core/profile/app_profile_store.dart';
+import 'package:gamebox/core/profile/nickname_rules.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
+import 'package:gamebox/features/profile/profile_controller.dart';
 import 'package:integration_test/integration_test.dart';
 
 const _aliceId = '11111111-1111-4111-8111-111111111111';
@@ -32,19 +36,23 @@ void main() {
     await tester.pumpWidget(fixture.app());
     await _flush(tester);
 
+    final nickname = find.bySemanticsIdentifier('local-nickname');
+    expect(nickname, findsOneWidget);
+    expect(
+      tester.getSemantics(nickname),
+      isSemantics(identifier: 'local-nickname', isTextField: true),
+    );
+    await tester.enterText(nickname, 'Alice');
+    await tester.tap(find.bySemanticsIdentifier('save-nickname'));
+    await _flush(tester);
+
     final invite = find.bySemanticsIdentifier('invite-code');
-    final nickname = find.bySemanticsIdentifier('nickname');
     final register = find.bySemanticsIdentifier('register');
     expect(invite, findsOneWidget);
-    expect(nickname, findsOneWidget);
     expect(register, findsOneWidget);
     expect(
       tester.getSemantics(invite),
       isSemantics(identifier: 'invite-code', isTextField: true),
-    );
-    expect(
-      tester.getSemantics(nickname),
-      isSemantics(identifier: 'nickname', isTextField: true),
     );
     expect(
       tester.getSemantics(register),
@@ -52,7 +60,6 @@ void main() {
     );
 
     await tester.enterText(invite, 'fixture-invite');
-    await tester.enterText(nickname, 'Alice');
     await tester.tap(register);
     await _flush(tester);
     expect(fixture.auth.registerCalls, 1);
@@ -157,6 +164,7 @@ final class _Fixture {
     required this.homeApi,
     required this.launcher,
     required this.home,
+    required this.profile,
   });
 
   factory _Fixture.unauthenticated() {
@@ -172,6 +180,10 @@ final class _Fixture {
         apiBaseUri: Uri.parse('http://127.0.0.1:8080'),
       ),
     );
+    final profile = ProfileController(
+      store: _MemoryProfileStore(),
+      nicknameRules: const _NicknameRules(),
+    );
     return _Fixture._(
       auth: auth,
       tokenStore: tokenStore,
@@ -179,12 +191,15 @@ final class _Fixture {
       homeApi: homeApi,
       launcher: launcher,
       home: home,
+      profile: profile,
     );
   }
 
   static Future<_Fixture> authenticated({required GomokuStatus status}) async {
     final fixture = _Fixture.unauthenticated();
     fixture.homeApi.status = status;
+    await fixture.profile.load();
+    await fixture.profile.commitNickname('Alice');
     await fixture.session.restore();
     await fixture.session.register('fixture-invite', 'Alice');
     return fixture;
@@ -196,17 +211,37 @@ final class _Fixture {
   final _FakeHomeApi homeApi;
   final _FakeLauncher launcher;
   final HomeController home;
+  final ProfileController profile;
 
   Widget app() => GameboxApp(
     gameLauncher: launcher,
     sessionController: session,
+    profileController: profile,
     homeController: home,
   );
 
   void dispose() {
     home.dispose();
     session.dispose();
+    profile.dispose();
   }
+}
+
+final class _MemoryProfileStore implements AppProfileStore {
+  AppProfile? value;
+
+  @override
+  Future<AppProfile?> read() async => value;
+
+  @override
+  Future<void> write(AppProfile profile) async => value = profile;
+}
+
+final class _NicknameRules implements NicknameRules {
+  const _NicknameRules();
+
+  @override
+  Future<String> normalize(String raw) async => raw.trim();
 }
 
 final class _FakeAuthApi implements AuthApi {

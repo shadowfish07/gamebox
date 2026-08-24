@@ -1890,13 +1890,16 @@ register_user() {
   local nickname="$3"
   local secret_flag="$4"
   start_flutter "$serial"
+  wait_for_identifier "$serial" local-nickname >/dev/null \
+    || fail "nickname setup did not expose local-nickname on $serial"
+  input_text_by_identifier "$serial" local-nickname "$nickname"
+  assert_field_text "$serial" local-nickname "$nickname"
+  tap_identifier "$serial" save-nickname
   wait_for_identifier "$serial" invite-code >/dev/null \
     || fail "registration page did not expose invite-code on $serial"
   printf -v "$secret_flag" '%s' 1
   input_text_by_identifier "$serial" invite-code "$invite"
   assert_field_text "$serial" invite-code "$invite"
-  input_text_by_identifier "$serial" nickname "$nickname"
-  assert_field_text "$serial" nickname "$nickname"
   tap_identifier "$serial" register
   wait_for_identifier "$serial" game-gomoku >/dev/null \
     || fail "registration did not reach the catalog on $serial"
