@@ -487,7 +487,10 @@ final class _RpsCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text('对手：${match.opponent.nickname}'),
-                  Text('赛制：${match.format.label}'),
+                  Semantics(
+                    identifier: 'rps-active-format-${match.format.wireValue}',
+                    child: Text('赛制：${match.format.label}'),
+                  ),
                   Text('当前事件：${match.revision}'),
                   SizedBox(height: GameboxTokens.spacing.page),
                   _ActionButton(

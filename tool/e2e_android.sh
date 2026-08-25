@@ -3664,7 +3664,7 @@ RPS_MATCH_ID="$(wait_for_new_rps_ready_match_id "$SERIAL_A")" \
   || fail "RPS ready marker did not contain a canonical match ID"
 wait_for_identifier "$SERIAL_B" rps-continue-match >/dev/null \
   || fail "B did not expose the invited RPS match"
-wait_for_visible_text "$SERIAL_B" '赛制：三局两胜' \
+wait_for_identifier "$SERIAL_B" rps-active-format-best_of_three >/dev/null \
   || fail "B could not see the persisted RPS format before launch"
 tap_identifier "$SERIAL_B" rps-continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH_ID" \
