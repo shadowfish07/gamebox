@@ -1799,6 +1799,9 @@ self_test() {
   grep -F 'start_first_connect_loading_watch "$SERIAL_A" first-gomoku-loading' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading watcher is not started with a post-attach boundary\n' >&2; return 1; }
+  grep -F 'wait_for_identifier_after_scroll "$SERIAL_B" continue-match' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'narrow active-match discovery is not scroll-aware\n' >&2; return 1; }
   if grep -E 'screencap|capture_ui_evidence|ui_evidence|screenshots/|\.png' \
     <<<"$runtime_source" >/dev/null; then
     printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
@@ -2441,6 +2444,29 @@ wait_for_identifier() {
   return 1
 }
 
+wait_for_identifier_after_scroll() {
+  local serial="$1"
+  local identifier="$2"
+  local deadline=$((SECONDS + WAIT_SECONDS))
+  local xml="$TEMP_DIR/ui-scroll-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  local width height center
+  read -r width height <<<"$(device_effective_size "$serial")"
+  [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] || return 1
+  while ((SECONDS < deadline)); do
+    if dump_ui "$serial" "$xml"; then
+      center="$(xml_query bounds "$xml" "$identifier" 2>/dev/null)" && {
+        printf '%s\n' "$center"
+        return 0
+      }
+    fi
+    adb_for "$serial" shell input swipe \
+      "$((width / 2))" "$((height * 3 / 4))" \
+      "$((width / 2))" "$((height * 2 / 5))" 250 >/dev/null || return 1
+    sleep 0.5
+  done
+  return 1
+}
+
 tap_identifier() {
   local serial="$1"
   local identifier="$2"
@@ -2721,7 +2747,7 @@ readonly BLACK_USER_ID WHITE_USER_ID BLACK_SERIAL WHITE_SERIAL
 
 wait_for_log_marker "$SERIAL_A" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "A Godot did not report ready for the first match"
-wait_for_identifier "$SERIAL_B" continue-match >/dev/null \
+wait_for_identifier_after_scroll "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the active-match automation identifier"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
   || fail "could not verify the dark narrow active lobby UI state"
@@ -2876,7 +2902,7 @@ exercise_active_system_back() {
     || fail "could not establish active Android Back log boundaries"
   adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
     || fail "could not send Android Back during the active match"
-  wait_for_identifier "$serial" continue-match >/dev/null \
+  wait_for_identifier_after_scroll "$serial" continue-match >/dev/null \
     || fail "active Android Back did not return to a resumable lobby"
   assert_ui_state_safe "$serial" "$SECRETS_ON_UI_A" \
     || fail "could not verify the resumable lobby after Android Back"
@@ -2901,7 +2927,7 @@ recover_both_clients_after_server_restart() {
     adb_for "$serial" shell am force-stop "$PACKAGE" >/dev/null \
       || fail "could not force-stop only $PACKAGE on $serial after server restart"
     start_flutter "$serial"
-    wait_for_identifier "$serial" continue-match >/dev/null \
+    wait_for_identifier_after_scroll "$serial" continue-match >/dev/null \
       || fail "$serial did not expose continue-match after server restart"
     tap_identifier "$serial" continue-match
   done
@@ -3061,7 +3087,7 @@ THIRD_MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "A did not emit exactly one resignation-match ready ID within ${WAIT_SECONDS}s"
 [[ "$THIRD_MATCH_ID" =~ $uuid_pattern ]] \
   || fail "resignation-match ready marker did not contain a canonical match ID"
-wait_for_identifier "$SERIAL_B" continue-match >/dev/null \
+wait_for_identifier_after_scroll "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the resignation match"
 tap_identifier "$SERIAL_B" continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$THIRD_MATCH_ID" \
