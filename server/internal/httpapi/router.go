@@ -51,13 +51,14 @@ type router struct {
 	games     *games.Registry
 	publisher MatchEventPublisher
 	hub       *matches.Hub
+	logger    *log.Logger
 }
 
 func NewRouter(config RouterConfig) (http.Handler, error) {
 	if config.Auth == nil || config.Matches == nil || config.Games == nil || nilInterface(config.Publisher) || config.Hub == nil || config.Logger == nil || config.RequestIDs == nil {
 		return nil, ErrInvalidConfiguration
 	}
-	router := &router{auth: config.Auth, matches: config.Matches, games: config.Games, publisher: config.Publisher, hub: config.Hub}
+	router := &router{auth: config.Auth, matches: config.Matches, games: config.Games, publisher: config.Publisher, hub: config.Hub, logger: config.Logger}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", router.health)
@@ -67,6 +68,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
+	mux.Handle("GET /v1/games/gomoku/history", router.authenticated(http.HandlerFunc(router.gomokuHistory)))
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
@@ -79,6 +81,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/gomoku/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
@@ -235,6 +238,7 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 				return
 			}
 			writer.Header().Set("X-Request-ID", requestID)
+			request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey{}, requestID))
 			// MaxBytesReader must receive the server's original writer so its
 			// private requestTooLarge signal can close an oversized HTTP/1.x
 			// connection. responseCapture deliberately stays outside this call.
@@ -313,6 +317,19 @@ func canonicalRequestID(value string) bool {
 }
 
 type authenticatedUserContextKey struct{}
+
+type requestIDContextKey struct{}
+
+func requestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, ok := ctx.Value(requestIDContextKey{}).(string)
+	if !ok || !canonicalRequestID(requestID) {
+		return ""
+	}
+	return requestID
+}
 
 func (router *router) authenticated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
