@@ -2618,11 +2618,9 @@ register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 tap_identifier "$SERIAL_B" app-update
 sleep 2
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
-  || fail "could not verify the dark update dialog UI state"
-adb_for "$SERIAL_B" shell input keyevent KEYCODE_BACK >/dev/null \
-  || fail "could not close the dark update dialog"
+  || fail "could not verify the dark routine-update feedback state"
 wait_for_identifier "$SERIAL_B" game-gomoku >/dev/null \
-  || fail "B did not return to the lobby after closing the update dialog"
+  || fail "B left the lobby after routine update feedback"
 
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 
