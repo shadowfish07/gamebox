@@ -20,6 +20,7 @@ readonly BOARD_SIDE=960
 readonly BOARD_GRID_LEFT=96
 readonly BOARD_GRID_TOP=396
 readonly BOARD_GRID_SIDE=888
+readonly SSIM_SIDE=480
 readonly GAMEBOX_READY_MARKER="GAMEBOX_GODOT_READY"
 readonly GAMEBOX_STATE_MARKER="GAMEBOX_GODOT_STATE"
 readonly GAMEBOX_RESULT_MARKER="GAMEBOX_MATCH_RESULT"
@@ -2159,7 +2160,10 @@ crop_grid_score() {
 }
 
 crop_ssim() {
-  ffmpeg -v info -i "$1" -i "$2" -lavfi ssim -f null - 2>&1 \
+  ffmpeg -v info -i "$1" -i "$2" \
+    -filter_complex \
+      "[0:v]scale=$SSIM_SIDE:$SSIM_SIDE:flags=lanczos[a];[1:v]scale=$SSIM_SIDE:$SSIM_SIDE:flags=lanczos[b];[a][b]ssim" \
+    -f null - 2>&1 \
     | sed -E -n 's/.* All:([0-9.]+).*/\1/p' \
     | tail -n 1
 }
@@ -2184,9 +2188,9 @@ assert_both_render_revision() {
     if capture_board_crop "$SERIAL_A" "$crop_a" && capture_board_crop "$SERIAL_B" "$crop_b"; then
       hash_a="$(shasum -a 256 "$crop_a" | awk '{print $1}')"
       hash_b="$(shasum -a 256 "$crop_b" | awk '{print $1}')"
-      similarity="$(crop_ssim "$crop_a" "$crop_b")"
-      grid_a="$(crop_grid_score "$crop_a")"
-      grid_b="$(crop_grid_score "$crop_b")"
+      similarity="$(crop_ssim "$crop_a" "$crop_b" || true)"
+      grid_a="$(crop_grid_score "$crop_a" || true)"
+      grid_b="$(crop_grid_score "$crop_b" || true)"
       if crop_matches_board "$crop_a" "$board_json" \
         && crop_matches_board "$crop_b" "$board_json" \
         && ruby -e 'exit(Float(ARGV[0]) >= 0.995 && Float(ARGV[1]) >= 5.0 && Float(ARGV[2]) >= 5.0 ? 0 : 1)' \
