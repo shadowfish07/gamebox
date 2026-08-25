@@ -20,7 +20,10 @@ import (
 	sqlite "modernc.org/sqlite"
 )
 
-const initialMigrationVersion = 1
+const (
+	initialMigrationVersion      = 1
+	matchHistoryMigrationVersion = 2
+)
 
 func TestOpenAndMigrate(t *testing.T) {
 	t.Parallel()
@@ -44,6 +47,10 @@ func TestOpenAndMigrate(t *testing.T) {
 	var firstAppliedAt int64
 	if err := db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = ?`, initialMigrationVersion).Scan(&firstAppliedAt); err != nil {
 		t.Fatalf("read first migration record: %v", err)
+	}
+	var firstHistoryAppliedAt int64
+	if err := db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = ?`, matchHistoryMigrationVersion).Scan(&firstHistoryAppliedAt); err != nil {
+		t.Fatalf("read match history migration record: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close first database handle: %v", err)
@@ -69,6 +76,20 @@ func TestOpenAndMigrate(t *testing.T) {
 	}
 	if secondAppliedAt <= 0 {
 		t.Fatalf("migration applied_at = %d, want a Unix timestamp", secondAppliedAt)
+	}
+	var historyMigrationCount int
+	var secondHistoryAppliedAt int64
+	if err := db.QueryRow(`SELECT COUNT(*), MIN(applied_at) FROM schema_migrations WHERE version = ?`, matchHistoryMigrationVersion).Scan(&historyMigrationCount, &secondHistoryAppliedAt); err != nil {
+		t.Fatalf("read repeated match history migration record: %v", err)
+	}
+	if historyMigrationCount != 1 {
+		t.Fatalf("migration version %d has %d records, want 1", matchHistoryMigrationVersion, historyMigrationCount)
+	}
+	if secondHistoryAppliedAt != firstHistoryAppliedAt {
+		t.Fatalf("repeated match history migration changed applied_at from %d to %d", firstHistoryAppliedAt, secondHistoryAppliedAt)
+	}
+	if secondHistoryAppliedAt <= 0 {
+		t.Fatalf("match history migration applied_at = %d, want a Unix timestamp", secondHistoryAppliedAt)
 	}
 }
 
@@ -116,6 +137,52 @@ func TestConcurrentOpenAppliesMigrationOnce(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("migration version %d has %d records, want 1", initialMigrationVersion, count)
 	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, matchHistoryMigrationVersion).Scan(&count); err != nil {
+		t.Fatalf("count match history migration records: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("migration version %d has %d records, want 1", matchHistoryMigrationVersion, count)
+	}
+}
+
+func TestOpenUpgradesV1DatabaseWithMatchHistoryMigrationOnce(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v1-only.sqlite")
+	oldDB := openRawDatabase(t, path)
+	initialScript, err := migrationFiles.ReadFile("migrations/001_initial.sql")
+	if err != nil {
+		oldDB.Close()
+		t.Fatalf("read initial migration: %v", err)
+	}
+	initialLoaded := newLoadedMigration(initialMigrationVersion, string(initialScript))
+	mustExec(t, oldDB, `CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)`)
+	mustExec(t, oldDB, initialLoaded.script)
+	mustExec(t, oldDB, `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, 1)`, initialLoaded.version, initialLoaded.checksum)
+	if err := oldDB.Close(); err != nil {
+		t.Fatalf("close v1-only database: %v", err)
+	}
+
+	db := openDatabase(t, ctx, path)
+	assertMigrationRecord(t, db, initialMigrationVersion, initialLoaded.checksum, 1)
+	historyMigration := readMigrationRecord(t, db, matchHistoryMigrationVersion)
+	if historyMigration.checksum == "" {
+		t.Fatal("match history migration checksum is empty")
+	}
+	if historyMigration.appliedAt <= 0 {
+		t.Fatalf("match history migration applied_at = %d, want a Unix timestamp", historyMigration.appliedAt)
+	}
+	assertSchema(t, db)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close upgraded database: %v", err)
+	}
+
+	db = openDatabase(t, ctx, path)
+	t.Cleanup(func() { _ = db.Close() })
+	assertMigrationRecord(t, db, initialMigrationVersion, initialLoaded.checksum, 1)
+	assertMigrationRecord(t, db, matchHistoryMigrationVersion, historyMigration.checksum, historyMigration.appliedAt)
+	assertSchema(t, db)
 }
 
 func TestFailedMigrationIsAtomicAndRetryable(t *testing.T) {
@@ -240,7 +307,7 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "future.sqlite")
 	db := openDatabase(t, ctx, path)
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (3, ?, unixepoch()), (2, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (4, ?, unixepoch()), (3, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
 		_ = db.Close()
 		t.Fatalf("insert future migration: %v", err)
 	}
@@ -253,7 +320,7 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 		_ = db.Close()
 		t.Fatal("Open returned a database with an unknown future migration")
 	}
-	if err == nil || !strings.Contains(err.Error(), "unknown migration version 2") {
+	if err == nil || !strings.Contains(err.Error(), "unknown migration version 3") {
 		t.Fatalf("Open future-version error = %v, want stable unknown-version diagnostic", err)
 	}
 }
@@ -767,6 +834,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 	wantIndexes := map[string][]string{
 		"idx_launch_tickets_expires_at":         {"expires_at"},
 		"idx_match_events_match_id_revision":    {"match_id", "revision"},
+		"idx_match_players_user_id_match_id":    {"user_id", "match_id"},
 		"idx_matches_status_both_offline_since": {"status", "both_offline_since"},
 		"idx_resume_tokens_expires_at":          {"expires_at"},
 	}
@@ -985,6 +1053,35 @@ func schemaSnapshot(t *testing.T, db *sql.DB) []string {
 		t.Fatalf("iterate schema snapshot: %v", err)
 	}
 	return snapshot
+}
+
+type migrationLedgerRecord struct {
+	checksum  string
+	appliedAt int64
+}
+
+func readMigrationRecord(t *testing.T, db *sql.DB, version int) migrationLedgerRecord {
+	t.Helper()
+	var record migrationLedgerRecord
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(MIN(checksum), ''), COALESCE(MIN(applied_at), 0) FROM schema_migrations WHERE version = ?`, version).Scan(&count, &record.checksum, &record.appliedAt); err != nil {
+		t.Fatalf("read migration version %d: %v", version, err)
+	}
+	if count != 1 {
+		t.Fatalf("migration version %d has %d records, want 1", version, count)
+	}
+	return record
+}
+
+func assertMigrationRecord(t *testing.T, db *sql.DB, version int, wantChecksum string, wantAppliedAt int64) {
+	t.Helper()
+	got := readMigrationRecord(t, db, version)
+	if got.checksum != wantChecksum {
+		t.Fatalf("migration version %d checksum = %q, want %q", version, got.checksum, wantChecksum)
+	}
+	if got.appliedAt != wantAppliedAt {
+		t.Fatalf("migration version %d applied_at = %d, want %d", version, got.appliedAt, wantAppliedAt)
+	}
 }
 
 func normalizeSQL(value string) string {
