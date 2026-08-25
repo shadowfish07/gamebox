@@ -80,19 +80,23 @@ Public shell components consume generated `sys`/`comp` roles for surfaces, text,
 | `lastMove` | Marker for the most recently accepted authoritative move. |
 | `pendingMove` | Non-final requested move marker; never interchangeable with a confirmed piece. |
 
-The current literals in `game_runtime/games/gomoku/gomoku_board.gd:15–21` map one-to-one to these semantic roles only as migration evidence; the generated GDScript mapping becomes authoritative. The game must pair public containers with their on-colors and remain readable/state-distinguishable in both versioned Gamebox Teal schemes.
+The generated GDScript token mapping is authoritative. Gomoku consumes these
+game roles for its board and shared `sys`/`comp` roles for public controls,
+keeping paired on-colors and state distinctions readable in both versioned
+Gamebox Teal schemes.
 
 ## SHOULD Deviations
 
-| Deviation | Current reason | Alternative measure and retrofit decision |
-| --- | --- | --- |
-| Connection detail remains visible after recovery as “已连接” (`game_runtime/games/gomoku/gomoku_controller.gd:231–233,281–290`). | The existing fixed HUD dedicates one line to connection state at all times. | Record the deviation for the pre-change baseline only. During retrofit, preserve explicit connect/sync/reconnect/failure copy but collapse the steady connected detail; turn, player identity, and pending status remain visible. |
-
-There are no remaining approved SHOULD deviations. Board dominance, secondary actions outside the playfield, and the optional visible shell are selected profile behavior rather than deviations. Accessibility conformance and assistive-technology work are explicitly outside this profile's completion scope; existing automation selectors remain compatibility contracts only.
+There are no approved SHOULD deviations. Steady connected detail is collapsed;
+connect, sync, reconnect, and failure states remain explicit. Board dominance,
+secondary actions outside the playfield, and the optional visible shell are
+selected profile behavior rather than deviations. Accessibility conformance and
+assistive-technology work are explicitly outside this profile's completion
+scope; existing automation selectors remain compatibility contracts only.
 
 ## Current Evidence to Preserve
 
-- Portrait is requested in `game_runtime/project.godot:15–21` and asserted in `game_runtime/test/test_main.gd:144–155`; the declared orientation still needs packaged Android verification.
+- Portrait is requested in `game_runtime/project.godot` and asserted by the Godot suite. Packaged Android verification passed on API 36 at source revision `9a45844b34ac038d0b53670d7203ce1e525174a0`; the two-device run is recorded under `artifacts/e2e/20260825T070033Z-22472`.
 - Reconnect and snapshot recovery keep moves/resign locked until authority is restored (`game_runtime/games/gomoku/gomoku_controller.gd:162–187,237–246`; `game_runtime/test/test_gomoku_scene.gd:80–228`).
 - Pending, last-move, terminal, and safe public error states already have distinct source paths (`game_runtime/games/gomoku/gomoku_controller.gd:204–290`; `game_runtime/games/gomoku/gomoku_board.gd:185–203`).
 - Existing safe Back, logging markers, launch boundaries, server messages, match rules, reducer behavior, and network protocol remain outside visual/profile redesign.
