@@ -1953,8 +1953,10 @@ self_test() {
   grep -F 'wait_for_first_connect_loading_and_pause "$SERIAL_A"' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading flow does not pause before inspecting UI\n' >&2; return 1; }
+  local first_connect_flow_source
+  first_connect_flow_source="$(sed -n '/^wait_for_first_connect_loading_and_pause "\$SERIAL_A"/,/^resume_e2e_server/p' "${BASH_SOURCE[0]}")"
   grep -F 'assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '\''正在同步对局…'\''' \
-    <<<"$runtime_source" >/dev/null \
+    <<<"$first_connect_flow_source" >/dev/null \
     || { printf 'first-connect loading flow does not verify loading copy in its safe UI snapshot\n' >&2; return 1; }
   grep -F 'resume_e2e_server' \
     <<<"$runtime_source" >/dev/null \
@@ -2854,7 +2856,7 @@ register_user() {
 }
 gamebox_test_progress 'Gamebox E2E: registering both users and creating the first match...'
 register_user "$SERIAL_A" "$INVITE_A" "$NICKNAME_A" SECRETS_ON_UI_A
-assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '正在同步对局…' \
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the light idle lobby UI state"
 register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 
@@ -2889,7 +2891,7 @@ tap_identifier "$SERIAL_A" "$opponent_identifier"
 
 wait_for_first_connect_loading_and_pause "$SERIAL_A" \
   || fail "could not hold the real first-connect loading state before its initial snapshot"
-assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '正在同步对局…' \
   || fail "could not verify the real first-connect loading UI state"
 resume_e2e_server \
   || fail "could not resume the E2E server after first-connect loading assertion"
