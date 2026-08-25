@@ -512,12 +512,14 @@ static func _keeps_portrait_touch_layout() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
 	var board: Control = scene.get_node("Board")
+	var presence: Control = scene.get_node("OpponentPresence")
 	var back: Button = scene.get_node("BackButton")
 	var resign: Button = scene.get_node("ResignButton")
 	var loading: Control = scene.get_node("LoadingOverlay")
 	var back_center := back.position + back.size * 0.5
 	var result := _check(board.position.is_equal_approx(Vector2(60.0, 360.0)), "fixed board origin changed: %s" % board.position) \
 		and _check(board.size.is_equal_approx(Vector2(960.0, 960.0)), "fixed board stopped being square: %s" % board.size) \
+		and _check(presence.position.y + presence.size.y <= board.position.y, "opponent presence overlaps the board: %s > %s" % [presence.position.y + presence.size.y, board.position.y]) \
 		and _check(back.custom_minimum_size.x >= 96.0 and back.custom_minimum_size.y >= 96.0, "back target too small") \
 		and _check(resign.custom_minimum_size.x >= 96.0 and resign.custom_minimum_size.y >= 96.0, "resign target too small") \
 		and _check(back.position.x >= 48.0 and back.position.y >= 48.0, "back button left portrait safe margin") \
