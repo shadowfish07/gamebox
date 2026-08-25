@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
+
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 )
 
@@ -14,6 +16,11 @@ const (
 	historyOutcomeLoss      = "loss"
 	historyOutcomeDraw      = "draw"
 	historyOutcomeAbandoned = "abandoned"
+
+	// Flutter's DateTime accepts exactly 100,000,000 days on either side
+	// of the Unix epoch. This is narrower than the strict JSON safe-integer
+	// range, so it is the shared wire boundary.
+	maximumHistoryWireMilliseconds int64 = 8_640_000_000_000_000
 )
 
 type HistoryPageRequest struct {
@@ -120,11 +127,27 @@ func validHistoryCursor(cursor *HistoryCursor) bool {
 	if cursor == nil {
 		return true
 	}
-	if cursor.FinishedAt.IsZero() || !canonicalUUID(cursor.MatchID) {
+	if cursor.FinishedAt.IsZero() || !ValidHistoryWireValues(cursor.MatchID, cursor.FinishedAt.UnixMilli()) {
 		return false
 	}
 	canonical := time.UnixMilli(cursor.FinishedAt.UnixMilli()).UTC()
 	return cursor.FinishedAt == canonical
+}
+
+// ValidHistoryWireValues enforces the match-ID and timestamp domain shared by
+// the Go history API and the shipped Flutter client. Match IDs are canonical
+// lowercase, nonzero RFC UUIDs with versions 1 through 5. Milliseconds use the
+// inclusive Flutter DateTime range; that range also fits exact JSON integers.
+func ValidHistoryWireValues(matchID string, finishedAtMillis int64) bool {
+	if finishedAtMillis < -maximumHistoryWireMilliseconds || finishedAtMillis > maximumHistoryWireMilliseconds {
+		return false
+	}
+	parsed, err := uuid.Parse(matchID)
+	if err != nil || parsed == uuid.Nil || parsed.String() != matchID || parsed.Variant() != uuid.RFC4122 {
+		return false
+	}
+	version := parsed.Version()
+	return version >= 1 && version <= 5
 }
 
 func readHistoryStatistics(ctx context.Context, transaction *sql.Tx, gameID, userID string) (HistoryStatistics, error) {
@@ -140,6 +163,9 @@ func readHistoryStatistics(ctx context.Context, transaction *sql.Tx, gameID, use
 	}
 	if enabled != 1 {
 		return HistoryStatistics{}, ErrInvalidRequest
+	}
+	if integrityErr := validateHistoryWireRows(ctx, transaction, gameID, userID); integrityErr != nil {
+		return HistoryStatistics{}, integrityErr
 	}
 
 	var statistics HistoryStatistics
@@ -197,6 +223,50 @@ WHERE current_player.user_id=? AND matches.game_id=?
 		statistics.WinRate = float64(statistics.Wins) / float64(statistics.ValidMatches)
 	}
 	return statistics, nil
+}
+
+func validateHistoryWireRows(ctx context.Context, transaction *sql.Tx, gameID, userID string) error {
+	rows, queryErr := transaction.QueryContext(ctx, `
+SELECT matches.id,matches.finished_at
+FROM match_players AS current_player
+JOIN matches ON matches.id=current_player.match_id
+WHERE current_player.user_id=? AND matches.game_id=?
+  AND matches.status IN ('finished','abandoned')`, userID, gameID)
+	if queryErr != nil {
+		return newHistoryFailure(
+			"statistics", historyDatabaseCategory(ctx, queryErr), matchDatabaseError(ctx, queryErr),
+		)
+	}
+	for rows.Next() {
+		var matchID string
+		var finishedMillis sql.NullInt64
+		if scanErr := rows.Scan(&matchID, &finishedMillis); scanErr != nil {
+			_ = rows.Close()
+			category := "data_integrity"
+			cause := error(ErrInternal)
+			if historyDatabaseCategory(ctx, scanErr) == "cancelled" {
+				category = "cancelled"
+				cause = matchDatabaseError(ctx, scanErr)
+			}
+			return newHistoryFailure("statistics", category, cause)
+		}
+		if !finishedMillis.Valid || !ValidHistoryWireValues(matchID, finishedMillis.Int64) {
+			_ = rows.Close()
+			return newHistoryFailure("statistics", "data_integrity", ErrInternal)
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return newHistoryFailure(
+			"statistics", historyDatabaseCategory(ctx, rowsErr), matchDatabaseError(ctx, rowsErr),
+		)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return newHistoryFailure(
+			"statistics", historyDatabaseCategory(ctx, closeErr), matchDatabaseError(ctx, closeErr),
+		)
+	}
+	return nil
 }
 
 func readHistoryEntries(ctx context.Context, transaction *sql.Tx, gameID, userID string, request HistoryPageRequest) ([]HistoryEntry, *HistoryCursor, error) {
@@ -326,15 +396,15 @@ func validatedHistoryEntry(
 	opponentEnabled sql.NullInt64,
 	memberCount, distinctUsers, distinctColors, moveCount int64,
 ) (HistoryEntry, bool) {
-	if !canonicalUUID(matchID) || currentUserID != userID || !canonicalUUID(currentUserID) ||
+	if !finishedMillis.Valid || !ValidHistoryWireValues(matchID, finishedMillis.Int64) ||
+		currentUserID != userID || !canonicalUUID(currentUserID) ||
 		!opponentID.Valid || !canonicalUUID(opponentID.String) || opponentID.String == currentUserID ||
 		memberCount != 2 || distinctUsers != 2 || distinctColors != 2 ||
 		(currentSeat != 0 && currentSeat != 1) || !opponentSeat.Valid ||
 		(opponentSeat.Int64 != 0 && opponentSeat.Int64 != 1) || int64(currentSeat) == opponentSeat.Int64 ||
 		!validHistoryColors(Color(currentColor), Color(opponentColor.String)) || !opponentColor.Valid ||
 		!nickname.Valid || !normalized.Valid || !validStoredUser(opponentID.String, nickname.String, normalized.String) ||
-		!opponentEnabled.Valid || (opponentEnabled.Int64 != 0 && opponentEnabled.Int64 != 1) ||
-		!finishedMillis.Valid || moveCount < 0 {
+		!opponentEnabled.Valid || (opponentEnabled.Int64 != 0 && opponentEnabled.Int64 != 1) || moveCount < 0 {
 		return HistoryEntry{}, false
 	}
 

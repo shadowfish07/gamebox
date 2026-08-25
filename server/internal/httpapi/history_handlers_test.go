@@ -58,7 +58,10 @@ func TestHistoryCursorCodecRejectsNoncanonicalOrMalformedValues(t *testing.T) {
 		{name: "fractional milliseconds", value: rawHistoryCursor(`{"v":1,"finishedAt":1787623200000.5,"matchId":"11111111-1111-4111-8111-111111111111"}`)},
 		{name: "string milliseconds", value: rawHistoryCursor(`{"v":1,"finishedAt":"1787623200000","matchId":"11111111-1111-4111-8111-111111111111"}`)},
 		{name: "overflow milliseconds", value: rawHistoryCursor(`{"v":1,"finishedAt":9223372036854775808,"matchId":"11111111-1111-4111-8111-111111111111"}`)},
+		{name: "milliseconds above Flutter DateTime range", value: rawHistoryCursor(`{"v":1,"finishedAt":8640000000000001,"matchId":"11111111-1111-4111-8111-111111111111"}`)},
+		{name: "milliseconds below Flutter DateTime range", value: rawHistoryCursor(`{"v":1,"finishedAt":-8640000000000001,"matchId":"11111111-1111-4111-8111-111111111111"}`)},
 		{name: "uppercase uuid", value: rawHistoryCursor(`{"v":1,"finishedAt":1787623200000,"matchId":"11111111-1111-4111-8111-11111111111A"}`)},
+		{name: "version six uuid", value: rawHistoryCursor(`{"v":1,"finishedAt":1787623200000,"matchId":"11111111-1111-6111-8111-111111111111"}`)},
 		{name: "invalid uuid", value: rawHistoryCursor(`{"v":1,"finishedAt":1787623200000,"matchId":"not-a-uuid"}`)},
 	}
 	for _, test := range tests {
@@ -66,6 +69,37 @@ func TestHistoryCursorCodecRejectsNoncanonicalOrMalformedValues(t *testing.T) {
 			cursor, err := decodeHistoryCursor(test.value)
 			if !errors.Is(err, matches.ErrInvalidRequest) || cursor != (matches.HistoryCursor{}) {
 				t.Fatalf("decodeHistoryCursor(%q) = (%+v,%v), want zero/%v", test.value, cursor, err, matches.ErrInvalidRequest)
+			}
+		})
+	}
+}
+
+func TestHistoryCursorCodecAcceptsInclusiveWireDomainBoundaries(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  matches.HistoryCursor
+	}{
+		{
+			name:  "minimum timestamp and version one UUID",
+			value: rawHistoryCursor(`{"v":1,"finishedAt":-8640000000000000,"matchId":"11111111-1111-1111-8111-111111111111"}`),
+			want:  matches.HistoryCursor{FinishedAt: time.UnixMilli(-8_640_000_000_000_000).UTC(), MatchID: "11111111-1111-1111-8111-111111111111"},
+		},
+		{
+			name:  "maximum timestamp and version five UUID",
+			value: rawHistoryCursor(`{"v":1,"finishedAt":8640000000000000,"matchId":"11111111-1111-5111-8111-111111111111"}`),
+			want:  matches.HistoryCursor{FinishedAt: time.UnixMilli(8_640_000_000_000_000).UTC(), MatchID: "11111111-1111-5111-8111-111111111111"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decoded, err := decodeHistoryCursor(test.value)
+			if err != nil || decoded != test.want {
+				t.Fatalf("decodeHistoryCursor = (%+v,%v), want %+v/nil", decoded, err, test.want)
+			}
+			encoded, err := encodeHistoryCursor(test.want)
+			if err != nil || encoded != test.value {
+				t.Fatalf("encodeHistoryCursor = (%q,%v), want %q/nil", encoded, err, test.value)
 			}
 		})
 	}
@@ -81,6 +115,9 @@ func TestHistoryCursorCodecRejectsNoncanonicalCursorValuesOnEncode(t *testing.T)
 		{name: "non UTC", cursor: matches.HistoryCursor{FinishedAt: canonicalTime.In(time.FixedZone("zero", 0)), MatchID: historyCursorMatchID}},
 		{name: "submillisecond", cursor: matches.HistoryCursor{FinishedAt: canonicalTime.Add(time.Microsecond), MatchID: historyCursorMatchID}},
 		{name: "uppercase uuid", cursor: matches.HistoryCursor{FinishedAt: canonicalTime, MatchID: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}},
+		{name: "version six uuid", cursor: matches.HistoryCursor{FinishedAt: canonicalTime, MatchID: "11111111-1111-6111-8111-111111111111"}},
+		{name: "timestamp above Flutter DateTime range", cursor: matches.HistoryCursor{FinishedAt: time.UnixMilli(8_640_000_000_000_001).UTC(), MatchID: historyCursorMatchID}},
+		{name: "timestamp below Flutter DateTime range", cursor: matches.HistoryCursor{FinishedAt: time.UnixMilli(-8_640_000_000_000_001).UTC(), MatchID: historyCursorMatchID}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -212,6 +249,33 @@ func TestGomokuHistoryInternalFailuresReturnGenericErrorAndOnlyFixedDiagnostics(
 		response := fixture.request(t, http.MethodGet, "/v1/games/gomoku/history?cursor="+canonicalHistoryCursor, "", alice.Session.AccessToken)
 		assertHistoryInternalFailure(t, fixture, response, "statistics", "data_integrity", []string{
 			alice.Session.AccessToken, alice.Session.User.ID, bob.Session.User.ID, "Alice", "Bob", canonicalHistoryCursor, "corrupt-result-marker", "SELECT", "match_players",
+		})
+	})
+
+	t.Run("version six row outside limited page", func(t *testing.T) {
+		fixture := newAPIFixture(t)
+		alice := fixture.register(t, "history-v6-a", "Alice")
+		bob := fixture.register(t, "history-v6-b", "Bob")
+		seedHTTPHistoryMatch(t, fixture.db, historyCursorMatchID, alice.Session.User.ID, bob.Session.User.ID, alice.Session.User.ID, "five", historyCursorMillis, 0)
+		v6ID := "11111111-1111-6111-8111-111111111111"
+		seedHTTPHistoryMatch(t, fixture.db, v6ID, alice.Session.User.ID, bob.Session.User.ID, alice.Session.User.ID, "five", historyCursorMillis-1_000, 0)
+
+		response := fixture.request(t, http.MethodGet, "/v1/games/gomoku/history?limit=1", "", alice.Session.AccessToken)
+		assertHistoryInternalFailure(t, fixture, response, "statistics", "data_integrity", []string{
+			alice.Session.AccessToken, alice.Session.User.ID, bob.Session.User.ID, "Alice", "Bob", v6ID, "SELECT", "match_players",
+		})
+	})
+
+	t.Run("out of range timestamp", func(t *testing.T) {
+		fixture := newAPIFixture(t)
+		alice := fixture.register(t, "history-time-a", "Alice")
+		bob := fixture.register(t, "history-time-b", "Bob")
+		corruptMillis := int64(-8_640_000_000_000_001)
+		seedHTTPHistoryMatch(t, fixture.db, historyCursorMatchID, alice.Session.User.ID, bob.Session.User.ID, alice.Session.User.ID, "five", corruptMillis, 0)
+
+		response := fixture.request(t, http.MethodGet, "/v1/games/gomoku/history", "", alice.Session.AccessToken)
+		assertHistoryInternalFailure(t, fixture, response, "statistics", "data_integrity", []string{
+			alice.Session.AccessToken, alice.Session.User.ID, bob.Session.User.ID, "Alice", "Bob", historyCursorMatchID, fmt.Sprint(corruptMillis), "SELECT", "match_players",
 		})
 	})
 

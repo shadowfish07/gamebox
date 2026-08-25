@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
-
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
 )
@@ -122,8 +120,7 @@ func validHTTPHistoryCursor(cursor matches.HistoryCursor) bool {
 		return false
 	}
 	canonicalTime := time.UnixMilli(cursor.FinishedAt.UnixMilli()).UTC()
-	parsedID, err := uuid.Parse(cursor.MatchID)
-	return cursor.FinishedAt == canonicalTime && err == nil && parsedID.String() == cursor.MatchID && parsedID.Variant() == uuid.RFC4122
+	return cursor.FinishedAt == canonicalTime && matches.ValidHistoryWireValues(cursor.MatchID, cursor.FinishedAt.UnixMilli())
 }
 
 type historyStatisticsResponse struct {

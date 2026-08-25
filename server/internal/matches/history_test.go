@@ -168,6 +168,9 @@ func TestListHistoryRejectsInvalidRequestAndCorruptTerminalRows(t *testing.T) {
 			{name: "non UTC cursor", gameID: gomoku.GameID, userID: initiatorID, request: HistoryPageRequest{Limit: 20, Cursor: &HistoryCursor{FinishedAt: canonicalTime.In(time.FixedZone("zero", 0)), MatchID: historyFiveID}}},
 			{name: "submillisecond cursor", gameID: gomoku.GameID, userID: initiatorID, request: HistoryPageRequest{Limit: 20, Cursor: &HistoryCursor{FinishedAt: canonicalTime.Add(time.Microsecond), MatchID: historyFiveID}}},
 			{name: "noncanonical cursor id", gameID: gomoku.GameID, userID: initiatorID, request: HistoryPageRequest{Limit: 20, Cursor: &HistoryCursor{FinishedAt: canonicalTime, MatchID: strings.ToUpper(historyFiveID)}}},
+			{name: "version six cursor id", gameID: gomoku.GameID, userID: initiatorID, request: HistoryPageRequest{Limit: 20, Cursor: &HistoryCursor{FinishedAt: canonicalTime, MatchID: "11111111-1111-6111-8111-111111111111"}}},
+			{name: "cursor above Flutter DateTime range", gameID: gomoku.GameID, userID: initiatorID, request: HistoryPageRequest{Limit: 20, Cursor: &HistoryCursor{FinishedAt: time.UnixMilli(8_640_000_000_000_001).UTC(), MatchID: historyFiveID}}},
+			{name: "cursor below Flutter DateTime range", gameID: gomoku.GameID, userID: initiatorID, request: HistoryPageRequest{Limit: 20, Cursor: &HistoryCursor{FinishedAt: time.UnixMilli(-8_640_000_000_000_001).UTC(), MatchID: historyFiveID}}},
 		}
 		service := fixture.service(t, bytes.NewReader([]byte{0}))
 		for _, test := range tests {
@@ -185,6 +188,7 @@ func TestListHistoryRejectsInvalidRequestAndCorruptTerminalRows(t *testing.T) {
 
 	corruptions := []struct {
 		name  string
+		limit int
 		setup func(t *testing.T, fixture fixture)
 	}{
 		{name: "unknown result", setup: func(t *testing.T, fixture fixture) {
@@ -214,13 +218,36 @@ func TestListHistoryRejectsInvalidRequestAndCorruptTerminalRows(t *testing.T) {
 				t.Fatalf("remove finished_at: %v", err)
 			}
 		}},
+		{name: "version six match outside limited page", limit: 1, setup: func(t *testing.T, fixture fixture) {
+			finished := canonicalHistoryTime(fixture)
+			seedHistoryMatch(t, fixture.db, historyFiveID, StatusFinished, ResultFive, initiatorID, finished, true)
+			seedHistoryMatch(t, fixture.db, "11111111-1111-6111-8111-111111111111", StatusFinished, ResultFive, initiatorID, finished.Add(-time.Second), true)
+		}},
+		{name: "timestamp above Flutter DateTime range", setup: func(t *testing.T, fixture fixture) {
+			seedHistoryMatch(t, fixture.db, historyFiveID, StatusFinished, ResultFive, initiatorID, canonicalHistoryTime(fixture), true)
+			if _, err := fixture.db.Exec(`UPDATE matches SET finished_at=? WHERE id=?`, int64(8_640_000_000_000_001), historyFiveID); err != nil {
+				t.Fatalf("corrupt finished_at: %v", err)
+			}
+		}},
+		{name: "timestamp below Flutter DateTime range outside limited page", limit: 1, setup: func(t *testing.T, fixture fixture) {
+			finished := canonicalHistoryTime(fixture)
+			seedHistoryMatch(t, fixture.db, historyFiveID, StatusFinished, ResultFive, initiatorID, finished, true)
+			seedHistoryMatch(t, fixture.db, historyResignID, StatusFinished, ResultFive, initiatorID, finished.Add(-time.Second), true)
+			if _, err := fixture.db.Exec(`UPDATE matches SET finished_at=? WHERE id=?`, int64(-8_640_000_000_000_001), historyResignID); err != nil {
+				t.Fatalf("corrupt finished_at: %v", err)
+			}
+		}},
 	}
 	for _, test := range corruptions {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newFixture(t)
 			test.setup(t, fixture)
+			limit := test.limit
+			if limit == 0 {
+				limit = 20
+			}
 			page, err := fixture.service(t, bytes.NewReader([]byte{0})).ListHistory(
-				context.Background(), gomoku.GameID, initiatorID, HistoryPageRequest{Limit: 20},
+				context.Background(), gomoku.GameID, initiatorID, HistoryPageRequest{Limit: limit},
 			)
 			if !errors.Is(err, ErrInternal) || !historyPageIsZero(page) {
 				t.Fatalf("ListHistory = (%+v, %v), want zero page/%v", page, err, ErrInternal)
