@@ -561,7 +561,8 @@ static func _uses_mobile_move_confirmation_surfaces() -> bool:
 		and _check(settings_toggle.toggle_mode, "settings row is not a toggle button") \
 		and _check(settings_toggle.custom_minimum_size.y >= 128.0, "settings row is too cramped for title, description, and switch") \
 		and _check(toggle_style != null and toggle_style.bg_color == colors["surface_container"], "settings row does not use a neutral semantic surface") \
-		and _check(toggle_content.position.x >= 32.0 and toggle_content.size.x <= settings_toggle.size.x - 64.0, "settings row content does not preserve 16dp horizontal padding: row=%s content=%s" % [settings_toggle.get_rect(), toggle_content.get_rect()]) \
+		and _check(toggle_content.position.x >= 32.0 \
+			and toggle_content.position.x + toggle_content.size.x <= settings_toggle.size.x - 32.0, "settings row content does not preserve 16dp horizontal padding: row=%s content=%s" % [settings_toggle.get_rect(), toggle_content.get_rect()]) \
 		and _check(switch_visual.custom_minimum_size.x >= 96.0 and switch_visual.custom_minimum_size.y >= 64.0, "switch visual is too small to distinguish its state") \
 		and _check(cancel_button.custom_minimum_size.y >= 96.0 and confirm_button.custom_minimum_size.y >= 96.0, "confirmation actions are below 48dp") \
 		and _check(not confirmation_bar.visible, "confirmation bar is visible without a selection") \
