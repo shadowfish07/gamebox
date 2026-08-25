@@ -214,8 +214,8 @@ static func _confirmation_contract() -> bool:
 		result = result and _check(not dialog.visible and cancelled_calls.size() == 1, "confirmation cancel did not close exactly once") \
 			and _check(confirmed_calls.is_empty(), "confirmation cancel emitted confirm")
 		dialog.open()
-		ok_button.pressed.emit()
 		await tree.process_frame
+		await _dispatch_click(tree, Vector2(640.0, 1230.0))
 		result = result and _check(not dialog.visible and confirmed_calls.size() == 1, "confirmation accept did not close exactly once")
 		host.free()
 	return result

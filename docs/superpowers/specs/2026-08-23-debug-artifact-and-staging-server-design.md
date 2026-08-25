@@ -17,7 +17,7 @@ Status: Validated
 
 | 问题 | 决策 |
 |---|---|
-| Debug 包发布方式 | 每次 push 到 `main` 自动构建 → 滚动 pre-release（固定 tag `debug-latest`，APK/校验文件按完整 SHA 使用不可变资产名；上传成功后再移动 tag 和更新说明） |
+| Debug 包发布方式 | 每次 push 到 `main` 自动构建 → 滚动 pre-release（固定 tag `debug-latest`，APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名；上传成功后再移动 tag 和更新说明） |
 | 包名后缀范围 | 仅 CI 发布的包加 `.debug`（通过 `GAMEBOX_DEBUG_ARTIFACT` 环境变量控制），本地 `flutter run`、`verify.sh`、smoke/E2E 脚本零影响 |
 | Staging 部署机制 | `deploy/macos/install-staging.sh` 手动脚本，在 Mac 上运行；需要更新服务端代码时 `git pull` 后重跑 |
 | Staging 域名 | `staging-gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
@@ -41,9 +41,9 @@ Status: Validated
   - `--build-name="<pubspec版本>-dev.<sha7>"`、`--build-number=${GITHUB_RUN_NUMBER}`
   - `--dart-define="GAMEBOX_API_BASE_URL=<staging 或输入值>"`
 - 校验：`aapt dump badging` 断言 `package name` 为 `me.zqydev.gamebox.debug`。
-- 发布：`gh release create debug-latest`（首次）→ 先上传完整 SHA 命名的 APK/校验文件，
-  再移动 tag 并 `gh release edit` 更新说明（标注 SHA、版本和当前资产名）；旧资产保留，
-  不使用 destructive `--clobber`。
+- 发布：`gh release create debug-latest`（首次）→ 先上传包含完整 SHA、run ID 和 attempt
+  的不可变 APK/校验文件，再移动 tag 并 `gh release edit` 更新说明（标注构建身份、版本和
+  当前资产名）；旧资产保留，不使用 destructive `--clobber`。
   pre-release，不参与 `releases/latest`。
 
 ### Part 2: 包名独立（最小风险方案）

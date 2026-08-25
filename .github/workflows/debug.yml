@@ -111,8 +111,9 @@ jobs:
       - name: Stage APK for release
         run: |
           mkdir -p debug-assets
-          asset_name="gamebox-debug-${GITHUB_SHA}.apk"
-          checksum_name="checksums-${GITHUB_SHA}.txt"
+          artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          asset_name="gamebox-debug-${artifact_identity}.apk"
+          checksum_name="checksums-${artifact_identity}.txt"
           cp app/build/app/outputs/flutter-apk/app-debug.apk "debug-assets/${asset_name}"
           (cd debug-assets && sha256sum "${asset_name}" > "${checksum_name}")
 
@@ -122,12 +123,14 @@ jobs:
           API_BASE_URL: ${{ inputs.api_base_url || env.DEBUG_API_BASE_URL }}
         run: |
           short_sha="${GITHUB_SHA::7}"
+          artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' app/pubspec.yaml)"
-          asset_name="gamebox-debug-${GITHUB_SHA}.apk"
-          checksum_name="checksums-${GITHUB_SHA}.txt"
+          asset_name="gamebox-debug-${artifact_identity}.apk"
+          checksum_name="checksums-${artifact_identity}.txt"
           notes="Debug build from \`${GITHUB_SHA}\` (\`${GITHUB_REF_NAME}\`)
 
           - version: \`${pubspec_version}-dev.${short_sha}\`
+          - run: \`${GITHUB_RUN_ID}\` (attempt \`${GITHUB_RUN_ATTEMPT}\`)
           - package: \`me.zqydev.gamebox.debug\`
           - api: \`${API_BASE_URL}\`
           - apk: \`${asset_name}\`

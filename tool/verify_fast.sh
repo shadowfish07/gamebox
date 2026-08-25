@@ -16,12 +16,7 @@ bash -n tool/worktree.sh tool/lib/android_lease.sh tool/test_android_lease.sh \
   tool/e2e_android.sh tool/ensure_test_avds.sh \
   tool/smoke_android_host.sh tool/smoke_android_release_apk.sh
 for deploy_script in deploy/macos/install.sh deploy/macos/install-staging.sh; do
-  if command -v zsh >/dev/null 2>&1; then
-    zsh -n "$deploy_script"
-  else
-    # Ubuntu CI does not ship zsh; bash -n still catches shell syntax errors.
-    bash -n "$deploy_script"
-  fi
+  zsh -n "$deploy_script"
 done
 bash tool/test_macos_deploy.sh
 bash tool/test_android_lease.sh

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import 'package:flutter_release_updater/flutter_release_updater.dart';
@@ -9,7 +7,7 @@ import '../../design_system/generated/gamebox_tokens.g.dart';
 final class UpdateActionButton extends StatelessWidget {
   const UpdateActionButton({super.key, required this.controller});
 
-  final UpdateController controller;
+  final ReleaseUpdater controller;
 
   @override
   Widget build(BuildContext context) {
@@ -42,10 +40,24 @@ final class UpdateActionButton extends StatelessWidget {
 
 Future<void> showUpdateDialog(
   BuildContext context,
-  UpdateController controller,
+  ReleaseUpdater controller,
 ) async {
   if (controller.status == UpdateStatus.idle) {
-    unawaited(controller.checkNow());
+    await controller.checkNow();
+    if (!context.mounted) return;
+  }
+  if (controller.availableUpdate == null) {
+    final message = switch (controller.status) {
+      UpdateStatus.upToDate => '当前已是最新版本',
+      UpdateStatus.failed =>
+        controller.errorMessage.isEmpty ? '暂时无法检查更新' : controller.errorMessage,
+      _ => null,
+    };
+    if (message != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+    return;
   }
   await showDialog<void>(
     context: context,
@@ -56,7 +68,7 @@ Future<void> showUpdateDialog(
 final class _UpdateDialog extends StatelessWidget {
   const _UpdateDialog({required this.controller});
 
-  final UpdateController controller;
+  final ReleaseUpdater controller;
 
   @override
   Widget build(BuildContext context) {
@@ -135,7 +147,7 @@ final class _UpdateDialog extends StatelessWidget {
 final class _UpdateState extends StatelessWidget {
   const _UpdateState({required this.controller});
 
-  final UpdateController controller;
+  final ReleaseUpdater controller;
 
   @override
   Widget build(BuildContext context) {

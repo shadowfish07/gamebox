@@ -31,8 +31,9 @@ chat, spectating, push notifications, public deployment, or account migration.
 - Godot 4.7 (set `GODOT_BIN` when it is not installed as the macOS app)
 - JDK 17 or newer
 - Android SDK platform 36 and accepted Android licenses
+- Bash and zsh
 
-The complete local E2E additionally requires `adb`, `emulator`, Bash, curl,
+The complete local E2E additionally requires `adb`, `emulator`, curl,
 Git, jq, lsof, OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. It requires the installed
 `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` image. Check
 the build/CI toolchain or the complete E2E toolchain without modifying it:
@@ -205,11 +206,12 @@ stable published release is offered automatically to normal installations.
 
 `.github/workflows/debug.yml` builds a debug APK on every push to `main` that
 touches app or runtime sources, and on manual `workflow_dispatch`. It publishes
-immutable SHA-named APK and checksum assets to the rolling pre-release tagged
-`debug-latest`; the release notes identify the current pair, while previous
-assets remain available if a later upload fails. The workflow uses the same
-repository signing secrets as the stable release workflow, so an installed
-debug build can accept the next rolling build without an uninstall.
+immutable build-identity-named APK and checksum assets to the rolling
+pre-release tagged `debug-latest`; each name includes the commit SHA, run ID, and
+attempt, while the release notes identify the current pair. Previous assets
+remain available if a later upload fails. The workflow uses the same repository
+signing secrets as the stable release workflow, so an installed debug build can
+accept the next rolling build without an uninstall.
 
 The published debug build uses the independent application id
 `me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment
