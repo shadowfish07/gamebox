@@ -177,6 +177,11 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
   adb_for "$serial" logcat -c
 done
 
+adb_for "$SERIAL_A" shell am instrument -w -r \
+  -e class me.zqydev.gamebox.GameResultBridgeTest "$TEST_RUNNER" >"$TEMP_DIR/result-bridge.log" \
+  || { cp "$TEMP_DIR/result-bridge.log" "$ARTIFACT_DIR/failed-phase.log"; fail 'device result durability test failed'; }
+adb_for "$SERIAL_A" shell pm clear "$PACKAGE" >/dev/null || fail "post-test app reset failed on $SERIAL_A"
+
 dump_ui() {
   local serial="$1" output="$2" remote=/data/local/tmp/gamebox-lan-ui.xml
   adb_for "$serial" shell uiautomator dump "$remote" >/dev/null 2>&1 || return 1
