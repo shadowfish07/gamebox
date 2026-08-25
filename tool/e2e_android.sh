@@ -1130,16 +1130,40 @@ start_first_connect_loading_watch() {
 
 stop_first_connect_loading_watch() {
   local cleanup_status=0
+  local watcher_recheck=0
+  local watcher_process_group=""
+  local watcher_session=""
   if [[ -n "${LOADING_WATCH_LEADER_PID:-}" \
     && -n "${LOADING_WATCH_PROCESS_GROUP:-}" \
     && -n "${LOADING_WATCH_SESSION:-}" ]]; then
-    terminate_owned_session_group \
-      "$LOADING_WATCH_LEADER_PID" "$LOADING_WATCH_PROCESS_GROUP" "$LOADING_WATCH_SESSION" \
-      "$TIMEOUT_KILL_GRACE_SECONDS" || cleanup_status=1
+    watcher_process_group="$LOADING_WATCH_PROCESS_GROUP"
+    watcher_session="$LOADING_WATCH_SESSION"
+    if session_numbers_are_safe \
+      "$LOADING_WATCH_LEADER_PID" "$watcher_process_group" "$watcher_session"; then
+      if ! terminate_owned_session_group \
+        "$LOADING_WATCH_LEADER_PID" "$watcher_process_group" "$watcher_session" \
+        "$TIMEOUT_KILL_GRACE_SECONDS"; then
+        cleanup_status=1
+        watcher_recheck=1
+      fi
+    else
+      cleanup_status=1
+    fi
   fi
   if [[ -n "${LOADING_WATCH_PID:-}" ]]; then
     kill "$LOADING_WATCH_PID" 2>/dev/null || true
     wait "$LOADING_WATCH_PID" 2>/dev/null || true
+  fi
+  if ((watcher_recheck)); then
+    if session_group_state "$watcher_process_group" "$watcher_session"; then
+      cleanup_status=1
+    else
+      if [[ "$?" == "1" ]]; then
+        cleanup_status=0
+      else
+        cleanup_status=1
+      fi
+    fi
   fi
   [[ -z "${LOADING_WATCH_READY_FILE:-}" ]] \
     || rm -f -- "$LOADING_WATCH_READY_FILE"
@@ -1721,6 +1745,13 @@ self_test() {
     || { printf 'EXIT cleanup no longer stops the exact owned server\n' >&2; return 1; }
   grep -F 'declare -F stop_first_connect_loading_watch' <<<"$cleanup_source" >/dev/null \
     || { printf 'early EXIT cleanup calls an unavailable loading watcher\n' >&2; return 1; }
+  local watcher_cleanup_source watcher_wait_line watcher_recheck_line
+  watcher_cleanup_source="$(sed -n '/^stop_first_connect_loading_watch() {/,/^self_test() {/p' "${BASH_SOURCE[0]}")"
+  watcher_wait_line="$(grep -n 'wait \"\$LOADING_WATCH_PID\"' <<<"$watcher_cleanup_source" | head -n 1 | cut -d: -f1)"
+  watcher_recheck_line="$(grep -n 'session_group_state \"\$watcher_process_group\" \"\$watcher_session\"' <<<"$watcher_cleanup_source" | head -n 1 | cut -d: -f1)"
+  [[ "$watcher_wait_line" =~ ^[1-9][0-9]*$ && "$watcher_recheck_line" =~ ^[1-9][0-9]*$ \
+    && "$watcher_recheck_line" -gt "$watcher_wait_line" ]] \
+    || { printf 'loading watcher teardown validates its session before reaping the pipeline\n' >&2; return 1; }
   local visual_configuration_source
   visual_configuration_source="$(
     sed -n '/^configure_device_visuals() {/,/^}/p' "${BASH_SOURCE[0]}"
