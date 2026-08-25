@@ -17,13 +17,13 @@ The selected shell contains a safe-area-aware return control, game title, turn/p
 
 The 15×15 board uses the Dense Playfield Target Exception. Its individual intersections may be smaller than 48dp, but the entire board region is continuously hittable with no dead gaps between intersections. Touch resolves to the nearest intersection; ties use one deterministic coordinate rule. Occupied or otherwise illegal intersections do not submit. Pressed, `pendingMove`, accepted/`lastMove`, and rejected/restored states are visibly distinct. Back, resign, dialog, and result actions remain public ≥48×48dp targets and do not receive the exception.
 
-The current board already rounds a point to an intersection and bounds the outer half-cell region (`game_runtime/games/gomoku/gomoku_board.gd:83–108`), safely submits a same-cell single-finger release (`game_runtime/games/gomoku/gomoku_board.gd:133–168`), and tests coordinate inverse, expanded viewports, drag/multitouch cancellation, and pending separation (`game_runtime/test/test_gomoku_board.gd:19–112`). The retrofit must preserve those behaviors while adding pressed feedback and semantic token consumption.
+The board rounds a point to an intersection, bounds the outer half-cell region, safely submits a same-cell single-finger release, and tests coordinate inverse, expanded viewports, drag/multitouch cancellation, and pending separation. The Material 3 retrofit preserves those behaviors while adding token-backed board rendering plus distinct pressed, pending, accepted, and restored interaction states.
 
 ## Inputs and Navigation
 
 - **Touch:** selects the nearest legal board intersection and operates Back, resign, confirmation, retry, and result actions. A move stays `pendingMove` until acknowledged; the confirmed board is not mutated locally (`game_runtime/games/gomoku/gomoku_controller.gd:127–133,217–246`; `game_runtime/test/test_gomoku_scene.gd:267–283`).
 - **Android Back:** Android system Back and visible Back must reach the same non-destructive return result. Back never resigns, cancels, or discards the active online match. Current source routes `ui_cancel` to the visible handler (`game_runtime/games/gomoku/gomoku_controller.gd:145–159`) and its test proves no resign request (`game_runtime/test/test_gomoku_scene.gd:242–264`); packaged Android parity remains required.
-- **Resign:** available only when the authoritative state permits it, then opens a consequence-named confirmation. Only the confirm action may call the existing request path. The current direct request (`game_runtime/games/gomoku/gomoku_controller.gd:136–142`) is a MUST gap, not an approved deviation.
+- **Resign:** available only when the authoritative state permits it, then opens the shared consequence-named confirmation. Only its confirm action calls the request path; cancellation and Android Back close the dialog without resigning.
 
 ## Key UI States and Visual Review States
 
@@ -50,6 +50,22 @@ The fixed E2E intentionally produces no screenshot list. Any separate visual
 review must record its final clean HEAD and artifact details here before the
 profile can claim visual closure.
 
+Visual closure was performed on the final UI source commit `cad84f9` with the
+separate, logic-free capture matrix below. Later acceptance-only changes do not
+alter the rendered application UI. The final two-device logic run records its
+exact clean branch HEAD in `artifacts/e2e/<run>/summary.json` as
+`sourceRevision`.
+
+| Mode | Android viewport | Runtime capture |
+| --- | --- | --- |
+| Light / large | 1080×2400 | `artifacts/visual/issue-7-material3/gomoku-online-light-large.png` |
+| Dark / narrow | 720×1600 | `artifacts/visual/issue-7-material3/gomoku-online-dark-narrow.png` |
+
+Both captures show the active online-presence HUD, board dominance, safe
+portrait margins, and no clipping or overlap. The fixed E2E separately covers
+online → offline → unknown → restored-online presence transitions without
+embedding screenshots.
+
 ## Token Roles
 
 Public shell components consume generated `sys`/`comp` roles for surfaces, text, disabled, error, dialogs, status, shape, spacing, typography, and motion. Game art consumes only these controlled `game` roles; it may not override public error, text, disabled, or system-state semantics:
@@ -72,7 +88,7 @@ The current literals in `game_runtime/games/gomoku/gomoku_board.gd:15–21` map 
 | --- | --- | --- |
 | Connection detail remains visible after recovery as “已连接” (`game_runtime/games/gomoku/gomoku_controller.gd:231–233,281–290`). | The existing fixed HUD dedicates one line to connection state at all times. | Record the deviation for the pre-change baseline only. During retrofit, preserve explicit connect/sync/reconnect/failure copy but collapse the steady connected detail; turn, player identity, and pending status remain visible. |
 
-There are no other approved SHOULD deviations. The current absolute layout, literal public/game colors, missing pressed indication, and direct resignation are MUST gaps; they cannot be justified as SHOULD alternatives. Board dominance, secondary actions outside the playfield, and the optional visible shell are selected profile behavior rather than deviations. Accessibility conformance and assistive-technology work are explicitly outside this profile's completion scope; existing automation selectors remain compatibility contracts only.
+There are no remaining approved SHOULD deviations. Board dominance, secondary actions outside the playfield, and the optional visible shell are selected profile behavior rather than deviations. Accessibility conformance and assistive-technology work are explicitly outside this profile's completion scope; existing automation selectors remain compatibility contracts only.
 
 ## Current Evidence to Preserve
 
