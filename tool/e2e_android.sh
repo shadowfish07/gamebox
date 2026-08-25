@@ -1081,12 +1081,13 @@ start_first_connect_loading_watch() {
   else
     boundary="$(boundary_for_serial "$serial")"
   fi
+  [[ -x "$ROOT_DIR/tool/run_in_session.rb" ]] || return 1
   LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
   LOADING_WATCH_READY_FILE="$TEMP_DIR/first-connect-loading-session"
   rm -f -- "$LOADING_WATCH_FILE"
   rm -f -- "$LOADING_WATCH_READY_FILE"
   {
-    "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
+    ruby "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
       "$ADB_BIN" -s "$serial" logcat -b all -v threadtime -T 100 2>/dev/null \
       | awk -v marker="$boundary" '
           index($0, marker) {

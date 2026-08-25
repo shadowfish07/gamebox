@@ -56,7 +56,7 @@ case " $* " in
       printf '%s\n' "${FAKE_ADB_LOG_BOUNDARY:?}"
       printf '%s\n' "$$" >"${FAKE_ADB_PID_FILE:?}"
       trap '' TERM
-      while :; do :; done
+      while :; do sleep 1; done
     fi
     ;;
 esac
