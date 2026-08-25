@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.35.1"
+  FLUTTER_VERSION: "3.47.1"
   JAVA_VERSION: "17"
   GODOT_VERSION: "4.7.0"
   GAMEBOX_API_BASE_URL: "https://gamebox.zqydev.me"
@@ -86,6 +86,8 @@ jobs:
 
       - name: Accept Android SDK licenses
         run: yes | flutter doctor --android-licenses
+      - name: Install zsh for macOS deployment script checks
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zsh
 
       - name: Verify tag matches pubspec version
         working-directory: app

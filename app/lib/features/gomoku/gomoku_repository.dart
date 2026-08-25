@@ -6,13 +6,11 @@ import 'gomoku_models.dart';
 
 final class GomokuRepository {
   GomokuRepository({
-    required HomeApi api,
-    required GameLauncher gameLauncher,
+    required this._api,
+    required this._gameLauncher,
     Uri? apiBaseUri,
     DateTime Function()? now,
-  }) : _api = api,
-       _gameLauncher = gameLauncher,
-       _apiBaseUri = apiBaseUri ?? Uri.parse(apiBaseUrl),
+  }) : _apiBaseUri = apiBaseUri ?? Uri.parse(apiBaseUrl),
        _now = now ?? DateTime.now {
     if (!_isHttpOrigin(_apiBaseUri)) {
       throw ArgumentError('API base URL must be an HTTP(S) origin');

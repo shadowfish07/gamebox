@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/api_error.dart';
+import '../../design_system/components/gamebox_async_panel.dart';
+import '../../design_system/components/gamebox_page_body.dart';
+import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
 import 'home_controller.dart';
 
@@ -105,7 +108,7 @@ final class _OpponentPageState extends State<OpponentPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('选择对手')),
-      body: SafeArea(child: _buildBody(context)),
+      body: _buildBody(context),
     );
   }
 
@@ -113,17 +116,26 @@ final class _OpponentPageState extends State<OpponentPage> {
     final opponents = _opponents;
     if (opponents == null) {
       if (_loading) {
-        return const Center(
-          child: CircularProgressIndicator(key: Key('opponent-loading')),
+        return const GameboxPageBody(
+          children: [
+            GameboxAsyncPanel(
+              key: Key('opponent-loading'),
+              icon: Icons.group_outlined,
+              title: '正在加载对手',
+              message: '请稍候，正在获取最新在线状态。',
+              isLoading: true,
+            ),
+          ],
         );
       }
       if (_errorMessage != null) {
-        return _ErrorView(message: _errorMessage!, onRetry: _load);
+        return GameboxPageBody(
+          children: [_ErrorView(message: _errorMessage!, onRetry: _load)],
+        );
       }
-      return const SizedBox.shrink();
+      return const GameboxPageBody(children: []);
     }
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+    return GameboxPageBody(
       children: [
         if (_loading)
           const LinearProgressIndicator(key: Key('opponent-loading')),
@@ -133,19 +145,20 @@ final class _OpponentPageState extends State<OpponentPage> {
             child: Semantics(
               identifier: 'opponent-error',
               liveRegion: true,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: Text(
-                  _errorMessage!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
+              child: GameboxAsyncPanel(
+                icon: Icons.error_outline,
+                title: '无法创建对局',
+                message: _errorMessage!,
+                actionLabel: '重试',
+                onAction: _load,
               ),
             ),
           ),
         if (opponents.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: Text('暂无可选对手')),
+          const GameboxAsyncPanel(
+            icon: Icons.group_outlined,
+            title: '暂无可选对手',
+            message: '朋友在线后即可发起对局。',
           )
         else
           for (final opponent in opponents) _opponentRow(opponent),
@@ -159,29 +172,45 @@ final class _OpponentPageState extends State<OpponentPage> {
         !_loading &&
         _creatingOpponentId == null &&
         opponent.availability == OpponentAvailability.idle;
-    return MergeSemantics(
+    final onTap = enabled ? () => _choose(opponent) : null;
+    return Semantics(
       key: Key('opponent-${opponent.id}'),
-      child: Semantics(
-        identifier: 'opponent-${opponent.id}',
-        button: true,
-        child: ListTile(
-          enabled: enabled,
-          title: Text(opponent.nickname),
-          subtitle: Text(_availabilityText(opponent)),
-          trailing: creating
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : null,
-          onTap: enabled ? () => _choose(opponent) : null,
+      identifier: 'opponent-${opponent.id}',
+      label: creating
+          ? '${opponent.nickname}\n${_availabilityText(opponent)}\n正在创建对局'
+          : '${opponent.nickname}\n${_availabilityText(opponent)}',
+      button: true,
+      enabled: enabled,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: ListTile(
+        enabled: enabled,
+        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        title: Text(opponent.nickname),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_availabilityText(opponent)),
+            if (creating) const Text('正在创建对局'),
+          ],
         ),
+        trailing: creating
+            ? SizedBox.square(
+                dimension: GameboxTokens.components.smallProgressSize,
+                child: const CircularProgressIndicator(),
+              )
+            : null,
+        onTap: onTap,
       ),
     );
   }
 
   static String _availabilityText(GomokuOpponent opponent) {
-    if (opponent.availability == OpponentAvailability.busy) return '游戏中';
+    if (opponent.availability == OpponentAvailability.busy) {
+      return opponent.presence == OpponentPresence.offline
+          ? '离线 · 游戏中'
+          : '在线 · 游戏中';
+    }
     return opponent.presence == OpponentPresence.offline
         ? '离线 · 可邀请'
         : '在线 · 可邀请';
@@ -212,18 +241,12 @@ final class _ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('重试')),
-          ],
-        ),
-      ),
+    return GameboxAsyncPanel(
+      icon: Icons.cloud_off_outlined,
+      title: '暂时无法加载对手',
+      message: message,
+      actionLabel: '重试',
+      onAction: onRetry,
     );
   }
 }

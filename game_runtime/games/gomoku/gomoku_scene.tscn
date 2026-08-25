@@ -1,104 +1,13 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://games/gomoku/gomoku_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_board.gd" id="2_board"]
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_back_normal"]
-bg_color = Color(1, 1, 1, 0.12)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(1, 1, 1, 0.16)
-corner_radius_top_left = 24
-corner_radius_top_right = 24
-corner_radius_bottom_right = 24
-corner_radius_bottom_left = 24
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_back_pressed"]
-bg_color = Color(1, 1, 1, 0.06)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(1, 1, 1, 0.22)
-corner_radius_top_left = 24
-corner_radius_top_right = 24
-corner_radius_bottom_right = 24
-corner_radius_bottom_left = 24
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_state_card"]
-bg_color = Color(0.996078, 0.988235, 0.964706, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.858824, 0.831373, 0.772549, 0.72)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
-shadow_color = Color(0.105882, 0.129412, 0.180392, 0.13)
-shadow_size = 12
-shadow_offset = Vector2(0, 6)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_presence"]
-bg_color = Color(0.929412, 0.92549, 0.905882, 1)
-corner_radius_top_left = 22
-corner_radius_top_right = 22
-corner_radius_bottom_right = 22
-corner_radius_bottom_left = 22
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_board_frame"]
-bg_color = Color(0.996078, 0.988235, 0.964706, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.858824, 0.831373, 0.772549, 0.65)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
-shadow_color = Color(0.152941, 0.105882, 0.054902, 0.2)
-shadow_size = 16
-shadow_offset = Vector2(0, 8)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_player_card"]
-bg_color = Color(0.996078, 0.988235, 0.964706, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.858824, 0.831373, 0.772549, 0.72)
-corner_radius_top_left = 30
-corner_radius_top_right = 30
-corner_radius_bottom_right = 30
-corner_radius_bottom_left = 30
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_error"]
-bg_color = Color(0.996078, 0.92549, 0.913725, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.862745, 0.278431, 0.231373, 0.35)
-corner_radius_top_left = 22
-corner_radius_top_right = 22
-corner_radius_bottom_right = 22
-corner_radius_bottom_left = 22
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_resign"]
-bg_color = Color(0.996078, 0.941176, 0.929412, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.705882, 0.109804, 0.109804, 0.58)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_back_button.tscn" id="3_back"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_connection_banner.tscn" id="4_connection"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_snackbar.tscn" id="5_snackbar"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="6_confirmation"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_loading_overlay.tscn" id="7_loading"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="8_result"]
 
 [node name="Gomoku" type="Control"]
 layout_mode = 3
@@ -109,7 +18,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_controller")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="PanelContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -117,136 +26,57 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.956863, 0.941176, 0.901961, 1)
 
-[node name="TopBand" type="ColorRect" parent="."]
-offset_right = 1080.0
-offset_bottom = 176.0
-mouse_filter = 2
-color = Color(0.0823529, 0.101961, 0.137255, 1)
-
-[node name="TopBandAccent" type="ColorRect" parent="."]
-offset_top = 168.0
-offset_right = 1080.0
-offset_bottom = 176.0
-mouse_filter = 2
-color = Color(0.831373, 0.611765, 0.290196, 1)
-
-[node name="BackButton" type="Button" parent="."]
+[node name="BackButton" parent="." instance=ExtResource("3_back")]
 offset_left = 48.0
 offset_top = 72.0
 offset_right = 240.0
 offset_bottom = 168.0
 custom_minimum_size = Vector2(192, 96)
-theme_override_colors/font_color = Color(0.980392, 0.972549, 0.941176, 1)
-theme_override_colors/font_hover_color = Color(1, 1, 1, 1)
-theme_override_colors/font_pressed_color = Color(0.929412, 0.909804, 0.854902, 1)
-theme_override_font_sizes/font_size = 30
-theme_override_styles/normal = SubResource("StyleBoxFlat_back_normal")
-theme_override_styles/hover = SubResource("StyleBoxFlat_back_normal")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_back_pressed")
-text = "返回"
 
 [node name="TitleLabel" type="Label" parent="."]
 offset_left = 260.0
 offset_top = 72.0
 offset_right = 820.0
 offset_bottom = 168.0
-theme_override_colors/font_color = Color(0.980392, 0.972549, 0.941176, 1)
-theme_override_font_sizes/font_size = 42
 text = "五子棋"
 horizontal_alignment = 1
 vertical_alignment = 1
-text_overrun_behavior = 3
-
-[node name="RevisionLabel" type="Label" parent="."]
-offset_left = 824.0
-offset_top = 72.0
-offset_right = 1032.0
-offset_bottom = 168.0
-theme_override_colors/font_color = Color(0.698039, 0.717647, 0.74902, 1)
-theme_override_font_sizes/font_size = 24
-horizontal_alignment = 2
-vertical_alignment = 1
-
-[node name="StateCard" type="Panel" parent="."]
-offset_left = 72.0
-offset_top = 188.0
-offset_right = 1008.0
-offset_bottom = 336.0
-mouse_filter = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_state_card")
 
 [node name="StatusLabel" type="Label" parent="."]
 offset_left = 48.0
-offset_top = 198.0
+offset_top = 196.0
 offset_right = 1032.0
-offset_bottom = 258.0
-theme_override_colors/font_color = Color(0.105882, 0.129412, 0.180392, 1)
-theme_override_font_sizes/font_size = 40
+offset_bottom = 276.0
 text = "连接中"
 horizontal_alignment = 1
 vertical_alignment = 1
-text_overrun_behavior = 3
 
-[node name="TurnAccent" type="ColorRect" parent="."]
-offset_left = 506.0
-offset_top = 258.0
-offset_right = 574.0
-offset_bottom = 264.0
-mouse_filter = 2
-color = Color(0.12549, 0.454902, 0.815686, 1)
-
-[node name="ConnectionLabel" type="Label" parent="."]
+[node name="ConnectionLabel" parent="." instance=ExtResource("4_connection")]
 offset_left = 48.0
-offset_top = 264.0
+offset_top = 256.0
 offset_right = 1032.0
-offset_bottom = 300.0
-theme_override_colors/font_color = Color(0.290196, 0.337255, 0.407843, 1)
-theme_override_font_sizes/font_size = 21
-text = "正在连接服务器…"
-horizontal_alignment = 1
-vertical_alignment = 1
-text_overrun_behavior = 3
+offset_bottom = 320.0
 
-[node name="OpponentPresencePill" type="Panel" parent="."]
-offset_left = 414.0
-offset_top = 294.0
-offset_right = 666.0
-offset_bottom = 330.0
+[node name="OpponentPresence" type="PanelContainer" parent="."]
+visible = false
+offset_left = 354.0
+offset_top = 280.0
+offset_right = 726.0
+offset_bottom = 344.0
 mouse_filter = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_presence")
 
-[node name="PresenceDot" type="Label" parent="."]
-offset_left = 434.0
-offset_top = 294.0
-offset_right = 470.0
-offset_bottom = 330.0
-theme_override_colors/font_color = Color(0.423529, 0.454902, 0.505882, 1)
-theme_override_font_sizes/font_size = 16
-text = "●"
-horizontal_alignment = 1
-vertical_alignment = 1
+[node name="Content" type="HBoxContainer" parent="OpponentPresence"]
+layout_mode = 2
+alignment = 1
 
-[node name="OpponentPresenceLabel" type="Label" parent="."]
-offset_left = 470.0
-offset_top = 294.0
-offset_right = 646.0
-offset_bottom = 330.0
-theme_override_colors/font_color = Color(0.290196, 0.337255, 0.407843, 1)
-theme_override_font_sizes/font_size = 19
+[node name="PresenceDot" type="Label" parent="OpponentPresence/Content"]
+layout_mode = 2
+text = "·"
+
+[node name="OpponentPresenceLabel" type="Label" parent="OpponentPresence/Content"]
+layout_mode = 2
 text = "对手状态未知"
-horizontal_alignment = 0
-vertical_alignment = 1
-text_overrun_behavior = 3
-
-[node name="BoardFrame" type="Panel" parent="."]
-offset_left = 42.0
-offset_top = 342.0
-offset_right = 1038.0
-offset_bottom = 1338.0
-mouse_filter = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_board_frame")
 
 [node name="Board" type="Control" parent="."]
 offset_left = 60.0
@@ -256,51 +86,19 @@ offset_bottom = 1320.0
 custom_minimum_size = Vector2(960, 960)
 script = ExtResource("2_board")
 
-[node name="PlayerCard" type="Panel" parent="."]
-offset_left = 360.0
-offset_top = 1356.0
-offset_right = 720.0
-offset_bottom = 1432.0
-mouse_filter = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_player_card")
-
-[node name="PlayerStone" type="Label" parent="."]
-offset_left = 392.0
-offset_top = 1360.0
-offset_right = 444.0
-offset_bottom = 1428.0
-theme_override_colors/font_color = Color(0.105882, 0.129412, 0.180392, 1)
-theme_override_colors/font_outline_color = Color(0.290196, 0.337255, 0.407843, 1)
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 28
-text = "●"
-horizontal_alignment = 1
-vertical_alignment = 1
-
 [node name="ColorLabel" type="Label" parent="."]
-offset_left = 444.0
-offset_top = 1360.0
-offset_right = 684.0
-offset_bottom = 1428.0
-theme_override_colors/font_color = Color(0.105882, 0.129412, 0.180392, 1)
-theme_override_font_sizes/font_size = 28
-horizontal_alignment = 0
-vertical_alignment = 1
-text_overrun_behavior = 3
-
-[node name="ErrorLabel" type="Label" parent="."]
-visible = false
-offset_left = 120.0
-offset_top = 1460.0
-offset_right = 960.0
-offset_bottom = 1544.0
-theme_override_colors/font_color = Color(0.705882, 0.109804, 0.109804, 1)
-theme_override_font_sizes/font_size = 25
-theme_override_styles/normal = SubResource("StyleBoxFlat_error")
+offset_left = 48.0
+offset_top = 1350.0
+offset_right = 1032.0
+offset_bottom = 1418.0
 horizontal_alignment = 1
 vertical_alignment = 1
-autowrap_mode = 2
-text_overrun_behavior = 3
+
+[node name="ErrorLabel" parent="." instance=ExtResource("5_snackbar")]
+offset_left = 48.0
+offset_top = 1438.0
+offset_right = 1032.0
+offset_bottom = 1548.0
 
 [node name="ResignButton" type="Button" parent="."]
 visible = false
@@ -309,10 +107,22 @@ offset_top = 1588.0
 offset_right = 726.0
 offset_bottom = 1692.0
 custom_minimum_size = Vector2(372, 104)
-theme_override_colors/font_color = Color(0.705882, 0.109804, 0.109804, 1)
-theme_override_colors/font_pressed_color = Color(0.560784, 0.0823529, 0.0823529, 1)
-theme_override_font_sizes/font_size = 32
-theme_override_styles/normal = SubResource("StyleBoxFlat_resign")
-theme_override_styles/hover = SubResource("StyleBoxFlat_resign")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_resign")
 text = "认输"
+
+[node name="ResignDialog" parent="." instance=ExtResource("6_confirmation")]
+
+[node name="LoadingOverlay" parent="." instance=ExtResource("7_loading")]
+layout_mode = 0
+anchors_preset = 0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = 60.0
+offset_top = 360.0
+offset_right = 1020.0
+offset_bottom = 1320.0
+
+[node name="ResultPanel" parent="." instance=ExtResource("8_result")]
+offset_left = 240.0
+offset_top = 1438.0
+offset_right = 840.0
+offset_bottom = 1692.0

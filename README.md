@@ -26,14 +26,15 @@ chat, spectating, push notifications, public deployment, or account migration.
 
 ## Required development tools
 
-- Flutter 3.35.1 with its Dart 3.9 SDK
+- Flutter 3.47.1 with its Dart 3.13 SDK
 - Go 1.25
 - Godot 4.7 (set `GODOT_BIN` when it is not installed as the macOS app)
 - JDK 17 or newer
 - Android SDK platform 36 and accepted Android licenses
+- Bash and zsh
 
-The complete local E2E additionally requires `adb`, `emulator`, Bash, curl,
-ffmpeg, Git, jq, lsof, OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. It requires the installed
+The complete local E2E additionally requires `adb`, `emulator`, curl,
+Git, jq, lsof, OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. It requires the installed
 `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` image. Check
 the build/CI toolchain or the complete E2E toolchain without modifying it:
 
@@ -46,6 +47,14 @@ bash tool/bootstrap.sh
 SDK components, or licenses and exits nonzero; it does not install or accept
 anything. `--build-only` omits only the E2E-specific `adb` and emulator checks;
 the no-argument form retains them.
+
+## Development and submission workflow
+
+完成开发并通过本地自测后，可以提交改动并直接 push。固定 Android E2E 只验证
+协议、状态和生命周期逻辑，不要求截图；UI 视觉验收另行进行。
+
+如果当前分支已关联 Pull Request，push 后等待 GitHub CI、Codex 和 CodeRabbit
+自动 review 完成；只处理仍然有效的意见，修复后重新自测并 push。
 
 ## Local server
 
@@ -142,12 +151,23 @@ never credential plaintext.
 
 The Android app checks the latest stable GitHub Release at startup, with a
 six-hour local cache. The update button in the app bar can bypass that cache.
-When a newer semantic version is available, Gamebox downloads the release APK
-into app-private storage, verifies its SHA-256 checksum, verifies the package
-name, signing certificate, and increasing Android version code, then opens the
-Android package installer. Android always requires a system confirmation; on
-Android 8 and newer the user may first need to allow Gamebox to install unknown
-apps. Network or update failures do not block registration or gameplay.
+When a newer semantic version is available, Gamebox downloads the APK into its
+private application-support directory, verifies its SHA-256 digest, then asks
+Android's system package installer to install it. The native bridge also rejects
+APKs with the wrong package name, a non-incrementing version code, or a different
+signing certificate. Network or update failures do not block registration or
+gameplay.
+
+The reusable implementation lives in the independent
+[`flutter_release_updater`](https://github.com/shadowfish07/flutter_release_updater)
+repository and is pinned here through the `v0.1.2` Git tag. Other Android
+Flutter applications can pin the same tag and provide their own update UI. The
+plugin contributes
+`REQUEST_INSTALL_PACKAGES` through manifest merging because Android requires
+that special access for a normal application that installs its own downloaded
+APK; it never requests the signature-only `INSTALL_PACKAGES` permission or
+attempts silent installation. Store-hosted update APIs can avoid this access
+only by moving download and installation ownership to the store.
 
 The release workflow is `.github/workflows/release.yml`. Configure these
 repository Actions secrets before the first release:
@@ -161,9 +181,10 @@ Back up the keystore and passwords outside the repository. Every published APK
 must use the same release key. Losing or replacing it prevents installed copies
 from accepting future in-app updates.
 
-Release builds use `https://gamebox.zqydev.me` as their API origin. Debug builds
-retain the emulator-friendly `http://10.0.2.2:8080` default unless overridden
-with `GAMEBOX_API_BASE_URL`.
+Release builds use `https://gamebox.zqydev.me` as their API origin. Local debug
+builds retain the emulator-friendly `http://10.0.2.2:8080` default unless
+overridden with `GAMEBOX_API_BASE_URL`. CI-published debug builds use the
+staging origin `https://staging-gamebox.zqydev.me` (see below).
 
 For a stable release, update `app/pubspec.yaml` to the intended version, commit
 and push it, then create and push the matching tag:
@@ -175,10 +196,29 @@ git push origin v1.0.1
 
 The workflow checks that the tag and pubspec versions match, runs the complete
 repository verification gate, builds signed APK and AAB files, verifies the APK
-signature, generates `checksums.txt`, and publishes all three files to GitHub
-Releases. A manually dispatched run requires an already-existing matching tag.
+signature, generates `checksums.txt` for manual verification, and publishes all
+three files to GitHub Releases. A manually dispatched run requires an
+already-existing matching tag.
 GitHub's `releases/latest` endpoint excludes drafts and prereleases, so only a
 stable published release is offered automatically to normal installations.
+
+## Debug artifact distribution
+
+`.github/workflows/debug.yml` builds a debug APK on every push to `main` that
+touches app or runtime sources, and on manual `workflow_dispatch`. It publishes
+immutable build-identity-named APK and checksum assets to the rolling
+pre-release tagged `debug-latest`; each name includes the commit SHA, run ID, and
+attempt, while the release notes identify the current pair. Previous assets
+remain available if a later upload fails. The workflow uses the same repository
+signing secrets as the stable release workflow, so an installed debug build can
+accept the next rolling build without an uninstall.
+
+The published debug build uses the independent application id
+`me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment
+variable in `app/android/app/build.gradle.kts`), so it installs and runs
+alongside a release install on the same device and is labeled `gamebox debug`.
+It targets the staging server `https://staging-gamebox.zqydev.me` by default;
+`workflow_dispatch` can override the API origin.
 
 ## macOS backend deployment
 
@@ -197,6 +237,29 @@ curl --fail --silent http://127.0.0.1:18080/healthz
 The Cloudflare Tunnel public hostname `gamebox.zqydev.me` must route to
 `http://127.0.0.1:18080`. The installer manages a dedicated Gamebox Tunnel
 LaunchAgent so failures or configuration changes do not affect other hostnames.
+
+### Staging server
+
+`deploy/macos/install-staging.sh` installs a second, fully isolated server
+instance on the same machine for staging use. It keeps an executable prefix
+(`~/.local/libexec/gamebox-staging`) separate from production, shares the
+production Cloudflare Tunnel, and keeps its own port (`127.0.0.1:18081`), SQLite
+database, Keychain secrets, and launchd agents. It is published at
+`https://staging-gamebox.zqydev.me`. Rerun it after pulling the latest `main` to
+refresh staging with current server code:
+
+```bash
+git pull
+zsh deploy/macos/install-staging.sh
+curl --fail --silent http://127.0.0.1:18081/healthz
+```
+
+The tunnel ingress for the staging hostname lives in
+`deploy/macos/cloudflared-config.yml` (shared with the production tunnel). It
+requires the one-time DNS record `staging-gamebox.zqydev.me` pointing at the
+tunnel, which `cloudflared tunnel route dns <tunnel-id>
+staging-gamebox.zqydev.me` creates. Debug builds distributed through the
+`debug-latest` release target this staging server.
 
 ## Verification
 
@@ -256,7 +319,12 @@ before using Android. With no serial overrides it creates/starts only
 those processes/packages; it does not stop, wipe, clear logcat, or change an
 unrelated emulator such as `emulator-5554`. Alternatively, set both
 `GAMEBOX_E2E_SERIAL_A` and `GAMEBOX_E2E_SERIAL_B`; supplied devices are selected
-but not created, wiped, restarted, or stopped.
+but not created, wiped, restarted, or stopped. Managed AVD A runs in light mode
+at a 1080x2400 large-phone viewport and B in dark mode at a 720x1600 narrow-
+phone viewport. Supplied devices keep their display overrides and must
+naturally provide portrait viewports with A at least 1080 pixels wide and B at
+most 720 pixels wide. The harness restores each selected device's original UI
+mode and every managed display override on success and through its exit trap.
 
 The semantics integration test always uses the selected A-device explicitly:
 
@@ -268,17 +336,22 @@ The semantics integration test always uses the selected A-device explicitly:
 Replace `emulator-5560` with the selected Gamebox-owned serial. UI automation
 selects stable resource IDs, not translated labels or content descriptions.
 Match and revision progress require independent signals to agree: bounded
-device ready/state logs plus the authoritative read-only `gameboxctl` snapshot;
-board crops from both devices are also checked against that snapshot before the
-next move. This proves wiring and rendered state without making UI text or an
-E2E-only board model authoritative.
+device ready/state logs plus the authoritative read-only `gameboxctl` snapshot.
+The fixed E2E harness asserts protocol, state, and lifecycle logic; it does not
+capture screenshots or make an E2E-only board model authoritative. Pending
+logic pauses only the verified E2E-owned server PID before the move and resumes
+it after the local pending marker is visible. Reconnect and failed states stop
+and restart that same owned server with its temporary database, port, and test
+secrets; the trap will not signal a PID that fails the ownership checks.
 
 Artifacts are written under `artifacts/e2e/<UTC timestamp>/` only after
 sanitization and secret scanning. They include serial/API level, commit and APK
-provenance, assertions, screenshots, sanitized server output, and the final
-read-only match snapshot, but no invites or tokens. Each adb/UI operation and
-build has a bounded watchdog; `GAMEBOX_E2E_*_TIMEOUT_SECONDS` variables exist
-for shorter fault-injection bounds, not for removing timeouts.
+provenance, logic assertions, sanitized server output, and the final read-only
+match snapshot, but no screenshots, invites, or tokens. Each adb/UI operation
+and build has a bounded watchdog; `GAMEBOX_E2E_*_TIMEOUT_SECONDS` variables
+exist for shorter fault-injection bounds, not for removing timeouts. Visual UX
+review, when required by the UI acceptance contract, is a separate target-
+runtime activity and is not a fixed E2E artifact gate.
 
 ## Continue after this phase
 

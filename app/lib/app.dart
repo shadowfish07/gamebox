@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 import 'package:http/http.dart' as http;
 
 import 'core/api/api_client.dart';
 import 'core/auth/token_store.dart';
 import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
+import 'design_system/gamebox_theme.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
@@ -14,7 +16,6 @@ import 'features/gomoku/gomoku_repository.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
-import 'features/update/update_controller.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
@@ -166,9 +167,9 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  bool get _canLaunchInstrumentationCanary => RegExp(
-    r'^[A-Za-z0-9_-]{8,64}$',
-  ).hasMatch(widget.instrumentationCanaryNonce);
+  bool get _canLaunchInstrumentationCanary =>
+      RegExp(r'^[A-Za-z0-9_-]{8,64}$')
+          .hasMatch(widget.instrumentationCanaryNonce);
 
   Future<void> _launchHostSmoke() async {
     if (_isLaunchingHostSmoke) {
@@ -234,10 +235,9 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     return MaterialApp(
       key: ValueKey<String>(_navigationBoundary),
       title: 'Gamebox',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: GameboxTheme.light(),
+      darkTheme: GameboxTheme.dark(),
+      themeMode: ThemeMode.system,
       home: widget.hostSmokeEnabled ? _buildHostSmoke() : _buildAuthFlow(),
     );
   }

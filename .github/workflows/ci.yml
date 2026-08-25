@@ -29,7 +29,7 @@ jobs:
           cache: gradle
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.1'
+          flutter-version: '3.47.1'
           channel: stable
           cache: true
       - uses: chickensoft-games/setup-godot@v2
@@ -38,5 +38,7 @@ jobs:
           use-dotnet: false
       - name: Accept Android SDK licenses
         run: yes | flutter doctor --android-licenses
+      - name: Install zsh for macOS deployment script checks
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zsh
       - name: Verify source and debug package
         run: bash tool/verify.sh

@@ -1,0 +1,77 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://design_system/components/gamebox_confirmation_dialog.gd" id="1_dialog"]
+
+[node name="GameboxConfirmationDialog" type="Control"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+z_index = 10
+script = ExtResource("1_dialog")
+
+[node name="Scrim" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+theme_type_variation = &"GameboxDialogScrim"
+
+[node name="Dialog" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -360.0
+offset_top = -260.0
+offset_right = 360.0
+offset_bottom = 260.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+theme_type_variation = &"GameboxConfirmationDialog"
+
+[node name="Content" type="VBoxContainer" parent="Dialog"]
+layout_mode = 2
+theme_type_variation = &"GameboxDialogContent"
+
+[node name="Title" type="Label" parent="Dialog/Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxDialogTitle"
+text = "确认认输"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="Message" type="Label" parent="Dialog/Content"]
+layout_mode = 2
+text = "认输后本局立即结束，确认认输吗？"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="Actions" type="HBoxContainer" parent="Dialog/Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxDialogActions"
+alignment = 1
+
+[node name="CancelButton" type="Button" parent="Dialog/Content/Actions"]
+custom_minimum_size = Vector2(240, 96)
+layout_mode = 2
+theme_type_variation = &"GameboxDialogCancelButton"
+text = "继续对局"
+
+[node name="ConfirmButton" type="Button" parent="Dialog/Content/Actions"]
+custom_minimum_size = Vector2(240, 96)
+layout_mode = 2
+text = "确认认输"
+
+[connection signal="pressed" from="Dialog/Content/Actions/CancelButton" to="." method="_on_cancel_pressed"]
+[connection signal="pressed" from="Dialog/Content/Actions/ConfirmButton" to="." method="_on_confirm_pressed"]

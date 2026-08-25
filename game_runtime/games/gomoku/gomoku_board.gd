@@ -3,6 +3,8 @@ extends Control
 
 signal cell_pressed(x: int, y: int)
 
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
+
 const BOARD_SIZE := 15
 const BOARD_CELLS := BOARD_SIZE * BOARD_SIZE
 const EMPTY := 0
@@ -12,13 +14,15 @@ const LOCAL_PADDING := 36.0
 const INVALID_CELL := Vector2i(-1, -1)
 const DRAG_CANCEL_DISTANCE := 12.0
 
-const BOARD_COLOR := Color("d8a85f")
-const GRID_COLOR := Color("493217")
-const BLACK_STONE_COLOR := Color("151a24")
-const WHITE_STONE_COLOR := Color("f8fafc")
-const WHITE_STONE_OUTLINE := Color("667085")
-const LAST_MOVE_COLOR := Color("f04438")
-const PENDING_COLOR := Color("0072b2")
+const BOARD_COLOR := GameboxTokens.GAME["board"]
+const GRID_COLOR := GameboxTokens.GAME["grid"]
+const BLACK_STONE_COLOR := GameboxTokens.GAME["black_piece"]
+const WHITE_STONE_COLOR := GameboxTokens.GAME["white_piece"]
+const WHITE_STONE_OUTLINE := GameboxTokens.GAME["white_piece_outline"]
+const LAST_MOVE_COLOR := GameboxTokens.GAME["last_move"]
+const PRESSED_COLOR := GameboxTokens.GAME["pressed_move"]
+const PENDING_COLOR := GameboxTokens.GAME["pending_move"]
+const PENDING_OVERLAY_ALPHA := GameboxTokens.GAME["pending_overlay_alpha"]
 
 var pending_cell: Vector2i:
 	get:
@@ -32,9 +36,16 @@ var last_move_cell: Vector2i:
 	set(_value):
 		pass
 
+var pressed_cell: Vector2i:
+	get:
+		return _pressed_cell
+	set(_value):
+		pass
+
 var _cells: Array = []
 var _pending_cell := INVALID_CELL
 var _last_move_cell := INVALID_CELL
+var _pressed_cell := INVALID_CELL
 var _interactable := true
 var _active_touch := -1
 var _touch_start_cell := INVALID_CELL
@@ -131,6 +142,8 @@ static func design_rect_to_viewport(rect: Rect2, design_size: Vector2, viewport_
 
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		print("GAMEBOX_BOARD_GUI pos=%s interactable=%s rect=%s" % [event.position, _interactable, board_rect()])
 	if not _interactable:
 		return
 	if event is InputEventScreenTouch:
@@ -138,6 +151,7 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventScreenDrag and event.index == _active_touch:
 		if event.position.distance_to(_touch_start_position) > DRAG_CANCEL_DISTANCE:
 			_touch_cancelled = true
+			_clear_pressed_cell()
 		accept_event()
 
 
@@ -145,14 +159,18 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 	if event.pressed:
 		if _active_touch >= 0:
 			_touch_cancelled = true
+			_clear_pressed_cell()
 			_blocked_touches[event.index] = true
 		elif _blocked_touches.is_empty():
 			var start_cell := pixel_to_cell(event.position, board_rect())
+			print("GAMEBOX_BOARD_DOWN pos=%s cell=%s active=%d" % [event.position, start_cell, _active_touch])
 			if start_cell != INVALID_CELL:
 				_active_touch = event.index
 				_touch_start_cell = start_cell
 				_touch_start_position = event.position
 				_touch_cancelled = false
+				_pressed_cell = start_cell
+				queue_redraw()
 			else:
 				_blocked_touches[event.index] = true
 	else:
@@ -160,6 +178,8 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 			var release_cell := pixel_to_cell(event.position, board_rect())
 			var should_submit := not event.canceled and not _touch_cancelled and release_cell == _touch_start_cell
 			var submitted_cell := _touch_start_cell
+			print("GAMEBOX_BOARD_UP pos=%s cell=%s start=%s cancel=%s touch_cancelled=%s submit=%s" \
+				% [event.position, release_cell, _touch_start_cell, event.canceled, _touch_cancelled, should_submit])
 			_reset_active_touch()
 			if should_submit:
 				cell_pressed.emit(submitted_cell.x, submitted_cell.y)
@@ -197,9 +217,13 @@ func _draw() -> void:
 	if _last_move_cell != INVALID_CELL:
 		var last_center := cell_to_pixel(_last_move_cell, rect)
 		draw_arc(last_center, stone_radius * 0.47, 0.0, TAU, 32, LAST_MOVE_COLOR, 4.0, true)
+	if _pressed_cell != INVALID_CELL and stone_at(_pressed_cell.x, _pressed_cell.y) == EMPTY:
+		var pressed_center := cell_to_pixel(_pressed_cell, rect)
+		draw_circle(pressed_center, stone_radius * 0.42, Color(PRESSED_COLOR, PENDING_OVERLAY_ALPHA), true, -1.0, true)
+		draw_arc(pressed_center, stone_radius * 0.58, 0.0, TAU, 32, PRESSED_COLOR, 4.0, true)
 	if _pending_cell != INVALID_CELL:
 		var pending_center := cell_to_pixel(_pending_cell, rect)
-		draw_circle(pending_center, stone_radius * 0.42, Color(PENDING_COLOR, 0.24), true, -1.0, true)
+		draw_circle(pending_center, stone_radius * 0.42, Color(PENDING_COLOR, PENDING_OVERLAY_ALPHA), true, -1.0, true)
 		draw_arc(pending_center, stone_radius * 0.72, 0.0, TAU, 32, PENDING_COLOR, 5.0, true)
 
 
@@ -218,6 +242,14 @@ func _reset_active_touch() -> void:
 	_touch_start_cell = INVALID_CELL
 	_touch_start_position = Vector2.ZERO
 	_touch_cancelled = false
+	_clear_pressed_cell()
+
+
+func _clear_pressed_cell() -> void:
+	if _pressed_cell == INVALID_CELL:
+		return
+	_pressed_cell = INVALID_CELL
+	queue_redraw()
 
 
 func _valid_cells(cells: Array) -> bool:
@@ -243,4 +275,4 @@ static func _viewport_transform(design_size: Vector2, viewport_size: Vector2) ->
 		or design_size.x <= 0.0 or design_size.y <= 0.0 or viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return {"ok": false}
 	var scale: float = minf(viewport_size.x / design_size.x, viewport_size.y / design_size.y)
-	return {"ok": true, "scale": scale, "offset": (viewport_size - design_size * scale) * 0.5}
+	return {"ok": true, "scale": scale, "offset": Vector2.ZERO}

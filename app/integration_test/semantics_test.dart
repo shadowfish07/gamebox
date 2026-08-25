@@ -40,19 +40,15 @@ void main() {
     expect(register, findsOneWidget);
     expect(
       tester.getSemantics(invite),
-      containsSemantics(identifier: 'invite-code', isTextField: true),
+      isSemantics(identifier: 'invite-code', isTextField: true),
     );
     expect(
       tester.getSemantics(nickname),
-      containsSemantics(identifier: 'nickname', isTextField: true),
+      isSemantics(identifier: 'nickname', isTextField: true),
     );
     expect(
       tester.getSemantics(register),
-      containsSemantics(
-        identifier: 'register',
-        isButton: true,
-        hasTapAction: true,
-      ),
+      isSemantics(identifier: 'register', isButton: true, hasTapAction: true),
     );
 
     await tester.enterText(invite, 'fixture-invite');
@@ -81,7 +77,7 @@ void main() {
     expect(choose, findsOneWidget);
     expect(
       tester.getSemantics(choose),
-      containsSemantics(
+      isSemantics(
         identifier: 'choose-opponent',
         isButton: true,
         hasTapAction: true,
@@ -94,7 +90,7 @@ void main() {
     expect(opponent, findsOneWidget);
     expect(
       tester.getSemantics(opponent),
-      containsSemantics(
+      isSemantics(
         identifier: 'opponent-$_bobId',
         isButton: true,
         hasTapAction: true,
@@ -132,7 +128,7 @@ void main() {
         expect(finder, findsOneWidget);
         expect(
           tester.getSemantics(finder),
-          containsSemantics(
+          isSemantics(
             identifier: identifier,
             isButton: true,
             hasTapAction: true,
@@ -141,6 +137,18 @@ void main() {
       }
 
       await tester.tap(find.bySemanticsIdentifier('cancel-match'));
+      await _flush(tester);
+      expect(
+        find.bySemanticsIdentifier('dismiss-cancel-match'),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsIdentifier('confirm-cancel-match'),
+        findsOneWidget,
+      );
+      expect(fixture.homeApi.cancelCalls, 0);
+
+      await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
       await _flush(tester);
       expect(fixture.homeApi.cancelCalls, 1);
     },

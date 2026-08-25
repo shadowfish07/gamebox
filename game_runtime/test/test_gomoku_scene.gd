@@ -13,14 +13,21 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 
 static func cases() -> Array:
 	return [
+		{"name": "gomoku scene consumes the lightweight Gamebox shell", "run": _uses_lightweight_shell},
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
 		{"name": "gomoku scene renders reusable opponent presence updates", "run": _renders_presence_updates},
+		{"name": "gomoku scene keeps required return guidance after Snackbar timeout", "run": _keeps_required_return_guidance},
+		{"name": "gomoku scene hides the internal board revision", "run": _hides_internal_revision},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
 		{"name": "gomoku scene ignores non-authoritative snapshot callbacks while locked", "run": _ignores_non_authoritative_snapshots},
 		{"name": "gomoku scene keeps reconnect locked until authoritative snapshot", "run": _keeps_reconnect_locked},
 		{"name": "gomoku scene locks immediately when real client requests snapshot recovery", "run": _locks_real_snapshot_recovery},
 		{"name": "gomoku scene gates resign and keeps back non-destructive", "run": _gates_resign_and_back},
+		{"name": "gomoku keyboard Escape closes resign before returning", "run": _escape_cancel_closes_dialog_first},
+		{"name": "gomoku Android go-back closes resign before returning", "run": _android_go_back_closes_dialog_first},
+		{"name": "gomoku collapses Android Back double-delivery without a dialog", "run": _android_go_back_double_delivery_without_dialog},
+		{"name": "gomoku terminal return stays non-destructive", "run": _terminal_return_is_non_destructive},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
 		{"name": "gomoku ready marker waits for one drawn frame and cancels safely", "run": _waits_for_drawn_frame_marker},
@@ -28,21 +35,69 @@ static func cases() -> Array:
 	]
 
 
+static func _uses_lightweight_shell() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var required_paths := [
+		"Background", "BackButton", "TitleLabel", "StatusLabel", "ConnectionLabel", "Board",
+		"ColorLabel", "ErrorLabel", "ResignButton", "ResignDialog", "LoadingOverlay", "ResultPanel",
+	]
+	for path in required_paths:
+		if not _check(scene.has_node(path), "lightweight shell node path missing: %s" % path):
+			return _cleanup(scene)
+	var back := scene.get_node("BackButton") as Button
+	var connection := scene.get_node("ConnectionLabel")
+	var snackbar := scene.get_node("ErrorLabel")
+	var dialog := scene.get_node("ResignDialog") as Control
+	var loading := scene.get_node("LoadingOverlay")
+	var result_panel := scene.get_node("ResultPanel")
+	var result := _check(scene.theme != null and scene.theme.get_type_list().has("GameboxConnectionBanner"), "shared Gamebox Theme is not applied") \
+		and _check(scene.get_node("Background") is PanelContainer, "background does not use the public surface Theme") \
+		and _check(back.text == "← 返回大厅", "shared return control copy changed") \
+		and _check(back.custom_minimum_size.x >= 96.0 and back.custom_minimum_size.y >= 96.0, "shared return target is below 48dp") \
+		and _check(connection.has_method("present") and connection.has_node("Content/Message"), "public connection component is not mounted") \
+		and _check(snackbar.has_method("present") and snackbar.has_node("AutoHideTimer"), "public Snackbar component is not mounted") \
+		and _check((dialog.get_node("Dialog/Content/Message") as Label).text == "认输后本局立即结束，确认认输吗？", "danger consequence copy changed") \
+		and _check((dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button).text == "确认认输" \
+			and (dialog.get_node("Dialog/Content/Actions/CancelButton") as Button).text == "继续对局", "danger actions changed") \
+		and _check(loading.has_method("set_loading") and loading.has_node("Content/Message"), "public loading component is not mounted") \
+		and _check(result_panel.has_method("present") and result_panel.has_node("Content/ReturnButton"), "public result component is not mounted") \
+		and _check(scene.get_node("Board").has_signal("cell_pressed"), "cell_pressed automation contract changed") \
+		and _check(InputMap.has_action("ui_cancel"), "ui_cancel input action changed")
+	return _cleanup(scene, result)
+
+
+static func _hides_internal_revision() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	return _cleanup(scene, _check(not scene.has_node("RevisionLabel"), "internal board revision is visible to players"))
+
+
 static func _renders_live_states() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
-	if not _check(_status(scene) == "连接中", "initial connecting copy changed"):
+	if not _check(_has_lightweight_nodes(scene), "live-state components are missing"):
+		return _cleanup(scene)
+	if not _check(not scene.get_node("StatusLabel").visible, "initial connection duplicates its prominent status") \
+		or not _check(_connection_visible(scene) and _connection_message(scene) == "正在连接…", "initial connection banner changed") \
+		or not _check(_loading_visible(scene), "initial connection did not show loading"):
 		return _cleanup(scene)
 	client.set_connection("connected")
-	if not _check(_status(scene) == "正在同步对局…", "platform connected exposed a turn before initial snapshot"):
+	if not _check(not scene.get_node("StatusLabel").visible, "initial snapshot wait duplicates its loading status") \
+		or not _check(not _connection_visible(scene), "connected state left the connection banner visible") \
+		or not _check(_loading_visible(scene), "initial snapshot wait hid loading"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
-	if not _check(_status(scene) == "重连中", "reconnecting copy changed"):
+	if not _check(not scene.get_node("StatusLabel").visible, "reconnecting state duplicates its banner") \
+		or not _check(_connection_visible(scene) and _connection_message(scene) == "正在重新连接…", "reconnecting banner changed"):
 		return _cleanup(scene)
 	client.accept_snapshot(_snapshot(0))
 	if not _check(_status(scene) == "轮到我", "local turn copy changed") \
-		or not _check((scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_STOP, "board not interactive on local turn"):
+		or not _check(scene.get_node("StatusLabel").visible, "active turn status stayed hidden") \
+		or not _check((scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_STOP, "board not interactive on local turn") \
+		or not _check(not _connection_visible(scene), "fresh snapshot left a connection banner visible") \
+		or not _check(not _loading_visible(scene), "fresh snapshot left loading visible"):
 		return _cleanup(scene)
 	var one_stone := _empty_board()
 	one_stone[0] = 1
@@ -50,13 +105,46 @@ static func _renders_live_states() -> bool:
 	if not _check(_status(scene) == "等待对手", "opponent turn copy changed"):
 		return _cleanup(scene)
 	client.emit_error("cell_occupied")
-	if not _check(_error(scene) == "这个位置已经有棋子", "cell occupied copy changed"):
+	if not _check(_error(scene) == "这个位置已经有棋子" and _error_visible(scene), "cell occupied Snackbar changed"):
 		return _cleanup(scene)
 	client.emit_error("stale_revision")
 	if not _check(_error(scene) == "棋盘已更新，正在同步", "stale revision copy changed"):
 		return _cleanup(scene)
 	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
-	var result := _check(_error(scene).is_empty(), "authoritative snapshot did not clear stale error")
+	if not _check(_error(scene).is_empty() and not _error_visible(scene), "authoritative snapshot did not clear stale error"):
+		return _cleanup(scene)
+	client.set_connection("failed")
+	var result := _check(not scene.get_node("StatusLabel").visible, "failed connection duplicates its banner") \
+		and _check(_connection_visible(scene) and _connection_message(scene) == "连接失败 · 连接已断开", "failed connection banner changed") \
+		and _check((scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE, "failed connection left board input enabled")
+	return _cleanup(scene, result)
+
+
+static func _keeps_required_return_guidance() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	var snackbar_timer := scene.get_node("ErrorLabel/AutoHideTimer") as Timer
+	snackbar_timer.wait_time = 0.05
+	client.accept_snapshot(_snapshot(0))
+	client.require_return("resume_expired")
+	var safe_guidance := "登录状态已失效，请返回大厅"
+	if not _check(_error_visible(scene) and _error(scene) == safe_guidance, "required-return Snackbar did not show safe guidance") \
+		or not _check(not _status(scene).contains("resume_expired"), "required-return status exposed a raw code"):
+		return _cleanup(scene)
+	await (Engine.get_main_loop() as SceneTree).create_timer(0.08).timeout
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	if not _check(not _error_visible(scene), "required-return Snackbar did not complete its real timeout") \
+		or not _check(_status(scene) == safe_guidance, "required-return guidance disappeared with its Snackbar"):
+		return _cleanup(scene)
+	var back := scene.get_node("BackButton") as Button
+	if not _check(back.visible and not back.disabled, "required-return state disabled the visible Back control") \
+		or not _check(quit_calls.is_empty(), "required-return guidance auto-returned before player input"):
+		return _cleanup(scene)
+	back.pressed.emit()
+	var result := _check(quit_calls.size() == 1, "required-return Back did not return exactly once") \
+		and _check(not _status(scene).contains("resume_expired"), "required-return UI exposed the raw return code")
 	return _cleanup(scene, result)
 
 
@@ -66,19 +154,16 @@ static func _renders_presence_updates() -> bool:
 	var client: FakeMatchClient = harness["client"]
 	client.set_player_presence(WHITE_ID, true, false)
 	client.accept_snapshot(_snapshot(0))
-	var online_color: Color = (scene.get_node("PresenceDot") as Label).get_theme_color("font_color")
 	if not _check(_opponent_presence(scene) == "对手在线", "initial opponent presence was not rendered") \
-		or not _check(online_color == Color("248457"), "online presence did not use the live accent"):
+		or not _check(_presence_mark(scene) == "●", "online presence did not use the live mark"):
 		return _cleanup(scene)
 	client.set_player_presence(WHITE_ID, false)
-	var offline_color: Color = (scene.get_node("PresenceDot") as Label).get_theme_color("font_color")
 	if not _check(_opponent_presence(scene) == "对手离线", "offline opponent transition was not rendered") \
-		or not _check(offline_color == Color("c4473d"), "offline presence did not use the warning accent"):
+		or not _check(_presence_mark(scene) == "○", "offline presence did not use the offline mark"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
-	var unknown_color: Color = (scene.get_node("PresenceDot") as Label).get_theme_color("font_color")
 	return _cleanup(scene, _check(_opponent_presence(scene) == "对手状态未知", "reconnect retained stale opponent presence") \
-		and _check(unknown_color == Color("667085"), "unknown presence did not use the neutral accent"))
+		and _check(_presence_mark(scene) == "·", "unknown presence did not use the neutral mark"))
 
 
 static func _renders_terminal_states() -> bool:
@@ -88,6 +173,8 @@ static func _renders_terminal_states() -> bool:
 	if not await _assert_terminal(WHITE_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "你输了"):
 		return false
 	if not await _assert_terminal(BLACK_ID, _snapshot(225, _draw_board(), "finished", "white", "draw", null), "和棋"):
+		return false
+	if not await _assert_terminal(BLACK_ID, _snapshot(1, _empty_board(), "cancelled", "black", null, null), "对局已取消"):
 		return false
 	return await _assert_terminal(BLACK_ID, _snapshot(1, _empty_board(), "abandoned", "black", null, null), "对局已作废")
 
@@ -124,7 +211,8 @@ static func _ignores_non_authoritative_snapshots() -> bool:
 	invalid_client.accept_snapshot(_snapshot(2, _two_stone_board(), "active", "black"))
 	invalid_client.begin_snapshot_sync()
 	invalid_client.emit_snapshot_raw({"type": "platform.snapshot"})
-	var result := _check(_status(invalid_scene) == "正在同步对局…", "invalid snapshot callback unlocked controller") \
+	var result := _check(_status(invalid_scene) == "同步失败，请返回大厅", "invalid snapshot did not keep required-return guidance") \
+		and _check((invalid_scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE, "invalid snapshot callback unlocked board input") \
 		and _check(invalid_scene.get_node("ResignButton").disabled, "invalid snapshot callback unlocked resign")
 	return _cleanup(invalid_scene, result)
 
@@ -133,6 +221,8 @@ static func _keeps_reconnect_locked() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
+	if not _check(_has_lightweight_nodes(scene), "reconnect components are missing"):
+		return _cleanup(scene)
 	var two_stones := _empty_board()
 	two_stones[0] = 1
 	two_stones[1] = 2
@@ -144,9 +234,12 @@ static func _keeps_reconnect_locked() -> bool:
 
 	client.set_connection("reconnecting")
 	scene._on_cell_pressed(7, 7)
+	scene._on_resign_pressed()
 	if not (_check(_status(scene) == "重连中", "reconnecting copy changed") \
 		and _check(client.move_requests.is_empty(), "reconnecting state accepted a move") \
-		and _check(scene.get_node("ResignButton").disabled, "reconnecting state enabled resign")):
+		and _check(scene.get_node("ResignButton").disabled, "reconnecting state enabled resign") \
+		and _check(not scene.get_node("ResignDialog").visible, "reconnecting state opened resign confirmation") \
+		and _check(client.resign_requests == 0, "reconnecting state submitted resignation")):
 		return _cleanup(scene)
 
 	client.set_connection("connected")
@@ -248,8 +341,12 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	client.accept_snapshot(snapshot)
-	var result := _check(_status(scene) == expected_status, "terminal copy changed: %s" % expected_status) \
-		and _check(_back_text(scene) == "返回大厅", "terminal back copy changed") \
+	if not _check(scene.has_node("ResultPanel/Content/Result"), "terminal result panel path is missing"):
+		return _cleanup(scene)
+	var result := _check(not scene.get_node("StatusLabel").visible, "terminal outcome duplicates its result panel") \
+		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
+		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
+		and _check(scene.get_node("ResultPanel").size.y <= 300.0, "terminal result panel keeps excessive empty height: %s" % str(scene.get_node("ResultPanel").size.y)) \
 		and _check(not scene.get_node("ResignButton").visible, "resign visible after terminal state")
 	return _cleanup(scene, result)
 
@@ -259,6 +356,9 @@ static func _gates_resign_and_back() -> bool:
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResignDialog"), "resign confirmation path is missing"):
+		return _cleanup(scene)
+	var dialog := scene.get_node("ResignDialog") as Control
 	client.accept_snapshot(_snapshot(0))
 	if not _check(not scene.get_node("ResignButton").visible, "resign visible before first move"):
 		return _cleanup(scene)
@@ -268,7 +368,19 @@ static func _gates_resign_and_back() -> bool:
 	if not _check(scene.get_node("ResignButton").visible, "resign hidden after first move"):
 		return _cleanup(scene)
 	scene._on_resign_pressed()
-	if not _check(client.resign_requests == 1, "visible resign did not submit exactly once") \
+	if not _check(dialog.visible, "resign did not request confirmation") \
+		or not _check(client.resign_requests == 0, "resign submitted before confirmation"):
+		return _cleanup(scene)
+	(dialog.get_node("Dialog/Content/Actions/CancelButton") as Button).pressed.emit()
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	if not _check(not dialog.visible, "cancel action did not close resign confirmation") \
+		or not _check(client.resign_requests == 0, "cancel action submitted resignation"):
+		return _cleanup(scene)
+	scene._on_resign_pressed()
+	(dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button).pressed.emit()
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	if not _check(client.resign_requests == 1, "confirmed resign did not submit exactly once") \
+		or not _check(not dialog.visible, "confirmed resign left its dialog visible") \
 		or not _check(not scene.get_node("ResignButton").visible, "pending resignation left resign enabled"):
 		return _cleanup(scene)
 	var resigns_before_back := client.resign_requests
@@ -276,6 +388,104 @@ static func _gates_resign_and_back() -> bool:
 	scene._on_back_pressed()
 	var result := _check(client.resign_requests == resigns_before_back, "ordinary back sent resignation") \
 		and _check(quit_calls.size() == 1, "ordinary back did not quit exactly once")
+	return _cleanup(scene, result)
+
+
+static func _escape_cancel_closes_dialog_first() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResignDialog"), "keyboard Escape confirmation path is missing"):
+		return _cleanup(scene)
+	var one_stone := _empty_board()
+	one_stone[0] = 1
+	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
+	scene._on_resign_pressed()
+	var dialog := scene.get_node("ResignDialog") as Control
+	if not _check(dialog.visible, "resign confirmation did not open before keyboard Escape"):
+		return _cleanup(scene)
+	scene._unhandled_key_input(_action("ui_cancel"))
+	if not _check(not dialog.visible, "first keyboard Escape did not close the visible confirmation") \
+		or not _check(quit_calls.is_empty(), "first keyboard Escape returned while confirmation was visible") \
+		or not _check(client.resign_requests == 0, "keyboard Escape submitted resignation"):
+		return _cleanup(scene)
+	scene._unhandled_key_input(_action("ui_cancel"))
+	var result := _check(quit_calls.size() == 1, "second keyboard Escape did not return exactly once") \
+		and _check(client.resign_requests == 0, "ordinary keyboard return submitted resignation")
+	return _cleanup(scene, result)
+
+
+static func _android_go_back_closes_dialog_first() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResignDialog"), "Android go-back confirmation path is missing"):
+		return _cleanup(scene)
+	if not _check(not (Engine.get_main_loop() as SceneTree).quit_on_go_back,
+		"Android go-back is not user-managed"):
+		return _cleanup(scene)
+	var one_stone := _empty_board()
+	one_stone[0] = 1
+	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
+	scene._on_resign_pressed()
+	var dialog := scene.get_node("ResignDialog") as Control
+	if not _check(dialog.visible, "resign confirmation did not open before Android go-back"):
+		return _cleanup(scene)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	if not _check(not dialog.visible, "first Android go-back did not close the visible confirmation") \
+		or not _check(quit_calls.is_empty(), "first Android go-back returned while confirmation was visible") \
+		or not _check(client.resign_requests == 0, "Android go-back submitted resignation"):
+		return _cleanup(scene)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	if not _check(quit_calls.is_empty(), "one Back press double-delivered a quit") \
+		or not _check(not dialog.visible, "suppressed duplicate go-back reopened the confirmation") \
+		or not _check(client.resign_requests == 0, "duplicate go-back submitted resignation"):
+		return _cleanup(scene)
+	scene._go_back_debounce_ms = 1
+	await (Engine.get_main_loop() as SceneTree).create_timer(0.05).timeout
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	var result := _check(quit_calls.size() == 1, "genuine later Android go-back did not return exactly once") \
+		and _check(client.resign_requests == 0, "ordinary Android go-back return submitted resignation")
+	return _cleanup(scene, result)
+
+
+static func _android_go_back_double_delivery_without_dialog() -> bool:
+	# Godot 4.7 delivers one physical Android Back press as two
+	# GO_BACK_REQUEST notifications (activity back dispatcher + render view
+	# key event, ~7ms apart). The controller must collapse them so a single
+	# press with no dialog open still returns exactly once.
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResignDialog"), "Android go-back confirmation path is missing"):
+		return _cleanup(scene)
+	var one_stone := _empty_board()
+	one_stone[0] = 1
+	client.accept_snapshot(_snapshot(1, one_stone, "active", "white"))
+	if not _check(not (scene.get_node("ResignDialog") as Control).visible,
+		"resign dialog unexpectedly visible before go-back"):
+		return _cleanup(scene)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	var result := _check(quit_calls.size() == 1, "double-delivered Back without dialog did not return exactly once") \
+		and _check(client.resign_requests == 0, "double-delivered Back submitted resignation")
+	return _cleanup(scene, result)
+
+
+static func _terminal_return_is_non_destructive() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	if not _check(scene.has_node("ResultPanel/Content/ReturnButton"), "terminal return path is missing"):
+		return _cleanup(scene)
+	client.accept_snapshot(_snapshot(9, _five_board(), "finished", "white", "five", BLACK_ID))
+	(scene.get_node("ResultPanel/Content/ReturnButton") as Button).pressed.emit()
+	var result := _check(quit_calls.size() == 1, "result return did not return exactly once") \
+		and _check(client.resign_requests == 0, "result return submitted resignation")
 	return _cleanup(scene, result)
 
 
@@ -304,11 +514,15 @@ static func _keeps_portrait_touch_layout() -> bool:
 	var board: Control = scene.get_node("Board")
 	var back: Button = scene.get_node("BackButton")
 	var resign: Button = scene.get_node("ResignButton")
+	var loading: Control = scene.get_node("LoadingOverlay")
+	var back_center := back.position + back.size * 0.5
 	var result := _check(board.position.is_equal_approx(Vector2(60.0, 360.0)), "fixed board origin changed: %s" % board.position) \
 		and _check(board.size.is_equal_approx(Vector2(960.0, 960.0)), "fixed board stopped being square: %s" % board.size) \
-		and _check(back.size.x >= 192.0 and back.size.y >= 96.0, "back touch target too small") \
-		and _check(resign.size.x >= 372.0 and resign.size.y >= 104.0, "resign touch target too small") \
-		and _check(back.position.x >= 48.0 and back.position.y >= 72.0, "back button left portrait safe margin")
+		and _check(back.custom_minimum_size.x >= 96.0 and back.custom_minimum_size.y >= 96.0, "back target too small") \
+		and _check(resign.custom_minimum_size.x >= 96.0 and resign.custom_minimum_size.y >= 96.0, "resign target too small") \
+		and _check(back.position.x >= 48.0 and back.position.y >= 48.0, "back button left portrait safe margin") \
+		and _check(resign.position.x >= 48.0 and scene.size.x - resign.position.x - resign.size.x >= 48.0, "resign button left portrait safe margin") \
+		and _check(not loading.get_rect().has_point(back_center), "initial loading overlay blocked the visible Back control")
 	return _cleanup(scene, result)
 
 
@@ -389,16 +603,47 @@ static func _status(scene: Control) -> String:
 	return (scene.get_node("StatusLabel") as Label).text
 
 
+static func _has_lightweight_nodes(scene: Control) -> bool:
+	return scene.has_node("ConnectionLabel/Content/Message") \
+		and scene.has_node("ErrorLabel/Content/Message") \
+		and scene.has_node("ResignDialog") \
+		and scene.has_node("LoadingOverlay/Content/Message") \
+		and scene.has_node("ResultPanel/Content/Result")
+
+
+static func _connection_visible(scene: Control) -> bool:
+	return scene.get_node("ConnectionLabel").visible
+
+
+static func _connection_message(scene: Control) -> String:
+	return (scene.get_node("ConnectionLabel/Content/Message") as Label).text
+
+
+static func _loading_visible(scene: Control) -> bool:
+	return scene.get_node("LoadingOverlay").visible
+
+
 static func _error(scene: Control) -> String:
-	return (scene.get_node("ErrorLabel") as Label).text
+	return (scene.get_node("ErrorLabel/Content/Message") as Label).text
 
 
 static func _opponent_presence(scene: Control) -> String:
-	return (scene.get_node("OpponentPresenceLabel") as Label).text
+	return (scene.get_node("OpponentPresence/Content/OpponentPresenceLabel") as Label).text
 
 
-static func _back_text(scene: Control) -> String:
-	return (scene.get_node("BackButton") as Button).text
+static func _presence_mark(scene: Control) -> String:
+	return (scene.get_node("OpponentPresence/Content/PresenceDot") as Label).text
+
+
+static func _error_visible(scene: Control) -> bool:
+	return scene.get_node("ErrorLabel").visible
+
+
+static func _action(action_name: String) -> InputEventAction:
+	var event := InputEventAction.new()
+	event.action = action_name
+	event.pressed = true
+	return event
 
 
 static func _launch_config() -> Dictionary:
@@ -544,6 +789,9 @@ class FakeMatchClient:
 
 	func emit_error(code: String) -> void:
 		match_error.emit(code)
+
+	func require_return(code: String) -> void:
+		return_to_lobby_requested.emit(code)
 
 	func begin_snapshot_sync() -> void:
 		snapshot_sync_started.emit()

@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val signingPropertiesFile = rootProject.file("key.properties")
@@ -19,10 +18,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
@@ -59,7 +54,13 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
 dependencies {
-    implementation("androidx.test.ext:junit:1.2.1")
-    implementation("androidx.test:runner:1.6.2")
+    implementation("androidx.test.ext:junit:1.3.0")
+    implementation("androidx.test:runner:1.7.0")
 }

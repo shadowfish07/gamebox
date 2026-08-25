@@ -24,9 +24,9 @@ run_self_test() {
 		'set -euo pipefail' \
 		'case "${0##*/}" in' \
 		'  flutter)' \
-		'    if [[ "${1:-}" == "--version" ]]; then printf "Waiting for another flutter command to release the startup lock...\\nFlutter 3.35.1 fixture\\n"; else printf "All Android licenses accepted.\\n"; fi' \
+		'    if [[ "${1:-}" == "--version" ]]; then printf "Waiting for another flutter command to release the startup lock...\\nFlutter 3.47.1 fixture\\n"; else printf "All Android licenses accepted.\\n"; fi' \
 		'    ;;' \
-		'  dart) printf "Dart SDK version: 3.9.0 (stable)\\n" ;;' \
+		'  dart) printf "Dart SDK version: 3.13.1 (stable)\\n" ;;' \
 		'  go) printf "go version go1.25.0 fixture/amd64\\n" ;;' \
 		'  java) printf "openjdk version \\x2217.0.1\\x22 fixture\\n" >&2 ;;' \
 		'  godot) printf "4.7.stable.fixture\\n" ;;' \
@@ -131,34 +131,34 @@ if command -v flutter >/dev/null 2>&1; then
 		flutter_version_line="$(printf '%s\n' "$flutter_output" | sed -n '/^Flutter[[:space:]][0-9]/{p;q;}')"
 		if [[ "$flutter_version_line" =~ ^Flutter[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
 			flutter_version="${BASH_REMATCH[1]}"
-			if [[ "$flutter_version" == "3.35.1" ]]; then
+			if [[ "$flutter_version" == "3.47.1" ]]; then
 				ok "Flutter $flutter_version"
 			else
-				missing "Flutter 3.35.1 required (found $flutter_version)" "Install Flutter 3.35.1 and put flutter on PATH."
+				missing "Flutter 3.47.1 required (found $flutter_version)" "Install Flutter 3.47.1 and put flutter on PATH."
 			fi
 		else
-			missing "Flutter 3.35.1 required (version could not be parsed)" "Install Flutter 3.35.1 and put flutter on PATH."
+			missing "Flutter 3.47.1 required (version could not be parsed)" "Install Flutter 3.47.1 and put flutter on PATH."
 		fi
 	else
-		missing "Flutter 3.35.1 required (flutter --version failed)" "Install Flutter 3.35.1 and put flutter on PATH."
+		missing "Flutter 3.47.1 required (flutter --version failed)" "Install Flutter 3.47.1 and put flutter on PATH."
 	fi
 else
-	missing "Flutter 3.35.1" "Install Flutter 3.35.1 and put flutter on PATH."
+	missing "Flutter 3.47.1" "Install Flutter 3.47.1 and put flutter on PATH."
 fi
 
 if command -v dart >/dev/null 2>&1; then
 	if dart_output="$(dart --version 2>&1)"; then
 		if [[ "$dart_output" =~ Dart[[:space:]]SDK[[:space:]]version:[[:space:]]([0-9]+)\.([0-9]+) ]]; then
 			dart_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-			version_matches "Dart" "3.9" "$dart_version" "Use the Dart 3.9 SDK bundled with Flutter 3.35.1."
+			version_matches "Dart" "3.13" "$dart_version" "Use the Dart 3.13 SDK bundled with Flutter 3.47.1."
 		else
-			missing "Dart 3.9 required (version could not be parsed)" "Use the Dart 3.9 SDK bundled with Flutter 3.35.1."
+			missing "Dart 3.13 required (version could not be parsed)" "Use the Dart 3.13 SDK bundled with Flutter 3.47.1."
 		fi
 	else
-		missing "Dart 3.9 required (dart --version failed)" "Use the Dart 3.9 SDK bundled with Flutter 3.35.1."
+		missing "Dart 3.13 required (dart --version failed)" "Use the Dart 3.13 SDK bundled with Flutter 3.47.1."
 	fi
 else
-	missing "Dart 3.9" "Install Flutter 3.35.1, which includes Dart 3.9."
+	missing "Dart 3.13" "Install Flutter 3.47.1, which includes Dart 3.13."
 fi
 
 if command -v go >/dev/null 2>&1; then

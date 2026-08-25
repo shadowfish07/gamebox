@@ -10,6 +10,30 @@ godot_imported_asset_is_allowed() {
   [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.ctex$ ]]
 }
 
+# The packaged Gamebox design system is required by the APK asset gate below.
+# Its generated token file legitimately ends in "_tokens.gd", which the
+# secret-name scanner would otherwise flag; these exact paths are the reviewed,
+# versioned design assets and must never be treated as credentials.
+design_system_asset_is_allowed() {
+  local asset_path="$1"
+  case "$asset_path" in
+    assets/design_system/generated/gamebox_tokens.gd \
+    | assets/design_system/gamebox_theme.gd \
+    | assets/design_system/components/gamebox_back_button.tscn \
+    | assets/design_system/components/gamebox_connection_banner.tscn \
+    | assets/design_system/components/gamebox_connection_banner.gd \
+    | assets/design_system/components/gamebox_snackbar.tscn \
+    | assets/design_system/components/gamebox_snackbar.gd \
+    | assets/design_system/components/gamebox_confirmation_dialog.tscn \
+    | assets/design_system/components/gamebox_confirmation_dialog.gd \
+    | assets/design_system/components/gamebox_loading_overlay.tscn \
+    | assets/design_system/components/gamebox_loading_overlay.gd \
+    | assets/design_system/components/gamebox_result_panel.tscn \
+    | assets/design_system/components/gamebox_result_panel.gd) return 0 ;;
+  esac
+  return 1
+}
+
 asset_path_is_forbidden() {
   local asset_path="$1"
   local relative_path component lowercase_component normalized_component camel_spaced
@@ -18,6 +42,7 @@ asset_path_is_forbidden() {
   local -a path_components component_tokens
 
   [[ "$asset_path" == assets/* ]] || return 1
+  design_system_asset_is_allowed "$asset_path" && return 1
   godot_imported_asset_is_allowed "$asset_path" && allowed_imported=1
   if [[ "$asset_path" == assets/.godot/* && "$allowed_imported" -eq 0 ]]; then
     return 0
@@ -117,6 +142,8 @@ verify_asset_path_fixtures() {
     assets/.GDIGNORE
     assets/.GoDoT/imported/runtime-texture.ctex
     assets/.g-o_d.o-t/cache.bin
+    assets/design_system/generated/gamebox_secrets.gd
+    assets/design_system/components/gamebox_tokens.gd
   )
   local -a allowed_fixtures=(
     assets/project.godot
@@ -148,6 +175,19 @@ verify_asset_path_fixtures() {
     assets/credentialedConfig.json
     assets/privateKeynote.txt
     assets/contestResult.json
+    assets/design_system/generated/gamebox_tokens.gd
+    assets/design_system/gamebox_theme.gd
+    assets/design_system/components/gamebox_back_button.tscn
+    assets/design_system/components/gamebox_connection_banner.tscn
+    assets/design_system/components/gamebox_connection_banner.gd
+    assets/design_system/components/gamebox_snackbar.tscn
+    assets/design_system/components/gamebox_snackbar.gd
+    assets/design_system/components/gamebox_confirmation_dialog.tscn
+    assets/design_system/components/gamebox_confirmation_dialog.gd
+    assets/design_system/components/gamebox_loading_overlay.tscn
+    assets/design_system/components/gamebox_loading_overlay.gd
+    assets/design_system/components/gamebox_result_panel.tscn
+    assets/design_system/components/gamebox_result_panel.gd
   )
 
   for asset_path in "${forbidden_fixtures[@]}"; do
@@ -244,7 +284,9 @@ fi
 bash tool/bootstrap.sh --build-only
 bash tool/verify_fast.sh
 
-(cd app/android && ./gradlew :app:testDebugUnitTest)
+(cd app/android && ./gradlew \
+  :app:testDebugUnitTest \
+  :flutter_release_updater:testDebugUnitTest)
 (cd app && flutter build apk --debug)
 
 readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
@@ -252,6 +294,29 @@ readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
   printf 'Debug APK was not produced at %s\n' "$APK" >&2
   exit 1
 }
+
+merged_manifests="$(find "$ROOT_DIR/app/build/app/intermediates/merged_manifests" \
+  -type f -name AndroidManifest.xml -path '*debug*' 2>/dev/null || true)"
+readonly merged_manifests
+[[ -n "$merged_manifests" ]] || {
+  printf 'No merged debug Android manifest was produced.\n' >&2
+  exit 1
+}
+while IFS= read -r merged_manifest; do
+  install_permission_count="$({
+    grep -oF 'android.permission.REQUEST_INSTALL_PACKAGES' "$merged_manifest" || true
+  } | wc -l | tr -d ' ')"
+  if [[ "$install_permission_count" != "1" ]]; then
+    printf 'Merged debug manifest must contain one updater permission (found %s): %s\n' \
+      "$install_permission_count" "$merged_manifest" >&2
+    exit 1
+  fi
+  if grep -F 'android.permission.INSTALL_PACKAGES' "$merged_manifest" >/dev/null; then
+    printf 'Merged debug manifest requests privileged silent installation: %s\n' \
+      "$merged_manifest" >&2
+    exit 1
+  fi
+done <<<"$merged_manifests"
 
 apk_entries="$(unzip -Z1 "$APK")"
 readonly apk_entries
@@ -270,7 +335,20 @@ for required_asset in \
   assets/games/gomoku/gomoku_board.gd \
   assets/games/gomoku/gomoku_controller.gd \
   assets/games/gomoku/gomoku_scene.tscn \
-  assets/games/gomoku/gomoku_state.gd; do
+  assets/games/gomoku/gomoku_state.gd \
+  assets/design_system/generated/gamebox_tokens.gd \
+  assets/design_system/gamebox_theme.gd \
+  assets/design_system/components/gamebox_back_button.tscn \
+  assets/design_system/components/gamebox_connection_banner.tscn \
+  assets/design_system/components/gamebox_connection_banner.gd \
+  assets/design_system/components/gamebox_snackbar.tscn \
+  assets/design_system/components/gamebox_snackbar.gd \
+  assets/design_system/components/gamebox_confirmation_dialog.tscn \
+  assets/design_system/components/gamebox_confirmation_dialog.gd \
+  assets/design_system/components/gamebox_loading_overlay.tscn \
+  assets/design_system/components/gamebox_loading_overlay.gd \
+  assets/design_system/components/gamebox_result_panel.tscn \
+  assets/design_system/components/gamebox_result_panel.gd; do
   grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {
     printf 'Debug APK is missing required Godot asset %s\n' "$required_asset" >&2
     exit 1
