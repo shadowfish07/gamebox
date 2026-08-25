@@ -1774,6 +1774,15 @@ self_test() {
   [[ "$watcher_wait_line" =~ ^[1-9][0-9]*$ && "$watcher_recheck_line" =~ ^[1-9][0-9]*$ \
     && "$watcher_recheck_line" -gt "$watcher_wait_line" ]] \
     || { printf 'loading watcher teardown validates its session before reaping the pipeline\n' >&2; return 1; }
+  local loading_pause_source loading_pause_line loading_stop_line
+  loading_pause_source="$(
+    sed -n '/^wait_for_first_connect_loading_and_pause() {/,/^}/p' "${BASH_SOURCE[0]}"
+  )"
+  loading_pause_line="$(grep -n 'pause_e2e_server' <<<"$loading_pause_source" | head -n 1 | cut -d: -f1)"
+  loading_stop_line="$(grep -n 'stop_first_connect_loading_watch' <<<"$loading_pause_source" | head -n 1 | cut -d: -f1)"
+  [[ "$loading_pause_line" =~ ^[1-9][0-9]*$ && "$loading_stop_line" =~ ^[1-9][0-9]*$ \
+    && "$loading_pause_line" -lt "$loading_stop_line" ]] \
+    || { printf 'first-connect server pause still follows loading watcher teardown\n' >&2; return 1; }
   local visual_configuration_source
   visual_configuration_source="$(
     sed -n '/^configure_device_visuals() {/,/^}/p' "${BASH_SOURCE[0]}"
@@ -2552,8 +2561,14 @@ wait_for_first_connect_loading_and_pause() {
     fi
     if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
       LOADING_MATCH_ID="$candidate"
-      stop_first_connect_loading_watch
-      pause_e2e_server || return 1
+      pause_e2e_server || {
+        stop_first_connect_loading_watch || true
+        return 1
+      }
+      stop_first_connect_loading_watch || {
+        resume_e2e_server || true
+        return 1
+      }
       sleep 0.2
       if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
         | grep -F "$GAMEBOX_STATE_MARKER match=$candidate revision=0" >/dev/null; then
