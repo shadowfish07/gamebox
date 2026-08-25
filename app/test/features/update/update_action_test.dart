@@ -30,6 +30,7 @@ void main() {
 
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('当前已是最新版本'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('update-feedback'), findsOneWidget);
     updater.dispose();
   });
 
@@ -62,6 +63,7 @@ void main() {
 
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('网络暂不可用'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('update-feedback'), findsOneWidget);
     updater.dispose();
   });
 

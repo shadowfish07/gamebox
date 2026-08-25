@@ -1954,9 +1954,9 @@ self_test() {
     || { printf 'optional move confirmation result assertion is missing\n' >&2; return 1; }
   local update_flow_source
   update_flow_source="$(sed -n '/^tap_identifier "\$SERIAL_B" app-update/,/^uuid_pattern=/p' "${BASH_SOURCE[0]}")"
-  grep -F 'wait_for_visible_text "$SERIAL_B" '\''当前已是最新版本'\''' \
+  grep -F 'wait_for_identifier "$SERIAL_B" update-feedback' \
     <<<"$update_flow_source" >/dev/null \
-    || { printf 'update flow does not wait for terminal routine-update feedback\n' >&2; return 1; }
+    || { printf 'update flow does not wait for terminal update feedback\n' >&2; return 1; }
   if grep -F 'settle_update_action "$SERIAL_B"' <<<"$update_flow_source" >/dev/null; then
     printf 'update flow still uses the premature toolbar settlement gate\n' >&2
     return 1
@@ -2836,8 +2836,8 @@ register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 wait_for_visible_text "$SERIAL_B" '检查更新' \
   || fail "B update action did not become ready after its automatic check"
 tap_identifier "$SERIAL_B" app-update
-wait_for_visible_text "$SERIAL_B" '当前已是最新版本' \
-  || fail "B did not show the routine up-to-date Snackbar"
+wait_for_identifier "$SERIAL_B" update-feedback >/dev/null \
+  || fail "B did not show terminal non-modal update feedback"
 assert_visible_text_absent "$SERIAL_B" '应用更新' \
   || fail "B showed a modal update dialog for routine up-to-date feedback"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \

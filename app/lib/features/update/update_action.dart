@@ -56,8 +56,14 @@ Future<void> showUpdateDialog(
       _ => null,
     };
     if (message != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Semantics(
+            identifier: 'update-feedback',
+            child: Text(message),
+          ),
+        ),
+      );
     }
     return;
   }
