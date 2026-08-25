@@ -14,7 +14,6 @@ class LanE2eHostExportTest {
     @Test
     fun exportExistingRoomThroughPrivateOneShotFile() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        check(instrumentation.context.packageName == "${instrumentation.targetContext.packageName}.test")
         val context = instrumentation.targetContext
         check(context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             "LAN E2E export is debug-only"

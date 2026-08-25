@@ -79,6 +79,13 @@ unexpected_error() {
 }
 trap 'unexpected_error "$?" "$LINENO"' ERR
 adb_for() { "$ADB_BIN" -s "$1" "${@:2}"; }
+run_instrumentation() {
+  local serial="$1" log_file="$2"
+  shift 2
+  adb_for "$serial" shell am instrument -w -r "$@" "$TEST_RUNNER" >"$log_file" 2>&1 \
+    && grep -F 'OK (1 test)' "$log_file" >/dev/null \
+    && ! grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' "$log_file" >/dev/null
+}
 
 cleanup() {
   local exit_code=$?
@@ -217,8 +224,8 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
   adb_for "$serial" logcat -c
 done
 
-adb_for "$SERIAL_A" shell am instrument -w -r \
-  -e class me.zqydev.gamebox.GameResultBridgeTest "$TEST_RUNNER" >"$TEMP_DIR/result-bridge.log" \
+run_instrumentation "$SERIAL_A" "$TEMP_DIR/result-bridge.log" \
+  -e class me.zqydev.gamebox.GameResultBridgeTest \
   || { cp "$TEMP_DIR/result-bridge.log" "$ARTIFACT_DIR/failed-phase.log"; fail 'device result durability test failed'; }
 adb_for "$SERIAL_A" shell pm clear "$PACKAGE" >/dev/null || fail "post-test app reset failed on $SERIAL_A"
 
@@ -286,8 +293,9 @@ set_nickname() {
   adb_for "$serial" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
   wait_id "$serial" local-nickname >/dev/null || fail "nickname field missing on $serial"
   printf '%s' "$nickname" | stage_test_input "$serial" "$name"
-  adb_for "$serial" shell am instrument -w -r -e class 'me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue' \
-    -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name" "$TEST_RUNNER" >"$TEMP_DIR/nickname-${serial}.log" \
+  run_instrumentation "$serial" "$TEMP_DIR/nickname-${serial}.log" \
+    -e class 'me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue' \
+    -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name" \
     || fail "nickname injection failed on $serial"
   tap_id "$serial" save-nickname
   wait_id "$serial" open-game-history >/dev/null || fail "home did not load on $serial"
@@ -303,7 +311,8 @@ SENSITIVE_UI=1
 wait_id "$SERIAL_A" credential-qr-sensitive >/dev/null || fail 'host QR state was not reached'
 adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/host-waiting-masked.png"
 
-adb_for "$SERIAL_A" shell am instrument -w -r -e class me.zqydev.gamebox.LanE2eHostExportTest "$TEST_RUNNER" >"$TEMP_DIR/host-export.log" \
+run_instrumentation "$SERIAL_A" "$TEMP_DIR/host-export.log" \
+  -e class me.zqydev.gamebox.LanE2eHostExportTest \
   || fail 'host private handoff export failed'
 adb_for "$SERIAL_A" exec-out run-as "$PACKAGE" cat files/lan-e2e-handoff.json >"$TEMP_DIR/handoff.json" \
   || fail 'host private handoff could not be read'
@@ -329,8 +338,9 @@ tap_id "$SERIAL_B" open-lan-mode
 tap_id "$SERIAL_B" join-lan-room
 LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID"
 printf '%s' "$JOIN_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
-adb_for "$SERIAL_B" shell am instrument -w -r -e class me.zqydev.gamebox.LanE2eInputTest \
-  -e gameboxLanInputName "$LAN_INPUT_NAME" "$TEST_RUNNER" >"$TEMP_DIR/lan-input.log" || fail 'guest private LAN input failed'
+run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-input.log" \
+  -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
+  || fail 'guest private LAN input failed'
 tap_id "$SERIAL_B" submit-lan-manual-input
 
 adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
@@ -379,7 +389,9 @@ for x in 0 1 2 3 4; do
     tap_id "$SERIAL_B" open-lan-mode; tap_id "$SERIAL_B" join-lan-room
     LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID-resume"
     printf '%s' "$RESUME_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
-    adb_for "$SERIAL_B" shell am instrument -w -r -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" "$TEST_RUNNER" >"$TEMP_DIR/lan-resume.log" || fail 'guest resume input failed'
+    run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-resume.log" \
+      -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
+      || fail 'guest resume input failed'
     tap_id "$SERIAL_B" submit-lan-manual-input
     wait_log_revision "$SERIAL_B" "$revision" || fail 'guest resume snapshot did not converge'
     adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/recovered-guest.png"
