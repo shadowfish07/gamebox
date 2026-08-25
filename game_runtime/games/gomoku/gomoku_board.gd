@@ -42,10 +42,17 @@ var pressed_cell: Vector2i:
 	set(_value):
 		pass
 
+var selected_cell: Vector2i:
+	get:
+		return _selected_cell
+	set(_value):
+		pass
+
 var _cells: Array = []
 var _pending_cell := INVALID_CELL
 var _last_move_cell := INVALID_CELL
 var _pressed_cell := INVALID_CELL
+var _selected_cell := INVALID_CELL
 var _interactable := true
 var _active_touch := -1
 var _touch_start_cell := INVALID_CELL
@@ -61,18 +68,29 @@ func _init() -> void:
 	_cells.fill(EMPTY)
 
 
-func present(cells: Array, last_move: Vector2i = INVALID_CELL, pending: Vector2i = INVALID_CELL) -> bool:
-	if not _valid_cells(cells) or not _valid_marker(last_move) or not _valid_marker(pending):
+func present(
+	cells: Array,
+	last_move: Vector2i = INVALID_CELL,
+	pending: Vector2i = INVALID_CELL,
+	selected: Vector2i = INVALID_CELL,
+) -> bool:
+	if not _valid_cells(cells) or not _valid_marker(last_move) \
+		or not _valid_marker(pending) or not _valid_marker(selected):
 		return false
 	if last_move != INVALID_CELL and cells[last_move.y * BOARD_SIZE + last_move.x] == EMPTY:
 		return false
 	if pending != INVALID_CELL and cells[pending.y * BOARD_SIZE + pending.x] != EMPTY:
 		return false
+	if selected != INVALID_CELL and cells[selected.y * BOARD_SIZE + selected.x] != EMPTY:
+		return false
 	if last_move != INVALID_CELL and last_move == pending:
+		return false
+	if selected != INVALID_CELL and selected == pending:
 		return false
 	_cells = cells.duplicate()
 	_last_move_cell = last_move
 	_pending_cell = pending
+	_selected_cell = selected
 	queue_redraw()
 	return true
 
@@ -221,6 +239,10 @@ func _draw() -> void:
 		var pressed_center := cell_to_pixel(_pressed_cell, rect)
 		draw_circle(pressed_center, stone_radius * 0.42, Color(PRESSED_COLOR, PENDING_OVERLAY_ALPHA), true, -1.0, true)
 		draw_arc(pressed_center, stone_radius * 0.58, 0.0, TAU, 32, PRESSED_COLOR, 4.0, true)
+	if _selected_cell != INVALID_CELL:
+		var selected_center := cell_to_pixel(_selected_cell, rect)
+		draw_circle(selected_center, stone_radius * 0.42, Color(PRESSED_COLOR, PENDING_OVERLAY_ALPHA), true, -1.0, true)
+		draw_arc(selected_center, stone_radius * 0.78, 0.0, TAU, 32, PRESSED_COLOR, 5.0, true)
 	if _pending_cell != INVALID_CELL:
 		var pending_center := cell_to_pixel(_pending_cell, rect)
 		draw_circle(pending_center, stone_radius * 0.42, Color(PENDING_COLOR, PENDING_OVERLAY_ALPHA), true, -1.0, true)

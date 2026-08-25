@@ -328,8 +328,9 @@ unrelated emulator such as `emulator-5554`. Alternatively, set both
 but not created, wiped, restarted, or stopped. Managed AVD A runs in light mode
 at a 1080x2400 large-phone viewport and B in dark mode at a 720x1600 narrow-
 phone viewport. Supplied devices keep their display overrides and must
-naturally provide portrait viewports with A at least 1080 pixels wide and B at
-most 720 pixels wide. The harness restores each selected device's original UI
+naturally provide the same portrait logical viewport matrix: A must resolve to
+410-414x912-918dp and B to 358-362x798-802dp after applying each device's
+effective density. The harness restores each selected device's original UI
 mode and every managed display override on success and through its exit trap.
 
 The semantics integration test always uses the selected A-device explicitly:

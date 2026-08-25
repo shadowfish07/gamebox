@@ -4,6 +4,7 @@ const GomokuScene = preload("res://games/gomoku/gomoku_scene.tscn")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const Protocol = preload("res://core/protocol.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
@@ -29,6 +30,14 @@ static func cases() -> Array:
 		{"name": "gomoku collapses Android Back double-delivery without a dialog", "run": _android_go_back_double_delivery_without_dialog},
 		{"name": "gomoku terminal return stays non-destructive", "run": _terminal_return_is_non_destructive},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
+		{"name": "gomoku scene uses mobile move confirmation surfaces", "run": _uses_mobile_move_confirmation_surfaces},
+		{"name": "gomoku settings Done target survives the large Android viewport", "run": _settings_done_target_survives_large_viewport},
+		{"name": "gomoku settings sheet persists move confirmation", "run": _settings_sheet_persists_move_confirmation},
+		{"name": "gomoku settings failure restores the saved value", "run": _settings_failure_restores_saved_value},
+		{"name": "gomoku move confirmation cancels or submits exactly once", "run": _move_confirmation_cancels_or_submits_once},
+		{"name": "gomoku failed confirmation keeps a retryable selection", "run": _failed_confirmation_keeps_retryable_selection},
+		{"name": "gomoku recovery clears an unsubmitted selection", "run": _recovery_clears_unsubmitted_selection},
+		{"name": "gomoku Back closes settings before returning", "run": _back_closes_settings_before_returning},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
 		{"name": "gomoku ready marker waits for one drawn frame and cancels safely", "run": _waits_for_drawn_frame_marker},
 		{"name": "gomoku scene disposes client and callbacks once", "run": _disposes_once},
@@ -352,6 +361,7 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
 		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
 		and _check(scene.get_node("ResultPanel").size.y <= 300.0, "terminal result panel keeps excessive empty height: %s" % str(scene.get_node("ResultPanel").size.y)) \
+		and _check(not scene.get_node("SettingsButton").visible, "settings action remained visible after terminal state") \
 		and _check(not scene.get_node("ResignButton").visible, "resign visible after terminal state")
 	return _cleanup(scene, result)
 
@@ -513,6 +523,184 @@ static func _wires_move_once() -> bool:
 	return _cleanup(scene, result)
 
 
+static func _uses_mobile_move_confirmation_surfaces() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID, FakePreferences.new(false))
+	var scene: Control = harness["scene"]
+	var required_paths := [
+		"SettingsButton", "SettingsSheet/Sheet/Content/MoveConfirmationToggle",
+		"SettingsSheet/Sheet/Content/DoneButton", "MoveConfirmationBar/Content/SelectionLabel",
+		"MoveConfirmationBar/Content/Actions/CancelButton",
+		"MoveConfirmationBar/Content/Actions/ConfirmButton",
+	]
+	for node_path in required_paths:
+		if not _check(scene.has_node(node_path), "mobile confirmation node missing: %s" % node_path):
+			return _cleanup(scene)
+	var settings_button := scene.get_node("SettingsButton") as Button
+	var settings_sheet := scene.get_node("SettingsSheet") as Control
+	var settings_toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as BaseButton
+	var confirmation_bar := scene.get_node("MoveConfirmationBar") as Control
+	var cancel_button := scene.get_node("MoveConfirmationBar/Content/Actions/CancelButton") as Button
+	var confirm_button := scene.get_node("MoveConfirmationBar/Content/Actions/ConfirmButton") as Button
+	var board := scene.get_node("Board") as Control
+	if not _check(settings_toggle.has_node("Content/Labels/Title"), "settings toggle title is not laid out independently") \
+		or not _check(settings_toggle.has_node("Content/Labels/Description"), "settings toggle description is not laid out independently") \
+		or not _check(settings_toggle.has_node("Content/SwitchVisual"), "settings toggle has no explicit switch visual") \
+		or not _check(not settings_sheet.visible, "settings sheet is visible by default"):
+		return _cleanup(scene)
+	scene._on_settings_pressed()
+	var tree := Engine.get_main_loop() as SceneTree
+	await tree.process_frame
+	await tree.process_frame
+	var colors: Dictionary = GameboxTokens.LIGHT
+	var toggle_style := settings_toggle.get_theme_stylebox("normal") as StyleBoxFlat
+	var toggle_content := settings_toggle.get_node("Content") as Control
+	var switch_visual := settings_toggle.get_node("Content/SwitchVisual") as Control
+	var result := _check(not scene.has_node("MoveConfirmationDialog"), "ordinary move confirmation still uses a Dialog") \
+		and _check(settings_button.text == "设置", "settings action copy changed") \
+		and _check(settings_button.custom_minimum_size.x >= 192.0 and settings_button.custom_minimum_size.y >= 96.0, "settings target is below 48dp") \
+		and _check(settings_toggle.toggle_mode, "settings row is not a toggle button") \
+		and _check(settings_toggle.custom_minimum_size.y >= 128.0, "settings row is too cramped for title, description, and switch") \
+		and _check(toggle_style != null and toggle_style.bg_color == colors["surface_container"], "settings row does not use a neutral semantic surface") \
+		and _check(toggle_content.position.x >= 32.0 \
+			and toggle_content.position.x + toggle_content.size.x <= settings_toggle.size.x - 32.0, "settings row content does not preserve 16dp horizontal padding: row=%s content=%s" % [settings_toggle.get_rect(), toggle_content.get_rect()]) \
+		and _check(switch_visual.custom_minimum_size.x >= 96.0 and switch_visual.custom_minimum_size.y >= 64.0, "switch visual is too small to distinguish its state") \
+		and _check(cancel_button.custom_minimum_size.y >= 96.0 and confirm_button.custom_minimum_size.y >= 96.0, "confirmation actions are below 48dp") \
+		and _check(not confirmation_bar.visible, "confirmation bar is visible without a selection") \
+		and _check(not confirmation_bar.get_rect().intersects(board.get_rect()), "confirmation bar obscures the board")
+	scene._on_settings_done_pressed()
+	return _cleanup(scene, result)
+
+
+static func _settings_sheet_persists_move_confirmation() -> bool:
+	var preferences := FakePreferences.new(false)
+	var harness: Dictionary = await _scene_harness(BLACK_ID, preferences)
+	var scene: Control = harness["scene"]
+	var toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as BaseButton
+	scene._on_settings_pressed()
+	if not _check(scene.get_node("SettingsSheet").visible, "settings action did not open the bottom sheet") \
+		or not _check(not toggle.button_pressed, "settings sheet ignored the saved direct-move value"):
+		return _cleanup(scene)
+	scene._on_move_confirmation_toggled(true)
+	scene._on_settings_done_pressed()
+	scene._on_settings_pressed()
+	var result := _check(preferences.saved_values == [true], "settings change was not persisted exactly once") \
+		and _check(toggle.button_pressed, "reopened settings sheet did not retain enabled confirmation")
+	return _cleanup(scene, result)
+
+
+static func _settings_done_target_survives_large_viewport() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	var host := Control.new()
+	host.size = Vector2(1080.0, 2400.0)
+	tree.root.add_child(host)
+	var client := FakeMatchClient.new()
+	client.local_user_id = BLACK_ID
+	var scene := GomokuScene.instantiate()
+	scene.configure_launch(_launch_config())
+	scene.set_match_client_factory(func() -> Variant: return client)
+	scene.set_preferences_store(FakePreferences.new(false))
+	scene.set_quit_callback(func() -> void: pass)
+	host.add_child(scene)
+	await tree.process_frame
+	scene._on_settings_pressed()
+	await tree.process_frame
+	await tree.process_frame
+	var done_button := scene.get_node("SettingsSheet/Sheet/Content/DoneButton") as Button
+	var done_rect := done_button.get_global_rect()
+	var result := _check(done_rect.has_point(Vector2(540.0, 2160.0)), "large Android Done tap left its button: %s" % done_rect)
+	host.free()
+	return result
+
+
+static func _settings_failure_restores_saved_value() -> bool:
+	var preferences := FakePreferences.new(false)
+	preferences.save_result = false
+	var harness: Dictionary = await _scene_harness(BLACK_ID, preferences)
+	var scene: Control = harness["scene"]
+	scene._on_settings_pressed()
+	scene._on_move_confirmation_toggled(true)
+	var toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as BaseButton
+	var result := _check(not toggle.button_pressed, "failed save left an unsaved enabled toggle") \
+		and _check(_error_visible(scene) and _error(scene) == "设置保存失败，请重试", "failed save did not offer retry guidance") \
+		and _check(scene.get_node("ErrorLabel").z_index > scene.get_node("SettingsSheet").z_index, "settings sheet obscures the save failure Snackbar")
+	return _cleanup(scene, result)
+
+
+static func _failed_confirmation_keeps_retryable_selection() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID, FakePreferences.new(true))
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var board = scene.get_node("Board")
+	client.accept_snapshot(_snapshot(0))
+	client.reject_moves = true
+	scene._on_cell_pressed(6, 8)
+	scene._on_move_confirm_pressed()
+	var result := _check(client.move_requests.is_empty(), "rejected confirmation reached the transport") \
+		and _check(board.selected_cell == Vector2i(6, 8), "rejected confirmation lost the retryable selected marker") \
+		and _check(scene.get_node("MoveConfirmationBar").visible, "rejected confirmation hid the retry actions") \
+		and _check(_error_visible(scene) and _error(scene) == "操作失败，请重试", "rejected confirmation did not show retry guidance")
+	client.reject_moves = false
+	scene._on_move_confirm_pressed()
+	result = result \
+		and _check(client.move_requests == [Vector2i(6, 8)], "retry did not submit the selected move exactly once") \
+		and _check(board.selected_cell == Vector2i(-1, -1), "successful retry retained the selected marker")
+	return _cleanup(scene, result)
+
+
+static func _move_confirmation_cancels_or_submits_once() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID, FakePreferences.new(true))
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var board = scene.get_node("Board")
+	client.accept_snapshot(_snapshot(0))
+	scene._on_cell_pressed(7, 7)
+	if not _check(client.move_requests.is_empty(), "selected move reached the server before confirmation") \
+		or not _check(board.selected_cell == Vector2i(7, 7), "selected move marker is missing") \
+		or not _check(board.pending_cell == Vector2i(-1, -1), "selected move used the server-pending marker") \
+		or not _check(scene.get_node("MoveConfirmationBar").visible, "selection did not open the confirmation bar") \
+		or not _check((scene.get_node("MoveConfirmationBar/Content/SelectionLabel") as Label).text == "第 8 列 · 第 8 行", "selected coordinate copy changed"):
+		return _cleanup(scene)
+	scene._on_move_cancel_pressed()
+	if not _check(client.move_requests.is_empty(), "cancel submitted a move") \
+		or not _check(board.selected_cell == Vector2i(-1, -1), "cancel did not clear the selected marker") \
+		or not _check(not scene.get_node("MoveConfirmationBar").visible, "cancel left the confirmation bar open"):
+		return _cleanup(scene)
+	scene._on_cell_pressed(7, 7)
+	scene._on_move_confirm_pressed()
+	var result := _check(client.move_requests == [Vector2i(7, 7)], "confirmation did not submit exactly one move") \
+		and _check(board.selected_cell == Vector2i(-1, -1), "submitted move retained the selected marker") \
+		and _check(board.pending_cell == Vector2i(7, 7), "submitted move did not transition to server pending") \
+		and _check(not scene.get_node("MoveConfirmationBar").visible, "server-pending move left local confirmation actions visible")
+	return _cleanup(scene, result)
+
+
+static func _recovery_clears_unsubmitted_selection() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID, FakePreferences.new(true))
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var board = scene.get_node("Board")
+	client.accept_snapshot(_snapshot(0))
+	scene._on_cell_pressed(5, 6)
+	client.set_connection("reconnecting")
+	var result := _check(board.selected_cell == Vector2i(-1, -1), "reconnect retained an unsubmitted selection") \
+		and _check(not scene.get_node("MoveConfirmationBar").visible, "reconnect left confirmation actions visible") \
+		and _check(client.move_requests.is_empty(), "recovery submitted the local selection")
+	return _cleanup(scene, result)
+
+
+static func _back_closes_settings_before_returning() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID, FakePreferences.new(false))
+	var scene: Control = harness["scene"]
+	var quit_calls: Array[int] = harness["quit_calls"]
+	scene._on_settings_pressed()
+	scene._on_back_requested()
+	if not _check(not scene.get_node("SettingsSheet").visible, "Back did not close the settings sheet") \
+		or not _check(quit_calls.is_empty(), "closing settings also returned to the lobby"):
+		return _cleanup(scene)
+	scene._on_back_requested()
+	return _cleanup(scene, _check(quit_calls.size() == 1, "Back did not return after settings was closed"))
+
+
 static func _keeps_portrait_touch_layout() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
@@ -586,13 +774,15 @@ static func _disposes_once() -> bool:
 	return _cleanup(scene, result)
 
 
-static func _scene_harness(local_user_id: String) -> Dictionary:
+static func _scene_harness(local_user_id: String, preferences: Variant = null) -> Dictionary:
 	var tree := Engine.get_main_loop() as SceneTree
 	var fake := FakeMatchClient.new()
 	fake.local_user_id = local_user_id
 	var scene := GomokuScene.instantiate()
 	scene.configure_launch(_launch_config())
 	scene.set_match_client_factory(func() -> Variant: return fake)
+	if preferences != null:
+		scene.set_preferences_store(preferences)
 	var quit_calls: Array[int] = []
 	scene.set_quit_callback(func() -> void: quit_calls.append(1))
 	tree.root.add_child(scene)
@@ -743,6 +933,7 @@ class FakeMatchClient:
 	var local_user_id := ""
 	var state: Variant
 	var move_requests: Array[Vector2i] = []
+	var reject_moves := false
 	var resign_requests := 0
 	var dispose_calls := 0
 	var player_presence := {}
@@ -756,6 +947,8 @@ class FakeMatchClient:
 		pass
 
 	func request_move(x: int, y: int) -> String:
+		if reject_moves:
+			return ""
 		if not state.can_request_move(x, y, local_user_id):
 			return ""
 		if not state.mark_pending(ACTION_ID, x, y):
@@ -812,6 +1005,27 @@ class FakeMatchClient:
 			push_error("fake event invalid")
 			return
 		event_received.emit(envelope)
+
+
+class FakePreferences:
+	extends RefCounted
+
+	var confirm_move := false
+	var save_result := true
+	var saved_values: Array[bool] = []
+
+	func _init(initial_confirm_move: bool) -> void:
+		confirm_move = initial_confirm_move
+
+	func load_confirm_move() -> bool:
+		return confirm_move
+
+	func save_confirm_move(enabled: bool) -> bool:
+		saved_values.append(enabled)
+		if not save_result:
+			return false
+		confirm_move = enabled
+		return true
 
 
 class FakeFrameGate:

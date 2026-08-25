@@ -350,8 +350,10 @@ verify_debug_apk() (
     assets/core/protocol.gd \
     assets/games/gomoku/gomoku_board.gd \
     assets/games/gomoku/gomoku_controller.gd \
+    assets/games/gomoku/gomoku_preferences.gd \
     assets/games/gomoku/gomoku_scene.tscn \
     assets/games/gomoku/gomoku_state.gd \
+    assets/games/gomoku/gomoku_switch_visual.gd \
     assets/design_system/generated/gamebox_tokens.gd \
     assets/design_system/gamebox_theme.gd \
     assets/design_system/components/gamebox_back_button.tscn \

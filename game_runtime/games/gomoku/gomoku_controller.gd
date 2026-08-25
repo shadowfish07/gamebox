@@ -3,6 +3,7 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+const GomokuPreferences = preload("res://games/gomoku/gomoku_preferences.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 
 const INVALID_CELL := Vector2i(-1, -1)
@@ -38,6 +39,7 @@ var _launch_config := {}
 var _match_client_factory := Callable()
 var _quit_callback := Callable()
 var _frame_ready_gate: Variant
+var _preferences_store: Variant
 var _state: Variant
 var _client: Variant
 var _match_id := ""
@@ -56,6 +58,8 @@ var _ready_marker_callback := Callable()
 var _ready_marker_emitted := false
 var _ready_marker_text := ""
 var _resign_submitted := false
+var _confirm_move_enabled := false
+var _selected_move := INVALID_CELL
 var _last_go_back_time_ms := -100000
 var _go_back_debounce_ms := GO_BACK_DEBOUNCE_MS
 
@@ -88,10 +92,26 @@ func set_frame_ready_gate(gate: Variant) -> bool:
 	return true
 
 
+func set_preferences_store(store: Variant) -> bool:
+	if is_inside_tree() or store == null \
+		or not store.has_method("load_confirm_move") or not store.has_method("save_confirm_move"):
+		return false
+	_preferences_store = store
+	return true
+
+
 func _ready() -> void:
 	theme = GameboxTheme.create(GameboxTheme.system_prefers_dark())
+	if _preferences_store == null:
+		_preferences_store = GomokuPreferences.new()
+	_confirm_move_enabled = _preferences_store.load_confirm_move()
 	$Board.cell_pressed.connect(_on_cell_pressed)
 	$BackButton.pressed.connect(_on_back_pressed)
+	$SettingsButton.pressed.connect(_on_settings_pressed)
+	$SettingsSheet/Sheet/Content/MoveConfirmationToggle.toggled.connect(_on_move_confirmation_toggled)
+	$SettingsSheet/Sheet/Content/DoneButton.pressed.connect(_on_settings_done_pressed)
+	$MoveConfirmationBar/Content/Actions/CancelButton.pressed.connect(_on_move_cancel_pressed)
+	$MoveConfirmationBar/Content/Actions/ConfirmButton.pressed.connect(_on_move_confirm_pressed)
 	$ResignButton.pressed.connect(_on_resign_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResultPanel.return_requested.connect(_on_back_pressed)
@@ -146,11 +166,71 @@ func _on_cell_pressed(x: int, y: int) -> void:
 	if not _started or _disposed or _awaiting_snapshot or _state == null \
 		or not _state.can_request_move(x, y, _client.local_user_id):
 		return
-	var result: String = _client.request_move(x, y)
-	print("GAMEBOX_BOARD_MOVE x=%d y=%d result=%s" % [x, y, result])
+	if _confirm_move_enabled:
+		_selected_move = Vector2i(x, y)
+		_error_text = ""
+		print("GAMEBOX_MOVE_SELECTION state=selected x=%d y=%d" % [x, y])
+		_refresh_ui()
+		return
+	_request_selected_move(Vector2i(x, y))
+
+
+func _request_selected_move(cell: Vector2i) -> void:
+	var result: String = _client.request_move(cell.x, cell.y)
+	print("GAMEBOX_BOARD_MOVE x=%d y=%d result=%s" % [cell.x, cell.y, result])
 	if not result.is_empty():
+		_selected_move = INVALID_CELL
 		_error_text = ""
 		_refresh_ui()
+	else:
+		_error_text = "操作失败，请重试"
+		_refresh_ui()
+
+
+func _on_move_cancel_pressed() -> void:
+	if _selected_move == INVALID_CELL:
+		return
+	print("GAMEBOX_MOVE_SELECTION state=cancelled x=%d y=%d" % [_selected_move.x, _selected_move.y])
+	_selected_move = INVALID_CELL
+	_refresh_ui()
+
+
+func _on_move_confirm_pressed() -> void:
+	if _selected_move == INVALID_CELL or not _can_request_selected_move():
+		return
+	_request_selected_move(_selected_move)
+
+
+func _on_settings_pressed() -> void:
+	var toggle := $SettingsSheet/Sheet/Content/MoveConfirmationToggle as BaseButton
+	toggle.set_pressed_no_signal(_confirm_move_enabled)
+	$SettingsSheet.visible = true
+	print("GAMEBOX_SETTINGS_SHEET visible=true")
+	_refresh_ui()
+
+
+func _on_settings_done_pressed() -> void:
+	if not $SettingsSheet.visible:
+		return
+	$SettingsSheet.visible = false
+	print("GAMEBOX_SETTINGS_SHEET visible=false")
+	_refresh_ui()
+
+
+func _on_move_confirmation_toggled(enabled: bool) -> void:
+	var toggle := $SettingsSheet/Sheet/Content/MoveConfirmationToggle as BaseButton
+	if not _preferences_store.save_confirm_move(enabled):
+		toggle.set_pressed_no_signal(_confirm_move_enabled)
+		_error_text = "设置保存失败，请重试"
+		_refresh_ui()
+		return
+	_confirm_move_enabled = enabled
+	toggle.set_pressed_no_signal(enabled)
+	if not enabled:
+		_selected_move = INVALID_CELL
+	_error_text = ""
+	print("GAMEBOX_MOVE_CONFIRMATION enabled=%s" % str(enabled))
+	_refresh_ui()
 
 
 func _on_resign_pressed() -> void:
@@ -172,6 +252,9 @@ func _on_resign_confirmed() -> void:
 
 
 func _on_back_pressed() -> void:
+	if $SettingsSheet.visible:
+		_on_settings_done_pressed()
+		return
 	if $ResignDialog.visible:
 		print("GAMEBOX_GODOT_BACK back_pressed hide_dialog")
 		$ResignDialog.close()
@@ -209,7 +292,10 @@ func _notification(what: int) -> void:
 
 
 func _on_back_requested() -> void:
-	if $ResignDialog.visible:
+	if $SettingsSheet.visible:
+		print("GAMEBOX_GODOT_BACK branch=hide_settings")
+		_on_settings_done_pressed()
+	elif $ResignDialog.visible:
 		print("GAMEBOX_GODOT_BACK branch=hide_dialog")
 		$ResignDialog.close()
 	else:
@@ -229,17 +315,20 @@ func _on_connection_state_changed(next_state: String) -> void:
 	_connection_state = next_state
 	if next_state in ["connecting", "reconnecting", "failed", "closed"]:
 		_awaiting_snapshot = true
+		_selected_move = INVALID_CELL
 	_refresh_ui()
 
 
 func _on_snapshot_sync_started() -> void:
 	_awaiting_snapshot = true
+	_selected_move = INVALID_CELL
 	_refresh_ui()
 
 
 func _on_snapshot_received(envelope: Dictionary) -> void:
 	if _state == null:
 		return
+	_selected_move = INVALID_CELL
 	var applied: Dictionary = _state.apply_snapshot(envelope)
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
@@ -255,6 +344,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 func _on_event_received(envelope: Dictionary) -> void:
 	if _state == null:
 		return
+	_selected_move = INVALID_CELL
 	var applied: Dictionary = _state.apply_event(envelope)
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
@@ -273,6 +363,7 @@ func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
 func _on_match_error(code: String) -> void:
 	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
 	_resign_submitted = false
+	_selected_move = INVALID_CELL
 	if code == "stale_revision":
 		_awaiting_snapshot = true
 	_refresh_ui()
@@ -281,6 +372,7 @@ func _on_match_error(code: String) -> void:
 func _on_return_to_lobby_requested(code: String) -> void:
 	_error_text = str(SAFE_ERROR_COPY.get(code, "连接失败，请返回大厅"))
 	_force_return = true
+	_selected_move = INVALID_CELL
 	_refresh_ui()
 
 
@@ -290,12 +382,18 @@ func _refresh_ui() -> void:
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var local_color: String = _local_color(local_user_id) if has_state else ""
 	var opponent_presence := _opponent_presence(local_user_id) if has_state else "unknown"
+	var can_move: bool = has_state and _connection_state == "connected" \
+		and not _awaiting_snapshot \
+		and _state.status == "active" and _state.pending_action.is_empty() \
+		and _local_color(local_user_id) == _state.next_color
+	if _selected_move != INVALID_CELL and not can_move:
+		_selected_move = INVALID_CELL
 	var pending: Vector2i = INVALID_CELL
 	if has_state:
 		var pending_action: Dictionary = _state.pending_action
 		if pending_action.get("type") == "gomoku.move.requested":
 			pending = Vector2i(pending_action.get("x", -1), pending_action.get("y", -1))
-		board.present(_state.board, _last_move, pending)
+		board.present(_state.board, _last_move, pending, _selected_move)
 	else:
 		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
 
@@ -311,22 +409,26 @@ func _refresh_ui() -> void:
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
 	$ErrorLabel.present(_error_text, "error")
 	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
+	$SettingsButton.visible = not terminal
 
+	if terminal:
+		_selected_move = INVALID_CELL
+		$SettingsSheet.visible = false
 	$StatusLabel.visible = _force_return or (has_state and _connection_state == "connected" \
 		and not _awaiting_snapshot and not terminal)
 	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
-	$ResignButton.visible = can_resign and not terminal and not _resign_submitted
+	var has_selection := _selected_move != INVALID_CELL
+	$MoveConfirmationBar.visible = has_selection
+	if has_selection:
+		$MoveConfirmationBar/Content/SelectionLabel.text = "第 %d 列 · 第 %d 行" % [_selected_move.x + 1, _selected_move.y + 1]
+	$ResignButton.visible = can_resign and not terminal and not _resign_submitted and not has_selection
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot
 	if terminal:
 		$ResignDialog.close()
 		$ResultPanel.present(_result_panel_status(), _state.winner_user_id == local_user_id)
 	else:
 		$ResultPanel.present("", false)
-	var can_move: bool = has_state and _connection_state == "connected" \
-		and not _awaiting_snapshot \
-		and _state.status == "active" and _state.pending_action.is_empty() \
-		and _local_color(local_user_id) == _state.next_color
-	board.set_interactable(can_move)
+	board.set_interactable(can_move and not $SettingsSheet.visible)
 	print("GAMEBOX_BOARD_CANMOVE can=%s conn=%s await=%s status=%s pend_empty=%s next=%s local=%s" \
 		% [can_move, _connection_state, _awaiting_snapshot, _state.status if has_state else "?", \
 			_state.pending_action.is_empty() if has_state else "?", _state.next_color if has_state else "?", _local_color(local_user_id)])
@@ -359,6 +461,8 @@ func _status_text(local_user_id: String) -> String:
 		return _connection_text()
 	if _awaiting_snapshot:
 		return "正在同步对局…"
+	if _selected_move != INVALID_CELL:
+		return "确认落子位置"
 	if not _state.pending_action.is_empty():
 		return "等待服务器确认"
 	return "轮到我" if _local_color(local_user_id) == _state.next_color else "等待对手"
@@ -498,6 +602,7 @@ func _dispose_client() -> void:
 	if _disposed:
 		return
 	_disposed = true
+	_selected_move = INVALID_CELL
 	_cancel_ready_marker()
 	set_process(false)
 	_disconnect_client_signals()
@@ -510,6 +615,7 @@ func _show_start_failure() -> void:
 	_error_text = "无法进入对局，请返回大厅"
 	_connection_state = "failed"
 	_force_return = true
+	_selected_move = INVALID_CELL
 	set_process(false)
 	_refresh_ui()
 
@@ -572,3 +678,9 @@ func _empty_board() -> Array:
 	board.resize(225)
 	board.fill(0)
 	return board
+
+
+func _can_request_selected_move() -> bool:
+	return _started and not _disposed and not _awaiting_snapshot \
+		and _connection_state == "connected" and _state != null \
+		and _state.can_request_move(_selected_move.x, _selected_move.y, _client.local_user_id)

@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://games/gomoku/gomoku_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_board.gd" id="2_board"]
@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="6_confirmation"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_loading_overlay.tscn" id="7_loading"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="8_result"]
+[ext_resource type="Script" path="res://games/gomoku/gomoku_switch_visual.gd" id="9_switch"]
 
 [node name="Gomoku" type="Control"]
 layout_mode = 3
@@ -42,6 +43,15 @@ offset_bottom = 168.0
 text = "五子棋"
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="SettingsButton" type="Button" parent="."]
+offset_left = 840.0
+offset_top = 72.0
+offset_right = 1032.0
+offset_bottom = 168.0
+custom_minimum_size = Vector2(192, 96)
+theme_type_variation = &"GameboxSecondaryButton"
+text = "设置"
 
 [node name="StatusLabel" type="Label" parent="."]
 offset_left = 48.0
@@ -99,6 +109,7 @@ offset_left = 48.0
 offset_top = 1438.0
 offset_right = 1032.0
 offset_bottom = 1548.0
+z_index = 30
 
 [node name="ResignButton" type="Button" parent="."]
 visible = false
@@ -108,6 +119,39 @@ offset_right = 726.0
 offset_bottom = 1692.0
 custom_minimum_size = Vector2(372, 104)
 text = "认输"
+
+[node name="MoveConfirmationBar" type="PanelContainer" parent="."]
+visible = false
+offset_left = 48.0
+offset_top = 1438.0
+offset_right = 1032.0
+offset_bottom = 1772.0
+theme_type_variation = &"GameboxMoveConfirmationBar"
+
+[node name="Content" type="VBoxContainer" parent="MoveConfirmationBar"]
+layout_mode = 2
+theme_type_variation = &"GameboxMoveConfirmationContent"
+
+[node name="SelectionLabel" type="Label" parent="MoveConfirmationBar/Content"]
+layout_mode = 2
+text = "第 1 列 · 第 1 行"
+horizontal_alignment = 1
+
+[node name="Actions" type="HBoxContainer" parent="MoveConfirmationBar/Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxMoveConfirmationActions"
+alignment = 1
+
+[node name="CancelButton" type="Button" parent="MoveConfirmationBar/Content/Actions"]
+custom_minimum_size = Vector2(420, 96)
+layout_mode = 2
+theme_type_variation = &"GameboxSecondaryButton"
+text = "取消"
+
+[node name="ConfirmButton" type="Button" parent="MoveConfirmationBar/Content/Actions"]
+custom_minimum_size = Vector2(420, 96)
+layout_mode = 2
+text = "确认落子"
 
 [node name="ResignDialog" parent="." instance=ExtResource("6_confirmation")]
 
@@ -126,3 +170,99 @@ offset_left = 240.0
 offset_top = 1438.0
 offset_right = 840.0
 offset_bottom = 1692.0
+
+[node name="SettingsSheet" type="Control" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+z_index = 20
+
+[node name="Scrim" type="PanelContainer" parent="SettingsSheet"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+theme_type_variation = &"GameboxDialogScrim"
+
+[node name="Sheet" type="PanelContainer" parent="SettingsSheet"]
+layout_mode = 1
+anchors_preset = 12
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 48.0
+offset_top = -640.0
+offset_right = -48.0
+offset_bottom = -64.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 1
+theme_type_variation = &"GameboxSettingsSheet"
+
+[node name="Content" type="VBoxContainer" parent="SettingsSheet/Sheet"]
+layout_mode = 2
+theme_type_variation = &"GameboxSettingsContent"
+
+[node name="Title" type="Label" parent="SettingsSheet/Sheet/Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxDialogTitle"
+text = "对局设置"
+horizontal_alignment = 1
+
+[node name="MoveConfirmationToggle" type="Button" parent="SettingsSheet/Sheet/Content"]
+custom_minimum_size = Vector2(0, 152)
+layout_mode = 2
+theme_type_variation = &"GameboxSettingsRow"
+toggle_mode = true
+
+[node name="Content" type="HBoxContainer" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = 16.0
+offset_right = -32.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsRowContent"
+
+[node name="Labels" type="VBoxContainer" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsLabels"
+
+[node name="Title" type="Label" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content/Labels"]
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsTitle"
+text = "落子前确认"
+
+[node name="Description" type="Label" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content/Labels"]
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsDescription"
+text = "开启后，选定位置再确认落子。"
+autowrap_mode = 2
+
+[node name="SwitchVisual" type="Control" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content"]
+custom_minimum_size = Vector2(104, 64)
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSwitchVisual"
+script = ExtResource("9_switch")
+
+[node name="DoneButton" type="Button" parent="SettingsSheet/Sheet/Content"]
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+text = "完成"
