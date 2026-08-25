@@ -2695,6 +2695,8 @@ assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the light idle lobby UI state"
 register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 
+wait_for_visible_text "$SERIAL_B" '检查更新' \
+  || fail "B update action did not become ready after its automatic check"
 tap_identifier "$SERIAL_B" app-update
 wait_for_visible_text "$SERIAL_B" '当前已是最新版本' \
   || fail "B did not show the routine up-to-date Snackbar"
