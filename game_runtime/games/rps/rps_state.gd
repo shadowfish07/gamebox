@@ -238,8 +238,11 @@ static func _valid_reveal(value: Variant, me_id: String, opponent_id: String) ->
 		or not value["choices"] is Dictionary or not value["scores"] is Dictionary:
 		return false
 	for user_id in [me_id, opponent_id]:
-		if not value["choices"].has(user_id) or value["choices"][user_id] not in CHOICES \
-			or typeof(value["scores"].get(user_id)) != TYPE_INT:
+		if not value["choices"].has(user_id) or value["choices"][user_id] not in CHOICES:
+			return false
+	for user_id in value["scores"]:
+		if user_id not in [me_id, opponent_id] or typeof(value["scores"][user_id]) != TYPE_INT \
+			or value["scores"][user_id] < 0 or value["scores"][user_id] > 2:
 			return false
 	return _nullable_uuid(value["roundWinnerUserId"]) and _nullable_uuid(value["matchWinnerUserId"]) \
 		and _nullable_string(value["result"])

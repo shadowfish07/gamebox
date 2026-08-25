@@ -141,10 +141,19 @@ static func _reveal(
 		"choices": {ME: my_choice, OPPONENT: opponent_choice},
 		"roundWinnerUserId": round_winner,
 		"draw": draw,
-		"scores": {ME: my_score, OPPONENT: opponent_score},
+		"scores": _nonzero_scores(my_score, opponent_score),
 		"matchWinnerUserId": match_winner,
 		"result": "rounds" if match_winner != null else null,
 	}
+
+
+static func _nonzero_scores(my_score: int, opponent_score: int) -> Dictionary:
+	var scores := {}
+	if my_score > 0:
+		scores[ME] = my_score
+	if opponent_score > 0:
+		scores[OPPONENT] = opponent_score
+	return scores
 
 
 static func _check(condition: bool, message: String) -> bool:
