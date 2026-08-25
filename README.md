@@ -271,6 +271,12 @@ bash tool/verify_fast.sh
 bash tool/verify.sh
 ```
 
+Verification output is compact by default: a successful gate prints one final
+summary, while a failed gate prints the failed phase and that phase's captured
+output. Warning lines are counted in the success summary. Set
+`GAMEBOX_TEST_OUTPUT=verbose` to stream complete successful subprocess output
+while debugging.
+
 `verify_fast.sh` runs Go, Flutter, and Godot tests, Flutter analysis, and the
 Android smoke-log parser fixture. `verify.sh` first runs the non-destructive
 build-only bootstrap check, then the fast gate, Kotlin unit tests, a Flutter

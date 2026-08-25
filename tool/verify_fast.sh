@@ -1,24 +1,60 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly ROOT_DIR
+cd "$ROOT_DIR"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
+gamebox_test_output_init
+trap gamebox_test_output_cleanup EXIT
+
 if [[ -z "${GODOT_BIN:-}" ]] && command -v godot >/dev/null 2>&1; then
   export GODOT_BIN
   GODOT_BIN="$(command -v godot)"
 fi
 
-bash tool/verify_design_system.sh
-(cd server && go test ./...)
+run_go_tests() {
+  (cd server && go test ./...)
+}
+
+run_flutter_pub_get() {
+  (cd app && flutter pub get --enforce-lockfile)
+}
+
+run_dart_analyze() {
+  (cd app && dart analyze)
+}
+
+run_flutter_tests() {
+  (cd app && flutter test)
+}
+
+gamebox_run_step "design system verification" bash tool/verify_design_system.sh
+gamebox_run_step "Go tests" run_go_tests
 # Flutter 3.47.1's `flutter analyze` LSP transport truncates initialization
 # messages when the checkout path contains non-ASCII characters. `dart analyze`
 # runs the same analyzer directly and remains reliable in Orca worktrees.
-(cd app && flutter pub get --enforce-lockfile && dart analyze && flutter test)
-bash -n tool/worktree.sh tool/lib/android_lease.sh tool/test_android_lease.sh \
+gamebox_run_step "Flutter locked dependencies" run_flutter_pub_get
+gamebox_run_step "Dart analysis" run_dart_analyze
+gamebox_run_step "Flutter tests" run_flutter_tests
+gamebox_run_step "shell syntax" bash -n \
+  tool/worktree.sh tool/lib/android_lease.sh tool/lib/check_output.sh \
+  tool/test_android_lease.sh tool/test_check_output.sh tool/test_verify_godot_tests.sh \
   tool/e2e_android.sh tool/ensure_test_avds.sh \
   tool/smoke_android_host.sh tool/smoke_android_release_apk.sh
-for deploy_script in deploy/macos/install.sh deploy/macos/install-staging.sh; do
-  zsh -n "$deploy_script"
-done
-bash tool/test_macos_deploy.sh
-bash tool/test_android_lease.sh
-bash tool/verify_godot_tests.sh
-bash tool/test_android_smoke_log.sh
+verify_macos_deploy_syntax() {
+  local deploy_script
+  for deploy_script in deploy/macos/install.sh deploy/macos/install-staging.sh; do
+    zsh -n "$deploy_script"
+  done
+}
+
+gamebox_run_step "check output fixtures" bash tool/test_check_output.sh
+gamebox_run_step "Godot verifier status fixtures" bash tool/test_verify_godot_tests.sh
+gamebox_run_step "macOS deploy script syntax" verify_macos_deploy_syntax
+gamebox_run_step "macOS deploy fixtures" bash tool/test_macos_deploy.sh
+gamebox_run_step "Android lease fixtures" bash tool/test_android_lease.sh
+gamebox_run_step "Godot tests" env GAMEBOX_TEST_NESTED=1 bash tool/verify_godot_tests.sh
+gamebox_run_step "Android smoke log fixtures" bash tool/test_android_smoke_log.sh
+gamebox_test_output_finish verify-fast
