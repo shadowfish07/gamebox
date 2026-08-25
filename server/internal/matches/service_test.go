@@ -3241,6 +3241,47 @@ func TestHubSnapshotAheadOfPublishSuppressesSameRevisionEvent(t *testing.T) {
 	}
 }
 
+func TestHubPresenceRevisionDoesNotRegressBehindConcurrentState(t *testing.T) {
+	stateMessage, err := boundEnvelope(gomoku.GameID, initiatorID, 2, protocol.TypePlatformError, "",
+		errorPayload{Code: "internal_error", Message: fixedErrorMessage("internal_error"), Details: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 10_000; attempt++ {
+		connection := &hubConnection{
+			send: make(chan []byte, 2), gameID: gomoku.GameID, matchID: initiatorID,
+		}
+		connection.revision.Store(1)
+		start := make(chan struct{})
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			<-start
+			connection.enqueuePresence(opponentID, true)
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			connection.enqueueState(stateMessage, 2)
+		}()
+		close(start)
+		workers.Wait()
+
+		var previous int64
+		for len(connection.send) > 0 {
+			envelope, err := protocol.Decode(<-connection.send)
+			if err != nil || envelope.Revision == nil {
+				t.Fatalf("attempt %d: invalid envelope: %+v err=%v", attempt, envelope, err)
+			}
+			if *envelope.Revision < previous {
+				t.Fatalf("attempt %d: outbound revision regressed from %d to %d", attempt, previous, *envelope.Revision)
+			}
+			previous = *envelope.Revision
+		}
+	}
+}
+
 func TestHubStaleResponseQueuesErrorThenNonRegressingSnapshotAfterNewerEvent(t *testing.T) {
 	fixture := newFixture(t)
 	service := fixture.service(t, bytes.NewReader([]byte{0}))

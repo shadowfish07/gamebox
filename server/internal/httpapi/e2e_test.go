@@ -86,6 +86,7 @@ func TestDurableTwoPlayerMatchHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect Bob: %v", err)
 	}
+	assertPresenceChange(t, mustReadEnvelope(t, ctx, aliceWS), bob.User.ID, true)
 	if !snapshotsEqual(aliceHandshake.Snapshot, bobHandshake.Snapshot) {
 		t.Fatalf("initial snapshots differ: Alice=%+v Bob=%+v", aliceHandshake.Snapshot, bobHandshake.Snapshot)
 	}
@@ -398,6 +399,7 @@ func TestDurableMatchRestoresAfterCompleteServerAndDatabaseRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertPresenceChange(t, mustReadEnvelope(t, ctx, aliceWS), bob.User.ID, true)
 	if !snapshotsEqual(aliceHandshake.Snapshot, bobHandshake.Snapshot) {
 		t.Fatalf("initial snapshots differ: %+v / %+v", aliceHandshake.Snapshot, bobHandshake.Snapshot)
 	}
@@ -462,6 +464,7 @@ func TestDurableMatchRestoresAfterCompleteServerAndDatabaseRestart(t *testing.T)
 	if err != nil {
 		t.Fatalf("restore Bob: %v", err)
 	}
+	assertPresenceChange(t, mustReadEnvelope(t, ctx, aliceAfterRestart), bob.User.ID, true)
 	if !snapshotsEqual(beforeRestart, aliceRestored.Snapshot) || !snapshotsEqual(aliceRestored.Snapshot, bobRestored.Snapshot) || aliceRestored.Snapshot.Revision != 3 {
 		t.Fatalf("restored snapshots before=%+v Alice=%+v Bob=%+v", beforeRestart, aliceRestored.Snapshot, bobRestored.Snapshot)
 	}
@@ -634,6 +637,7 @@ func TestActionCommitFailureRollsBackWithoutPeerBroadcast(t *testing.T) {
 	if _, err := bobWS.ConnectLaunch(ctx, bobTicket.LaunchTicket); err != nil {
 		t.Fatal(err)
 	}
+	assertPresenceChange(t, mustReadEnvelope(t, ctx, aliceWS), bob.User.ID, true)
 
 	const databaseFailureMarker = "private-deferred-action-commit-marker"
 	if _, err := server.DB.Exec(`
@@ -1239,6 +1243,17 @@ func mustReadEnvelope(t *testing.T, ctx context.Context, client *testutil.WebSoc
 		t.Fatalf("read websocket envelope: %v", err)
 	}
 	return envelope
+}
+
+func assertPresenceChange(t *testing.T, envelope protocol.Envelope, userID string, online bool) {
+	t.Helper()
+	var payload struct {
+		UserID string `json:"userId"`
+		Online bool   `json:"online"`
+	}
+	if envelope.Type != protocol.TypePlatformPresenceChanged || envelope.Revision == nil || json.Unmarshal(envelope.Payload, &payload) != nil || payload.UserID != userID || payload.Online != online {
+		t.Fatalf("presence change=%+v payload=%s want user=%s online=%t", envelope, envelope.Payload, userID, online)
+	}
 }
 
 func readEnvelopeAsync(ctx context.Context, client *testutil.WebSocketClient) <-chan envelopeRead {

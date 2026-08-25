@@ -16,6 +16,7 @@ static func cases() -> Array:
 	return [
 		{"name": "gomoku scene consumes the lightweight Gamebox shell", "run": _uses_lightweight_shell},
 		{"name": "gomoku scene renders connection turns and safe errors", "run": _renders_live_states},
+		{"name": "gomoku scene renders reusable opponent presence updates", "run": _renders_presence_updates},
 		{"name": "gomoku scene keeps required return guidance after Snackbar timeout", "run": _keeps_required_return_guidance},
 		{"name": "gomoku scene hides the internal board revision", "run": _hides_internal_revision},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
@@ -154,6 +155,29 @@ static func _keeps_required_return_guidance() -> bool:
 	var result := _check(quit_calls.size() == 1, "required-return Back did not return exactly once") \
 		and _check(not _status(scene).contains("resume_expired"), "required-return UI exposed the raw return code")
 	return _cleanup(scene, result)
+
+
+static func _renders_presence_updates() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.set_player_presence(WHITE_ID, true, false)
+	client.accept_snapshot(_snapshot(0))
+	if not _check(_opponent_presence(scene) == "对手在线", "initial opponent presence was not rendered") \
+		or not _check(_presence_mark(scene) == "●", "online presence did not use the live mark"):
+		return _cleanup(scene)
+	client.set_player_presence(WHITE_ID, false)
+	if not _check(_opponent_presence(scene) == "对手离线", "offline opponent transition was not rendered") \
+		or not _check(_presence_mark(scene) == "○", "offline presence did not use the offline mark"):
+		return _cleanup(scene)
+	client.set_connection("reconnecting")
+	var connection_rect: Rect2 = (scene.get_node("ConnectionLabel") as Control).get_global_rect()
+	var presence_rect: Rect2 = (scene.get_node("OpponentPresence") as Control).get_global_rect()
+	return _cleanup(scene, _check(_opponent_presence(scene) == "对手状态未知", "reconnect retained stale opponent presence") \
+		and _check(_presence_mark(scene) == "·", "unknown presence did not use the neutral mark") \
+		and _check(scene.get_node("OpponentPresence").visible, "unknown opponent presence was hidden during reconnect") \
+		and _check(not connection_rect.intersects(presence_rect), \
+			"unknown presence overlaps the reconnect banner: connection=%s presence=%s" % [connection_rect, presence_rect]))
 
 
 static func _renders_terminal_states() -> bool:
@@ -674,12 +698,14 @@ static func _keeps_portrait_touch_layout() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
 	var board: Control = scene.get_node("Board")
+	var presence: Control = scene.get_node("OpponentPresence")
 	var back: Button = scene.get_node("BackButton")
 	var resign: Button = scene.get_node("ResignButton")
 	var loading: Control = scene.get_node("LoadingOverlay")
 	var back_center := back.position + back.size * 0.5
 	var result := _check(board.position.is_equal_approx(Vector2(60.0, 360.0)), "fixed board origin changed: %s" % board.position) \
 		and _check(board.size.is_equal_approx(Vector2(960.0, 960.0)), "fixed board stopped being square: %s" % board.size) \
+		and _check(presence.position.y + presence.size.y <= board.position.y, "opponent presence overlaps the board: %s > %s" % [presence.position.y + presence.size.y, board.position.y]) \
 		and _check(back.custom_minimum_size.x >= 96.0 and back.custom_minimum_size.y >= 96.0, "back target too small") \
 		and _check(resign.custom_minimum_size.x >= 96.0 and resign.custom_minimum_size.y >= 96.0, "resign target too small") \
 		and _check(back.position.x >= 48.0 and back.position.y >= 48.0, "back button left portrait safe margin") \
@@ -791,6 +817,14 @@ static func _error(scene: Control) -> String:
 	return (scene.get_node("ErrorLabel/Content/Message") as Label).text
 
 
+static func _opponent_presence(scene: Control) -> String:
+	return (scene.get_node("OpponentPresence/Content/OpponentPresenceLabel") as Label).text
+
+
+static func _presence_mark(scene: Control) -> String:
+	return (scene.get_node("OpponentPresence/Content/PresenceDot") as Label).text
+
+
 static func _error_visible(scene: Control) -> bool:
 	return scene.get_node("ErrorLabel").visible
 
@@ -884,6 +918,7 @@ class FakeMatchClient:
 	signal snapshot_sync_started
 	signal snapshot_received(envelope: Dictionary)
 	signal event_received(envelope: Dictionary)
+	signal player_presence_changed(user_id: String, online: bool)
 	signal match_error(code: String)
 	signal return_to_lobby_requested(code: String)
 
@@ -894,6 +929,7 @@ class FakeMatchClient:
 	var reject_moves := false
 	var resign_requests := 0
 	var dispose_calls := 0
+	var player_presence := {}
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant) -> bool:
 		state = game_state
@@ -916,6 +952,17 @@ class FakeMatchClient:
 	func request_resign() -> String:
 		resign_requests += 1
 		return ACTION_ID if state.mark_pending_resign(ACTION_ID, local_user_id) else ""
+
+	func has_player_presence(user_id: String) -> bool:
+		return player_presence.has(user_id)
+
+	func is_player_online(user_id: String) -> bool:
+		return bool(player_presence.get(user_id, false))
+
+	func set_player_presence(user_id: String, online: bool, emit_change: bool = true) -> void:
+		player_presence[user_id] = online
+		if emit_change:
+			player_presence_changed.emit(user_id, online)
 
 	func dispose() -> void:
 		dispose_calls += 1
@@ -1077,6 +1124,10 @@ static func _connected(revision: int) -> Dictionary:
 		"payload": {
 			"userId": BLACK_ID, "connectionId": "55555555-5555-4555-8555-555555555555",
 			"resumeToken": "resume-secret", "resumeExpiresAt": 4102444800000,
+			"players": [
+				{"userId": BLACK_ID, "online": true},
+				{"userId": WHITE_ID, "online": false},
+			],
 		},
 	}
 

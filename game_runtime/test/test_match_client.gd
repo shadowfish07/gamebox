@@ -248,6 +248,7 @@ static func cases() -> Array:
 		{"name": "match client maps close reasons through a fixed allowlist", "run": _maps_policy_close_reasons},
 		{"name": "match client production transport handles real policy closes", "run": _handles_real_policy_closes},
 		{"name": "match client answers ping and requests snapshots on gaps", "run": _handles_ping_and_gap},
+		{"name": "match client tracks generic player presence independently of game revision", "run": _tracks_player_presence},
 		{"name": "match client signals every transition into snapshot recovery once", "run": _signals_snapshot_recovery_once},
 		{"name": "match client sends UUIDv4 actions without optimistic stones", "run": _sends_actions_authoritatively},
 		{"name": "match client sends a fresh resignation action after the first move", "run": _sends_resignation},
@@ -271,7 +272,10 @@ static func _connects_and_resumes() -> bool:
 	client.poll()
 	var connect := _last_sent(transport)
 	if not _check(connect.get("type") == "platform.connect", "missing platform.connect") \
-		or not _check(connect.get("payload") == {"launchTicket": "launch-secret"}, "initial connect did not use launch ticket only"):
+		or not _check(connect.get("payload") == {
+			"launchTicket": "launch-secret",
+			"capabilities": [Protocol.CAPABILITY_PLAYER_PRESENCE],
+		}, "initial connect did not advertise player presence"):
 		return false
 	transport.queue(_connected(0, "resume-secret"))
 	transport.queue(_snapshot(0))
@@ -285,7 +289,10 @@ static func _connects_and_resumes() -> bool:
 	transport.open()
 	client.poll()
 	var resumed := _last_sent(transport)
-	return _check(resumed.get("payload") == {"resumeToken": "resume-secret"}, "reconnect did not use resume token only") \
+	return _check(resumed.get("payload") == {
+		"resumeToken": "resume-secret",
+		"capabilities": [Protocol.CAPABILITY_PLAYER_PRESENCE],
+	}, "reconnect did not preserve player presence capability") \
 		and _check(not JSON.stringify(resumed).contains("launch-secret"), "launch ticket leaked into resume handshake")
 
 
@@ -604,6 +611,25 @@ static func _sends_actions_authoritatively() -> bool:
 	return _check(fixture.state.cell(7, 7) == 1 and fixture.state.pending_action.is_empty(), "accepted move did not commit and clear pending")
 
 
+static func _tracks_player_presence() -> bool:
+	var fixture := _connected_fixture()
+	if not (_check(fixture.client.has_player_presence(BLACK_ID), "local player presence missing from handshake") \
+		and _check(fixture.client.is_player_online(BLACK_ID), "local player was not online in handshake") \
+		and _check(fixture.client.has_player_presence(WHITE_ID), "opponent presence missing from handshake") \
+		and _check(not fixture.client.is_player_online(WHITE_ID), "offline opponent was reported online")):
+		return false
+	var changes: Array = []
+	fixture.client.player_presence_changed.connect(func(user_id: String, online: bool) -> void:
+		changes.append([user_id, online])
+	)
+	fixture.transport.queue(_presence_changed(0, WHITE_ID, true))
+	fixture.transport.queue(_presence_changed(0, WHITE_ID, true))
+	fixture.client.poll()
+	return _check(fixture.client.is_player_online(WHITE_ID), "presence change did not update core client state") \
+		and _check(changes == [[WHITE_ID, true]], "presence signal was missing or emitted for an unchanged state: %s" % [changes]) \
+		and _check(fixture.state.revision == 0, "presence change consumed a game revision")
+
+
 static func _rolls_back_failed_send() -> bool:
 	var fixture := _connected_fixture()
 	fixture.transport.fail_send = true
@@ -744,6 +770,10 @@ static func _connected(revision: int, resume_token: String) -> Dictionary:
 		"type": "platform.connected", "payload": {
 			"userId": BLACK_ID, "connectionId": CONNECTION_ID,
 			"resumeToken": resume_token, "resumeExpiresAt": 4102444800000,
+			"players": [
+				{"userId": BLACK_ID, "online": true},
+				{"userId": WHITE_ID, "online": false},
+			],
 		},
 	}
 
@@ -774,6 +804,14 @@ static func _ping(revision: int, nonce: String) -> Dictionary:
 	return {
 		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
 		"revision": revision, "type": "platform.ping", "payload": {"nonce": nonce},
+	}
+
+
+static func _presence_changed(revision: int, user_id: String, online: bool) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+		"revision": revision, "type": "platform.presence.changed",
+		"payload": {"userId": user_id, "online": online},
 	}
 
 

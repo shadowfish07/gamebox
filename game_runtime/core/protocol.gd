@@ -11,6 +11,7 @@ const TYPE_PLATFORM_CONNECT := "platform.connect"
 const TYPE_PLATFORM_CONNECTED := "platform.connected"
 const TYPE_PLATFORM_PING := "platform.ping"
 const TYPE_PLATFORM_PONG := "platform.pong"
+const TYPE_PLATFORM_PRESENCE_CHANGED := "platform.presence.changed"
 const TYPE_PLATFORM_SNAPSHOT := "platform.snapshot"
 const TYPE_PLATFORM_SNAPSHOT_REQUESTED := "platform.snapshot.requested"
 const TYPE_PLATFORM_ERROR := "platform.error"
@@ -20,6 +21,7 @@ const TYPE_GOMOKU_MOVE_REQUESTED := "gomoku.move.requested"
 const TYPE_GOMOKU_MOVE_ACCEPTED := "gomoku.move.accepted"
 const TYPE_GOMOKU_RESIGN_REQUESTED := "gomoku.resign.requested"
 const TYPE_GOMOKU_RESIGNED := "gomoku.resigned"
+const CAPABILITY_PLAYER_PRESENCE := "player_presence_v1"
 
 const _ALLOWED_FIELDS := {
 	"protocolVersion": true,
@@ -37,6 +39,7 @@ const _KNOWN_TYPES := {
 	TYPE_PLATFORM_CONNECTED: true,
 	TYPE_PLATFORM_PING: true,
 	TYPE_PLATFORM_PONG: true,
+	TYPE_PLATFORM_PRESENCE_CHANGED: true,
 	TYPE_PLATFORM_SNAPSHOT: true,
 	TYPE_PLATFORM_SNAPSHOT_REQUESTED: true,
 	TYPE_PLATFORM_ERROR: true,
@@ -166,7 +169,10 @@ static func encode_connect(credential_name: String, credential: String) -> Dicti
 	return _encode_envelope({
 		"protocolVersion": VERSION,
 		"type": TYPE_PLATFORM_CONNECT,
-		"payload": {credential_name: credential},
+		"payload": {
+			credential_name: credential,
+			"capabilities": [CAPABILITY_PLAYER_PRESENCE],
+		},
 	})
 
 

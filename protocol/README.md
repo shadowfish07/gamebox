@@ -22,18 +22,34 @@ Client game actions are `gomoku.move.requested` and
 field or an action ID. `platform.pong` and `platform.snapshot.requested` remain
 match-bound.
 
+New clients advertise `"capabilities":["player_presence_v1"]` beside the one
+launch or resume credential in `platform.connect`. The server accepts legacy
+connect payloads without `capabilities` and then preserves the original v1
+message shapes, so already released clients do not receive message types or
+fields they cannot decode.
+
 Version 1 accepts only the following directions and types:
 
 - Client to server: `platform.connect`, `platform.pong`,
   `platform.snapshot.requested`, `gomoku.move.requested`, and
   `gomoku.resign.requested`.
 - Server to client: `platform.connected`, `platform.ping`,
-  `platform.snapshot`, `platform.error`, `gomoku.move.accepted`,
+  `platform.presence.changed`, `platform.snapshot`, `platform.error`, `gomoku.move.accepted`,
   `gomoku.resigned`, `platform.match.cancelled`, and
   `platform.match.abandoned`.
 
 Apart from the three revisionless client control messages above and an unbound
 handshake `platform.error`, match-bound server messages carry `revision`.
+
+For clients that advertised `player_presence_v1`, `platform.connected` is the
+reusable initial presence snapshot. Its `players`
+array contains unique `{ "userId", "online" }` entries for every player in the
+match. Later zero-to-one and one-to-zero connection boundaries are delivered as
+`platform.presence.changed` with `{ "userId", "online" }`. Presence messages
+carry the connection's latest game `revision` as an ordering anchor but do not
+consume or advance game revision; game-specific state reducers must not apply
+them. A player is online while at least one live match connection remains, and
+heartbeat expiry produces the same offline boundary as an explicit close.
 
 The envelope is closed: its field names use the exact camelCase spelling shown
 above, each top-level field may occur only once, and unknown top-level fields

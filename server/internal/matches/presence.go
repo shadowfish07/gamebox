@@ -28,6 +28,13 @@ type PresenceStore interface {
 	SetPlayerOffline(ctx context.Context, matchID, userID string) error
 }
 
+// presenceObserver receives committed in-memory player boundaries. Delivery is
+// best effort and happens after the per-match operation lock is released so an
+// observer may safely close another connection in the same match.
+type presenceObserver interface {
+	playerPresenceChanged(matchID, userID string, online bool)
+}
+
 type presenceConnectionKey struct {
 	matchID      string
 	userID       string
@@ -42,12 +49,16 @@ type presenceMatchOperation struct {
 // Presence tracks transport connections, not user sessions. A user remains
 // online while any distinct connection for the match remains live.
 type Presence struct {
-	mu          sync.Mutex
-	connections map[presenceConnectionKey]time.Time
-	operationMu sync.Mutex
-	operations  map[string]*presenceMatchOperation
-	store       PresenceStore
-	clock       clock.Clock
+	mu                sync.Mutex
+	connections       map[presenceConnectionKey]time.Time
+	operationMu       sync.Mutex
+	operations        map[string]*presenceMatchOperation
+	notificationMu    sync.Mutex
+	notificationTails map[string]chan struct{}
+	observerMu        sync.RWMutex
+	observer          presenceObserver
+	store             PresenceStore
+	clock             clock.Clock
 }
 
 func NewPresence(store PresenceStore, serviceClock clock.Clock) (*Presence, error) {
@@ -55,10 +66,11 @@ func NewPresence(store PresenceStore, serviceClock clock.Clock) (*Presence, erro
 		return nil, ErrInvalidConfiguration
 	}
 	return &Presence{
-		connections: make(map[presenceConnectionKey]time.Time),
-		operations:  make(map[string]*presenceMatchOperation),
-		store:       store,
-		clock:       serviceClock,
+		connections:       make(map[presenceConnectionKey]time.Time),
+		operations:        make(map[string]*presenceMatchOperation),
+		notificationTails: make(map[string]chan struct{}),
+		store:             store,
+		clock:             serviceClock,
 	}, nil
 }
 
@@ -78,7 +90,19 @@ func (presence *Presence) Connect(ctx context.Context, matchID, userID, connecti
 	if acquireErr != nil {
 		return acquireErr
 	}
-	defer release()
+	changed := false
+	defer func() {
+		var dispatch func()
+		var delivered <-chan struct{}
+		if changed {
+			dispatch, delivered = presence.prepareNotification(matchID, userID, true)
+		}
+		release()
+		if dispatch != nil {
+			dispatch()
+			<-delivered
+		}
+	}()
 
 	presence.mu.Lock()
 	key := presenceConnectionKey{matchID: matchID, userID: userID, connectionID: connectionID}
@@ -99,6 +123,7 @@ func (presence *Presence) Connect(ctx context.Context, matchID, userID, connecti
 		presence.mu.Unlock()
 		return sanitizePresenceError(ctx, err)
 	}
+	changed = true
 	return nil
 }
 
@@ -134,7 +159,17 @@ func (presence *Presence) Disconnect(ctx context.Context, matchID, userID, conne
 	if acquireErr != nil {
 		return acquireErr
 	}
-	defer release()
+	changed := false
+	defer func() {
+		var dispatch func()
+		if changed {
+			dispatch, _ = presence.prepareNotification(matchID, userID, false)
+		}
+		release()
+		if dispatch != nil {
+			dispatch()
+		}
+	}()
 
 	presence.mu.Lock()
 	key := presenceConnectionKey{matchID: matchID, userID: userID, connectionID: connectionID}
@@ -144,8 +179,13 @@ func (presence *Presence) Disconnect(ctx context.Context, matchID, userID, conne
 		return nil
 	}
 	delete(presence.connections, key)
-	if presence.playerOnlineLocked(matchID, userID) || presence.matchOnlineLocked(matchID) {
+	if presence.playerOnlineLocked(matchID, userID) {
 		presence.mu.Unlock()
+		return nil
+	}
+	if presence.matchOnlineLocked(matchID) {
+		presence.mu.Unlock()
+		changed = true
 		return nil
 	}
 	presence.mu.Unlock()
@@ -155,6 +195,7 @@ func (presence *Presence) Disconnect(ctx context.Context, matchID, userID, conne
 		presence.mu.Unlock()
 		return sanitizePresenceError(ctx, err)
 	}
+	changed = true
 	return nil
 }
 
@@ -165,6 +206,22 @@ func (presence *Presence) IsOnline(matchID, userID string) bool {
 	presence.mu.Lock()
 	defer presence.mu.Unlock()
 	return presence.playerOnlineLocked(matchID, userID)
+}
+
+// onlineStates returns one coherent in-memory view for a platform handshake.
+// Unknown users are represented as offline so callers can preserve the stable
+// match player list without leaking unrelated connection state.
+func (presence *Presence) onlineStates(matchID string, userIDs []string) map[string]bool {
+	states := make(map[string]bool, len(userIDs))
+	if !presence.configured() {
+		return states
+	}
+	presence.mu.Lock()
+	defer presence.mu.Unlock()
+	for _, userID := range userIDs {
+		states[userID] = presence.playerOnlineLocked(matchID, userID)
+	}
+	return states
 }
 
 // Sweep removes connections strictly older than the timeout. Matches are
@@ -236,7 +293,18 @@ func (presence *Presence) sweepMatch(ctx context.Context, matchID string, candid
 	if acquireErr != nil {
 		return acquireErr
 	}
-	defer release()
+	offlineUserIDs := make([]string, 0, 2)
+	defer func() {
+		dispatches := make([]func(), 0, len(offlineUserIDs))
+		for _, userID := range offlineUserIDs {
+			dispatch, _ := presence.prepareNotification(matchID, userID, false)
+			dispatches = append(dispatches, dispatch)
+		}
+		release()
+		for _, dispatch := range dispatches {
+			dispatch()
+		}
+	}()
 
 	expired := make(map[presenceConnectionKey]time.Time)
 	presence.mu.Lock()
@@ -247,30 +315,81 @@ func (presence *Presence) sweepMatch(ctx context.Context, matchID string, candid
 			delete(presence.connections, key)
 		}
 	}
-	matchOnline := presence.matchOnlineLocked(matchID)
-	presence.mu.Unlock()
-	if len(expired) == 0 || matchOnline {
-		return nil
-	}
-
-	userIDs := make([]string, 0, len(expired))
+	expiredUserIDs := make([]string, 0, len(expired))
 	seenUsers := make(map[string]struct{}, len(expired))
 	for key := range expired {
-		if _, seen := seenUsers[key.userID]; !seen {
-			seenUsers[key.userID] = struct{}{}
-			userIDs = append(userIDs, key.userID)
+		if _, seen := seenUsers[key.userID]; seen {
+			continue
+		}
+		seenUsers[key.userID] = struct{}{}
+		expiredUserIDs = append(expiredUserIDs, key.userID)
+	}
+	for _, userID := range expiredUserIDs {
+		if !presence.playerOnlineLocked(matchID, userID) {
+			offlineUserIDs = append(offlineUserIDs, userID)
 		}
 	}
-	sort.Strings(userIDs)
-	if err := presence.store.SetPlayerOffline(ctx, matchID, userIDs[0]); err != nil {
+	matchOnline := presence.matchOnlineLocked(matchID)
+	presence.mu.Unlock()
+	if len(expired) == 0 {
+		return nil
+	}
+	sort.Strings(offlineUserIDs)
+	if matchOnline {
+		return nil
+	}
+	if err := presence.store.SetPlayerOffline(ctx, matchID, offlineUserIDs[0]); err != nil {
 		presence.mu.Lock()
 		for key, lastSeen := range expired {
 			presence.connections[key] = lastSeen
 		}
 		presence.mu.Unlock()
+		offlineUserIDs = offlineUserIDs[:0]
 		return sanitizePresenceError(ctx, err)
 	}
 	return nil
+}
+
+func (presence *Presence) setObserver(observer presenceObserver) {
+	presence.observerMu.Lock()
+	presence.observer = observer
+	presence.observerMu.Unlock()
+}
+
+func (presence *Presence) notify(matchID, userID string, online bool) {
+	presence.observerMu.RLock()
+	observer := presence.observer
+	presence.observerMu.RUnlock()
+	if observer != nil {
+		observer.playerPresenceChanged(matchID, userID, online)
+	}
+}
+
+// prepareNotification reserves this boundary's position while the caller still
+// owns the match operation, then returns a dispatcher that starts only after
+// the operation is released. Chaining completion channels preserves commit
+// order without invoking a reentrant observer under the operation lock.
+func (presence *Presence) prepareNotification(matchID, userID string, online bool) (func(), <-chan struct{}) {
+	presence.notificationMu.Lock()
+	predecessor := presence.notificationTails[matchID]
+	done := make(chan struct{})
+	presence.notificationTails[matchID] = done
+	presence.notificationMu.Unlock()
+	dispatch := func() {
+		go func() {
+			if predecessor != nil {
+				<-predecessor
+			}
+			presence.notify(matchID, userID, online)
+			close(done)
+			presence.notificationMu.Lock()
+			if presence.notificationTails[matchID] == done {
+				delete(presence.notificationTails, matchID)
+			}
+			presence.notificationMu.Unlock()
+		}()
+	}
+	return dispatch, done
 }
 
 // Run starts the production 15-second expiry worker and returns after
@@ -364,7 +483,8 @@ func (presence *Presence) releaseMatchOperation(matchID string, operation *prese
 }
 
 func (presence *Presence) configured() bool {
-	return presence != nil && presence.connections != nil && presence.operations != nil && !nilDependency(presence.store) && !nilDependency(presence.clock)
+	return presence != nil && presence.connections != nil && presence.operations != nil &&
+		presence.notificationTails != nil && !nilDependency(presence.store) && !nilDependency(presence.clock)
 }
 
 func sanitizePresenceError(ctx context.Context, err error) error {
