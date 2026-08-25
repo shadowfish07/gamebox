@@ -641,7 +641,7 @@ static func _failed_confirmation_keeps_retryable_selection() -> bool:
 	client.reject_moves = false
 	scene._on_move_confirm_pressed()
 	result = result \
-		and _check(client.move_requests.size() == 1, "retry did not submit exactly one move") \
+		and _check(client.move_requests == [Vector2i(6, 8)], "retry did not submit the selected move exactly once") \
 		and _check(board.selected_cell == Vector2i(-1, -1), "successful retry retained the selected marker")
 	return _cleanup(scene, result)
 

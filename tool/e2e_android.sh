@@ -2881,11 +2881,11 @@ tap_identifier "$SERIAL_B" app-update
 wait_for_identifier "$SERIAL_B" update-feedback >/dev/null \
   || fail "B did not show terminal non-modal update feedback"
 assert_visible_text_absent "$SERIAL_B" '应用更新' \
-  || fail "B showed a modal update dialog for routine up-to-date feedback"
+  || fail "B showed a modal update dialog for terminal update feedback"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
-  || fail "could not verify the dark routine-update feedback state"
+  || fail "could not verify the dark terminal-update feedback state"
 wait_for_identifier "$SERIAL_B" game-gomoku >/dev/null \
-  || fail "B left the lobby after routine update feedback"
+  || fail "B left the lobby after terminal update feedback"
 
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 
