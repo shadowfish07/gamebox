@@ -3,6 +3,7 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 
 const INVALID_CELL := Vector2i(-1, -1)
 const TERMINAL_STATUSES := ["finished", "cancelled", "abandoned"]
@@ -18,6 +19,8 @@ const SAFE_ERROR_COPY := {
 	"internal_error": "服务暂时不可用，请稍后重试",
 	"connection_failed": "连接失败，请返回大厅",
 }
+
+const GO_BACK_DEBOUNCE_MS := 150
 
 var ready_marker_emitted: bool:
 	get:
@@ -52,6 +55,9 @@ var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
 var _ready_marker_emitted := false
 var _ready_marker_text := ""
+var _resign_submitted := false
+var _last_go_back_time_ms := -100000
+var _go_back_debounce_ms := GO_BACK_DEBOUNCE_MS
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -83,9 +89,12 @@ func set_frame_ready_gate(gate: Variant) -> bool:
 
 
 func _ready() -> void:
+	theme = GameboxTheme.create(GameboxTheme.system_prefers_dark())
 	$Board.cell_pressed.connect(_on_cell_pressed)
 	$BackButton.pressed.connect(_on_back_pressed)
 	$ResignButton.pressed.connect(_on_resign_pressed)
+	$ResignDialog.confirmed.connect(_on_resign_confirmed)
+	$ResultPanel.return_requested.connect(_on_back_pressed)
 	_refresh_ui()
 
 	var resolved := _resolve_launch_config()
@@ -120,32 +129,58 @@ func _process(_delta: float) -> void:
 		_client.poll()
 
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		print("GAMEBOX_INPUT_TOUCH index=%d pressed=%s pos=%s" % [event.index, event.pressed, event.position])
+
+
 func _exit_tree() -> void:
+	print("GAMEBOX_GODOT_BACK exit_tree returning=%s" % str(_returning))
 	_dispose_client()
 
 
 func _on_cell_pressed(x: int, y: int) -> void:
+	var can_request: bool = _state != null and _state.can_request_move(x, y, _client.local_user_id)
+	print("GAMEBOX_BOARD_CELL x=%d y=%d started=%s disposed=%s await_snap=%s state=%s can=%s conn=%s" \
+		% [x, y, _started, _disposed, _awaiting_snapshot, _state != null, can_request, _connection_state])
 	if not _started or _disposed or _awaiting_snapshot or _state == null \
 		or not _state.can_request_move(x, y, _client.local_user_id):
 		return
-	if not _client.request_move(x, y).is_empty():
+	var result: String = _client.request_move(x, y)
+	print("GAMEBOX_BOARD_MOVE x=%d y=%d result=%s" % [x, y, result])
+	if not result.is_empty():
 		_error_text = ""
 		_refresh_ui()
 
 
 func _on_resign_pressed() -> void:
-	if not _started or _disposed or _awaiting_snapshot or _state == null \
-		or not _state.can_request_resign(_client.local_user_id):
+	if not _can_offer_resign():
 		return
+	print("GAMEBOX_GODOT_BACK resign_dialog open")
+	$ResignDialog.open()
+
+
+func _on_resign_confirmed() -> void:
+	if not _can_offer_resign() or _resign_submitted:
+		return
+	_resign_submitted = true
 	if not _client.request_resign().is_empty():
 		_error_text = ""
 		_refresh_ui()
+	else:
+		_resign_submitted = false
 
 
 func _on_back_pressed() -> void:
+	if $ResignDialog.visible:
+		print("GAMEBOX_GODOT_BACK back_pressed hide_dialog")
+		$ResignDialog.close()
+		return
 	if _returning:
+		print("GAMEBOX_GODOT_BACK back_pressed already_returning")
 		return
 	_returning = true
+	print("GAMEBOX_GODOT_BACK back_pressed quitting")
 	_dispose_client()
 	if _quit_callback.is_valid():
 		_quit_callback.call()
@@ -153,10 +188,39 @@ func _on_back_pressed() -> void:
 		get_tree().quit()
 
 
+func _notification(what: int) -> void:
+	if what == Node.NOTIFICATION_WM_GO_BACK_REQUEST:
+		# Android hardware Back is delivered as a go-back window event (the
+		# raw Key::BACK input never maps to ui_cancel). Route it through the
+		# same resign-dialog-aware handler as keyboard Escape.
+		print("GAMEBOX_GODOT_BACK go_back_request dialog_visible=%s" % str($ResignDialog.visible))
+		var now := Time.get_ticks_msec()
+		if now - _last_go_back_time_ms < _go_back_debounce_ms:
+			# Godot 4.7 forwards one physical Android Back press as two
+			# GO_BACK_REQUEST notifications: the activity back dispatcher and
+			# the render view's key event each send it, ~7ms apart. Acting on
+			# both closes the resign dialog and quits in a single press, so
+			# ignore the immediate duplicate — only a later, deliberate press
+			# returns.
+			print("GAMEBOX_GODOT_BACK go_back_duplicate_suppressed")
+			return
+		_last_go_back_time_ms = now
+		_on_back_requested()
+
+
+func _on_back_requested() -> void:
+	if $ResignDialog.visible:
+		print("GAMEBOX_GODOT_BACK branch=hide_dialog")
+		$ResignDialog.close()
+	else:
+		print("GAMEBOX_GODOT_BACK branch=quit_on_back")
+		_on_back_pressed()
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and not event.is_echo():
 		get_viewport().set_input_as_handled()
-		_on_back_pressed()
+		_on_back_requested()
 
 
 func _on_connection_state_changed(next_state: String) -> void:
@@ -182,6 +246,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_force_return = true
 	elif applied.get("status") == "applied":
 		_error_text = ""
+		_resign_submitted = false
 		_awaiting_snapshot = false
 		_last_move = INVALID_CELL
 	_refresh_ui()
@@ -203,6 +268,7 @@ func _on_event_received(envelope: Dictionary) -> void:
 
 func _on_match_error(code: String) -> void:
 	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
+	_resign_submitted = false
 	if code == "stale_revision":
 		_awaiting_snapshot = true
 	_refresh_ui()
@@ -228,23 +294,47 @@ func _refresh_ui() -> void:
 	else:
 		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
 
-	$StatusLabel.text = _status_text(local_user_id) if has_state else _connection_text()
-	$ConnectionLabel.text = _connection_detail()
+	var status_text: String = _status_text(local_user_id) if has_state else _connection_text()
+	if _force_return:
+		status_text = _error_text if not _error_text.is_empty() else "请返回大厅"
+	$StatusLabel.text = status_text
+	$ConnectionLabel.present(_connection_state, _connection_detail())
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
-	$ErrorLabel.text = _error_text
-	$ErrorLabel.visible = not _error_text.is_empty()
+	$ErrorLabel.present(_error_text, "error")
+	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
 
 	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
-	$BackButton.text = "返回大厅" if terminal or _force_return else "返回"
+	$StatusLabel.visible = _force_return or (has_state and _connection_state == "connected" \
+		and not _awaiting_snapshot and not terminal)
 	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
-	$ResignButton.visible = can_resign
+	$ResignButton.visible = can_resign and not terminal and not _resign_submitted
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot
+	if terminal:
+		$ResignDialog.close()
+		$ResultPanel.present(_result_panel_status(), _state.winner_user_id == local_user_id)
+	else:
+		$ResultPanel.present("", false)
 	var can_move: bool = has_state and _connection_state == "connected" \
 		and not _awaiting_snapshot \
 		and _state.status == "active" and _state.pending_action.is_empty() \
 		and _local_color(local_user_id) == _state.next_color
 	board.set_interactable(can_move)
+	print("GAMEBOX_BOARD_CANMOVE can=%s conn=%s await=%s status=%s pend_empty=%s next=%s local=%s" \
+		% [can_move, _connection_state, _awaiting_snapshot, _state.status if has_state else "?", \
+			_state.pending_action.is_empty() if has_state else "?", _state.next_color if has_state else "?", _local_color(local_user_id)])
 	_log_safe_state(has_state)
+
+
+func _can_offer_resign() -> bool:
+	return _started and not _disposed and not _awaiting_snapshot and not _resign_submitted \
+		and _connection_state == "connected" and _state != null \
+		and _state.can_request_resign(_client.local_user_id)
+
+
+func _result_panel_status() -> String:
+	if _state.status != "finished":
+		return _state.status
+	return "draw" if _state.result == "draw" else "finished"
 
 
 func _status_text(local_user_id: String) -> String:

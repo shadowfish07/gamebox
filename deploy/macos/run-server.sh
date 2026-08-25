@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly keychain_account="${USER}"
-readonly jwt_service="me.zqydev.gamebox.jwt-secret"
-readonly pepper_service="me.zqydev.gamebox.token-pepper"
+readonly jwt_service="${GAMEBOX_JWT_SERVICE:-me.zqydev.gamebox.jwt-secret}"
+readonly pepper_service="${GAMEBOX_TOKEN_PEPPER_SERVICE:-me.zqydev.gamebox.token-pepper}"
 readonly script_dir="${0:A:h}"
 
 export GAMEBOX_JWT_SECRET="$(/usr/bin/security find-generic-password \

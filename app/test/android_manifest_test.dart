@@ -79,6 +79,42 @@ void main() {
     expect(gameActivity, contains('android:excludeFromRecents="true"'));
     expect(gameActivity, contains('android:launchMode="singleTask"'));
   });
+
+  test('Android launcher exposes adaptive and monochrome icon layers', () {
+    const resourceRoot = 'android/app/src/main/res';
+    final adaptiveIcon = File(
+      '$resourceRoot/mipmap-anydpi-v26/ic_launcher.xml',
+    );
+    final themedIcon = File(
+      '$resourceRoot/mipmap-anydpi-v33/ic_launcher.xml',
+    );
+
+    expect(adaptiveIcon.existsSync(), isTrue);
+    expect(themedIcon.existsSync(), isTrue);
+
+    final adaptiveXml = adaptiveIcon.readAsStringSync();
+    final themedXml = themedIcon.readAsStringSync();
+    expect(adaptiveXml, contains('@drawable/ic_launcher_background'));
+    expect(adaptiveXml, contains('@mipmap/ic_launcher_foreground'));
+    expect(adaptiveXml, isNot(contains('<monochrome')));
+    expect(themedXml, contains('@drawable/ic_launcher_background'));
+    expect(themedXml, contains('@mipmap/ic_launcher_foreground'));
+    expect(themedXml, contains('@mipmap/ic_launcher_monochrome'));
+
+    for (final density in ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+      for (final layer in ['foreground', 'monochrome']) {
+        final iconLayer = File(
+          '$resourceRoot/mipmap-$density/ic_launcher_$layer.png',
+        );
+        expect(
+          iconLayer.existsSync(),
+          isTrue,
+          reason: 'missing $density launcher $layer layer',
+        );
+        expect(iconLayer.lengthSync(), greaterThan(0));
+      }
+    }
+  });
 }
 
 Uri _packageRoot(String packageName) {

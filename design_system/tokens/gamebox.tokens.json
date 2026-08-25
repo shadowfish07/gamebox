@@ -1,0 +1,225 @@
+{
+  "$schema": "../schema/tokens.schema.json",
+  "version": "2.0.0",
+  "brand": {
+    "seed": "#006B60",
+    "schemeSource": "flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0"
+  },
+  "colorSchemes": {
+    "light": {
+      "primary": "#006B60",
+      "onPrimary": "#FFFFFF",
+      "primaryContainer": "#9EF2E3",
+      "onPrimaryContainer": "#005048",
+      "primaryFixed": "#9EF2E3",
+      "primaryFixedDim": "#82D5C7",
+      "onPrimaryFixed": "#00201C",
+      "onPrimaryFixedVariant": "#005048",
+      "secondary": "#4A635E",
+      "onSecondary": "#FFFFFF",
+      "secondaryContainer": "#CCE8E2",
+      "onSecondaryContainer": "#334B47",
+      "secondaryFixed": "#CCE8E2",
+      "secondaryFixedDim": "#B1CCC6",
+      "onSecondaryFixed": "#05201C",
+      "onSecondaryFixedVariant": "#334B47",
+      "tertiary": "#456179",
+      "onTertiary": "#FFFFFF",
+      "tertiaryContainer": "#CCE5FF",
+      "onTertiaryContainer": "#2D4960",
+      "tertiaryFixed": "#CCE5FF",
+      "tertiaryFixedDim": "#ADCAE5",
+      "onTertiaryFixed": "#001E31",
+      "onTertiaryFixedVariant": "#2D4960",
+      "error": "#BA1A1A",
+      "onError": "#FFFFFF",
+      "errorContainer": "#FFDAD6",
+      "onErrorContainer": "#93000A",
+      "surface": "#F4FBF8",
+      "onSurface": "#161D1B",
+      "surfaceDim": "#D5DBD9",
+      "surfaceBright": "#F4FBF8",
+      "surfaceContainerLowest": "#FFFFFF",
+      "surfaceContainerLow": "#EFF5F2",
+      "surfaceContainer": "#E9EFEC",
+      "surfaceContainerHigh": "#E3EAE7",
+      "surfaceContainerHighest": "#DDE4E1",
+      "onSurfaceVariant": "#3F4946",
+      "outline": "#6F7976",
+      "outlineVariant": "#BEC9C5",
+      "inverseSurface": "#2B3230",
+      "onInverseSurface": "#ECF2EF",
+      "inversePrimary": "#82D5C7",
+      "surfaceTint": "#006B60",
+      "shadow": "#000000",
+      "scrim": "#000000"
+    },
+    "dark": {
+      "primary": "#82D5C7",
+      "onPrimary": "#003731",
+      "primaryContainer": "#005048",
+      "onPrimaryContainer": "#9EF2E3",
+      "primaryFixed": "#9EF2E3",
+      "primaryFixedDim": "#82D5C7",
+      "onPrimaryFixed": "#00201C",
+      "onPrimaryFixedVariant": "#005048",
+      "secondary": "#B1CCC6",
+      "onSecondary": "#1C3531",
+      "secondaryContainer": "#334B47",
+      "onSecondaryContainer": "#CCE8E2",
+      "secondaryFixed": "#CCE8E2",
+      "secondaryFixedDim": "#B1CCC6",
+      "onSecondaryFixed": "#05201C",
+      "onSecondaryFixedVariant": "#334B47",
+      "tertiary": "#ADCAE5",
+      "onTertiary": "#143349",
+      "tertiaryContainer": "#2D4960",
+      "onTertiaryContainer": "#CCE5FF",
+      "tertiaryFixed": "#CCE5FF",
+      "tertiaryFixedDim": "#ADCAE5",
+      "onTertiaryFixed": "#001E31",
+      "onTertiaryFixedVariant": "#2D4960",
+      "error": "#FFB4AB",
+      "onError": "#690005",
+      "errorContainer": "#93000A",
+      "onErrorContainer": "#FFDAD6",
+      "surface": "#0E1513",
+      "onSurface": "#DDE4E1",
+      "surfaceDim": "#0E1513",
+      "surfaceBright": "#343B39",
+      "surfaceContainerLowest": "#090F0E",
+      "surfaceContainerLow": "#161D1B",
+      "surfaceContainer": "#1A211F",
+      "surfaceContainerHigh": "#252B2A",
+      "surfaceContainerHighest": "#303634",
+      "onSurfaceVariant": "#BEC9C5",
+      "outline": "#899390",
+      "outlineVariant": "#3F4946",
+      "inverseSurface": "#DDE4E1",
+      "onInverseSurface": "#2B3230",
+      "inversePrimary": "#006B60",
+      "surfaceTint": "#82D5C7",
+      "shadow": "#000000",
+      "scrim": "#000000"
+    }
+  },
+  "game": {
+    "board": "#D8A85F",
+    "grid": "#493217",
+    "blackPiece": "#151A24",
+    "whitePiece": "#F8FAFC",
+    "whitePieceOutline": "#667085",
+    "lastMove": "#F04438",
+    "pressedMove": "#7A5AF8",
+    "pendingMove": "#0072B2",
+    "pendingOverlayAlpha": 0.56
+  },
+  "typography": {
+    "displayLarge": {
+      "fontSize": 57,
+      "fontWeight": 400,
+      "lineHeight": 64
+    },
+    "displayMedium": {
+      "fontSize": 45,
+      "fontWeight": 400,
+      "lineHeight": 52
+    },
+    "displaySmall": {
+      "fontSize": 36,
+      "fontWeight": 400,
+      "lineHeight": 44
+    },
+    "headlineLarge": {
+      "fontSize": 32,
+      "fontWeight": 400,
+      "lineHeight": 40
+    },
+    "headlineMedium": {
+      "fontSize": 28,
+      "fontWeight": 400,
+      "lineHeight": 36
+    },
+    "headlineSmall": {
+      "fontSize": 24,
+      "fontWeight": 400,
+      "lineHeight": 32
+    },
+    "titleLarge": {
+      "fontSize": 22,
+      "fontWeight": 400,
+      "lineHeight": 28
+    },
+    "titleMedium": {
+      "fontSize": 16,
+      "fontWeight": 500,
+      "lineHeight": 24
+    },
+    "titleSmall": {
+      "fontSize": 14,
+      "fontWeight": 500,
+      "lineHeight": 20
+    },
+    "bodyLarge": {
+      "fontSize": 16,
+      "fontWeight": 400,
+      "lineHeight": 24
+    },
+    "bodyMedium": {
+      "fontSize": 14,
+      "fontWeight": 400,
+      "lineHeight": 20
+    },
+    "bodySmall": {
+      "fontSize": 12,
+      "fontWeight": 400,
+      "lineHeight": 16
+    },
+    "labelLarge": {
+      "fontSize": 14,
+      "fontWeight": 500,
+      "lineHeight": 20
+    },
+    "labelMedium": {
+      "fontSize": 12,
+      "fontWeight": 500,
+      "lineHeight": 16
+    },
+    "labelSmall": {
+      "fontSize": 11,
+      "fontWeight": 500,
+      "lineHeight": 16
+    }
+  },
+  "spacing": {
+    "base": 4,
+    "layout": 8,
+    "compact": 12,
+    "page": 16,
+    "section": 24,
+    "large": 32,
+    "xlarge": 40,
+    "xxlarge": 48
+  },
+  "shape": {
+    "input": 8,
+    "card": 12,
+    "floating": 16,
+    "dialog": 28,
+    "full": 999
+  },
+  "motion": {
+    "fast": 100,
+    "standard": 200,
+    "slow": 300,
+    "pageEnter": 400
+  },
+  "component": {
+    "dialogScrimOpacity": 0.32,
+    "minimumTouchTarget": 48,
+    "pageMaxWidth": 560,
+    "pagePadding": 16,
+    "sectionSpacing": 24,
+    "smallProgressSize": 20
+  }
+}

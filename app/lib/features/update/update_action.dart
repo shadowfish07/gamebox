@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+
 import 'package:flutter_release_updater/flutter_release_updater.dart';
+
+import '../../design_system/generated/gamebox_tokens.g.dart';
 
 final class UpdateActionButton extends StatelessWidget {
   const UpdateActionButton({super.key, required this.controller});
 
-  final UpdateController controller;
+  final ReleaseUpdater controller;
 
   @override
   Widget build(BuildContext context) {
@@ -22,9 +25,9 @@ final class UpdateActionButton extends StatelessWidget {
             icon: Badge(
               isLabelVisible: hasUpdate,
               child: controller.isBusy
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                  ? SizedBox.square(
+                      dimension: GameboxTokens.components.smallProgressSize,
+                      child: const CircularProgressIndicator(),
                     )
                   : const Icon(Icons.system_update_alt),
             ),
@@ -37,11 +40,24 @@ final class UpdateActionButton extends StatelessWidget {
 
 Future<void> showUpdateDialog(
   BuildContext context,
-  UpdateController controller,
+  ReleaseUpdater controller,
 ) async {
   if (controller.status == UpdateStatus.idle) {
     await controller.checkNow();
     if (!context.mounted) return;
+  }
+  if (controller.availableUpdate == null) {
+    final message = switch (controller.status) {
+      UpdateStatus.upToDate => '当前已是最新版本',
+      UpdateStatus.failed =>
+        controller.errorMessage.isEmpty ? '暂时无法检查更新' : controller.errorMessage,
+      _ => null,
+    };
+    if (message != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+    return;
   }
   await showDialog<void>(
     context: context,
@@ -52,7 +68,7 @@ Future<void> showUpdateDialog(
 final class _UpdateDialog extends StatelessWidget {
   const _UpdateDialog({required this.controller});
 
-  final UpdateController controller;
+  final ReleaseUpdater controller;
 
   @override
   Widget build(BuildContext context) {
@@ -62,33 +78,39 @@ final class _UpdateDialog extends StatelessWidget {
         final update = controller.availableUpdate;
         return AlertDialog(
           title: const Text('应用更新'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('当前版本 v${controller.installedVersion}'),
-                  const SizedBox(height: 16),
-                  if (update != null) ...[
-                    Text(
-                      '新版本 v${update.version}',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (update.title.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(update.title),
-                    ],
-                    if (update.releaseNotes.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(update.releaseNotes),
-                    ],
-                    const SizedBox(height: 16),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('当前版本 v${controller.installedVersion}'),
+                SizedBox(height: GameboxTokens.spacing.page),
+                if (update != null) ...[
+                  Text(
+                    '新版本 v${update.version}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (update.title.isNotEmpty) ...[
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    Text(update.title),
                   ],
-                  _UpdateState(controller: controller),
+                  if (update.releaseNotes.isNotEmpty) ...[
+                    SizedBox(height: GameboxTokens.spacing.compact),
+                    Text(update.releaseNotes),
+                  ],
+                  SizedBox(height: GameboxTokens.spacing.page),
                 ],
-              ),
+                ConstrainedBox(
+                  key: const Key('update-state-region'),
+                  constraints: BoxConstraints(
+                    minHeight: GameboxTokens.components.minimumTouchTarget,
+                  ),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: _UpdateState(controller: controller),
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [
@@ -125,7 +147,7 @@ final class _UpdateDialog extends StatelessWidget {
 final class _UpdateState extends StatelessWidget {
   const _UpdateState({required this.controller});
 
-  final UpdateController controller;
+  final ReleaseUpdater controller;
 
   @override
   Widget build(BuildContext context) {
@@ -149,6 +171,26 @@ final class _UpdateState extends StatelessWidget {
   }
 }
 
+final class _ProgressMessage extends StatelessWidget {
+  const _ProgressMessage({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox.square(
+          dimension: GameboxTokens.components.smallProgressSize,
+          child: const CircularProgressIndicator(),
+        ),
+        SizedBox(width: GameboxTokens.spacing.compact),
+        Expanded(child: Text(message)),
+      ],
+    );
+  }
+}
+
 final class _DownloadProgress extends StatelessWidget {
   const _DownloadProgress({required this.progress});
 
@@ -161,28 +203,8 @@ final class _DownloadProgress extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(value == null ? '正在下载 APK...' : '正在下载 ${(value * 100).round()}%'),
-        const SizedBox(height: 8),
+        SizedBox(height: GameboxTokens.spacing.layout),
         LinearProgressIndicator(value: value),
-      ],
-    );
-  }
-}
-
-final class _ProgressMessage extends StatelessWidget {
-  const _ProgressMessage({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const SizedBox.square(
-          dimension: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: Text(message)),
       ],
     );
   }

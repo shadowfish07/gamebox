@@ -5,6 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/design_system/components/gamebox_async_panel.dart';
+import 'package:gamebox/design_system/components/gamebox_page_body.dart';
+import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
+import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/home/home_api.dart';
@@ -16,44 +20,58 @@ void main() {
   const carolId = '44444444-4444-4444-8444-444444444444';
   final now = DateTime.utc(2026, 8, 20, 12);
 
-  testWidgets('idle catalog exposes stable game and opponent semantics', (
-    tester,
-  ) async {
-    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
-    await tester.pumpWidget(_app(fixture.controller, aliceId));
-    await _flushWidget(tester);
+  testWidgets(
+    'idle catalog preserves stable game and opponent automation ids',
+    (tester) async {
+      final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+      await tester.pumpWidget(_app(fixture.controller, aliceId));
+      await _flushWidget(tester);
 
-    expect(find.byKey(const Key('home-shell')), findsOneWidget);
-    expect(find.text('你好，自己'), findsOneWidget);
-    expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
-    expect(find.text('五子棋'), findsOneWidget);
-    expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
-    expect(find.byKey(const Key('continue-match')), findsNothing);
-    final gameSemantics = tester.getSemantics(
-      find.byKey(const Key('game-gomoku')),
-    );
-    expect(
-      gameSemantics,
-      isSemantics(
-        identifier: 'game-gomoku',
-        label: '五子棋\n2 人对战',
-        isHeader: true,
-      ),
-    );
-    expect(
-      tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      isSemantics(
-        identifier: 'choose-opponent',
-        label: '选择对手',
-        isButton: true,
-        isEnabled: true,
-        hasEnabledState: true,
-        hasTapAction: true,
-      ),
-    );
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(find.text('你好，自己'), findsOneWidget);
+      expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
+      expect(find.text('五子棋'), findsOneWidget);
+      expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
+      expect(find.byKey(const Key('continue-match')), findsNothing);
+      expect(
+        find.byKey(const Key('choose-opponent')).evaluate().single.widget,
+        isA<GameboxPendingButton>(),
+      );
+      expect(find.bySemanticsIdentifier('choose-opponent'), findsOneWidget);
+      expect(
+        tester.getSemantics(find.bySemanticsIdentifier('choose-opponent')),
+        isSemantics(
+          identifier: 'choose-opponent',
+          isButton: true,
+          hasTapAction: true,
+        ),
+      );
+      final gameSemantics = tester.getSemantics(
+        find.byKey(const Key('game-gomoku')),
+      );
+      expect(
+        gameSemantics,
+        isSemantics(
+          identifier: 'game-gomoku',
+          label: '五子棋\n2 人 · 回合制',
+          isHeader: true,
+        ),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.descendant(
+                of: find.byKey(const Key('choose-opponent')),
+                matching: find.byType(FilledButton),
+              ),
+            )
+            .onPressed,
+        isNotNull,
+      );
 
-    fixture.dispose();
-  });
+      fixture.dispose();
+    },
+  );
 
   testWidgets('active card shows opponent color revision and hides creation', (
     tester,
@@ -69,15 +87,28 @@ void main() {
     expect(find.byKey(const Key('choose-opponent')), findsNothing);
     expect(find.byKey(const Key('cancel-match')), findsNothing);
     expect(
-      tester.getSemantics(find.byKey(const Key('continue-match'))),
+      find.byKey(const Key('continue-match')).evaluate().single.widget,
+      isA<GameboxPendingButton>(),
+    );
+    expect(find.bySemanticsIdentifier('continue-match'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.bySemanticsIdentifier('continue-match')),
       isSemantics(
         identifier: 'continue-match',
-        label: '继续对局',
         isButton: true,
-        isEnabled: true,
-        hasEnabledState: true,
         hasTapAction: true,
       ),
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('continue-match')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNotNull,
     );
 
     fixture.dispose();
@@ -103,6 +134,26 @@ void main() {
         hasTapAction: true,
       ),
     );
+
+    await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('取消这局尚未开始的对局？'), findsOneWidget);
+    expect(find.text('取消后，双方将返回空闲状态。'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('dismiss-cancel-match'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('confirm-cancel-match'), findsOneWidget);
+    expect(fixture.api.cancelCalls, 0);
+
+    await tester.tap(find.bySemanticsIdentifier('dismiss-cancel-match'));
+    await tester.pumpAndSettle();
+    expect(find.text('取消这局尚未开始的对局？'), findsNothing);
+    expect(fixture.api.cancelCalls, 0);
+
+    await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
+    await _flushWidget(tester);
+    expect(fixture.api.cancelCalls, 1);
 
     fixture.dispose();
   });
@@ -142,23 +193,26 @@ void main() {
     await tester.pump();
 
     expect(
-      tester.getSemantics(find.byKey(const Key('continue-match'))),
-      isSemantics(
-        identifier: 'continue-match',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('continue-match')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     expect(
-      tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      isSemantics(
-        identifier: 'cancel-match',
-        label: '取消未开始对局',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<TextButton>(
+            find.descendant(
+              of: find.byKey(const Key('cancel-match')),
+              matching: find.byType(TextButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     await tester.tap(
       find.byKey(const Key('cancel-match')),
@@ -175,6 +229,9 @@ void main() {
     tester,
   ) async {
     final cancelled = Completer<void>();
+    addTearDown(() {
+      if (!cancelled.isCompleted) cancelled.complete();
+    });
     final fixture = _Fixture(now)..api.status = _active(revision: 0);
     fixture.api.onCancel = (_) async {
       await cancelled.future;
@@ -184,26 +241,31 @@ void main() {
     await _flushWidget(tester);
 
     await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
     await tester.pump();
 
     expect(
-      tester.getSemantics(find.byKey(const Key('continue-match'))),
-      isSemantics(
-        identifier: 'continue-match',
-        label: '继续对局',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('continue-match')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     expect(
-      tester.getSemantics(find.byKey(const Key('cancel-match'))),
-      isSemantics(
-        identifier: 'cancel-match',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-      ),
+      tester
+          .widget<TextButton>(
+            find.descendant(
+              of: find.byKey(const Key('cancel-match')),
+              matching: find.byType(TextButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     await tester.tap(
       find.byKey(const Key('continue-match')),
@@ -229,6 +291,8 @@ void main() {
     await _flushWidget(tester);
 
     await tester.tap(find.byKey(const Key('cancel-match')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsIdentifier('confirm-cancel-match'));
     await _flushWidget(tester);
 
     expect(find.text('对局无法取消'), findsOneWidget);
@@ -276,19 +340,27 @@ void main() {
     expect(fixture.api.createCalls, 1);
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(
-      tester.getSemantics(find.byKey(const Key('choose-opponent'))),
-      isSemantics(
-        identifier: 'choose-opponent',
-        label: '选择对手',
-        isButton: true,
-        isEnabled: false,
-        hasEnabledState: true,
-        hasTapAction: false,
+      find.descendant(
+        of: find.byKey(const Key('choose-opponent')),
+        matching: find.text('正在创建对局'),
       ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('choose-opponent')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNull,
     );
     await tester.tap(
       find.byKey(const Key('choose-opponent')),
@@ -319,18 +391,20 @@ void main() {
     await _flushWidget(tester);
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(GameboxAsyncPanel), findsOneWidget);
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
+    expect(find.bySemanticsIdentifier('retry-home'), findsOneWidget);
     expect(
-      tester.getSemantics(find.byKey(const Key('retry-home'))),
-      isSemantics(
-        identifier: 'retry-home',
-        label: '重试',
-        isButton: true,
-        isEnabled: true,
-        hasEnabledState: true,
-        hasTapAction: true,
-      ),
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: find.byKey(const Key('retry-home')),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
+      isNotNull,
     );
 
     fixture.api.statusError = null;
@@ -339,11 +413,57 @@ void main() {
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
     fixture.dispose();
   });
+
+  for (final configuration in const [
+    (size: Size(360, 800), status: 'idle', nickname: '一位名字很长但仍需要正常换行的玩家'),
+    (size: Size(412, 915), status: 'active', nickname: '另一位名字很长的玩家'),
+  ]) {
+    testWidgets('lays out dark ${configuration.status} Home at '
+        '${configuration.size}', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = configuration.size;
+      addTearDown(tester.view.reset);
+      final fixture = _Fixture(now)
+        ..api.status = configuration.status == 'idle'
+            ? const GomokuIdleStatus()
+            : _active(revision: 0);
+
+      await tester.pumpWidget(
+        _app(
+          fixture.controller,
+          aliceId,
+          nickname: configuration.nickname,
+          dark: true,
+        ),
+      );
+      await _flushWidget(tester);
+
+      final home = find.byType(HomePage);
+      expect(find.byType(GameboxPageBody), findsOneWidget);
+      expect(find.text('五子棋'), findsOneWidget);
+      expect(find.text('2 人 · 回合制'), findsOneWidget);
+      expect(find.byType(GameboxPendingButton), findsOneWidget);
+      expect(Theme.of(tester.element(home)).brightness, Brightness.dark);
+      expect(tester.takeException(), isNull);
+      fixture.dispose();
+    });
+  }
 }
 
-Widget _app(HomeController controller, String userId) => MaterialApp(
-  theme: ThemeData(useMaterial3: true),
-  home: HomePage(controller: controller, currentUserId: userId, nickname: '自己'),
+Widget _app(
+  HomeController controller,
+  String userId, {
+  String nickname = '自己',
+  bool dark = false,
+}) => MaterialApp(
+  theme: GameboxTheme.light(),
+  darkTheme: GameboxTheme.dark(),
+  themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+  home: HomePage(
+    controller: controller,
+    currentUserId: userId,
+    nickname: nickname,
+  ),
 );
 
 Future<void> _flushWidget(WidgetTester tester) async {

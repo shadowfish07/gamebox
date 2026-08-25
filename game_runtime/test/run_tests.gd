@@ -9,6 +9,8 @@ const TEST_SUITES := [
 	preload("res://test/test_match_client.gd"),
 	preload("res://test/test_gomoku_board.gd"),
 	preload("res://test/test_gomoku_scene.gd"),
+	preload("res://test/test_design_system.gd"),
+	preload("res://test/test_design_system_components.gd"),
 ]
 
 

@@ -9,12 +9,192 @@ import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
+import 'package:gamebox/design_system/gamebox_theme.dart';
+import 'package:gamebox/design_system/generated/gamebox_tokens.g.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/registration_page.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
+
+  testWidgets('GameboxApp follows system dark mode with the fixed scheme', (
+    tester,
+  ) async {
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    final fixture = await _RegistrationFixture.create(now);
+
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: _NoopGameLauncher(),
+        sessionController: fixture.controller,
+      ),
+    );
+    await tester.pump();
+
+    final context = tester.element(find.byType(RegistrationPage));
+    expect(Theme.of(context).brightness, Brightness.dark);
+    expect(Theme.of(context).colorScheme, GameboxTokens.darkColorScheme);
+  });
+
+  for (final size in const [Size(360, 800), Size(412, 915)]) {
+    testWidgets('uses the branded field-owned form at $size', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+      final fixture = await _RegistrationFixture.create(now);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GameboxTheme.dark(),
+          home: RegistrationPage(controller: fixture.controller),
+        ),
+      );
+
+      expect(find.text('加入 Gamebox'), findsOneWidget);
+      expect(find.text('输入邀请码，和朋友开始一局游戏'), findsOneWidget);
+      expect(find.byIcon(Icons.sports_esports_outlined), findsOneWidget);
+      expect(find.byType(GameboxPendingButton), findsOneWidget);
+      expect(
+        Theme.of(tester.element(find.byType(RegistrationPage))).brightness,
+        Brightness.dark,
+      );
+
+      await tester.tap(find.byKey(const Key('register')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(
+                of: find.byKey(const Key('invite-code')),
+                matching: find.byType(TextField),
+              ),
+            )
+            .decoration
+            ?.errorText,
+        '请输入邀请码',
+      );
+
+      await _enter(tester, const Key('invite-code'), 'invite-one');
+      await _enter(tester, const Key('nickname'), '鱼');
+      await tester.tap(find.byKey(const Key('register')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(
+                of: find.byKey(const Key('nickname')),
+                matching: find.byType(TextField),
+              ),
+            )
+            .decoration
+            ?.errorText,
+        '昵称至少需要 2 个字符',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final size in const [Size(360, 800), Size(412, 915)]) {
+    testWidgets(
+      'retains long valid input after a safe service failure at $size',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.reset);
+        const invite = 'invite-code-with-long-safe-value-20260822';
+        const nickname = 'LongNickname1234';
+        const rawServerMessage = 'private-storage-provider-detail';
+        const safeMessage = '无法安全保存登录信息，请申请新的邀请码';
+        final fixture = await _RegistrationFixture.create(now)
+          ..api.onRegister = (_, _) => Future<Session>.error(
+            const ApiError(code: 'storage_error', message: rawServerMessage),
+          );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GameboxTheme.light(),
+            home: RegistrationPage(controller: fixture.controller),
+          ),
+        );
+        await _enter(tester, const Key('invite-code'), invite);
+        await _enter(tester, const Key('nickname'), nickname);
+
+        await tester.tap(find.byKey(const Key('register')));
+        await tester.pump();
+
+        final errorText = find.text(safeMessage);
+        final errorRegion = find.ancestor(
+          of: errorText,
+          matching: find.byType(SizedBox),
+        );
+        expect(errorText, findsOneWidget);
+        expect(find.textContaining(rawServerMessage), findsNothing);
+        expect(errorRegion, findsOneWidget);
+        expect(
+          tester.getSize(errorRegion).height,
+          GameboxTokens.components.minimumTouchTarget,
+        );
+        expect(
+          _field(tester, const Key('invite-code')).controller?.text,
+          invite,
+        );
+        expect(
+          _field(tester, const Key('nickname')).controller?.text,
+          nickname,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'register button stays within the visible viewport when the keyboard is open',
+    (tester) async {
+      // Match the on-device E2E condition (1080x2400 @ DPR 3.5): the previous
+      // layout put register as the last lazy ListView child, so opening the
+      // keyboard shrank the viewport below the button and Android's a11y tree
+      // (which only exposes viewport-visible nodes) lost it entirely.
+      tester.view.devicePixelRatio = 3.5;
+      tester.view.physicalSize = const Size(1080, 2400);
+      addTearDown(tester.view.reset);
+      final fixture = await _RegistrationFixture.create(now);
+      await tester.pumpWidget(
+        MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+      );
+      await tester.pump();
+
+      // Focus the nickname field, as the E2E harness does before tapping
+      // register, then open the keyboard.
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('nickname')),
+          matching: find.byType(TextField),
+        ),
+      );
+      await tester.pump();
+      tester.view.viewInsets = FakeViewPadding(bottom: 1050); // ~300 logical
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump();
+
+      final register = find.byKey(const Key('register'));
+      expect(
+        register,
+        findsOneWidget,
+        reason: 'register must survive the keyboard shrinking the viewport',
+      );
+      final registerRect = tester.getRect(register);
+      final logicalHeight = tester.view.physicalSize.height /
+          tester.view.devicePixelRatio;
+      final logicalInset = tester.view.viewInsets.bottom /
+          tester.view.devicePixelRatio;
+      expect(
+        registerRect.bottom,
+        lessThanOrEqualTo(logicalHeight - logicalInset),
+        reason: 'register must stay tappable above the keyboard',
+      );
+    },
+  );
 
   testWidgets('registration controls expose stable semantics labels', (
     tester,
@@ -94,6 +274,8 @@ void main() {
     await tester.pump();
 
     expect(fixture.controller.status, SessionStatus.submitting);
+    expect(find.byType(GameboxPendingButton), findsOneWidget);
+    expect(find.text('正在注册'), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('register'))),
       matchesSemantics(
@@ -327,6 +509,14 @@ Future<void> _enter(WidgetTester tester, Key semanticsKey, String value) async {
   );
   await tester.enterText(field, value);
 }
+
+TextField _field(WidgetTester tester, Key semanticsKey) =>
+    tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(semanticsKey),
+        matching: find.byType(TextField),
+      ),
+    );
 
 Session _session(DateTime now) => Session(
   user: const SessionUser(
