@@ -219,6 +219,9 @@ dependencies {
     add(standaloneAndroidTestRuntime.name, "androidx.test.ext:junit:1.3.0")
     add(standaloneAndroidTestRuntime.name, "androidx.test:runner:1.7.0")
     add(standaloneAndroidTestRuntime.name, "androidx.test.uiautomator:uiautomator:2.4.0")
+    // Match Flutter embedding's lifecycle ABI when app-target instrumentation
+    // loads the helper APK into the target process.
+    add(standaloneAndroidTestRuntime.name, "androidx.lifecycle:lifecycle-common:2.7.0")
     add(standaloneAndroidTestRuntime.name, "org.jetbrains.kotlin:kotlin-stdlib:2.4.0")
     // The self-targeting smoke runner cannot borrow runtime classes from the tested APK.
     androidTestImplementation(files(standaloneAndroidTestRuntime))
