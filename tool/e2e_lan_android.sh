@@ -23,6 +23,7 @@ EMULATOR_PID_A=""
 EMULATOR_PID_B=""
 FORWARDED_PORT=""
 ROOM_ID=""
+SENSITIVE_UI=0
 
 # shellcheck source=tool/lib/android_lease.sh
 # shellcheck disable=SC1091
@@ -44,6 +45,30 @@ fail() {
   mkdir -p "$ARTIFACT_DIR"
   jq -n --arg status failure --arg message "$message" --arg serialA "$SERIAL_A" --arg serialB "$SERIAL_B" \
     '{status:$status,message:$message,serials:[$serialA,$serialB]}' >"$ARTIFACT_DIR/summary.json" 2>/dev/null || true
+  if ((SENSITIVE_UI == 0)) && declare -F dump_ui >/dev/null 2>&1; then
+    local serial label xml
+    for label in A B; do
+      [[ "$label" == A ]] && serial="$SERIAL_A" || serial="$SERIAL_B"
+      [[ -n "$serial" ]] || continue
+      adb_for "$serial" exec-out screencap -p >"$ARTIFACT_DIR/failure-$label.png" 2>/dev/null || true
+      xml="$TEMP_DIR/failure-$label.xml"
+      if dump_ui "$serial" "$xml"; then
+        ruby -rrexml/document -e '
+          doc=REXML::Document.new(File.binread(ARGV[0]))
+          REXML::XPath.each(doc,"//node") do |node|
+            id=node.attributes["resource-id"].to_s
+            text=node.attributes["text"].to_s
+            desc=node.attributes["content-desc"].to_s
+            next if id.empty? && text.empty? && desc.empty?
+            puts "id=#{id.empty? ? "-" : id} text=#{text.empty? ? "-" : text} desc=#{desc.empty? ? "-" : desc}"
+          end
+        ' "$xml" >"$ARTIFACT_DIR/failure-$label-ui.txt" 2>/dev/null || true
+      fi
+      adb_for "$serial" logcat -d -v brief 2>/dev/null \
+        | grep -E 'AndroidRuntime|FATAL EXCEPTION|flutter[^a-zA-Z]|Gamebox' \
+        | tail -200 >"$ARTIFACT_DIR/failure-$label-crash.log" || true
+    done
+  fi
   printf 'Gamebox LAN E2E failed: %s\nArtifacts: %s\n' "$message" "$ARTIFACT_DIR" >&2
   exit "$exit_code"
 }
@@ -274,6 +299,7 @@ set_nickname "$SERIAL_B" GuestB
 
 tap_id "$SERIAL_A" open-lan-mode
 tap_id "$SERIAL_A" create-lan-room
+SENSITIVE_UI=1
 wait_id "$SERIAL_A" credential-qr-sensitive >/dev/null || fail 'host QR state was not reached'
 adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/host-waiting-masked.png"
 
