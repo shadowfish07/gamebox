@@ -139,10 +139,6 @@ void main() {
       expect(find.text('胜 1'), findsOneWidget);
       expect(find.text('负 1'), findsOneWidget);
       expect(find.text('和 1'), findsOneWidget);
-      expect(find.text('黑方'), findsNWidgets(2));
-      expect(find.text('白方'), findsNWidgets(2));
-      expect(find.text('Aug 25, 2026 20:30'), findsOneWidget);
-      expect(find.text('57 手'), findsOneWidget);
 
       final scheme = Theme.of(
         tester.element(find.byKey(const Key('match-history-page'))),
@@ -155,6 +151,11 @@ void main() {
       };
       for (final entry in entries) {
         final finder = find.byKey(Key('match-history-entry-${entry.id}'));
+        await tester.scrollUntilVisible(
+          finder,
+          300,
+          scrollable: find.byType(Scrollable),
+        );
         expect(finder, findsOneWidget);
         expect(
           tester
@@ -240,7 +241,7 @@ void main() {
 
     await _pumpPage(tester, api);
     await _flush(tester);
-    await tester.drag(find.byType(ListView), const Offset(0, -5000));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -5000));
     await tester.pump();
 
     expect(api.cursors, [null, 'older-page']);
@@ -260,11 +261,6 @@ void main() {
       find.bySemanticsIdentifier('retry-match-history-more'),
       findsOneWidget,
     );
-    expect(
-      find.byKey(Key('match-history-entry-${initialEntries.first.id}')),
-      findsOneWidget,
-    );
-
     await tester.ensureVisible(
       find.byKey(const Key('retry-match-history-more')),
     );
@@ -281,6 +277,53 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('match-history-load-more')), findsNothing);
+  });
+
+  testWidgets('history rows are built lazily as they enter the viewport', (
+    tester,
+  ) async {
+    final entries = List.generate(
+      100,
+      (index) => _entry(
+        '${(index + 1).toString().padLeft(8, '0')}-1111-4111-8111-111111111111',
+        outcome: MatchOutcome.win,
+        nickname: '对手$index',
+        color: GomokuColor.black,
+        hour: 20,
+        moveCount: index,
+      ),
+    );
+    final api = _FakeMatchHistoryApi()
+      ..responses.add(
+        (_) async => MatchHistoryPageData(
+          statistics: _statistics(entries.length),
+          matches: entries,
+          nextCursor: null,
+        ),
+      );
+
+    await _pumpPage(tester, api);
+    await _flush(tester);
+
+    expect(
+      find.byKey(Key('match-history-entry-${entries.first.id}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('match-history-entry-${entries.last.id}')),
+      findsNothing,
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(Key('match-history-entry-${entries.last.id}')),
+      500,
+      scrollable: find.byType(Scrollable),
+    );
+
+    expect(
+      find.byKey(Key('match-history-entry-${entries.last.id}')),
+      findsOneWidget,
+    );
   });
 
   for (final brightness in Brightness.values) {

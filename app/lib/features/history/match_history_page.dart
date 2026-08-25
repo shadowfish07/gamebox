@@ -62,23 +62,28 @@ final class _MatchHistoryPageState extends State<MatchHistoryPage> {
         ),
         body: NotificationListener<ScrollNotification>(
           onNotification: _onScroll,
-          child: GameboxPageBody(children: _children(context)),
+          child: _body(context),
         ),
       ),
     );
   }
 
-  List<Widget> _children(BuildContext context) {
+  Widget _body(BuildContext context) {
     final controller = widget.controller;
     if (controller.isInitialLoading ||
         (controller.statistics == null && controller.initialError == null)) {
-      return const [_InitialLoading()];
+      return const GameboxPageBody(children: [_InitialLoading()]);
     }
     final initialError = controller.initialError;
     if (initialError != null) {
-      return [
-        _InitialError(message: initialError.message, onRetry: controller.retry),
-      ];
+      return GameboxPageBody(
+        children: [
+          _InitialError(
+            message: initialError.message,
+            onRetry: controller.retry,
+          ),
+        ],
+      );
     }
     final statistics = controller.statistics!;
     final Widget? footer;
@@ -92,15 +97,19 @@ final class _MatchHistoryPageState extends State<MatchHistoryPage> {
     } else {
       footer = null;
     }
-    return [
-      _StatisticsCard(statistics: statistics),
-      if (controller.matches.isEmpty)
-        const _EmptyHistory()
-      else ...[
-        Text('最近对局', style: Theme.of(context).textTheme.titleLarge),
-        _HistoryList(matches: controller.matches, footer: footer),
-      ],
-    ];
+    if (controller.matches.isEmpty) {
+      return GameboxPageBody(
+        children: [
+          _StatisticsCard(statistics: statistics),
+          const _EmptyHistory(),
+        ],
+      );
+    }
+    return _HistoryContent(
+      statistics: statistics,
+      matches: controller.matches,
+      footer: footer,
+    );
   }
 }
 
@@ -213,9 +222,14 @@ final class _EmptyHistory extends StatelessWidget {
   }
 }
 
-final class _HistoryList extends StatelessWidget {
-  const _HistoryList({required this.matches, this.footer});
+final class _HistoryContent extends StatelessWidget {
+  const _HistoryContent({
+    required this.statistics,
+    required this.matches,
+    this.footer,
+  });
 
+  final MatchHistoryStatistics statistics;
   final List<MatchHistoryEntry> matches;
   final Widget? footer;
 
@@ -225,17 +239,58 @@ final class _HistoryList extends StatelessWidget {
       key: const Key('match-history-list'),
       identifier: 'match-history-list',
       container: true,
-      child: Column(
-        children: [
-          for (var index = 0; index < matches.length; index += 1) ...[
-            if (index > 0) SizedBox(height: GameboxTokens.spacing.layout),
-            _HistoryEntry(entry: matches[index]),
-          ],
-          if (footer case final footer?) ...[
-            SizedBox(height: GameboxTokens.spacing.layout),
-            footer,
-          ],
-        ],
+      child: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: GameboxTokens.components.pageMaxWidth,
+            ),
+            child: CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    GameboxTokens.components.pagePadding,
+                    GameboxTokens.components.pagePadding,
+                    GameboxTokens.components.pagePadding,
+                    GameboxTokens.components.sectionSpacing,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: _StatisticsCard(statistics: statistics),
+                  ),
+                ),
+                SliverPadding(
+                  padding: EdgeInsets.only(
+                    left: GameboxTokens.components.pagePadding,
+                    right: GameboxTokens.components.pagePadding,
+                    bottom: GameboxTokens.components.sectionSpacing,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: Text(
+                      '最近对局',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: GameboxTokens.components.pagePadding,
+                  ),
+                  sliver: SliverList.separated(
+                    itemCount: matches.length + (footer == null ? 0 : 1),
+                    itemBuilder: (context, index) => index == matches.length
+                        ? footer!
+                        : _HistoryEntry(entry: matches[index]),
+                    separatorBuilder: (context, index) =>
+                        SizedBox(height: GameboxTokens.spacing.layout),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: SizedBox(height: GameboxTokens.components.pagePadding),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
