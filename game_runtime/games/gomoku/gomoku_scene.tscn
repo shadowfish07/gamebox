@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://games/gomoku/gomoku_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_board.gd" id="2_board"]
@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="6_confirmation"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_loading_overlay.tscn" id="7_loading"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="8_result"]
+[ext_resource type="Script" path="res://games/gomoku/gomoku_switch_visual.gd" id="9_switch"]
 
 [node name="Gomoku" type="Control"]
 layout_mode = 3
@@ -195,17 +196,51 @@ theme_type_variation = &"GameboxDialogTitle"
 text = "对局设置"
 horizontal_alignment = 1
 
-[node name="MoveConfirmationToggle" type="CheckButton" parent="SettingsSheet/Sheet/Content"]
-custom_minimum_size = Vector2(0, 104)
+[node name="MoveConfirmationToggle" type="Button" parent="SettingsSheet/Sheet/Content"]
+custom_minimum_size = Vector2(0, 152)
 layout_mode = 2
-theme_type_variation = &"GameboxSettingsToggle"
+theme_type_variation = &"GameboxSettingsRow"
+toggle_mode = true
+
+[node name="Content" type="HBoxContainer" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = 16.0
+offset_right = -32.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsRowContent"
+
+[node name="Labels" type="VBoxContainer" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsLabels"
+
+[node name="Title" type="Label" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content/Labels"]
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsTitle"
 text = "落子前确认"
 
-[node name="Description" type="Label" parent="SettingsSheet/Sheet/Content"]
+[node name="Description" type="Label" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content/Labels"]
 layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSettingsDescription"
 text = "开启后，选定位置再确认落子。"
-horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="SwitchVisual" type="Control" parent="SettingsSheet/Sheet/Content/MoveConfirmationToggle/Content"]
+custom_minimum_size = Vector2(104, 64)
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"GameboxSwitchVisual"
+script = ExtResource("9_switch")
 
 [node name="DoneButton" type="Button" parent="SettingsSheet/Sheet/Content"]
 custom_minimum_size = Vector2(0, 96)

@@ -4,6 +4,7 @@ const GomokuScene = preload("res://games/gomoku/gomoku_scene.tscn")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const Protocol = preload("res://core/protocol.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
@@ -510,17 +511,36 @@ static func _uses_mobile_move_confirmation_surfaces() -> bool:
 			return _cleanup(scene)
 	var settings_button := scene.get_node("SettingsButton") as Button
 	var settings_sheet := scene.get_node("SettingsSheet") as Control
+	var settings_toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as BaseButton
 	var confirmation_bar := scene.get_node("MoveConfirmationBar") as Control
 	var cancel_button := scene.get_node("MoveConfirmationBar/Content/Actions/CancelButton") as Button
 	var confirm_button := scene.get_node("MoveConfirmationBar/Content/Actions/ConfirmButton") as Button
 	var board := scene.get_node("Board") as Control
+	if not _check(settings_toggle.has_node("Content/Labels/Title"), "settings toggle title is not laid out independently") \
+		or not _check(settings_toggle.has_node("Content/Labels/Description"), "settings toggle description is not laid out independently") \
+		or not _check(settings_toggle.has_node("Content/SwitchVisual"), "settings toggle has no explicit switch visual") \
+		or not _check(not settings_sheet.visible, "settings sheet is visible by default"):
+		return _cleanup(scene)
+	scene._on_settings_pressed()
+	var tree := Engine.get_main_loop() as SceneTree
+	await tree.process_frame
+	await tree.process_frame
+	var colors: Dictionary = GameboxTokens.LIGHT
+	var toggle_style := settings_toggle.get_theme_stylebox("normal") as StyleBoxFlat
+	var toggle_content := settings_toggle.get_node("Content") as Control
+	var switch_visual := settings_toggle.get_node("Content/SwitchVisual") as Control
 	var result := _check(not scene.has_node("MoveConfirmationDialog"), "ordinary move confirmation still uses a Dialog") \
 		and _check(settings_button.text == "设置", "settings action copy changed") \
 		and _check(settings_button.custom_minimum_size.x >= 192.0 and settings_button.custom_minimum_size.y >= 96.0, "settings target is below 48dp") \
+		and _check(settings_toggle.toggle_mode, "settings row is not a toggle button") \
+		and _check(settings_toggle.custom_minimum_size.y >= 128.0, "settings row is too cramped for title, description, and switch") \
+		and _check(toggle_style != null and toggle_style.bg_color == colors["surface_container"], "settings row does not use a neutral semantic surface") \
+		and _check(toggle_content.position.x >= 32.0 and toggle_content.size.x <= settings_toggle.size.x - 64.0, "settings row content does not preserve 16dp horizontal padding: row=%s content=%s" % [settings_toggle.get_rect(), toggle_content.get_rect()]) \
+		and _check(switch_visual.custom_minimum_size.x >= 96.0 and switch_visual.custom_minimum_size.y >= 64.0, "switch visual is too small to distinguish its state") \
 		and _check(cancel_button.custom_minimum_size.y >= 96.0 and confirm_button.custom_minimum_size.y >= 96.0, "confirmation actions are below 48dp") \
-		and _check(not settings_sheet.visible, "settings sheet is visible by default") \
 		and _check(not confirmation_bar.visible, "confirmation bar is visible without a selection") \
 		and _check(not confirmation_bar.get_rect().intersects(board.get_rect()), "confirmation bar obscures the board")
+	scene._on_settings_done_pressed()
 	return _cleanup(scene, result)
 
 
@@ -528,7 +548,7 @@ static func _settings_sheet_persists_move_confirmation() -> bool:
 	var preferences := FakePreferences.new(false)
 	var harness: Dictionary = await _scene_harness(BLACK_ID, preferences)
 	var scene: Control = harness["scene"]
-	var toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as CheckButton
+	var toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as BaseButton
 	scene._on_settings_pressed()
 	if not _check(scene.get_node("SettingsSheet").visible, "settings action did not open the bottom sheet") \
 		or not _check(not toggle.button_pressed, "settings sheet ignored the saved direct-move value"):
@@ -548,7 +568,7 @@ static func _settings_failure_restores_saved_value() -> bool:
 	var scene: Control = harness["scene"]
 	scene._on_settings_pressed()
 	scene._on_move_confirmation_toggled(true)
-	var toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as CheckButton
+	var toggle := scene.get_node("SettingsSheet/Sheet/Content/MoveConfirmationToggle") as BaseButton
 	var result := _check(not toggle.button_pressed, "failed save left an unsaved enabled toggle") \
 		and _check(_error_visible(scene) and _error(scene) == "设置保存失败，请重试", "failed save did not offer retry guidance") \
 		and _check(scene.get_node("ErrorLabel").z_index > scene.get_node("SettingsSheet").z_index, "settings sheet obscures the save failure Snackbar")

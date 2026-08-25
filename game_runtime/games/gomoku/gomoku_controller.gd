@@ -203,7 +203,7 @@ func _on_move_confirm_pressed() -> void:
 
 
 func _on_settings_pressed() -> void:
-	var toggle := $SettingsSheet/Sheet/Content/MoveConfirmationToggle as CheckButton
+	var toggle := $SettingsSheet/Sheet/Content/MoveConfirmationToggle as BaseButton
 	toggle.set_pressed_no_signal(_confirm_move_enabled)
 	$SettingsSheet.visible = true
 	print("GAMEBOX_SETTINGS_SHEET visible=true")
@@ -219,7 +219,7 @@ func _on_settings_done_pressed() -> void:
 
 
 func _on_move_confirmation_toggled(enabled: bool) -> void:
-	var toggle := $SettingsSheet/Sheet/Content/MoveConfirmationToggle as CheckButton
+	var toggle := $SettingsSheet/Sheet/Content/MoveConfirmationToggle as BaseButton
 	if not _preferences_store.save_confirm_move(enabled):
 		toggle.set_pressed_no_signal(_confirm_move_enabled)
 		_error_text = "设置保存失败，请重试"
