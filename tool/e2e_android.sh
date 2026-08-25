@@ -1799,9 +1799,9 @@ self_test() {
   grep -F 'start_first_connect_loading_watch "$SERIAL_A" first-gomoku-loading' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading watcher is not started with a post-attach boundary\n' >&2; return 1; }
-  grep -F 'wait_for_identifier_after_scroll "$SERIAL_B" continue-match' \
+  grep -F 'tap_identifier_after_scroll "$SERIAL_B" continue-match' \
     <<<"$runtime_source" >/dev/null \
-    || { printf 'narrow active-match discovery is not scroll-aware\n' >&2; return 1; }
+    || { printf 'narrow active-match action is not atomically scroll-aware\n' >&2; return 1; }
   if grep -E 'screencap|capture_ui_evidence|ui_evidence|screenshots/|\.png' \
     <<<"$runtime_source" >/dev/null; then
     printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
@@ -2467,6 +2467,15 @@ wait_for_identifier_after_scroll() {
   return 1
 }
 
+tap_identifier_after_scroll() {
+  local serial="$1"
+  local identifier="$2"
+  local center x y
+  center="$(wait_for_identifier_after_scroll "$serial" "$identifier")" || return 1
+  read -r x y <<<"$center"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
 tap_identifier() {
   local serial="$1"
   local identifier="$2"
@@ -2751,7 +2760,8 @@ wait_for_identifier_after_scroll "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the active-match automation identifier"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
   || fail "could not verify the dark narrow active lobby UI state"
-tap_identifier "$SERIAL_B" continue-match
+tap_identifier_after_scroll "$SERIAL_B" continue-match \
+  || fail "B could not activate the narrow active-match action"
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "B Godot did not report ready for the first match"
 
@@ -2911,7 +2921,8 @@ exercise_active_system_back() {
     && "$(jq -r '.status' <<<"$after")" == "active" \
     && "$(jq -S '.board' <<<"$after")" == "$(jq -S '.board' <<<"$before")" ]] \
     || fail "Android Back changed or discarded the authoritative active match"
-  tap_identifier "$serial" continue-match
+  tap_identifier_after_scroll "$serial" continue-match \
+    || fail "active match could not be relaunched after Android Back"
   wait_for_log_marker "$serial" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
     || fail "active match did not relaunch after Android Back"
   wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=$expected_revision status=active connection=connected" \
@@ -2929,7 +2940,8 @@ recover_both_clients_after_server_restart() {
     start_flutter "$serial"
     wait_for_identifier_after_scroll "$serial" continue-match >/dev/null \
       || fail "$serial did not expose continue-match after server restart"
-    tap_identifier "$serial" continue-match
+    tap_identifier_after_scroll "$serial" continue-match \
+      || fail "$serial could not activate continue-match after server restart"
   done
   for serial in "$SERIAL_A" "$SERIAL_B"; do
     wait_for_log_marker "$serial" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
@@ -3089,7 +3101,8 @@ THIRD_MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "resignation-match ready marker did not contain a canonical match ID"
 wait_for_identifier_after_scroll "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the resignation match"
-tap_identifier "$SERIAL_B" continue-match
+tap_identifier_after_scroll "$SERIAL_B" continue-match \
+  || fail "B could not activate the narrow resignation match"
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$THIRD_MATCH_ID" \
   || fail "B did not launch the resignation match"
 
