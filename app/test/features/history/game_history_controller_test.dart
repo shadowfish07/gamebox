@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -127,6 +128,31 @@ void main() {
     expect(controller.results.single.source, GameResultSource.lan);
     expect(controller.pending, isEmpty);
   });
+
+  test('finishes an in-flight refresh quietly after disposal', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'gamebox-history-controller-dispose-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final gate = Completer<void>();
+    final platform = _FakeResultsPlatform(
+      committed: [],
+      pending: [],
+      listPendingGate: gate,
+    );
+    final controller = GameHistoryController(
+      platform: platform,
+      store: GameHistoryStore(directory: () async => directory),
+      lanApi: LanApi(),
+      credentials: LanCredentialStore(storage: _MemoryLanStorage()),
+    );
+
+    final refresh = controller.refresh();
+    controller.dispose();
+    gate.complete();
+
+    await expectLater(refresh, completes);
+  });
 }
 
 final class _FakeResultsPlatform implements GameResultsPlatform {
@@ -134,11 +160,13 @@ final class _FakeResultsPlatform implements GameResultsPlatform {
     required this.committed,
     required this.pending,
     this.events,
+    this.listPendingGate,
   });
   final List<CommittedGameResult> committed;
   final List<PendingGameResultRecord> pending;
   final List<String> completed = [];
   final List<String>? events;
+  final Completer<void>? listPendingGate;
 
   @override
   Future<void> completePending(String matchId, String expectedSha256) async {
@@ -152,8 +180,10 @@ final class _FakeResultsPlatform implements GameResultsPlatform {
   Future<List<CommittedGameResult>> listCommitted() async => committed;
 
   @override
-  Future<List<PendingGameResultRecord>> listPending() async =>
-      List.unmodifiable(pending);
+  Future<List<PendingGameResultRecord>> listPending() async {
+    await listPendingGate?.future;
+    return List.unmodifiable(pending);
+  }
 
   @override
   Future<String> persistRecovered(AuthoritativeGameResult result) async =>

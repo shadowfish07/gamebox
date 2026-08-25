@@ -96,6 +96,7 @@ final class LanRoomController extends ChangeNotifier {
   bool _busy = false;
   bool get isBusy => _busy;
   LanHostCreation? _hostCreation;
+  bool _disposed = false;
 
   Future<void> initialize() => refreshHostStatus();
   Future<void> handleAppResumed() => refreshHostStatus();
@@ -120,7 +121,7 @@ final class LanRoomController extends ChangeNotifier {
       _set(LanRoomFailure(error.code));
     } finally {
       _busy = false;
-      notifyListeners();
+      _notifyListeners();
     }
   }
 
@@ -177,7 +178,7 @@ final class LanRoomController extends ChangeNotifier {
       _set(const LanRoomFailure('storage_unavailable'));
     } finally {
       _busy = false;
-      notifyListeners();
+      _notifyListeners();
     }
   }
 
@@ -315,7 +316,18 @@ final class LanRoomController extends ChangeNotifier {
   }
 
   void _set(LanRoomState next) {
+    if (_disposed) return;
     _state = next;
-    notifyListeners();
+    _notifyListeners();
+  }
+
+  void _notifyListeners() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }

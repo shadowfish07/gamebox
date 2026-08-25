@@ -33,6 +33,7 @@ final class GameHistoryController extends ChangeNotifier {
   final LanCredentialStore _credentials;
   PublicResultFetcher? _fetchPublicResult;
   String? _publicUserId;
+  bool _disposed = false;
 
   List<GameHistoryRecord> results = const [];
   List<PendingGameResultRecord> pending = const [];
@@ -48,7 +49,7 @@ final class GameHistoryController extends ChangeNotifier {
     if (loading) return;
     loading = true;
     errorCode = null;
-    notifyListeners();
+    _notifyListeners();
     try {
       pending = await _platform.listPending();
       final committed = await _platform.listCommitted();
@@ -71,7 +72,7 @@ final class GameHistoryController extends ChangeNotifier {
       errorCode = 'history_unavailable';
     } finally {
       loading = false;
-      notifyListeners();
+      _notifyListeners();
     }
   }
 
@@ -79,7 +80,7 @@ final class GameHistoryController extends ChangeNotifier {
     if (loading) return;
     loading = true;
     errorCode = null;
-    notifyListeners();
+    _notifyListeners();
     try {
       final committed = await _platform.listCommitted();
       await _recover(
@@ -94,7 +95,7 @@ final class GameHistoryController extends ChangeNotifier {
       errorCode = 'recovery_failed';
     } finally {
       loading = false;
-      notifyListeners();
+      _notifyListeners();
     }
   }
 
@@ -165,5 +166,15 @@ final class GameHistoryController extends ChangeNotifier {
       await _credentials.delete(item.matchId);
     }
     await _platform.completePending(item.matchId, persistedSha256);
+  }
+
+  void _notifyListeners() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 final class TestHost implements LanHostPlatform {
+  Completer<LanHostStatus>? statusGate;
   LanHostStatus status = const LanHostStatus(
     state: LanNativeState.empty,
     roomId: null,
@@ -30,7 +32,7 @@ final class TestHost implements LanHostPlatform {
     ),
   );
   @override
-  Future<LanHostStatus> getStatus() async => status;
+  Future<LanHostStatus> getStatus() async => statusGate?.future ?? status;
   @override
   Future<LanHostStatus> refreshEndpoint() async => status;
   @override
@@ -158,5 +160,23 @@ void main() {
     expect(launcher.request!.source, GameLaunchSource.lan);
     expect(launcher.request!.wsUrl, endpoint.webSocketUri.toString());
     expect(storage.values.values.single, contains('"kind":"credential"'));
+  });
+
+  test('ignores a host status response after disposal', () async {
+    final host = TestHost();
+    final gate = Completer<LanHostStatus>();
+    host.statusGate = gate;
+    final controller = LanRoomController(
+      host: host,
+      api: LanApi(client: MockClient((_) async => http.Response('{}', 500))),
+      credentialStore: LanCredentialStore(storage: MemoryLanStorage()),
+      gameLauncher: RecordingLauncher(),
+    );
+
+    final refresh = controller.refreshHostStatus();
+    controller.dispose();
+    gate.complete(host.status);
+
+    await expectLater(refresh, completes);
   });
 }
