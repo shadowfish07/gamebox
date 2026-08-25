@@ -192,6 +192,8 @@ final class LanRoomController extends ChangeNotifier {
           launchTicket: launch.launchTicket,
           wsUrl: launch.wsUrl,
           source: GameLaunchSource.lan,
+          resumeToken: launch.resumeToken,
+          localUserId: launch.playerId,
         ),
       );
       final current = _state;
@@ -247,6 +249,8 @@ final class LanRoomController extends ChangeNotifier {
         launchTicket: receipt.launchTicket,
         wsUrl: endpoint.webSocketUri.toString(),
         source: GameLaunchSource.lan,
+        resumeToken: receipt.resumeToken,
+        localUserId: receipt.playerId,
       ),
     );
     _set(LanActive(roomId: receipt.matchId, revision: 0, role: 'guest'));

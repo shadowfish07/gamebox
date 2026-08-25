@@ -52,8 +52,10 @@ final class TestHost implements LanHostPlatform {
   Future<LanHostLaunch> issueHostLaunch() async => LanHostLaunch(
     matchId: '11111111-1111-4111-8111-111111111111',
     gameId: 'gomoku',
+    playerId: '22222222-2222-4222-8222-222222222222',
     launchTicket: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-    wsUrl: 'ws://127.0.0.1:50000/v1/ws',
+    resumeToken: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA',
+    wsUrl: 'ws://127.0.0.1:50000/lan/v1/ws',
     expiresAt: DateTime.fromMillisecondsSinceEpoch(1900000000000, isUtc: true),
   );
   @override

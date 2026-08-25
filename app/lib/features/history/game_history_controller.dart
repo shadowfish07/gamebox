@@ -103,6 +103,23 @@ final class GameHistoryController extends ChangeNotifier {
     PendingGameResultRecord item,
     CommittedGameResult? committed,
   ) async {
+    var phase = 'initialize';
+    try {
+      await _recoverTracked(item, committed, (value) => phase = value);
+    } on Object catch (error) {
+      debugPrint(
+        'GAMEBOX_HISTORY_RECOVERY match=${item.matchId} '
+        'source=${item.source} phase=$phase error=${error.runtimeType}',
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _recoverTracked(
+    PendingGameResultRecord item,
+    CommittedGameResult? committed,
+    void Function(String value) setPhase,
+  ) async {
     late final AuthoritativeGameResult result;
     late final String persistedSha256;
     late final String localUserId;
@@ -110,9 +127,11 @@ final class GameHistoryController extends ChangeNotifier {
     String? lanAckHash;
 
     if (item.source == 'public') {
+      setPhase('public-session');
       localUserId =
           _publicUserId ?? (throw StateError('public_session_unavailable'));
       if (committed == null) {
+        setPhase('public-fetch');
         final fetch = _fetchPublicResult;
         if (fetch == null) throw StateError('public_session_unavailable');
         result = await fetch(item.matchId);
@@ -122,32 +141,46 @@ final class GameHistoryController extends ChangeNotifier {
         persistedSha256 = committed.sha256;
       }
     } else if (item.source == 'lan') {
+      setPhase('lan-credential');
       credential = await _credentials.readCredential(item.matchId);
-      if (credential == null) throw StateError('lan_credential_unavailable');
-      localUserId = credential.playerId;
-      final fetched = await _lanApi.fetchResult(
-        credential.endpoint,
-        credential,
-      );
-      lanAckHash = fetched.resultHash;
-      if (committed == null) {
-        result = fetched.result;
-        persistedSha256 = await _platform.persistRecovered(result);
-      } else {
+      setPhase('lan-identity');
+      localUserId =
+          item.localUserId ??
+          credential?.playerId ??
+          (throw StateError('lan_identity_unavailable'));
+      if (credential == null) {
+        setPhase('lan-committed');
+        if (committed == null) throw StateError('lan_result_unavailable');
         result = committed.result;
         persistedSha256 = committed.sha256;
-        if (result.encode() != fetched.result.encode()) {
-          throw const FormatException('result_conflict');
+      } else {
+        setPhase('lan-fetch');
+        final fetched = await _lanApi.fetchResult(
+          credential.endpoint,
+          credential,
+        );
+        lanAckHash = fetched.resultHash;
+        if (committed == null) {
+          result = fetched.result;
+          persistedSha256 = await _platform.persistRecovered(result);
+        } else {
+          result = committed.result;
+          persistedSha256 = committed.sha256;
+          if (result.encode() != fetched.result.encode()) {
+            throw const FormatException('result_conflict');
+          }
         }
       }
     } else {
       throw const FormatException('invalid_source');
     }
 
+    setPhase('validate');
     if (result.matchId != item.matchId ||
         !result.players.any((player) => player.userId == localUserId)) {
       throw const FormatException('result_mismatch');
     }
+    setPhase('import');
     await _store.import(
       GameHistoryRecord(
         authoritative: result,
@@ -158,13 +191,16 @@ final class GameHistoryController extends ChangeNotifier {
       ),
     );
     if (credential != null && lanAckHash != null) {
+      setPhase('acknowledge');
       await _lanApi.acknowledgeResult(
         credential.endpoint,
         credential,
         lanAckHash,
       );
+      setPhase('credential-delete');
       await _credentials.delete(item.matchId);
     }
+    setPhase('complete-pending');
     await _platform.completePending(item.matchId, persistedSha256);
   }
 

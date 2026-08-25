@@ -52,7 +52,7 @@ final class LanEndpoint {
   Uri resolve(String path) =>
       Uri(scheme: 'http', host: host.address, port: port, path: path);
 
-  Uri get webSocketUri => resolve('/v1/ws').replace(scheme: 'ws');
+  Uri get webSocketUri => resolve('/lan/v1/ws').replace(scheme: 'ws');
 
   String get encoded => '${host.address}:$port';
 
@@ -108,6 +108,7 @@ final class LanLaunchReceipt {
     required this.gameId,
     required this.playerId,
     required this.launchTicket,
+    required this.resumeToken,
     required this.expiresAt,
   });
 
@@ -115,11 +116,12 @@ final class LanLaunchReceipt {
   final String gameId;
   final String playerId;
   final String launchTicket;
+  final String resumeToken;
   final DateTime expiresAt;
 
   @override
   String toString() =>
-      'LanLaunchReceipt(matchId: $matchId, ticket: <redacted>)';
+      'LanLaunchReceipt(matchId: $matchId, credentials: <redacted>)';
 }
 
 typedef LanJoinReceipt = LanLaunchReceipt;

@@ -103,8 +103,12 @@ func _ready() -> void:
 		_show_start_failure()
 		return
 	_connect_client_signals()
-	var started: bool = _client.start(config["ws_url"], _match_id, config["launch_ticket"], _state)
+	var started: bool = _client.start(
+		config["ws_url"], _match_id, config["launch_ticket"], _state,
+		config.get("resume_token", ""),
+	)
 	config["launch_ticket"] = ""
+	config["resume_token"] = ""
 	_launch_config.clear()
 	if not started:
 		_show_start_failure()
@@ -213,12 +217,23 @@ func _on_authoritative_result_received(result: Dictionary) -> void:
 	if _result_persisted:
 		return
 	var persisted := false
-	if Engine.has_singleton("GameboxResultBridge"):
+	var has_singleton := Engine.has_singleton("GameboxResultBridge")
+	var advertised_method := false
+	if has_singleton:
 		var bridge: Variant = Engine.get_singleton("GameboxResultBridge")
-		if bridge != null and bridge.has_method("persistAuthoritativeResult"):
-			persisted = bridge.persistAuthoritativeResult(JSON.stringify(result, "", true, true))
+		advertised_method = bridge != null and bridge.has_method("persistAuthoritativeResult")
+		if bridge != null:
+			var response: Variant = bridge.call(
+				"persistAuthoritativeResult", JSON.stringify(result, "", true, true)
+			)
+			persisted = response == "persisted"
+	print("GAMEBOX_RESULT_BRIDGE singleton=%s advertised=%s persisted=%s" % [
+		has_singleton, advertised_method, persisted,
+	])
 	_result_persisted = persisted
-	if not persisted:
+	if persisted and _error_text == "战绩保存待重试":
+		_error_text = ""
+	elif not persisted:
 		_error_text = "战绩保存待重试"
 	_refresh_ui()
 
@@ -322,15 +337,23 @@ func _resolve_launch_config() -> Dictionary:
 
 
 func _validated_config(config: Dictionary) -> Dictionary:
-	if config.size() != 4:
+	if config.size() not in [4, 5]:
 		return {"ok": false}
 	for key in config:
-		if key not in ["game_id", "match_id", "launch_ticket", "ws_url"] or not config[key] is String:
+		if key not in ["game_id", "match_id", "launch_ticket", "ws_url", "resume_token"] or not config[key] is String:
 			return {"ok": false}
-	return LaunchConfig.parse(PackedStringArray([
+	var parsed := LaunchConfig.parse(PackedStringArray([
 		"--game-id", config["game_id"], "--match-id", config["match_id"],
 		"--launch-ticket", config["launch_ticket"], "--ws-url", config["ws_url"],
 	]))
+	if not parsed.get("ok", false):
+		return parsed
+	var resume_token: String = config.get("resume_token", "")
+	if resume_token.length() > 256 or resume_token.to_utf8_buffer().size() > 256:
+		return {"ok": false}
+	if not resume_token.is_empty():
+		parsed["config"]["resume_token"] = resume_token
+	return parsed
 
 
 func _connect_client_signals() -> void:
@@ -439,10 +462,14 @@ func _log_safe_state(has_state: bool) -> void:
 		return
 	var revision: int = _state.revision if has_state else -1
 	var status: String = _state.status if has_state else "loading"
-	var signature := "%d|%s|%s" % [revision, status, _connection_state]
+	var local_user_id: String = _client.local_user_id if _client != null else ""
+	var local_color := _local_color(local_user_id) if has_state else "none"
+	if local_color.is_empty():
+		local_color = "none"
+	var signature := "%d|%s|%s|%s" % [revision, status, _connection_state, local_color]
 	if signature != _last_log_signature:
 		_last_log_signature = signature
-		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s" % [_match_id, revision, status, _connection_state])
+		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s color=%s" % [_match_id, revision, status, _connection_state, local_color])
 	if has_state and status in TERMINAL_STATUSES:
 		var result: String = str(_state.result) if _state.result in ["five", "resignation", "draw"] else status
 		var terminal_signature := "%d|%s" % [revision, result]

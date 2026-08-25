@@ -124,7 +124,10 @@ final class _LanJoinPageState extends State<LanJoinPage> {
             ),
             if (state case LanRoomFailure(:final code)) ...[
               const SizedBox(height: 16),
-              Text(lanMessage(code), key: const Key('lan-join-error')),
+              Semantics(
+                identifier: 'lan-join-error-$code',
+                child: Text(lanMessage(code), key: const Key('lan-join-error')),
+              ),
             ],
           ],
         ),

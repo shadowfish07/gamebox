@@ -235,6 +235,7 @@ class LocalPolicyWebSocketServer:
 static func cases() -> Array:
 	return [
 		{"name": "match client connects with launch then resumes in memory", "run": _connects_and_resumes},
+		{"name": "match client sends paired LAN credentials only on initial connect", "run": _connects_lan_with_paired_credentials},
 		{"name": "match client retries with bounded deterministic backoff", "run": _bounds_retries},
 		{"name": "match client watchdog bounds every incomplete handshake phase", "run": _bounds_incomplete_handshakes},
 		{"name": "match client inbound watchdog resets only on valid messages", "run": _bounds_half_open_connections},
@@ -288,6 +289,28 @@ static func _connects_and_resumes() -> bool:
 	var resumed := _last_sent(transport)
 	return _check(resumed.get("payload") == {"resumeToken": "resume-secret"}, "reconnect did not use resume token only") \
 		and _check(not JSON.stringify(resumed).contains("launch-secret"), "launch ticket leaked into resume handshake")
+
+
+static func _connects_lan_with_paired_credentials() -> bool:
+	var fixture := _fixture()
+	if not _check(
+		fixture.client.start(
+			"ws://10.0.2.2:8080/lan/v1/ws", MATCH_ID, "launch-secret", fixture.state,
+			"candidate-resume-secret",
+		),
+		"LAN client did not start",
+	):
+		return false
+	fixture.transport.open()
+	fixture.client.poll()
+	var connect := _last_sent(fixture.transport)
+	return _check(
+		connect.get("payload") == {
+			"launchTicket": "launch-secret",
+			"resumeToken": "candidate-resume-secret",
+		},
+		"initial LAN connect did not pair launch and resume credentials",
+	)
 
 
 static func _bounds_retries() -> bool:

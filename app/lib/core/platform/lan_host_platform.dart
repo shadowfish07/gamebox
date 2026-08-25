@@ -40,19 +40,24 @@ final class LanHostLaunch {
   const LanHostLaunch({
     required this.matchId,
     required this.gameId,
+    required this.playerId,
     required this.launchTicket,
+    required this.resumeToken,
     required this.wsUrl,
     required this.expiresAt,
   });
 
   final String matchId;
   final String gameId;
+  final String playerId;
   final String launchTicket;
+  final String resumeToken;
   final String wsUrl;
   final DateTime expiresAt;
 
   @override
-  String toString() => 'LanHostLaunch(matchId: $matchId, ticket: <redacted>)';
+  String toString() =>
+      'LanHostLaunch(matchId: $matchId, credentials: <redacted>)';
 }
 
 abstract interface class LanHostPlatform {

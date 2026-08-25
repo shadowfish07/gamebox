@@ -151,7 +151,9 @@ class LanHostChannelTest {
         "schemaVersion" to 1,
         "matchId" to "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         "gameId" to "gomoku",
+        "playerId" to "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         "launchTicket" to "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "resumeToken" to "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA",
         "wsUrl" to "ws://127.0.0.1:50000/lan/v1/ws",
         "expiresAt" to 60_000L,
     )

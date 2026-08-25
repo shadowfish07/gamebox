@@ -43,6 +43,8 @@ class GameResultStoreTest {
                 "launchTicket" to "ticket",
                 "wsUrl" to "ws://192.168.1.2:49152/v1/ws",
                 "source" to "lan",
+                "resumeToken" to "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA",
+                "localUserId" to "22222222-2222-4222-8222-222222222222",
             ),
         ) as GameLaunchArgs.ParseResult.Success
 
@@ -50,10 +52,24 @@ class GameResultStoreTest {
         assertTrue(committed.persist(VALID))
         assertEquals(listOf(root.name, "pending", root.name, "committed"), syncs)
         assertTrue(pending.list().single().matchId == MATCH_ID)
+        assertEquals("22222222-2222-4222-8222-222222222222", pending.list().single().localUserId)
         assertFalse(pending.remove("../escape"))
         assertTrue(committed.get(MATCH_ID)?.sha256?.matches(Regex("^[0-9a-f]{64}$")) == true)
         assertTrue(pending.remove(MATCH_ID))
         assertEquals(listOf(root.name, "pending", root.name, "committed", "pending"), syncs)
+    }
+
+    @Test
+    fun `pending store reads legacy version one markers without a local identity`() {
+        val directory = Files.createTempDirectory("pending-results-v1").toFile()
+        directory.resolve("$MATCH_ID.json").writeText(
+            """{"schemaVersion":1,"matchId":"$MATCH_ID","gameId":"gomoku","source":"lan","endpointKind":"lan"}""",
+        )
+
+        val item = PendingGameResultStore(directory).list().single()
+
+        assertEquals(MATCH_ID, item.matchId)
+        assertEquals(null, item.localUserId)
     }
 
     private companion object {

@@ -25,6 +25,7 @@ EMULATOR_PID_B=""
 FORWARDED_PORT=""
 ROOM_ID=""
 SENSITIVE_UI=0
+WARNING_COUNT=0
 
 # shellcheck source=tool/lib/android_lease.sh
 # shellcheck disable=SC1091
@@ -40,6 +41,43 @@ while (($#)); do
 done
 
 log() { ((VERBOSE == 1)) && printf '[lan-e2e] %s\n' "$*" || true; }
+sanitize_log() {
+  sed -E \
+    -e 's/(roomKey|launchTicket|resumeToken|accessToken|refreshToken)([=:])[[:space:]]*[^[:space:],}"&]+/\1\2[REDACTED]/g' \
+    -e 's/[A-Za-z0-9_-]{43}/[REDACTED_CREDENTIAL]/g'
+}
+capture_phase() {
+  local log_file="$1"
+  shift
+  local status warning_count
+  set +e
+  if ((VERBOSE == 1)); then
+    "$@" 2>&1 | tee "$log_file"
+    status=${PIPESTATUS[0]}
+  else
+    "$@" >"$log_file" 2>&1
+    status=$?
+  fi
+  set -e
+  warning_count="$(grep -Eic '(^|[[:space:]])(warning:|warning |warnings:|w: )' "$log_file" 2>/dev/null || true)"
+  WARNING_COUNT=$((WARNING_COUNT + ${warning_count:-0}))
+  return "$status"
+}
+print_phase_failure() {
+  local phase="$1" log_file="$2"
+  printf 'Failed phase: %s\n' "$phase" >&2
+  tail -200 "$log_file" | sanitize_log >&2
+}
+run_required_phase() {
+  local phase="$1" log_file="$2"
+  shift 2
+  local status
+  if capture_phase "$log_file" "$@"; then return 0; else status=$?; fi
+  mkdir -p "$ARTIFACT_DIR"
+  cp "$log_file" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true
+  print_phase_failure "$phase" "$log_file"
+  fail "$phase failed" "$status"
+}
 fail() {
   local message="$1"
   local exit_code="${2:-1}"
@@ -75,8 +113,11 @@ fail() {
     [[ "$label" == A ]] && serial="$SERIAL_A" || serial="$SERIAL_B"
     [[ -n "$serial" ]] || continue
     adb_for "$serial" logcat -d -v brief 2>/dev/null \
-      | grep -E 'GAMEBOX_(GODOT_STATE|GODOT_READY|MATCH_RESULT)|AndroidRuntime.*FATAL EXCEPTION' \
+      | grep -E 'GAMEBOX_(GODOT_STATE|GODOT_READY|MATCH_RESULT|HISTORY_RECOVERY|RESULT_PERSIST|RESULT_BRIDGE)|AndroidRuntime.*FATAL EXCEPTION' \
       | tail -300 >"$ARTIFACT_DIR/failure-$label-runtime.log" || true
+    if declare -F dump_safe_ui_ids >/dev/null 2>&1; then
+      dump_safe_ui_ids "$serial" "$ARTIFACT_DIR/failure-$label-ui-ids.txt" || true
+    fi
   done
   printf 'Gamebox LAN E2E failed: %s\nArtifacts: %s\n' "$message" "$ARTIFACT_DIR" >&2
   exit "$exit_code"
@@ -91,8 +132,16 @@ adb_for() { "$ADB_BIN" -s "$1" "${@:2}"; }
 run_instrumentation() {
   local serial="$1" log_file="$2" runner="$3"
   shift 3
-  adb_for "$serial" shell am instrument -w -r "$@" "$runner" >"$log_file" 2>&1 \
-    && grep -F 'OK (1 test)' "$log_file" >/dev/null \
+  local raw_log status
+  raw_log="$TEMP_DIR/raw-$(basename "$log_file")"
+  set +e
+  adb_for "$serial" shell am instrument -w -r "$@" "$runner" >"$raw_log" 2>&1
+  status=$?
+  set -e
+  cp "$raw_log" "$log_file"
+  cat "$log_file"
+  ((status == 0)) || return "$status"
+  grep -F 'OK (1 test)' "$log_file" >/dev/null \
     && ! grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' "$log_file" >/dev/null
 }
 
@@ -130,6 +179,50 @@ scan_artifacts() {
   fi
 }
 
+extract_json_stream() {
+  local maximum_bytes="$1" output="$2"
+  ruby -e '
+    maximum = Integer(ARGV[0], 10)
+    output = ARGV[1]
+    data = STDIN.read
+    exit 2 if data.bytesize > maximum + 65_536
+    index = 0
+    index += 1 while index < data.bytesize && [9, 10, 13, 32].include?(data.getbyte(index))
+    exit 2 unless data.getbyte(index) == 123
+    start = index
+    depth = 0
+    in_string = false
+    escaped = false
+    finish = nil
+    while index < data.bytesize
+      byte = data.getbyte(index)
+      if in_string
+        if escaped
+          escaped = false
+        elsif byte == 92
+          escaped = true
+        elsif byte == 34
+          in_string = false
+        end
+      elsif byte == 34
+        in_string = true
+      elsif byte == 123 || byte == 91
+        depth += 1
+      elsif byte == 125 || byte == 93
+        depth -= 1
+        exit 2 if depth < 0
+        if depth == 0
+          finish = index + 1
+          break
+        end
+      end
+      index += 1
+    end
+    exit 2 if finish.nil? || in_string || finish - start > maximum
+    File.binwrite(output, data.byteslice(start, finish - start))
+  ' "$maximum_bytes" "$output"
+}
+
 bounded_wait_pid() {
   local pid="$1" deadline=$((SECONDS + $2))
   while kill -0 "$pid" 2>/dev/null; do
@@ -154,6 +247,10 @@ run_self_test() {
   scan_artifacts "$safe"
   printf 'resumeToken=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' >"$unsafe/log.txt"
   if scan_artifacts "$unsafe"; then return 1; fi
+  printf ' {"value":"escaped \\" brace }","nested":[1,{"ok":true}]}transport-noise' \
+    | extract_json_stream 128 "$TEMP_DIR/extracted.json"
+  jq -e '.nested[1].ok == true' "$TEMP_DIR/extracted.json" >/dev/null
+  if printf '{"truncated":' | extract_json_stream 128 "$TEMP_DIR/truncated.json"; then return 1; fi
   local child_marker="$TEMP_DIR/child-stopped" child_ready="$TEMP_DIR/child-ready"
   (trap 'printf stopped >"$child_marker"; exit 143' TERM; printf ready >"$child_ready"; while :; do sleep 1; done) &
   local child=$!
@@ -171,7 +268,28 @@ run_self_test() {
   kill "$timeout_child" >/dev/null 2>&1 || true
   wait "$timeout_child" 2>/dev/null || true
   [[ "$timeout_code" == 124 ]]
-  printf 'Gamebox LAN E2E self-test passed (serials, forwarding, timeout, cleanup, redaction).\n'
+  local phase_log="$TEMP_DIR/self-test-phase.log" phase_output="$TEMP_DIR/self-test-output.log"
+  WARNING_COUNT=0
+  VERBOSE=0
+  capture_phase "$phase_log" bash -c 'printf "warning: outer\\nw: nested\\n"'
+  [[ "$WARNING_COUNT" == 2 ]]
+  capture_phase "$phase_log" bash -c 'printf compact-output'
+  [[ "$(cat "$phase_log")" == compact-output ]]
+  VERBOSE=1
+  capture_phase "$phase_log" bash -c 'printf verbose-output' >"$phase_output"
+  grep -F verbose-output "$phase_output" >/dev/null
+  VERBOSE=0
+  local preserved_status
+  if capture_phase "$phase_log" bash -c 'printf diagnostic-output; exit 37'; then
+    preserved_status=0
+  else
+    preserved_status=$?
+  fi
+  [[ "$preserved_status" == 37 ]]
+  print_phase_failure self-test "$phase_log" 2>"$phase_output"
+  grep -F 'Failed phase: self-test' "$phase_output" >/dev/null
+  grep -F diagnostic-output "$phase_output" >/dev/null
+  printf 'Gamebox LAN E2E self-test passed (compact, diagnostics, warnings, verbose, exit status, serials, forwarding, timeout, cleanup, redaction).\n'
 }
 
 if ((SELF_TEST == 1)); then
@@ -217,10 +335,14 @@ validate_serial_pair "$SERIAL_A" "$SERIAL_B" || fail 'invalid or duplicate devic
 [[ "$(adb_for "$SERIAL_A" get-state)" == device && "$(adb_for "$SERIAL_B" get-state)" == device ]] || fail 'selected devices are unavailable'
 
 log 'building one arm64 debug APK and instrumentation APK'
-(cd "$ROOT_DIR/app/android" && ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a ./gradlew :app:assembleDebugAndroidTest) >"$TEMP_DIR/build-test.log" 2>&1 \
-  || { cp "$TEMP_DIR/build-test.log" "$ARTIFACT_DIR/failed-phase.log"; fail 'androidTest build failed'; }
-(cd "$ROOT_DIR/app" && ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a flutter build apk --debug --target-platform=android-arm64 --dart-define=GAMEBOX_SCREENSHOT_PRIVACY=true) >"$TEMP_DIR/build-app.log" 2>&1 \
-  || { cp "$TEMP_DIR/build-app.log" "$ARTIFACT_DIR/failed-phase.log"; fail 'debug APK build failed'; }
+build_android_test() {
+  (cd "$ROOT_DIR/app/android" && ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a ./gradlew :app:assembleDebugAndroidTest)
+}
+build_debug_app() {
+  (cd "$ROOT_DIR/app" && ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a flutter build apk --debug --target-platform=android-arm64 --dart-define=GAMEBOX_SCREENSHOT_PRIVACY=true)
+}
+run_required_phase androidTest-build "$TEMP_DIR/build-test.log" build_android_test
+run_required_phase debug-APK-build "$TEMP_DIR/build-app.log" build_debug_app
 readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
 readonly TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 [[ -f "$APK" && -f "$TEST_APK" ]] || fail 'built APKs are missing'
@@ -233,16 +355,48 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
   adb_for "$serial" logcat -c
 done
 
-run_instrumentation "$SERIAL_A" "$TEMP_DIR/result-bridge.log" \
+run_required_phase device-result-durability "$TEMP_DIR/result-bridge.log" run_instrumentation "$SERIAL_A" "$TEMP_DIR/result-bridge-instrumentation.log" \
   "$APP_TEST_RUNNER" \
-  -e class me.zqydev.gamebox.GameResultBridgeTest \
-  || { cp "$TEMP_DIR/result-bridge.log" "$ARTIFACT_DIR/failed-phase.log"; fail 'device result durability test failed'; }
+  -e class me.zqydev.gamebox.GameResultBridgeTest
 adb_for "$SERIAL_A" shell pm clear "$PACKAGE" >/dev/null || fail "post-test app reset failed on $SERIAL_A"
 
 dump_ui() {
   local serial="$1" output="$2" remote=/data/local/tmp/gamebox-lan-ui.xml
   adb_for "$serial" shell uiautomator dump "$remote" >/dev/null 2>&1 || return 1
   adb_for "$serial" exec-out cat "$remote" >"$output"
+}
+
+dump_safe_ui_ids() {
+  local serial="$1" output="$2" xml="$TEMP_DIR/safe-ui-${1//[^A-Za-z0-9]/_}.xml"
+  dump_ui "$serial" "$xml" || return 1
+  ruby -rrexml/document -e '
+    doc=REXML::Document.new(File.binread(ARGV[0]))
+    REXML::XPath.each(doc,"//node") do |node|
+      id=node.attributes["resource-id"].to_s
+      next if id.empty?
+      enabled=node.attributes["enabled"].to_s
+      visible=node.attributes["visible-to-user"].to_s
+      bounds=node.attributes["bounds"].to_s
+      puts "id=#{id} enabled=#{enabled} visible=#{visible} bounds=#{bounds}"
+    end
+  ' "$xml" >"$output"
+}
+
+read_private_file() {
+  local serial="$1" relative_path="$2" output="$3" maximum_bytes="$4"
+  adb_for "$serial" exec-out run-as "$PACKAGE" cat "$relative_path" 2>/dev/null \
+    | extract_json_stream "$maximum_bytes" "$output"
+}
+
+wait_forward_listener() {
+  local port="$1" deadline=$((SECONDS + 20)) status
+  while ((SECONDS < deadline)); do
+    status="$(curl --max-time 2 --silent --output /dev/null --write-out '%{http_code}' \
+      "http://127.0.0.1:$port/" 2>/dev/null || true)"
+    [[ "$status" == 404 ]] && return 0
+    sleep 1
+  done
+  return 1
 }
 
 node_center() {
@@ -264,6 +418,30 @@ wait_id() {
     sleep 1
   done
   return 1
+}
+
+has_id() {
+  local serial="$1" id="$2" xml="$TEMP_DIR/has-${1//[^A-Za-z0-9]/_}.xml"
+  dump_ui "$serial" "$xml" && node_center "$xml" "$id" >/dev/null 2>&1
+}
+
+dismiss_one_wait_dialog() {
+  local serial="$1" xml="$TEMP_DIR/wait-dialog-${1//[^A-Za-z0-9]/_}.xml" point x y
+  dump_ui "$serial" "$xml" || return 1
+  point="$(node_center "$xml" android:id/aerr_wait 2>/dev/null)" || return 1
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+  sleep 3
+}
+
+return_to_home() {
+  local serial="$1" attempt
+  for attempt in 1 2 3; do
+    has_id "$serial" open-game-history && return 0
+    adb_for "$serial" shell input keyevent BACK >/dev/null || return 1
+    sleep 1
+  done
+  has_id "$serial" open-game-history
 }
 
 reveal_id() {
@@ -301,13 +479,16 @@ set_nickname() {
   local serial="$1" nickname="$2"
   local name="gamebox-e2e-input-$RUN_ID-${serial//[^A-Za-z0-9]/}"
   adb_for "$serial" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
-  wait_id "$serial" local-nickname >/dev/null || fail "nickname field missing on $serial"
+  if ! wait_id "$serial" local-nickname >/dev/null; then
+    dismiss_one_wait_dialog "$serial" || fail "nickname field missing on $serial"
+    adb_for "$serial" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
+    wait_id "$serial" local-nickname >/dev/null || fail "nickname field missing after one system wait recovery on $serial"
+  fi
   printf '%s' "$nickname" | stage_test_input "$serial" "$name"
-  run_instrumentation "$serial" "$TEMP_DIR/nickname-${serial}.log" \
+  run_required_phase "nickname-injection-$serial" "$TEMP_DIR/nickname-${serial}.log" run_instrumentation "$serial" "$TEMP_DIR/nickname-${serial}-instrumentation.log" \
     "$HELPER_TEST_RUNNER" \
     -e class 'me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue' \
-    -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name" \
-    || { cp "$TEMP_DIR/nickname-${serial}.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail "nickname injection failed on $serial"; }
+    -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name"
   tap_id "$serial" save-nickname
   wait_id "$serial" open-game-history >/dev/null || fail "home did not load on $serial"
   reveal_id "$serial" open-lan-mode >/dev/null || fail "LAN action could not be revealed on $serial"
@@ -322,11 +503,14 @@ SENSITIVE_UI=1
 wait_id "$SERIAL_A" credential-qr-sensitive >/dev/null || fail 'host QR state was not reached'
 adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/host-waiting-masked.png"
 
-run_instrumentation "$SERIAL_A" "$TEMP_DIR/host-export.log" \
+run_required_phase host-private-handoff "$TEMP_DIR/host-export.log" run_instrumentation "$SERIAL_A" "$TEMP_DIR/host-export-instrumentation.log" \
   "$APP_TEST_RUNNER" \
-  -e class me.zqydev.gamebox.LanE2eHostExportTest \
-  || { cp "$TEMP_DIR/host-export.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail 'host private handoff export failed'; }
-adb_for "$SERIAL_A" exec-out run-as "$PACKAGE" cat files/lan-e2e-handoff.json >"$TEMP_DIR/handoff.json" \
+  -e class me.zqydev.gamebox.LanE2eHostExportTest
+# App-target instrumentation stops the existing app process. Restore the real
+# Flutter/foreground-service process before exposing its listener to the guest.
+adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
+wait_id "$SERIAL_A" continue-lan-room >/dev/null || fail 'host recovery action did not return after private export'
+read_private_file "$SERIAL_A" files/lan-e2e-handoff.json "$TEMP_DIR/handoff.json" 8192 \
   || fail 'host private handoff could not be read'
 adb_for "$SERIAL_A" shell run-as "$PACKAGE" rm files/lan-e2e-handoff.json >/dev/null 2>&1 || true
 if ! jq -er '
@@ -343,6 +527,7 @@ IFS=$'\t' read -r ROOM_ID DEVICE_PORT ROOM_KEY JOIN_EXPIRY <"$TEMP_DIR/handoff-f
   || fail 'host private handoff fields could not be decoded'
 FORWARDED_PORT="$(adb_for "$SERIAL_A" forward tcp:0 "tcp:$DEVICE_PORT")"
 FORWARDED_PORT="$(parse_forward_port "$FORWARDED_PORT")" || fail 'adb forward did not return a safe port'
+wait_forward_listener "$FORWARDED_PORT" || fail 'recovered host listener was unavailable through adb forwarding'
 JOIN_QR="$(ruby -ruri -e 'puts "gamebox-lan://join?"+URI.encode_www_form(v:"1",room:ARGV[0],host:"10.0.2.2",port:ARGV[1],key:ARGV[2],exp:ARGV[3])' "$ROOM_ID" "$FORWARDED_PORT" "$ROOM_KEY" "$JOIN_EXPIRY")"
 RESUME_QR="$(ruby -ruri -e 'puts "gamebox-lan://resume?"+URI.encode_www_form(v:"1",room:ARGV[0],host:"10.0.2.2",port:ARGV[1])' "$ROOM_ID" "$FORWARDED_PORT")"
 
@@ -350,14 +535,10 @@ tap_id "$SERIAL_B" open-lan-mode
 tap_id "$SERIAL_B" join-lan-room
 LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID"
 printf '%s' "$JOIN_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
-run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-input.log" \
+run_required_phase guest-private-LAN-input "$TEMP_DIR/lan-input.log" run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-input-instrumentation.log" \
   "$HELPER_TEST_RUNNER" \
-  -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
-  || { cp "$TEMP_DIR/lan-input.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail 'guest private LAN input failed'; }
+  -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME"
 tap_id "$SERIAL_B" submit-lan-manual-input
-
-adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
-tap_id "$SERIAL_A" continue-lan-room
 wait_log_revision() {
   local serial="$1" revision="$2" deadline=$((SECONDS + 35))
   while ((SECONDS < deadline)); do
@@ -366,27 +547,27 @@ wait_log_revision() {
   done
   return 1
 }
-wait_log_revision "$SERIAL_A" 0 || fail 'host Godot did not reach revision 0'
 wait_log_revision "$SERIAL_B" 0 || fail 'guest Godot did not reach revision 0'
+tap_id "$SERIAL_A" continue-lan-room
+wait_log_revision "$SERIAL_A" 0 || fail 'host Godot did not reach revision 0'
 adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/joined-host.png"
 adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/joined-guest.png"
 
-is_black() { adb_for "$1" shell uiautomator dump /data/local/tmp/color.xml >/dev/null 2>&1 && adb_for "$1" exec-out cat /data/local/tmp/color.xml | grep -q '你执黑'; }
+is_black() {
+  adb_for "$1" logcat -d -v brief \
+    | grep -E "GAMEBOX_GODOT_STATE match=$ROOM_ID revision=0 .* color=black$" >/dev/null
+}
 if is_black "$SERIAL_A"; then BLACK_SERIAL="$SERIAL_A"; WHITE_SERIAL="$SERIAL_B"; else BLACK_SERIAL="$SERIAL_B"; WHITE_SERIAL="$SERIAL_A"; fi
 
 tap_cell() {
-  local serial="$1" x="$2" y="$3" size width height scale_num scale_den offset_x offset_y px py
+  local serial="$1" x="$2" y="$3" size width height px py
   size="$(adb_for "$serial" shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1)"
   read -r width height <<<"$size"
-  if ((width * 1920 <= height * 1080)); then
-    scale_num=$width; scale_den=1080
-  else
-    scale_num=$height; scale_den=1920
-  fi
-  offset_x=$(( (width - 1080 * scale_num / scale_den) / 2 ))
-  offset_y=$(( (height - 1920 * scale_num / scale_den) / 2 ))
-  px=$(( offset_x + (96 + x * 888 / 14) * scale_num / scale_den ))
-  py=$(( offset_y + (396 + y * 888 / 14) * scale_num / scale_den ))
+  read -r px py <<<"$(ruby -e '
+    width, height, x, y = ARGV.map(&:to_f)
+    scale = [width / 1080.0, height / 1920.0].min
+    puts "#{((96.0 + x * 888.0 / 14.0) * scale).round} #{((396.0 + y * 888.0 / 14.0) * scale).round}"
+  ' "$width" "$height" "$x" "$y")"
   adb_for "$serial" shell input tap "$px" "$py" >/dev/null
 }
 
@@ -396,76 +577,131 @@ for x in 0 1 2 3 4; do
   if ! wait_log_revision "$SERIAL_A" "$revision" || ! wait_log_revision "$SERIAL_B" "$revision"; then
     fail "revision $revision did not converge"
   fi
-  if ((revision == 2)); then
-    adb_for "$SERIAL_B" shell am force-stop "$PACKAGE"
-    adb_for "$SERIAL_B" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
-    tap_id "$SERIAL_B" open-lan-mode; tap_id "$SERIAL_B" join-lan-room
-    LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID-resume"
-    printf '%s' "$RESUME_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
-    run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-resume.log" \
-      "$HELPER_TEST_RUNNER" \
-      -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
-      || { cp "$TEMP_DIR/lan-resume.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail 'guest resume input failed'; }
-    tap_id "$SERIAL_B" submit-lan-manual-input
-    wait_log_revision "$SERIAL_B" "$revision" || fail 'guest resume snapshot did not converge'
-    adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/recovered-guest.png"
-  elif ((revision == 4)); then
-    adb_for "$SERIAL_A" shell input keyevent BACK
-    tap_id "$SERIAL_A" continue-lan-room
-    wait_log_revision "$SERIAL_A" "$revision" || fail 'host Godot relaunch did not converge'
-  elif ((revision == 6)); then
-    adb_for "$SERIAL_A" shell am force-stop "$PACKAGE"
-    adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
-    tap_id "$SERIAL_A" continue-lan-room
-    wait_log_revision "$SERIAL_A" "$revision" || fail 'host force-stop recovery did not converge'
-    adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/recovered-host.png"
-  fi
   if ((x < 4)); then
     tap_cell "$WHITE_SERIAL" "$x" 1; revision=$((revision+1))
     if ! wait_log_revision "$SERIAL_A" "$revision" || ! wait_log_revision "$SERIAL_B" "$revision"; then
       fail "revision $revision did not converge"
     fi
+    if ((revision == 2)); then
+      adb_for "$SERIAL_B" shell am force-stop "$PACKAGE"
+      adb_for "$SERIAL_B" logcat -c
+      adb_for "$SERIAL_B" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
+      reveal_id "$SERIAL_B" open-lan-mode >/dev/null || fail 'guest recovery LAN action could not be revealed'
+      tap_id "$SERIAL_B" open-lan-mode; tap_id "$SERIAL_B" join-lan-room
+      LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID-resume"
+      printf '%s' "$RESUME_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
+      run_required_phase guest-resume-input "$TEMP_DIR/lan-resume.log" run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-resume-instrumentation.log" \
+        "$HELPER_TEST_RUNNER" \
+        -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME"
+      tap_id "$SERIAL_B" submit-lan-manual-input
+      wait_log_revision "$SERIAL_B" "$revision" || fail 'guest resume snapshot did not converge'
+      adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/recovered-guest.png"
+    elif ((revision == 4)); then
+      adb_for "$SERIAL_A" shell input keyevent BACK
+      adb_for "$SERIAL_A" logcat -c
+      tap_id "$SERIAL_A" continue-lan-room
+      wait_log_revision "$SERIAL_A" "$revision" || fail 'host Godot relaunch did not converge'
+    elif ((revision == 6)); then
+      adb_for "$SERIAL_A" shell am force-stop "$PACKAGE"
+      adb_for "$SERIAL_A" logcat -c
+      adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
+      tap_id "$SERIAL_A" continue-lan-room
+      wait_log_revision "$SERIAL_A" "$revision" || fail 'host force-stop recovery did not converge'
+      adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/recovered-host.png"
+    fi
   fi
 done
 [[ "$revision" == 9 ]] || fail 'deterministic terminal revision changed'
-adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/terminal-host.png"
-adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/terminal-guest.png"
 
 wait_result_file() {
   local serial="$1" output="$2" deadline=$((SECONDS + 30))
   while ((SECONDS < deadline)); do
-    if adb_for "$serial" exec-out run-as "$PACKAGE" cat "files/game_results/$ROOM_ID.json" >"$output" 2>/dev/null && [[ -s "$output" ]]; then return 0; fi
+    if read_private_file "$serial" "files/game_results/$ROOM_ID.json" "$output" 524288; then return 0; fi
     sleep 1
   done
   return 1
 }
-wait_result_file "$SERIAL_A" "$TEMP_DIR/result-a.json" || fail 'host durable result is missing'
-wait_result_file "$SERIAL_B" "$TEMP_DIR/result-b.json" || fail 'guest durable result is missing'
+preserve_rejected_result() {
+  local serial="$1" label="$2" raw
+  raw="$TEMP_DIR/rejected-$label.raw"
+  adb_for "$serial" exec-out run-as "$PACKAGE" cat cache/gamebox-rejected-result.json >"$raw" 2>/dev/null || return 0
+  extract_json_stream 524288 "$ARTIFACT_DIR/rejected-result-$label.json" <"$raw" || true
+}
+if ! wait_result_file "$SERIAL_A" "$TEMP_DIR/result-a.json"; then
+  preserve_rejected_result "$SERIAL_A" A
+  fail 'host durable result is missing'
+fi
+if ! wait_result_file "$SERIAL_B" "$TEMP_DIR/result-b.json"; then
+  preserve_rejected_result "$SERIAL_B" B
+  fail 'guest durable result is missing'
+fi
+sleep 1
+adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/terminal-host.png"
+adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/terminal-guest.png"
 HASH_A="$(shasum -a 256 "$TEMP_DIR/result-a.json" | awk '{print $1}')"
 HASH_B="$(shasum -a 256 "$TEMP_DIR/result-b.json" | awk '{print $1}')"
 [[ "$HASH_A" == "$HASH_B" ]] || fail 'authoritative result hashes differ'
 
+capture_result_metadata() {
+  local serial="$1" label="$2" result_file="$3" pending_file
+  pending_file="$TEMP_DIR/pending-$label.json"
+  read_private_file "$serial" "files/pending_game_results/$ROOM_ID.json" "$pending_file" 8192 \
+    || fail "pending result metadata is missing on $serial"
+  cp "$pending_file" "$ARTIFACT_DIR/diagnostic-pending-$label.json"
+  cp "$result_file" "$ARTIFACT_DIR/diagnostic-result-$label.json"
+  jq -se --arg resultSha256 "$HASH_A" '
+    .[0] as $pending | .[1] as $result
+    | select($pending | type == "object" and .schemaVersion == 2 and .matchId == $result.matchId)
+    | $pending.localUserId as $localUserId
+    | ($result.players | map(.userId)) as $playerIds
+    | select($localUserId != null and ($playerIds | index($localUserId)) != null)
+    | {schemaVersion:$pending.schemaVersion,matchId:$pending.matchId,source:$pending.source,endpointKind:$pending.endpointKind,localUserId:$localUserId,playerIds:$playerIds,resultSha256:$resultSha256}
+  ' "$pending_file" "$result_file" >"$ARTIFACT_DIR/result-metadata-$label.json" \
+    || fail "pending local identity did not match the authoritative result on $serial"
+  rm "$ARTIFACT_DIR/diagnostic-pending-$label.json" "$ARTIFACT_DIR/diagnostic-result-$label.json"
+}
+capture_result_metadata "$SERIAL_A" A "$TEMP_DIR/result-a.json"
+capture_result_metadata "$SERIAL_B" B "$TEMP_DIR/result-b.json"
+
+wait_id_gone() {
+  local serial="$1" id="$2" deadline=$((SECONDS + 30))
+  while ((SECONDS < deadline)); do
+    has_id "$serial" "$id" || return 0
+    sleep 1
+  done
+  return 1
+}
+
 for serial in "$SERIAL_A" "$SERIAL_B"; do
-  adb_for "$serial" shell input keyevent BACK
-  wait_id "$serial" open-game-history >/dev/null || fail "home did not return on $serial"
+  return_to_home "$serial" || fail "home did not return on $serial"
   tap_id "$serial" open-game-history
   wait_id "$serial" game-history-list >/dev/null || fail "history page did not load on $serial"
   retry_id="retry-pending-$ROOM_ID"
-  if wait_id "$serial" "$retry_id" >/dev/null 2>&1; then tap_id "$serial" "$retry_id"; fi
+  if has_id "$serial" "$retry_id"; then
+    tap_id "$serial" "$retry_id"
+    wait_id_gone "$serial" "$retry_id" || fail "history recovery did not finish on $serial"
+  fi
   adb_for "$serial" exec-out screencap -p >"$ARTIFACT_DIR/history-${serial//[^A-Za-z0-9]/_}.png"
   xml="$TEMP_DIR/history-${serial//[^A-Za-z0-9]/_}.xml"; dump_ui "$serial" "$xml"
   ! grep -E '公网战绩|局域网战绩|public result|LAN result' "$xml" >/dev/null || fail 'history exposed a source distinction'
 done
 
+for required_artifact in \
+  joined-host.png joined-guest.png recovered-host.png recovered-guest.png \
+  terminal-host.png terminal-guest.png \
+  "history-${SERIAL_A//[^A-Za-z0-9]/_}.png" "history-${SERIAL_B//[^A-Za-z0-9]/_}.png"; do
+  [[ -s "$ARTIFACT_DIR/$required_artifact" ]] || fail "required runtime screenshot is missing: $required_artifact"
+done
+
 for serial in "$SERIAL_A" "$SERIAL_B"; do
   adb_for "$serial" logcat -d -v brief \
-    | grep -E "GAMEBOX_(GODOT_STATE|MATCH_RESULT) match=$ROOM_ID " \
+    | grep -E "GAMEBOX_(GODOT_STATE|MATCH_RESULT|RESULT_PERSIST|RESULT_BRIDGE)( match=$ROOM_ID | )" \
     >"$ARTIFACT_DIR/runtime-${serial//[^A-Za-z0-9]/_}.log" || true
 done
 
 jq -n --arg roomId "$ROOM_ID" --arg apkSha256 "$APK_HASH" --arg resultSha256 "$HASH_A" \
-  --arg serialA "$SERIAL_A" --arg serialB "$SERIAL_B" \
-  '{status:"passed",roomId:$roomId,terminalRevision:9,apkSha256:$apkSha256,resultSha256:$resultSha256,serials:[$serialA,$serialB],hostForceStopRecovered:true,guestResumed:true,historySourceNeutral:true}' \
+  --arg serialA "$SERIAL_A" --arg serialB "$SERIAL_B" --argjson warnings "$WARNING_COUNT" \
+  '{status:"passed",roomId:$roomId,terminalRevision:9,apkSha256:$apkSha256,resultSha256:$resultSha256,serials:[$serialA,$serialB],hostForceStopRecovered:true,guestResumed:true,historySourceNeutral:true,warnings:$warnings}' \
   >"$ARTIFACT_DIR/summary.json"
 scan_artifacts "$ARTIFACT_DIR" || { find "$ARTIFACT_DIR" -depth -delete; fail 'artifact credential scanner rejected retained output'; }
-printf 'Gamebox LAN Android E2E passed: room=%s revision=9 result=%s\nArtifacts: %s\n' "$ROOM_ID" "$HASH_A" "$ARTIFACT_DIR"
+printf 'Gamebox LAN Android E2E passed: room=%s revision=9 result=%s warnings=%s\nArtifacts: %s\n' "$ROOM_ID" "$HASH_A" "$WARNING_COUNT" "$ARTIFACT_DIR"

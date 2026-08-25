@@ -129,6 +129,48 @@ void main() {
     expect(controller.pending, isEmpty);
   });
 
+  test(
+    'LAN host imports its committed result without guest credentials',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'gamebox-history-controller-host-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final result = AuthoritativeGameResult.fromJsonBytes(
+        await File('../protocol/fixtures/game_result.json').readAsBytes(),
+      );
+      final platform = _FakeResultsPlatform(
+        committed: [CommittedGameResult(result: result, sha256: 'a' * 64)],
+        pending: [
+          PendingGameResultRecord(
+            matchId: result.matchId,
+            gameId: result.gameId,
+            source: 'lan',
+            endpointKind: 'lan',
+            localUserId: result.players.last.userId,
+          ),
+        ],
+      );
+      final controller = GameHistoryController(
+        platform: platform,
+        store: GameHistoryStore(directory: () async => directory),
+        lanApi: LanApi(
+          client: MockClient(
+            (_) async => throw StateError('unexpected network'),
+          ),
+        ),
+        credentials: LanCredentialStore(storage: _MemoryLanStorage()),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.refresh();
+
+      expect(controller.pending, isEmpty);
+      expect(controller.results.single.localUserId, result.players.last.userId);
+      expect(controller.errorCode, isNull);
+    },
+  );
+
   test('finishes an in-flight refresh quietly after disposal', () async {
     final directory = await Directory.systemTemp.createTemp(
       'gamebox-history-controller-dispose-',

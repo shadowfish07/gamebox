@@ -30,7 +30,7 @@ final class LanApi {
       throw const LanException('invalid_request');
     }
     final object = await _request(
-      qr.endpoint.resolve('/v1/rooms/${qr.roomId}/join'),
+      qr.endpoint.resolve('/lan/v1/rooms/${qr.roomId}/join'),
       'POST',
       {
         'roomId': qr.roomId,
@@ -40,7 +40,11 @@ final class LanApi {
         'roomKey': qr.roomKey,
       },
     );
-    return _launchReceipt(object, qr.roomId);
+    return _launchReceipt(
+      object,
+      qr.roomId,
+      resumeToken: candidate.candidateResumeToken,
+    );
   }
 
   Future<LanLaunchReceipt> resumeTicket(
@@ -51,7 +55,7 @@ final class LanApi {
       throw const LanException('credential_mismatch');
     }
     final object = await _request(
-      qr.endpoint.resolve('/v1/rooms/${qr.roomId}/resume-ticket'),
+      qr.endpoint.resolve('/lan/v1/rooms/${qr.roomId}/resume-ticket'),
       'POST',
       {
         'roomId': qr.roomId,
@@ -59,7 +63,11 @@ final class LanApi {
         'resumeToken': credential.resumeToken,
       },
     );
-    return _launchReceipt(object, qr.roomId);
+    return _launchReceipt(
+      object,
+      qr.roomId,
+      resumeToken: credential.resumeToken,
+    );
   }
 
   Future<({String resultHash, AuthoritativeGameResult result})> fetchResult(
@@ -67,7 +75,7 @@ final class LanApi {
     LanCredential credential,
   ) async {
     final object = await _request(
-      endpoint.resolve('/v1/rooms/${credential.roomId}/result'),
+      endpoint.resolve('/lan/v1/rooms/${credential.roomId}/result'),
       'GET',
       {'resumeToken': credential.resumeToken},
     );
@@ -112,7 +120,7 @@ final class LanApi {
       throw const LanException('invalid_request');
     }
     final object = await _request(
-      endpoint.resolve('/v1/rooms/${credential.roomId}/result-ack'),
+      endpoint.resolve('/lan/v1/rooms/${credential.roomId}/result-ack'),
       'POST',
       {'resumeToken': credential.resumeToken, 'resultHash': resultHash},
     );
@@ -204,8 +212,9 @@ final class LanApi {
 
   static LanLaunchReceipt _launchReceipt(
     Map<String, Object?> object,
-    String expectedMatchId,
-  ) {
+    String expectedMatchId, {
+    required String resumeToken,
+  }) {
     if (!hasExactJsonKeys(object, const {
           'schemaVersion',
           'matchId',
@@ -221,7 +230,8 @@ final class LanApi {
         object['launchTicket'] is! String ||
         object['expiresAt'] is! int ||
         !isCanonicalLanUuid(object['playerId']! as String) ||
-        !isCanonicalLanCredential(object['launchTicket']! as String)) {
+        !isCanonicalLanCredential(object['launchTicket']! as String) ||
+        !isCanonicalLanCredential(resumeToken)) {
       throw const LanException('invalid_response');
     }
     final expiresAt = DateTime.fromMillisecondsSinceEpoch(
@@ -233,6 +243,7 @@ final class LanApi {
       gameId: 'gomoku',
       playerId: object['playerId']! as String,
       launchTicket: object['launchTicket']! as String,
+      resumeToken: resumeToken,
       expiresAt: expiresAt,
     );
   }

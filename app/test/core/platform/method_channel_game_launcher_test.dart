@@ -42,6 +42,8 @@ void main() {
       'launchTicket': '--opaque-launch-ticket',
       'wsUrl': 'wss://gamebox.example.com/matches/550e8400',
       'source': 'public',
+      'resumeToken': null,
+      'localUserId': null,
     });
     expect((calls.single.arguments as Map<Object?, Object?>).keys, {
       'gameId',
@@ -49,6 +51,8 @@ void main() {
       'launchTicket',
       'wsUrl',
       'source',
+      'resumeToken',
+      'localUserId',
     });
   });
 

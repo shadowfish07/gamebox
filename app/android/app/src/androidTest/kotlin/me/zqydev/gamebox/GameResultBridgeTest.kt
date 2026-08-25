@@ -27,6 +27,8 @@ class GameResultBridgeTest {
                     "launchTicket" to "opaque-ticket",
                     "wsUrl" to "ws://192.168.1.2:49152/v1/ws",
                     "source" to "lan",
+                    "resumeToken" to "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA",
+                    "localUserId" to "22222222-2222-4222-8222-222222222222",
                 ),
             ) as GameLaunchArgs.ParseResult.Success
             val pending = PendingGameResultStore(pendingDirectory)

@@ -13,12 +13,14 @@ final class PendingGameResultRecord {
     required this.gameId,
     required this.source,
     required this.endpointKind,
+    this.localUserId,
   });
 
   final String matchId;
   final String gameId;
   final String source;
   final String endpointKind;
+  final String? localUserId;
 }
 
 abstract interface class GameResultsPlatform {

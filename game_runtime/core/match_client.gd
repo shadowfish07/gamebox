@@ -65,15 +65,23 @@ func _init(
 	)
 
 
-func start(ws_url: String, match_id: String, launch_ticket: String, game_state: Variant) -> bool:
+func start(
+	ws_url: String,
+	match_id: String,
+	launch_ticket: String,
+	game_state: Variant,
+	initial_resume_token: String = "",
+) -> bool:
 	if connection_state != STATE_CLOSED or not _dependencies_configured() \
 		or not _valid_ws_url(ws_url) or not _canonical_uuid(match_id) \
 		or launch_ticket.is_empty() or launch_ticket.length() > 256 or launch_ticket.to_utf8_buffer().size() > 256 \
+		or initial_resume_token.length() > 256 or initial_resume_token.to_utf8_buffer().size() > 256 \
 		or game_state == null:
 		return false
 	_ws_url = ws_url
 	_match_id = match_id
 	_launch_ticket = launch_ticket
+	_resume_token = initial_resume_token
 	_game_state = game_state
 	_failure_count = 0
 	_issued_action_ids.clear()
@@ -220,9 +228,10 @@ func _begin_attempt(initial: bool = false) -> void:
 
 
 func _send_connect() -> bool:
-	var credential_name := "resumeToken" if not _resume_token.is_empty() else "launchTicket"
-	var credential := _resume_token if credential_name == "resumeToken" else _launch_ticket
-	var encoded: Dictionary = Protocol.encode_connect(credential_name, credential)
+	var credential_name := "launchTicket" if not _launch_ticket.is_empty() else "resumeToken"
+	var credential := _launch_ticket if credential_name == "launchTicket" else _resume_token
+	var paired_resume := _resume_token if not _launch_ticket.is_empty() else ""
+	var encoded: Dictionary = Protocol.encode_connect(credential_name, credential, paired_resume)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		return false
 	_connect_sent = true

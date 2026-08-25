@@ -235,6 +235,9 @@ class MainActivity : FlutterActivity() {
         }
         val intent = Intent(this, GameActivity::class.java).apply {
             putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, args.commandLineParams)
+            args.privateResumeToken?.let { resumeToken ->
+                putExtra(PrivateCommandLineArgs.PRIVATE_RESUME_EXTRA, arrayOf(resumeToken))
+            }
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or

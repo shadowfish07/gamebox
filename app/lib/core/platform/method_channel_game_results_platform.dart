@@ -40,17 +40,19 @@ final class MethodChannelGameResultsPlatform implements GameResultsPlatform {
     final values = await _channel.invokeListMethod<Object?>('listPending');
     return (values ?? const <Object?>[])
         .map((raw) {
-          if (raw is! Map<Object?, Object?> || raw.length != 4) {
+          if (raw is! Map<Object?, Object?> || raw.length != 5) {
             throw const FormatException('invalid_pending_result');
           }
           final matchId = raw['matchId'];
           final gameId = raw['gameId'];
           final source = raw['source'];
           final endpointKind = raw['endpointKind'];
+          final localUserId = raw['localUserId'];
           if (matchId is! String ||
               gameId is! String ||
               source is! String ||
-              endpointKind is! String) {
+              endpointKind is! String ||
+              localUserId is! String?) {
             throw const FormatException('invalid_pending_result');
           }
           return PendingGameResultRecord(
@@ -58,6 +60,7 @@ final class MethodChannelGameResultsPlatform implements GameResultsPlatform {
             gameId: gameId,
             source: source,
             endpointKind: endpointKind,
+            localUserId: localUserId,
           );
         })
         .toList(growable: false);

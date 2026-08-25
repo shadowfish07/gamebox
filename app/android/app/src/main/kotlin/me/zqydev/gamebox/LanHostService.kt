@@ -94,7 +94,11 @@ internal class LanHostService : Service(), LanHostCommands {
     @Synchronized
     override fun issueHostLaunch(): Map<String, Any?> {
         checkAvailable()
-        return LanHostResponseCodec.launch(requireCoordinator().issueHostLaunch())
+        val secrets = secretStore.load() ?: throw LanEngineException("internal_error")
+        return LinkedHashMap(LanHostResponseCodec.launch(requireCoordinator().issueHostLaunch())).apply {
+            put("playerId", secrets.hostPlayerId)
+            put("resumeToken", secrets.hostResumeToken)
+        }
     }
 
     @Synchronized

@@ -235,14 +235,24 @@ static func encode_action(
 	return _encode_envelope(envelope)
 
 
-static func encode_connect(credential_name: String, credential: String) -> Dictionary:
+static func encode_connect(
+	credential_name: String,
+	credential: String,
+	paired_resume_token: String = "",
+) -> Dictionary:
 	if credential_name not in ["launchTicket", "resumeToken"] or credential.is_empty() \
 		or credential.length() > 256 or credential.to_utf8_buffer().size() > 256:
 		return _failure("invalid_connect", "Connection credential is invalid")
+	if not paired_resume_token.is_empty() and (credential_name != "launchTicket" \
+		or paired_resume_token.length() > 256 or paired_resume_token.to_utf8_buffer().size() > 256):
+		return _failure("invalid_connect", "Connection credential is invalid")
+	var payload := {credential_name: credential}
+	if not paired_resume_token.is_empty():
+		payload["resumeToken"] = paired_resume_token
 	return _encode_envelope({
 		"protocolVersion": VERSION,
 		"type": TYPE_PLATFORM_CONNECT,
-		"payload": {credential_name: credential},
+		"payload": payload,
 	})
 
 

@@ -54,7 +54,7 @@ void main() {
     expect(receipt.playerId, player);
     expect(
       captured.url.toString(),
-      'http://10.0.2.2:50000/v1/rooms/$room/join',
+      'http://10.0.2.2:50000/lan/v1/rooms/$room/join',
     );
     expect(captured.headers, isNot(contains('authorization')));
     expect(jsonDecode(captured.body), {
@@ -64,6 +64,14 @@ void main() {
       'candidateResumeToken': token,
       'roomKey': key,
     });
+  });
+
+  test('uses the embedded LAN router prefix for HTTP and WebSocket', () {
+    expect(
+      endpoint.resolve('/lan/v1/rooms/$room/result').toString(),
+      'http://10.0.2.2:50000/lan/v1/rooms/$room/result',
+    );
+    expect(endpoint.webSocketUri.toString(), 'ws://10.0.2.2:50000/lan/v1/ws');
   });
 
   test('rejects redirects and preserves authoritative error codes', () async {

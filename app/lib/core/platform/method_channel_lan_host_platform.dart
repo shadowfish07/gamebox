@@ -64,7 +64,9 @@ final class MethodChannelLanHostPlatform implements LanHostPlatform {
       'schemaVersion',
       'matchId',
       'gameId',
+      'playerId',
       'launchTicket',
+      'resumeToken',
       'wsUrl',
       'expiresAt',
     };
@@ -72,11 +74,15 @@ final class MethodChannelLanHostPlatform implements LanHostPlatform {
         value['schemaVersion'] != 1 ||
         value['matchId'] is! String ||
         value['gameId'] != 'gomoku' ||
+        value['playerId'] is! String ||
         value['launchTicket'] is! String ||
+        value['resumeToken'] is! String ||
         value['wsUrl'] is! String ||
         value['expiresAt'] is! int ||
         !isCanonicalLanUuid(value['matchId']! as String) ||
-        !isCanonicalLanCredential(value['launchTicket']! as String)) {
+        !isCanonicalLanUuid(value['playerId']! as String) ||
+        !isCanonicalLanCredential(value['launchTicket']! as String) ||
+        !isCanonicalLanCredential(value['resumeToken']! as String)) {
       throw const LanHostException('invalid_response');
     }
     final ws = Uri.tryParse(value['wsUrl']! as String);
@@ -85,7 +91,7 @@ final class MethodChannelLanHostPlatform implements LanHostPlatform {
         ws.host != '127.0.0.1' ||
         ws.port < 1 ||
         ws.port > 65535 ||
-        ws.path != '/v1/ws' ||
+        ws.path != '/lan/v1/ws' ||
         ws.userInfo.isNotEmpty ||
         ws.hasQuery ||
         ws.hasFragment) {
@@ -94,7 +100,9 @@ final class MethodChannelLanHostPlatform implements LanHostPlatform {
     return LanHostLaunch(
       matchId: value['matchId']! as String,
       gameId: 'gomoku',
+      playerId: value['playerId']! as String,
       launchTicket: value['launchTicket']! as String,
+      resumeToken: value['resumeToken']! as String,
       wsUrl: ws.toString(),
       expiresAt: DateTime.fromMillisecondsSinceEpoch(
         value['expiresAt']! as int,

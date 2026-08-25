@@ -475,7 +475,13 @@ class FakeMatchClient:
 	var resign_requests := 0
 	var dispose_calls := 0
 
-	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant) -> bool:
+	func start(
+		_ws_url: String,
+		_match_id: String,
+		_ticket: String,
+		game_state: Variant,
+		_initial_resume_token: String = "",
+	) -> bool:
 		state = game_state
 		connection_state = "connecting"
 		return true

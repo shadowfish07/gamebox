@@ -9,12 +9,14 @@ data class PendingGameResult(
     val gameId: String,
     val source: String,
     val endpointKind: String,
+    val localUserId: String?,
 ) {
-    fun toMap(): Map<String, String> = mapOf(
+    fun toMap(): Map<String, Any?> = mapOf(
         "matchId" to matchId,
         "gameId" to gameId,
         "source" to source,
         "endpointKind" to endpointKind,
+        "localUserId" to localUserId,
     )
 }
 
@@ -29,11 +31,12 @@ class PendingGameResultStore(
         val destination = file(args.matchId)
         val body = JSONObject(
             linkedMapOf(
-                "schemaVersion" to 1,
+                "schemaVersion" to 2,
                 "matchId" to args.matchId,
                 "gameId" to args.gameId,
                 "source" to args.source,
                 "endpointKind" to args.endpointKind,
+                "localUserId" to args.localUserId,
             ),
         ).toString()
         if (destination.exists()) return runCatching { destination.readText() == body }.getOrDefault(false)
@@ -97,16 +100,26 @@ class PendingGameResultStore(
     private fun read(file: File): PendingGameResult? = runCatching {
         if (!file.isFile || file.length() !in 2..MAX_PENDING_BYTES.toLong()) return@runCatching null
         val objectValue = JSONObject(file.readText())
-        if (objectValue.optInt("schemaVersion") != 1 || objectValue.length() != 5) return@runCatching null
+        val schemaVersion = objectValue.optInt("schemaVersion")
+        if (schemaVersion !in 1..2 || objectValue.length() != if (schemaVersion == 1) 5 else 6) {
+            return@runCatching null
+        }
+        val localUserId = if (schemaVersion == 2 && !objectValue.isNull("localUserId")) {
+            objectValue.getString("localUserId")
+        } else {
+            null
+        }
         PendingGameResult(
             objectValue.getString("matchId"),
             objectValue.getString("gameId"),
             objectValue.getString("source"),
             objectValue.getString("endpointKind"),
+            localUserId,
         ).takeIf {
             it.matchId == file.nameWithoutExtension &&
                 GameResultValidator.validateMatchId(it.matchId) &&
-                it.gameId == "gomoku" && it.source in SOURCES && it.endpointKind == it.source
+                it.gameId == "gomoku" && it.source in SOURCES && it.endpointKind == it.source &&
+                (it.localUserId == null || GameResultValidator.validateMatchId(it.localUserId))
         }
     }.getOrNull()
 

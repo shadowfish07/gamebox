@@ -168,11 +168,15 @@ internal class LanHostCommandDispatcher(
     private fun validLaunch(value: Map<String, Any?>): Boolean {
         if (value.keys != LAUNCH_FIELDS || value["schemaVersion"] != 1) return false
         val matchId = value["matchId"] as? String ?: return false
+        val playerId = value["playerId"] as? String ?: return false
         val ticket = value["launchTicket"] as? String ?: return false
+        val resumeToken = value["resumeToken"] as? String ?: return false
         val wsUrl = value["wsUrl"] as? String ?: return false
         val expiresAt = value["expiresAt"] as? Long ?: return false
         return LanHostResponseCodec.isCanonicalUUID(matchId) && value["gameId"] == "gomoku" &&
+            LanHostResponseCodec.isCanonicalUUID(playerId) &&
             LanHostResponseCodec.isCanonicalCredential(ticket) &&
+            LanHostResponseCodec.isCanonicalCredential(resumeToken) &&
             LanHostResponseCodec.isCanonicalLoopbackWS(wsUrl) && expiresAt in 1..MAX_SAFE_INTEGER
     }
 
@@ -204,7 +208,9 @@ internal class LanHostCommandDispatcher(
             "schemaVersion",
             "matchId",
             "gameId",
+            "playerId",
             "launchTicket",
+            "resumeToken",
             "wsUrl",
             "expiresAt",
         )

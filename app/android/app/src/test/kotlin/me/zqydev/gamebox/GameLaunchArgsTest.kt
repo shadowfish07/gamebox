@@ -18,6 +18,8 @@ class GameLaunchArgsTest {
                 "launchTicket" to ticket,
                 "wsUrl" to "wss://gamebox.example.com/matches/550e8400",
                 "source" to "public",
+                "resumeToken" to null,
+                "localUserId" to null,
             ),
         )
 
@@ -39,6 +41,25 @@ class GameLaunchArgsTest {
     }
 
     @Test
+    fun `LAN launch keeps paired resume credential outside Godot command line`() {
+        val resumeToken = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA"
+        val result = GameLaunchArgs.fromNative(
+            mapOf(
+                "gameId" to "gomoku",
+                "matchId" to "550e8400-e29b-41d4-a716-446655440000",
+                "launchTicket" to ticket,
+                "wsUrl" to "ws://192.168.1.2:50000/lan/v1/ws",
+                "source" to "lan",
+                "resumeToken" to resumeToken,
+                "localUserId" to "22222222-2222-4222-8222-222222222222",
+            ),
+        ) as GameLaunchArgs.ParseResult.Success
+
+        assertFalse(result.args.commandLineParams.contains(resumeToken))
+        assertTrue(result.args.privateResumeToken == resumeToken)
+    }
+
+    @Test
     fun `host smoke builds exact Godot user arguments`() {
         assertArrayEquals(
             arrayOf("--", "--host-smoke", "--auto-exit-ms", "800"),
@@ -54,6 +75,8 @@ class GameLaunchArgsTest {
             "launchTicket" to ticket,
             "wsUrl" to "wss://gamebox.example.com",
             "source" to "public",
+            "resumeToken" to null,
+            "localUserId" to null,
         )
         val invalidInputs = listOf<Any?>(
             null,
@@ -84,6 +107,8 @@ class GameLaunchArgsTest {
                 "launchTicket" to ticket,
                 "wsUrl" to "wss://gamebox.example.com",
                 "source" to "public",
+                "resumeToken" to null,
+                "localUserId" to null,
             ),
         )
 
@@ -114,6 +139,8 @@ class GameLaunchArgsTest {
                 "launchTicket" to PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
                 "wsUrl" to "wss://gamebox.example.com",
                 "source" to "public",
+                "resumeToken" to null,
+                "localUserId" to null,
             ),
         )
 

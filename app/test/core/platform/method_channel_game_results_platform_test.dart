@@ -27,6 +27,7 @@ void main() {
             'gameId': 'gomoku',
             'source': 'lan',
             'endpointKind': 'lan',
+            'localUserId': '22222222-2222-4222-8222-222222222222',
           },
         ],
         _ => null,
@@ -40,6 +41,7 @@ void main() {
     final pending = (await platform.listPending()).single;
     expect(pending.source, 'lan');
     expect(pending.matchId, '11111111-1111-4111-8111-111111111111');
+    expect(pending.localUserId, '22222222-2222-4222-8222-222222222222');
   });
 
   test('persists recovery then completes by exact native hash', () async {
