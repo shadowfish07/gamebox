@@ -516,7 +516,8 @@ xml_query() {
       puts nodes.count { |node| node.attributes["resource-id"] == expected }
     when "visible-text"
       matches = nodes.select do |node|
-        node.attributes["text"].to_s == expected && enabled.call(node) && bounds.call(node)
+        (node.attributes["text"].to_s == expected || node.attributes["content-desc"].to_s == expected) \
+          && enabled.call(node) && bounds.call(node)
       end
       exit 3 unless matches.length == 1
     when "diagnostics"
@@ -1254,7 +1255,7 @@ self_test() {
     '  <node resource-id="invite-code" text="" content-desc="not-a-selector" enabled="true" visible-to-user="true" bounds="[10,20][110,220]"><node resource-id="" text="fixture-secret" enabled="true" bounds="[10,20][110,220]" /></node>' \
     '  <node resource-id="nickname" text="fixture-nickname" content-desc="" enabled="true" visible-to-user="true" bounds="[120,20][220,220]"><node resource-id="" text="fixture-nickname" enabled="true" bounds="[120,20][220,220]" /></node>' \
     '  <node resource-id="disabled" text="" content-desc="invite-code" enabled="false" visible-to-user="true" bounds="[0,0][50,50]" />' \
-    '  <node resource-id="" text="当前已是最新版本" content-desc="" enabled="true" visible-to-user="true" bounds="[20,520][400,600]" />' \
+    '  <node resource-id="" text="" content-desc="当前已是最新版本" enabled="true" visible-to-user="true" bounds="[20,520][400,600]" />' \
     "  <node resource-id=\"$opponent_id\" text=\"Bob\" content-desc=\"Bob\" enabled=\"true\" visible-to-user=\"true\" bounds=\"[100,300][500,500]\" />" \
     '</hierarchy>' >"$fixture"
 
