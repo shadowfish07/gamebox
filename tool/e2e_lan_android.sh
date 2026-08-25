@@ -4,7 +4,8 @@ set -Eeuo pipefail
 readonly PACKAGE=me.zqydev.gamebox
 readonly TEST_PACKAGE=me.zqydev.gamebox.test
 readonly MAIN_ACTIVITY="$PACKAGE/.MainActivity"
-readonly TEST_RUNNER="$TEST_PACKAGE/me.zqydev.gamebox.HostSmokeTestRunner"
+readonly APP_TEST_RUNNER="$TEST_PACKAGE/androidx.test.runner.AndroidJUnitRunner"
+readonly HELPER_TEST_RUNNER="$TEST_PACKAGE/me.zqydev.gamebox.HostSmokeTestRunner"
 readonly AVD_A=Gamebox_A_API_36
 readonly AVD_B=Gamebox_B_API_36
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -80,9 +81,9 @@ unexpected_error() {
 trap 'unexpected_error "$?" "$LINENO"' ERR
 adb_for() { "$ADB_BIN" -s "$1" "${@:2}"; }
 run_instrumentation() {
-  local serial="$1" log_file="$2"
-  shift 2
-  adb_for "$serial" shell am instrument -w -r "$@" "$TEST_RUNNER" >"$log_file" 2>&1 \
+  local serial="$1" log_file="$2" runner="$3"
+  shift 3
+  adb_for "$serial" shell am instrument -w -r "$@" "$runner" >"$log_file" 2>&1 \
     && grep -F 'OK (1 test)' "$log_file" >/dev/null \
     && ! grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' "$log_file" >/dev/null
 }
@@ -225,6 +226,7 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
 done
 
 run_instrumentation "$SERIAL_A" "$TEMP_DIR/result-bridge.log" \
+  "$APP_TEST_RUNNER" \
   -e class me.zqydev.gamebox.GameResultBridgeTest \
   || { cp "$TEMP_DIR/result-bridge.log" "$ARTIFACT_DIR/failed-phase.log"; fail 'device result durability test failed'; }
 adb_for "$SERIAL_A" shell pm clear "$PACKAGE" >/dev/null || fail "post-test app reset failed on $SERIAL_A"
@@ -294,6 +296,7 @@ set_nickname() {
   wait_id "$serial" local-nickname >/dev/null || fail "nickname field missing on $serial"
   printf '%s' "$nickname" | stage_test_input "$serial" "$name"
   run_instrumentation "$serial" "$TEMP_DIR/nickname-${serial}.log" \
+    "$HELPER_TEST_RUNNER" \
     -e class 'me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue' \
     -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name" \
     || fail "nickname injection failed on $serial"
@@ -312,6 +315,7 @@ wait_id "$SERIAL_A" credential-qr-sensitive >/dev/null || fail 'host QR state wa
 adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/host-waiting-masked.png"
 
 run_instrumentation "$SERIAL_A" "$TEMP_DIR/host-export.log" \
+  "$APP_TEST_RUNNER" \
   -e class me.zqydev.gamebox.LanE2eHostExportTest \
   || fail 'host private handoff export failed'
 adb_for "$SERIAL_A" exec-out run-as "$PACKAGE" cat files/lan-e2e-handoff.json >"$TEMP_DIR/handoff.json" \
@@ -339,6 +343,7 @@ tap_id "$SERIAL_B" join-lan-room
 LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID"
 printf '%s' "$JOIN_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
 run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-input.log" \
+  "$HELPER_TEST_RUNNER" \
   -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
   || fail 'guest private LAN input failed'
 tap_id "$SERIAL_B" submit-lan-manual-input
@@ -390,6 +395,7 @@ for x in 0 1 2 3 4; do
     LAN_INPUT_NAME="gamebox-lan-e2e-$RUN_ID-resume"
     printf '%s' "$RESUME_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
     run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-resume.log" \
+      "$HELPER_TEST_RUNNER" \
       -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
       || fail 'guest resume input failed'
     tap_id "$SERIAL_B" submit-lan-manual-input

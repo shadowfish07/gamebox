@@ -18,8 +18,9 @@ class LanE2eHostExportTest {
         check(context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             "LAN E2E export is debug-only"
         }
-        val commands = LanHostService.serviceReady.current()
-            ?: LanHostService.serviceReady.await(10_000)
+        LanHostService.serviceReady.prepareStart()
+        context.startForegroundService(LanHostService.recoverIntent(context))
+        val commands = LanHostService.serviceReady.await(10_000)
             ?: error("LAN host service is unavailable")
         val status = commands.getStatus()
         check(status["state"] == "waiting")
