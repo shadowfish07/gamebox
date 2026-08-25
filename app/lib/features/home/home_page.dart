@@ -80,13 +80,14 @@ final class _HomePageState extends State<HomePage> {
     if (mounted && error != null) _showError(error);
   }
 
-  Future<void> _openHistory() => Navigator.of(context).push<void>(
-    MaterialPageRoute<void>(
-      builder: (_) => MatchHistoryPage(
-        controller: MatchHistoryController(api: widget.historyApi),
+  Future<void> _openHistory() {
+    final controller = MatchHistoryController(api: widget.historyApi);
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MatchHistoryPage(controller: controller),
       ),
-    ),
-  );
+    );
+  }
 
   Future<void> _cancelMatch() async {
     final confirmed = await showDialog<bool>(
