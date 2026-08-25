@@ -47,6 +47,14 @@ SDK components, or licenses and exits nonzero; it does not install or accept
 anything. `--build-only` omits only the E2E-specific `adb` and emulator checks;
 the no-argument form retains them.
 
+## Development and submission workflow
+
+完成开发并通过本地自测后，可以提交改动并直接 push。固定 Android E2E 只验证
+协议、状态和生命周期逻辑，不要求截图；UI 视觉验收另行进行。
+
+如果当前分支已关联 Pull Request，push 后等待 GitHub CI、Codex 和 CodeRabbit
+自动 review 完成；只处理仍然有效的意见，修复后重新自测并 push。
+
 ## Local server
 
 The server requires two independent secrets of at least 32 bytes. Its SQLite
