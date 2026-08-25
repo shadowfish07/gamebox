@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly PACKAGE=me.zqydev.gamebox
 readonly TEST_PACKAGE=me.zqydev.gamebox.test
@@ -40,12 +40,19 @@ done
 log() { ((VERBOSE == 1)) && printf '[lan-e2e] %s\n' "$*" || true; }
 fail() {
   local message="$1"
+  local exit_code="${2:-1}"
   mkdir -p "$ARTIFACT_DIR"
   jq -n --arg status failure --arg message "$message" --arg serialA "$SERIAL_A" --arg serialB "$SERIAL_B" \
     '{status:$status,message:$message,serials:[$serialA,$serialB]}' >"$ARTIFACT_DIR/summary.json" 2>/dev/null || true
   printf 'Gamebox LAN E2E failed: %s\nArtifacts: %s\n' "$message" "$ARTIFACT_DIR" >&2
-  exit 1
+  exit "$exit_code"
 }
+unexpected_error() {
+  local exit_code="$1" line="$2"
+  trap - ERR
+  fail "unexpected harness command failure at line $line (exit $exit_code)" "$exit_code"
+}
+trap 'unexpected_error "$?" "$LINENO"' ERR
 adb_for() { "$ADB_BIN" -s "$1" "${@:2}"; }
 
 cleanup() {
@@ -115,10 +122,11 @@ run_self_test() {
   [[ -f "$child_marker" ]]
   (sleep 5) &
   local timeout_child=$! timeout_code
-  set +e
-  bounded_wait_pid "$timeout_child" 1
-  timeout_code=$?
-  set -e
+  if bounded_wait_pid "$timeout_child" 1; then
+    timeout_code=0
+  else
+    timeout_code=$?
+  fi
   kill "$timeout_child" >/dev/null 2>&1 || true
   wait "$timeout_child" 2>/dev/null || true
   [[ "$timeout_code" == 124 ]]
@@ -274,10 +282,18 @@ adb_for "$SERIAL_A" shell am instrument -w -r -e class me.zqydev.gamebox.LanE2eH
 adb_for "$SERIAL_A" exec-out run-as "$PACKAGE" cat files/lan-e2e-handoff.json >"$TEMP_DIR/handoff.json" \
   || fail 'host private handoff could not be read'
 adb_for "$SERIAL_A" shell run-as "$PACKAGE" rm files/lan-e2e-handoff.json >/dev/null 2>&1 || true
-ROOM_ID="$(jq -er '.roomId' "$TEMP_DIR/handoff.json")"
-DEVICE_PORT="$(jq -er '.port' "$TEMP_DIR/handoff.json")"
-ROOM_KEY="$(jq -er '.roomKey' "$TEMP_DIR/handoff.json")"
-JOIN_EXPIRY="$(jq -er '.joinExpiresAt' "$TEMP_DIR/handoff.json")"
+if ! jq -er '
+  select(type == "object" and keys == ["joinExpiresAt", "port", "roomId", "roomKey"])
+  | [.roomId, .port, .roomKey, .joinExpiresAt]
+  | @tsv
+' "$TEMP_DIR/handoff.json" >"$TEMP_DIR/handoff-fields.tsv"; then
+  handoff_size="$(wc -c <"$TEMP_DIR/handoff.json" | tr -d ' ')"
+  handoff_first_byte="$(od -An -t x1 -N 1 "$TEMP_DIR/handoff.json" | tr -d ' ')"
+  cp "$TEMP_DIR/host-export.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true
+  fail "host private handoff was not canonical JSON (size=$handoff_size firstByte=${handoff_first_byte:-empty})"
+fi
+IFS=$'\t' read -r ROOM_ID DEVICE_PORT ROOM_KEY JOIN_EXPIRY <"$TEMP_DIR/handoff-fields.tsv" \
+  || fail 'host private handoff fields could not be decoded'
 FORWARDED_PORT="$(adb_for "$SERIAL_A" forward tcp:0 "tcp:$DEVICE_PORT")"
 FORWARDED_PORT="$(parse_forward_port "$FORWARDED_PORT")" || fail 'adb forward did not return a safe port'
 JOIN_QR="$(ruby -ruri -e 'puts "gamebox-lan://join?"+URI.encode_www_form(v:"1",room:ARGV[0],host:"10.0.2.2",port:ARGV[1],key:ARGV[2],exp:ARGV[3])' "$ROOM_ID" "$FORWARDED_PORT" "$ROOM_KEY" "$JOIN_EXPIRY")"
