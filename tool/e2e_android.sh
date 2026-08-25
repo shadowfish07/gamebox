@@ -1726,6 +1726,8 @@ self_test() {
     printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
     return 1
   fi
+  grep -F 'point="$(design_point_for_serial "$serial" 640 1230)"' <<<"$runtime_source" >/dev/null \
+    || { printf 'large portrait resign confirmation tap point is stale\n' >&2; return 1; }
   grep -F "flutter test -d \"\$SERIAL_A\" integration_test/semantics_test.dart" <<<"$runtime_source" >/dev/null \
     || { printf 'selected-device semantics command is missing\n' >&2; return 1; }
   if grep -F 'SECONDS + 10' <<<"$runtime_source" >/dev/null; then
@@ -2760,7 +2762,7 @@ tap_godot_resign() {
 tap_godot_confirm_resign() {
   local serial="$1"
   local point x y
-  point="$(design_point_for_serial "$serial" 640 980)"
+  point="$(design_point_for_serial "$serial" 640 1230)"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }

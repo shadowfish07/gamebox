@@ -181,7 +181,7 @@ static func _confirmation_contract() -> bool:
 		var dialog := ConfirmationDialogScene.instantiate()
 		dialog.theme = GameboxTheme.create(dark)
 		var host := Control.new()
-		host.size = Vector2(1080.0, 1920.0)
+		host.size = Vector2(1080.0, 2400.0)
 		tree.root.add_child(host)
 		host.add_child(dialog)
 		dialog.open()
@@ -207,7 +207,8 @@ static func _confirmation_contract() -> bool:
 			and _check(panel_style != null and panel_style.bg_color == colors["surface_container_high"], "confirmation panel surface drifted") \
 			and _check(scrim_style != null and scrim_style.bg_color == Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"]), "confirmation scrim drifted") \
 			and _check(ok_button.size.x >= 96.0 and ok_button.size.y >= 96.0, "confirmation action rendered below minimum target") \
-			and _check(cancel_button.size.x >= 96.0 and cancel_button.size.y >= 96.0, "confirmation cancel rendered below minimum target")
+			and _check(cancel_button.size.x >= 96.0 and cancel_button.size.y >= 96.0, "confirmation cancel rendered below minimum target") \
+			and _check(ok_button.get_global_rect().has_point(Vector2(640.0, 1230.0)), "large portrait confirm touch point moved")
 		cancel_button.pressed.emit()
 		await tree.process_frame
 		result = result and _check(not dialog.visible and cancelled_calls.size() == 1, "confirmation cancel did not close exactly once") \
