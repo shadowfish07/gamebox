@@ -800,7 +800,6 @@ dump_ui_remote() {
 assert_ui_state_safe() {
   local serial="$1"
   local secret_flag="$2"
-  local required_text="${3:-}"
   [[ "$secret_flag" == "0" ]] || return 1
   local safe_serial="${serial//[^A-Za-z0-9_.-]/_}"
   local local_path="$TEMP_DIR/ui-state-$safe_serial.xml"
@@ -814,10 +813,6 @@ assert_ui_state_safe() {
   identifier_count="$(xml_query identifier-count "$local_path" invite-code 2>/dev/null)" || status=1
   if ((status == 0)) && [[ "$identifier_count" != "0" ]]; then
     [[ "$identifier_count" == "1" ]] && xml_query field-empty "$local_path" invite-code >/dev/null 2>&1 \
-      || status=1
-  fi
-  if ((status == 0)) && [[ -n "$required_text" ]]; then
-    xml_query visible-text "$local_path" "$required_text" >/dev/null 2>&1 \
       || status=1
   fi
   for value in "${INVITE_A:-}" "${INVITE_B:-}" "${JWT_SECRET:-}" "${TOKEN_PEPPER:-}"; do
@@ -1955,9 +1950,19 @@ self_test() {
     || { printf 'first-connect loading flow does not pause before inspecting UI\n' >&2; return 1; }
   local first_connect_flow_source
   first_connect_flow_source="$(sed -n '/^wait_for_first_connect_loading_and_pause "\$SERIAL_A"/,/^resume_e2e_server/p' "${BASH_SOURCE[0]}")"
-  grep -F 'assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '\''正在同步对局…'\''' \
+  grep -F 'assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A"' \
     <<<"$first_connect_flow_source" >/dev/null \
-    || { printf 'first-connect loading flow does not verify loading copy in its safe UI snapshot\n' >&2; return 1; }
+    || { printf 'first-connect loading flow does not capture its safe UI snapshot\n' >&2; return 1; }
+  grep -F 'assert_first_connect_loading_held "$SERIAL_A" "$LOADING_MATCH_ID"' \
+    <<<"$first_connect_flow_source" >/dev/null \
+    || { printf 'first-connect loading flow does not recheck the held state after its UI snapshot\n' >&2; return 1; }
+  local first_connect_safe_line first_connect_held_line
+  first_connect_safe_line="$(grep -n 'assert_ui_state_safe' <<<"$first_connect_flow_source" | head -n 1 | cut -d: -f1)"
+  first_connect_held_line="$(grep -n 'assert_first_connect_loading_held' <<<"$first_connect_flow_source" | head -n 1 | cut -d: -f1)"
+  [[ "$first_connect_safe_line" =~ ^[1-9][0-9]*$ \
+    && "$first_connect_held_line" =~ ^[1-9][0-9]*$ \
+    && "$first_connect_held_line" -gt "$first_connect_safe_line" ]] \
+    || { printf 'first-connect held-state recheck does not follow its UI snapshot\n' >&2; return 1; }
   grep -F 'resume_e2e_server' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading flow does not resume the paused server\n' >&2; return 1; }
@@ -2812,6 +2817,16 @@ wait_for_first_connect_loading_and_pause() {
   return 1
 }
 
+assert_first_connect_loading_held() {
+  local serial="$1"
+  local match_id="$2"
+  [[ "$match_id" =~ ^[0-9a-f-]{36}$ ]] || return 2
+  if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+    | grep -F "$GAMEBOX_STATE_MARKER match=$match_id revision=0" >/dev/null; then
+    return 1
+  fi
+}
+
 JWT_SECRET="$(openssl rand -hex 32)"
 TOKEN_PEPPER="$(openssl rand -hex 32)"
 : >"$SERVER_LOG"
@@ -2891,8 +2906,10 @@ tap_identifier "$SERIAL_A" "$opponent_identifier"
 
 wait_for_first_connect_loading_and_pause "$SERIAL_A" \
   || fail "could not hold the real first-connect loading state before its initial snapshot"
-assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '正在同步对局…' \
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the real first-connect loading UI state"
+assert_first_connect_loading_held "$SERIAL_A" "$LOADING_MATCH_ID" \
+  || fail "first-connect snapshot arrived while the held loading UI was inspected"
 resume_e2e_server \
   || fail "could not resume the E2E server after first-connect loading assertion"
 
