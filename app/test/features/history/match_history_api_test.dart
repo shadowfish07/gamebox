@@ -109,6 +109,51 @@ void main() {
       ),
     );
   });
+
+  test(
+    'decodes a fractional win rate through the HTTP client boundary',
+    () async {
+      final fixture = await _ApiFixture.create(
+        now,
+        (_) async => _json({
+          'statistics': {
+            'validMatches': 8,
+            'wins': 5,
+            'losses': 2,
+            'draws': 1,
+            'winRate': 0.625,
+          },
+          'matches': [_match()],
+          'nextCursor': null,
+        }),
+      );
+
+      final page = await fixture.api.fetchPage();
+
+      expect(page.statistics.winRate, 0.625);
+    },
+  );
+
+  test(
+    'decodes an exponent win rate through the HTTP client boundary',
+    () async {
+      final fixture = await _ApiFixture.create(
+        now,
+        (_) async => http.Response(
+          '{"statistics":{"validMatches":8,"wins":5,"losses":2,"draws":1,"winRate":6.25e-1},'
+          '"matches":[{"id":"11111111-1111-4111-8111-111111111111",'
+          '"outcome":"win","opponentNickname":"棋手","color":"black",'
+          '"finishedAt":1787659200000,"moveCount":42}],"nextCursor":null}',
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+
+      final page = await fixture.api.fetchPage();
+
+      expect(page.statistics.winRate, 0.625);
+    },
+  );
 }
 
 final class _ApiFixture {

@@ -28,12 +28,26 @@ final class MatchHistoryStatistics {
     if (winRate is! num || !winRate.isFinite || winRate < 0 || winRate > 1) {
       throw const FormatException('Invalid match history statistics');
     }
+    final validMatches = _nonnegativeSafeInt(json['validMatches']);
+    final wins = _nonnegativeSafeInt(json['wins']);
+    final losses = _nonnegativeSafeInt(json['losses']);
+    final draws = _nonnegativeSafeInt(json['draws']);
+    final rate = winRate.toDouble();
+    if (!_hasConsistentStatistics(
+      validMatches: validMatches,
+      wins: wins,
+      losses: losses,
+      draws: draws,
+      winRate: rate,
+    )) {
+      throw const FormatException('Invalid match history statistics');
+    }
     return MatchHistoryStatistics(
-      validMatches: _nonnegativeSafeInt(json['validMatches']),
-      wins: _nonnegativeSafeInt(json['wins']),
-      losses: _nonnegativeSafeInt(json['losses']),
-      draws: _nonnegativeSafeInt(json['draws']),
-      winRate: winRate.toDouble(),
+      validMatches: validMatches,
+      wins: wins,
+      losses: losses,
+      draws: draws,
+      winRate: rate,
     );
   }
 
@@ -42,6 +56,26 @@ final class MatchHistoryStatistics {
   final int losses;
   final int draws;
   final double winRate;
+}
+
+bool _hasConsistentStatistics({
+  required int validMatches,
+  required int wins,
+  required int losses,
+  required int draws,
+  required double winRate,
+}) {
+  if (validMatches == 0) {
+    return wins == 0 && losses == 0 && draws == 0 && winRate == 0;
+  }
+  if (wins > validMatches) {
+    return false;
+  }
+  final afterWins = validMatches - wins;
+  if (losses > afterWins) {
+    return false;
+  }
+  return draws == afterWins - losses && winRate == wins / validMatches;
 }
 
 final class MatchHistoryEntry {

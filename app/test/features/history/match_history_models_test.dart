@@ -141,6 +141,34 @@ void main() {
         ..._statistics(),
         'winRate': -0.000001,
       }),
+      'outcomes do not add up': _withStatistics(valid, {
+        'validMatches': 3,
+        'wins': 1,
+        'losses': 0,
+        'draws': 1,
+        'winRate': 1 / 3,
+      }),
+      'wrong nonzero win rate': _withStatistics(valid, {
+        'validMatches': 3,
+        'wins': 1,
+        'losses': 1,
+        'draws': 1,
+        'winRate': 0.5,
+      }),
+      'zero denominator nonzero rate': _withStatistics(valid, {
+        'validMatches': 0,
+        'wins': 0,
+        'losses': 0,
+        'draws': 0,
+        'winRate': 1,
+      }),
+      'near-safe counts exceed valid matches': _withStatistics(valid, {
+        'validMatches': 9007199254740991,
+        'wins': 9007199254740991,
+        'losses': 1,
+        'draws': 0,
+        'winRate': 1,
+      }),
       'duplicate match ID': {
         ...valid,
         'matches': [
