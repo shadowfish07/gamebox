@@ -4,6 +4,7 @@ signal connection_state_changed(next_state: String)
 signal snapshot_sync_started
 signal snapshot_received(envelope: Dictionary)
 signal event_received(envelope: Dictionary)
+signal player_presence_changed(user_id: String, online: bool)
 signal match_error(code: String)
 signal return_to_lobby_requested(code: String)
 
@@ -48,6 +49,7 @@ var _retry_generation := 0
 var _watchdog_handle := -1
 var _watchdog_generation := 0
 var _issued_action_ids := {}
+var _player_presence := {}
 
 
 func _init(
@@ -75,6 +77,7 @@ func start(ws_url: String, match_id: String, launch_ticket: String, game_state: 
 	_game_state = game_state
 	_failure_count = 0
 	_issued_action_ids.clear()
+	_player_presence.clear()
 	last_error_code = ""
 	_begin_attempt(true)
 	return true
@@ -147,6 +150,14 @@ func request_resign() -> String:
 	return action_id
 
 
+func has_player_presence(user_id: String) -> bool:
+	return _player_presence.has(user_id)
+
+
+func is_player_online(user_id: String) -> bool:
+	return bool(_player_presence.get(user_id, false))
+
+
 func close() -> void:
 	if connection_state == STATE_CLOSED:
 		return
@@ -160,6 +171,7 @@ func close() -> void:
 	_launch_ticket = ""
 	_resume_token = ""
 	_ws_url = ""
+	_player_presence.clear()
 	_awaiting_initial_snapshot = false
 	_handshake_revision = -1
 	_set_connection_state(STATE_CLOSED)
@@ -209,6 +221,7 @@ func _begin_attempt(initial: bool = false) -> void:
 	_snapshot_requested = false
 	_awaiting_initial_snapshot = false
 	_handshake_revision = -1
+	_player_presence.clear()
 	_set_connection_state(STATE_CONNECTING if initial else STATE_RECONNECTING)
 	_schedule_watchdog(ATTEMPT_TIMEOUT_SECONDS, "attempt")
 	if not _transport.connect_to_url(_ws_url):
@@ -241,6 +254,8 @@ func _handle_text(text: String) -> bool:
 			handled = _handle_snapshot(envelope)
 		Protocol.TYPE_PLATFORM_PING:
 			handled = _handle_ping(envelope)
+		Protocol.TYPE_PLATFORM_PRESENCE_CHANGED:
+			handled = _handle_presence_changed(envelope)
 		Protocol.TYPE_PLATFORM_ERROR:
 			handled = _handle_error(envelope)
 		Protocol.TYPE_GOMOKU_MOVE_ACCEPTED, Protocol.TYPE_GOMOKU_RESIGNED, \
@@ -260,15 +275,28 @@ func _handle_connected(envelope: Dictionary) -> bool:
 		or not _valid_bound(envelope, Protocol.TYPE_PLATFORM_CONNECTED):
 		return _protocol_failure()
 	var payload: Variant = envelope["payload"]
-	if not payload is Dictionary or not _exact_keys(payload, ["connectionId", "resumeExpiresAt", "resumeToken", "userId"]) \
+	if not payload is Dictionary or not _exact_keys(payload, ["connectionId", "players", "resumeExpiresAt", "resumeToken", "userId"]) \
 		or not _canonical_uuid(payload.get("userId")) or not _canonical_uuid(payload.get("connectionId")) \
 		or not payload.get("resumeToken") is String or payload["resumeToken"].is_empty() \
 		or payload["resumeToken"].length() > 256 or payload["resumeToken"].to_utf8_buffer().size() > 256 \
 		or typeof(payload.get("resumeExpiresAt")) != TYPE_INT or payload["resumeExpiresAt"] <= 0:
 		return _protocol_failure()
+	var players: Variant = payload.get("players")
+	if not players is Array or players.is_empty() or players.size() > 64:
+		return _protocol_failure()
+	var player_presence := {}
+	for player in players:
+		if not player is Dictionary or not _exact_keys(player, ["online", "userId"]) \
+			or not _canonical_uuid(player.get("userId")) or typeof(player.get("online")) != TYPE_BOOL \
+			or player_presence.has(player["userId"]):
+			return _protocol_failure()
+		player_presence[player["userId"]] = player["online"]
+	if not player_presence.has(payload["userId"]):
+		return _protocol_failure()
 	if not local_user_id.is_empty() and local_user_id != payload["userId"]:
 		return _protocol_failure()
 	local_user_id = payload["userId"]
+	_player_presence = player_presence
 	_resume_token = payload["resumeToken"]
 	_launch_ticket = ""
 	_handshake_revision = envelope["revision"]
@@ -324,6 +352,24 @@ func _handle_ping(envelope: Dictionary) -> bool:
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		_attempt_failed("send_failed")
 		return false
+	return true
+
+
+func _handle_presence_changed(envelope: Dictionary) -> bool:
+	if connection_state != STATE_CONNECTED or _awaiting_initial_snapshot or local_user_id.is_empty() \
+		or not _exact_keys(envelope, ["gameId", "matchId", "payload", "protocolVersion", "revision", "type"]) \
+		or not _valid_bound(envelope, Protocol.TYPE_PLATFORM_PRESENCE_CHANGED):
+		return _protocol_failure()
+	var payload: Variant = envelope["payload"]
+	if not payload is Dictionary or not _exact_keys(payload, ["online", "userId"]) \
+		or not _canonical_uuid(payload.get("userId")) or typeof(payload.get("online")) != TYPE_BOOL \
+		or not _player_presence.has(payload["userId"]):
+		return _protocol_failure()
+	var user_id: String = payload["userId"]
+	var online: bool = payload["online"]
+	if _player_presence[user_id] != online:
+		_player_presence[user_id] = online
+		player_presence_changed.emit(user_id, online)
 	return true
 
 
@@ -419,6 +465,7 @@ func _fail(code: String) -> void:
 	_transport.close()
 	_launch_ticket = ""
 	_resume_token = ""
+	_player_presence.clear()
 	_awaiting_initial_snapshot = false
 	_handshake_revision = -1
 	last_error_code = code

@@ -22,8 +22,8 @@ readonly GAMEBOX_STATE_MARKER="GAMEBOX_GODOT_STATE"
 readonly GAMEBOX_RESULT_MARKER="GAMEBOX_MATCH_RESULT"
 readonly MANAGED_LARGE_DISPLAY="1080x2400"
 readonly MANAGED_NARROW_DISPLAY="720x1600"
-readonly LARGE_VIEWPORT_MIN_WIDTH=1080
-readonly NARROW_VIEWPORT_MAX_WIDTH=720
+readonly MANAGED_LARGE_DENSITY=420
+readonly MANAGED_NARROW_DENSITY=320
 
 ADB_BIN="${GAMEBOX_E2E_ADB_BIN:-adb}"
 ADB_TIMEOUT_SECONDS="${GAMEBOX_E2E_ADB_TIMEOUT_SECONDS:-30}"
@@ -41,6 +41,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 # shellcheck source=tool/lib/android_lease.sh
 source "$ROOT_DIR/tool/lib/android_lease.sh"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
 HARNESS_PGID="$(ps -p "$HARNESS_PID" -o pgid= | tr -d ' ')"
 readonly HARNESS_PGID
 [[ "$HARNESS_PGID" =~ ^[1-9][0-9]*$ ]] || {
@@ -514,6 +516,16 @@ xml_query() {
       exit 3 unless values.all?(&:empty?)
     when "identifier-count"
       puts nodes.count { |node| node.attributes["resource-id"] == expected }
+    when "visible-text", "visible-text-count"
+      matches = nodes.select do |node|
+        (node.attributes["text"].to_s == expected || node.attributes["content-desc"].to_s == expected) \
+          && enabled.call(node) && bounds.call(node)
+      end
+      if mode == "visible-text-count"
+        puts matches.length
+      else
+        exit 3 unless matches.length == 1
+      end
     when "diagnostics"
       nodes.each do |node|
         identifier = node.attributes["resource-id"].to_s
@@ -824,6 +836,20 @@ device_display_override() {
     | tail -n 1
 }
 
+device_density_override() {
+  local serial="$1"
+  adb_for "$serial" shell wm density 2>/dev/null \
+    | sed -n 's/^[[:space:]]*Override density:[[:space:]]*\([0-9][0-9]*\).*$/\1/p' \
+    | tail -n 1
+}
+
+device_effective_density() {
+  local serial="$1"
+  adb_for "$serial" shell wm density 2>/dev/null \
+    | sed -n 's/.*density:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+    | tail -n 1
+}
+
 device_effective_size() {
   local serial="$1"
   adb_for "$serial" shell wm size 2>/dev/null \
@@ -837,6 +863,8 @@ restore_one_device_visuals() {
   local original_display_override="$3"
   local ui_flag_variable="$4"
   local display_flag_variable="$5"
+  local original_density_override="$6"
+  local density_flag_variable="$7"
   local status=0 actual
   if [[ "${!ui_flag_variable:-0}" == "1" ]]; then
     adb_for "$serial" shell cmd uimode night "$original_ui_mode" >/dev/null 2>&1 || status=1
@@ -858,6 +886,18 @@ restore_one_device_visuals() {
     fi
     ((status == 0)) && printf -v "$display_flag_variable" '%s' 0
   fi
+  if [[ "${!density_flag_variable:-0}" == "1" ]]; then
+    if [[ -n "$original_density_override" ]]; then
+      adb_for "$serial" shell wm density "$original_density_override" >/dev/null 2>&1 || status=1
+    else
+      adb_for "$serial" shell wm density reset >/dev/null 2>&1 || status=1
+    fi
+    if ((status == 0)) && [[ "${VERIFY_VISUAL_RESTORE:-1}" == "1" ]]; then
+      actual="$(device_density_override "$serial")" || status=1
+      [[ "$actual" == "$original_density_override" ]] || status=1
+    fi
+    ((status == 0)) && printf -v "$density_flag_variable" '%s' 0
+  fi
   ((status == 0))
 }
 
@@ -866,12 +906,14 @@ restore_selected_device_visuals() {
   if [[ -n "${SERIAL_A:-}" ]]; then
     restore_one_device_visuals \
       "$SERIAL_A" "${ORIGINAL_UI_MODE_A:-}" "${ORIGINAL_DISPLAY_OVERRIDE_A:-}" \
-      UI_MODE_MUTATED_A DISPLAY_MUTATED_A || status=1
+      UI_MODE_MUTATED_A DISPLAY_MUTATED_A "${ORIGINAL_DENSITY_OVERRIDE_A:-}" \
+      DENSITY_MUTATED_A || status=1
   fi
   if [[ -n "${SERIAL_B:-}" ]]; then
     restore_one_device_visuals \
       "$SERIAL_B" "${ORIGINAL_UI_MODE_B:-}" "${ORIGINAL_DISPLAY_OVERRIDE_B:-}" \
-      UI_MODE_MUTATED_B DISPLAY_MUTATED_B || status=1
+      UI_MODE_MUTATED_B DISPLAY_MUTATED_B "${ORIGINAL_DENSITY_OVERRIDE_B:-}" \
+      DENSITY_MUTATED_B || status=1
   fi
   ((status == 0))
 }
@@ -881,8 +923,9 @@ configure_device_visuals() {
   local serial="$2"
   local target_ui_mode="$3"
   local target_display="$4"
-  local mutate_display="$5"
-  local original_ui_mode original_display_override actual
+  local target_density="$5"
+  local mutate_display="$6"
+  local original_ui_mode original_display_override original_density_override actual
   original_ui_mode="$(device_ui_mode "$serial")" \
     || fail "$serial did not report its original ui mode"
   case "$original_ui_mode" in
@@ -891,9 +934,12 @@ configure_device_visuals() {
   esac
   original_display_override="$(device_display_override "$serial")" \
     || fail "$serial did not report its original display override"
+  original_density_override="$(device_density_override "$serial")" \
+    || fail "$serial did not report its original density override"
 
   printf -v "ORIGINAL_UI_MODE_$label" '%s' "$original_ui_mode"
   printf -v "ORIGINAL_DISPLAY_OVERRIDE_$label" '%s' "$original_display_override"
+  printf -v "ORIGINAL_DENSITY_OVERRIDE_$label" '%s' "$original_density_override"
   printf -v "UI_MODE_MUTATED_$label" '%s' 1
   adb_for "$serial" shell cmd uimode night "$target_ui_mode" >/dev/null \
     || fail "could not set $serial to $target_ui_mode ui mode"
@@ -909,11 +955,29 @@ configure_device_visuals() {
       || fail "$serial display override could not be verified"
     [[ "$actual" == "$target_display" ]] \
       || fail "$serial did not enter the required $target_display display override"
+    printf -v "DENSITY_MUTATED_$label" '%s' 1
+    adb_for "$serial" shell wm density "$target_density" >/dev/null \
+      || fail "could not set the managed $serial density to $target_density"
+    actual="$(device_density_override "$serial")" \
+      || fail "$serial density override could not be verified"
+    [[ "$actual" == "$target_density" ]] \
+      || fail "$serial did not enter the required $target_density density override"
   fi
 }
 
+logical_viewport() {
+  local width="$1"
+  local height="$2"
+  local density="$3"
+  ruby -e '
+    width, height, density = ARGV.map(&:to_f)
+    puts "#{(width * 160.0 / density).floor} #{(height * 160.0 / density).floor}"
+  ' "$width" "$height" "$density"
+}
+
 assert_selected_viewport_matrix() {
-  local width_a height_a width_b height_b
+  local width_a height_a width_b height_b density_a density_b
+  local logical_width_a logical_height_a logical_width_b logical_height_b
   read -r width_a height_a <<<"$(device_effective_size "$SERIAL_A")"
   read -r width_b height_b <<<"$(device_effective_size "$SERIAL_B")"
   [[ "$width_a" =~ ^[0-9]+$ && "$height_a" =~ ^[0-9]+$ \
@@ -921,12 +985,20 @@ assert_selected_viewport_matrix() {
     || fail "selected Android devices did not report usable effective viewports"
   ((height_a > width_a && height_b > width_b)) \
     || fail "selected Android devices must both use portrait phone viewports"
-  ((width_a >= LARGE_VIEWPORT_MIN_WIDTH)) \
-    || fail "serial A must naturally or by managed override provide the large phone viewport"
-  ((width_b <= NARROW_VIEWPORT_MAX_WIDTH)) \
-    || fail "serial B must naturally or by managed override provide the narrow phone viewport"
-  VIEWPORT_A="${width_a}x${height_a}"
-  VIEWPORT_B="${width_b}x${height_b}"
+  density_a="$(device_effective_density "$SERIAL_A")"
+  density_b="$(device_effective_density "$SERIAL_B")"
+  [[ "$density_a" =~ ^[1-9][0-9]*$ && "$density_b" =~ ^[1-9][0-9]*$ ]] \
+    || fail "selected Android devices did not report usable effective densities"
+  read -r logical_width_a logical_height_a <<<"$(logical_viewport "$width_a" "$height_a" "$density_a")"
+  read -r logical_width_b logical_height_b <<<"$(logical_viewport "$width_b" "$height_b" "$density_b")"
+  ((logical_width_a >= 410 && logical_width_a <= 414 \
+    && logical_height_a >= 912 && logical_height_a <= 918)) \
+    || fail "serial A must provide the 412x915dp large phone viewport"
+  ((logical_width_b >= 358 && logical_width_b <= 362 \
+    && logical_height_b >= 798 && logical_height_b <= 802)) \
+    || fail "serial B must provide the 360x800dp narrow phone viewport"
+  VIEWPORT_A="${logical_width_a}x${logical_height_a}dp (${width_a}x${height_a}px@$density_a)"
+  VIEWPORT_B="${logical_width_b}x${logical_height_b}dp (${width_b}x${height_b}px@$density_b)"
 }
 
 finalize_cleanup_outcome() {
@@ -1197,6 +1269,39 @@ stop_first_connect_loading_watch() {
   return "$cleanup_status"
 }
 
+wait_for_first_connect_loading() {
+  local serial="$1"
+  local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
+  while ((SECONDS < deadline)); do
+    if [[ -s "$LOADING_WATCH_FILE" ]]; then
+      candidate="$(tail -n 1 "$LOADING_WATCH_FILE")"
+    fi
+    if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
+      LOADING_MATCH_ID="$candidate"
+      stop_first_connect_loading_watch
+      return $?
+    fi
+    sleep 0.01
+  done
+  stop_first_connect_loading_watch
+  return 1
+}
+
+presence_state_fragment() {
+  local match_id="$1"
+  local revision="$2"
+  local presence="$3"
+  [[ "$match_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ \
+    && "$revision" =~ ^-?[0-9]+$ \
+    && ("$presence" == "online" || "$presence" == "offline" || "$presence" == "unknown") ]] \
+    || return 2
+  printf '%s match=%s revision=%s status=%s connection=%s opponent_presence=%s\n' \
+    "$GAMEBOX_STATE_MARKER" "$match_id" "$revision" \
+    "$( [[ "$revision" == "-1" ]] && printf loading || printf active )" \
+    "$( [[ "$revision" == "-1" ]] && printf connecting || printf connected )" \
+    "$presence"
+}
+
 self_test() {
   local fixture_dir
   fixture_dir="$(mktemp -d)"
@@ -1216,6 +1321,7 @@ self_test() {
     '  <node resource-id="invite-code" text="" content-desc="not-a-selector" enabled="true" visible-to-user="true" bounds="[10,20][110,220]"><node resource-id="" text="fixture-secret" enabled="true" bounds="[10,20][110,220]" /></node>' \
     '  <node resource-id="nickname" text="fixture-nickname" content-desc="" enabled="true" visible-to-user="true" bounds="[120,20][220,220]"><node resource-id="" text="fixture-nickname" enabled="true" bounds="[120,20][220,220]" /></node>' \
     '  <node resource-id="disabled" text="" content-desc="invite-code" enabled="false" visible-to-user="true" bounds="[0,0][50,50]" />' \
+    '  <node resource-id="" text="" content-desc="当前已是最新版本" enabled="true" visible-to-user="true" bounds="[20,520][400,600]" />' \
     "  <node resource-id=\"$opponent_id\" text=\"Bob\" content-desc=\"Bob\" enabled=\"true\" visible-to-user=\"true\" bounds=\"[100,300][500,500]\" />" \
     '</hierarchy>' >"$fixture"
 
@@ -1239,6 +1345,30 @@ self_test() {
   fi
   [[ "$(xml_query opponent "$fixture")" == "$opponent_id" ]] \
     || { printf 'opponent fixture failed\n' >&2; return 1; }
+  xml_query visible-text "$fixture" '当前已是最新版本' >/dev/null \
+    || { printf 'visible Snackbar text fixture failed\n' >&2; return 1; }
+  [[ "$(xml_query visible-text-count "$fixture" '当前已是最新版本')" == "1" ]] \
+    || { printf 'single visible text count fixture failed\n' >&2; return 1; }
+  [[ "$(xml_query visible-text-count "$fixture" '不存在的提示')" == "0" ]] \
+    || { printf 'missing visible text count fixture failed\n' >&2; return 1; }
+  if xml_query visible-text "$fixture" '不存在的提示' >/dev/null 2>&1; then
+    printf 'missing visible text fixture was accepted\n' >&2
+    return 1
+  fi
+
+  local duplicate_visible_text="$fixture_dir/duplicate-visible-text.xml"
+  printf '%s\n' \
+    '<hierarchy>' \
+    '  <node text="应用更新" enabled="true" visible-to-user="true" bounds="[0,0][10,10]" />' \
+    '  <node content-desc="应用更新" enabled="true" visible-to-user="true" bounds="[10,10][20,20]" />' \
+    '</hierarchy>' >"$duplicate_visible_text"
+  [[ "$(xml_query visible-text-count "$duplicate_visible_text" '应用更新')" == "2" ]] \
+    || { printf 'duplicate visible text count fixture failed\n' >&2; return 1; }
+
+  local fixture_match_id='11111111-1111-4111-8111-111111111111'
+  [[ "$(presence_state_fragment "$fixture_match_id" 3 offline)" \
+    == 'GAMEBOX_GODOT_STATE match=11111111-1111-4111-8111-111111111111 revision=3 status=active connection=connected opponent_presence=offline' ]] \
+    || { printf 'offline presence marker fixture failed\n' >&2; return 1; }
 
   local duplicate="$fixture_dir/duplicate.xml"
   printf '<hierarchy><node resource-id="register" enabled="true" bounds="[0,0][10,10]"/><node resource-id="register" enabled="true" bounds="[10,10][20,20]"/></hierarchy>\n' >"$duplicate"
@@ -1441,6 +1571,8 @@ self_test() {
   : >"$loading_watch_pid_file"
   export FAKE_ADB_PID_FILE="$loading_watch_pid_file"
   export FAKE_ADB_LOG_BOUNDARY='watch-boundary'
+  local loading_match_id='11111111-1111-4111-8111-111111111111'
+  export FAKE_ADB_LOADING_MATCH_ID="$loading_match_id"
   export FAKE_ADB_MODE=loading-watch
   TEMP_DIR="$fixture_dir"
   SERIAL_A='fixture-A'
@@ -1461,8 +1593,10 @@ self_test() {
   [[ -s "$loading_watch_pid_file" ]] \
     || { printf 'loading watcher fixture did not start adb logcat\n' >&2; return 1; }
   loading_watch_adb_pid="$(<"$loading_watch_pid_file")"
-  stop_first_connect_loading_watch \
-    || { printf 'loading watcher fixture did not stop\n' >&2; return 1; }
+  wait_for_first_connect_loading fixture-A \
+    || { printf 'loading watcher fixture did not observe its marker\n' >&2; return 1; }
+  [[ "$LOADING_MATCH_ID" == "$loading_match_id" ]] \
+    || { printf 'loading watcher fixture returned the wrong match ID\n' >&2; return 1; }
   if kill -0 "$loading_watch_adb_pid" 2>/dev/null; then
     kill -KILL "$loading_watch_adb_pid" 2>/dev/null || true
     printf 'loading watcher left adb logcat alive\n' >&2
@@ -1471,7 +1605,7 @@ self_test() {
   export FAKE_ADB_PID_FILE="$fake_pid_file"
   [[ "$FAKE_ADB_PID_FILE" == "$fake_pid_file" ]] \
     || { printf 'loading watcher fixture did not restore the fake adb pid file\n' >&2; return 1; }
-  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY
+  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY FAKE_ADB_LOADING_MATCH_ID
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
@@ -1725,16 +1859,27 @@ self_test() {
   [[ ! -e "$fake_device_root/remote-ui.xml" ]] \
     || { printf 'logic-only UI state assertion left a remote UI dump\n' >&2; return 1; }
 
+  [[ "$(logical_viewport 1080 2400 420)" == "411 914" \
+    && "$(logical_viewport 720 1600 320)" == "360 800" ]] \
+    || { printf 'logical Android viewport conversion fixture failed\n' >&2; return 1; }
+  grep -F '410-414x912-918dp' "$ROOT_DIR/README.md" >/dev/null \
+    && grep -F '358-362x798-802dp' "$ROOT_DIR/README.md" >/dev/null \
+    || { printf 'documented supplied-device viewport contract is inconsistent with the harness\n' >&2; return 1; }
+
   SERIAL_A='fixture-A'
   SERIAL_B='fixture-B'
   ORIGINAL_UI_MODE_A='auto'
   ORIGINAL_UI_MODE_B='no'
   ORIGINAL_DISPLAY_OVERRIDE_A='800x1800'
   ORIGINAL_DISPLAY_OVERRIDE_B=''
+  ORIGINAL_DENSITY_OVERRIDE_A='420'
+  ORIGINAL_DENSITY_OVERRIDE_B=''
   UI_MODE_MUTATED_A=1
   UI_MODE_MUTATED_B=1
   DISPLAY_MUTATED_A=1
   DISPLAY_MUTATED_B=1
+  DENSITY_MUTATED_A=1
+  DENSITY_MUTATED_B=1
   VERIFY_VISUAL_RESTORE=0
   : >"$fake_log"
   restore_selected_device_visuals \
@@ -1747,8 +1892,11 @@ self_test() {
     || { printf 'A original display override was not restored\n' >&2; return 1; }
   grep -F 'arg=reset' "$fake_log" >/dev/null \
     || { printf 'B absent display override was not restored\n' >&2; return 1; }
+  grep -F 'arg=420' "$fake_log" >/dev/null \
+    || { printf 'A original density override was not restored\n' >&2; return 1; }
   [[ "$UI_MODE_MUTATED_A" == "0" && "$UI_MODE_MUTATED_B" == "0" \
-    && "$DISPLAY_MUTATED_A" == "0" && "$DISPLAY_MUTATED_B" == "0" ]] \
+    && "$DISPLAY_MUTATED_A" == "0" && "$DISPLAY_MUTATED_B" == "0" \
+    && "$DENSITY_MUTATED_A" == "0" && "$DENSITY_MUTATED_B" == "0" ]] \
     || { printf 'visual restoration fixture did not clear mutation flags\n' >&2; return 1; }
 
   local helper_source="$ROOT_DIR/app/android/app/src/androidTest/kotlin/me/zqydev/gamebox/E2eSetTextTest.kt"
@@ -1775,14 +1923,12 @@ self_test() {
     && "$watcher_recheck_line" -gt "$watcher_wait_line" ]] \
     || { printf 'loading watcher teardown validates its session before reaping the pipeline\n' >&2; return 1; }
   local loading_pause_source loading_pause_line loading_stop_line
-  loading_pause_source="$(
-    sed -n '/^wait_for_first_connect_loading_and_pause() {/,/^}/p' "${BASH_SOURCE[0]}"
-  )"
-  loading_pause_line="$(grep -n 'pause_e2e_server' <<<"$loading_pause_source" | head -n 1 | cut -d: -f1)"
+  loading_pause_source="$(sed -n '/^wait_for_first_connect_loading_and_pause() {/,/^}/p' "${BASH_SOURCE[0]}")"
+  loading_pause_line="$(grep -n 'pause_e2e_server || return 1' <<<"$loading_pause_source" | head -n 1 | cut -d: -f1)"
   loading_stop_line="$(grep -n 'stop_first_connect_loading_watch' <<<"$loading_pause_source" | head -n 1 | cut -d: -f1)"
   [[ "$loading_pause_line" =~ ^[1-9][0-9]*$ && "$loading_stop_line" =~ ^[1-9][0-9]*$ \
     && "$loading_pause_line" -lt "$loading_stop_line" ]] \
-    || { printf 'first-connect server pause still follows loading watcher teardown\n' >&2; return 1; }
+    || { printf 'first-connect server pause does not precede watcher teardown\n' >&2; return 1; }
   local visual_configuration_source
   visual_configuration_source="$(
     sed -n '/^configure_device_visuals() {/,/^}/p' "${BASH_SOURCE[0]}"
@@ -1807,6 +1953,46 @@ self_test() {
     printf 'a continue-match action still uses the non-scroll-aware tap helper\n' >&2
     return 1
   fi
+  grep -F 'wait_for_first_connect_loading_and_pause "$SERIAL_A"' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'first-connect loading flow does not pause before inspecting UI\n' >&2; return 1; }
+  local first_connect_flow_source
+  first_connect_flow_source="$(sed -n '/^wait_for_first_connect_loading_and_pause "\$SERIAL_A"/,/^resume_e2e_server/p' "${BASH_SOURCE[0]}")"
+  grep -F 'assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A"' \
+    <<<"$first_connect_flow_source" >/dev/null \
+    || { printf 'first-connect loading flow does not capture its safe UI snapshot\n' >&2; return 1; }
+  grep -F 'assert_first_connect_loading_held "$SERIAL_A" "$LOADING_MATCH_ID"' \
+    <<<"$first_connect_flow_source" >/dev/null \
+    || { printf 'first-connect loading flow does not recheck the held state after its UI snapshot\n' >&2; return 1; }
+  local first_connect_safe_line first_connect_held_line
+  first_connect_safe_line="$(grep -n 'assert_ui_state_safe' <<<"$first_connect_flow_source" | head -n 1 | cut -d: -f1)"
+  first_connect_held_line="$(grep -n 'assert_first_connect_loading_held' <<<"$first_connect_flow_source" | head -n 1 | cut -d: -f1)"
+  [[ "$first_connect_safe_line" =~ ^[1-9][0-9]*$ \
+    && "$first_connect_held_line" =~ ^[1-9][0-9]*$ \
+    && "$first_connect_held_line" -gt "$first_connect_safe_line" ]] \
+    || { printf 'first-connect held-state recheck does not follow its UI snapshot\n' >&2; return 1; }
+  grep -F 'resume_e2e_server' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'first-connect loading flow does not resume the paused server\n' >&2; return 1; }
+  grep -F 'exercise_optional_move_confirmation "$BLACK_SERIAL" 3 3 1 1' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'optional move confirmation lifecycle is not exercised\n' >&2; return 1; }
+  grep -F 'optional-move-confirmation-enable-cancel-confirm-disable' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'optional move confirmation result assertion is missing\n' >&2; return 1; }
+  local update_flow_source
+  update_flow_source="$(sed -n '/^tap_identifier "\$SERIAL_B" app-update/,/^uuid_pattern=/p' "${BASH_SOURCE[0]}")"
+  grep -F 'wait_for_identifier "$SERIAL_B" update-feedback' \
+    <<<"$update_flow_source" >/dev/null \
+    || { printf 'update flow does not wait for terminal update feedback\n' >&2; return 1; }
+  if grep -F 'settle_update_action "$SERIAL_B"' <<<"$update_flow_source" >/dev/null; then
+    printf 'update flow still uses the premature toolbar settlement gate\n' >&2
+    return 1
+  fi
+  if grep -F 'KEYCODE_BACK' <<<"$update_flow_source" >/dev/null; then
+    printf 'update flow can still exit the app when no dialog opens\n' >&2
+    return 1
+  fi
   if grep -E 'screencap|capture_ui_evidence|ui_evidence|screenshots/|\.png' \
     <<<"$runtime_source" >/dev/null; then
     printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
@@ -1814,6 +2000,8 @@ self_test() {
   fi
   grep -F 'point="$(design_point_for_serial "$serial" 640 1230)"' <<<"$runtime_source" >/dev/null \
     || { printf 'large portrait resign confirmation tap point is stale\n' >&2; return 1; }
+  grep -F 'point="$(design_point_from_bottom_for_serial "$serial" 540 240)"' <<<"$runtime_source" >/dev/null \
+    || { printf 'large portrait settings Done tap point is stale\n' >&2; return 1; }
   grep -F "flutter test -d \"\$SERIAL_A\" integration_test/semantics_test.dart" <<<"$runtime_source" >/dev/null \
     || { printf 'selected-device semantics command is missing\n' >&2; return 1; }
   if grep -F 'SECONDS + 10' <<<"$runtime_source" >/dev/null; then
@@ -1927,10 +2115,14 @@ ORIGINAL_UI_MODE_A=""
 ORIGINAL_UI_MODE_B=""
 ORIGINAL_DISPLAY_OVERRIDE_A=""
 ORIGINAL_DISPLAY_OVERRIDE_B=""
+ORIGINAL_DENSITY_OVERRIDE_A=""
+ORIGINAL_DENSITY_OVERRIDE_B=""
 UI_MODE_MUTATED_A=0
 UI_MODE_MUTATED_B=0
 DISPLAY_MUTATED_A=0
 DISPLAY_MUTATED_B=0
+DENSITY_MUTATED_A=0
+DENSITY_MUTATED_B=0
 VERIFY_VISUAL_RESTORE=1
 VIEWPORT_A=""
 VIEWPORT_B=""
@@ -2054,12 +2246,14 @@ cleanup() {
     rm -f -- "$ARTIFACT_DIR/summary.json"
     ((exit_code == 0)) && exit_code=1
   fi
+  gamebox_test_output_cleanup
   rm -rf "$TEMP_DIR"
   exit "$exit_code"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+gamebox_test_output_init
 
 clear_secret_field_for_failure() {
   local serial="$1"
@@ -2284,8 +2478,8 @@ validate_device "$SERIAL_A" API_LEVEL_A
 validate_device "$SERIAL_B" API_LEVEL_B
 readonly API_LEVEL_A API_LEVEL_B
 
-configure_device_visuals A "$SERIAL_A" no "$MANAGED_LARGE_DISPLAY" "$((1 - USING_PROVIDED_DEVICES))"
-configure_device_visuals B "$SERIAL_B" yes "$MANAGED_NARROW_DISPLAY" "$((1 - USING_PROVIDED_DEVICES))"
+configure_device_visuals A "$SERIAL_A" no "$MANAGED_LARGE_DISPLAY" "$MANAGED_LARGE_DENSITY" "$((1 - USING_PROVIDED_DEVICES))"
+configure_device_visuals B "$SERIAL_B" yes "$MANAGED_NARROW_DISPLAY" "$MANAGED_NARROW_DENSITY" "$((1 - USING_PROVIDED_DEVICES))"
 assert_selected_viewport_matrix
 readonly VIEWPORT_A VIEWPORT_B
 printf 'E2E viewports: A=%s (light/large), B=%s (dark/narrow)\n' \
@@ -2319,23 +2513,29 @@ printf 'Building single-ABI debug APK and server tools...\n'
 # Build the repository-owned UI Automator helper first. Gradle also assembles a
 # default app APK for androidTest; the Flutter build below must run last so the
 # installed app retains this run's isolated API base URL.
-(
+build_android_test_apk() {
+  (
   cd "$ROOT_DIR/app/android"
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" env \
     ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
     ./gradlew :app:assembleDebugAndroidTest
-)
+  )
+}
+gamebox_run_step "E2E Android test APK build" build_android_test_apk
 TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 readonly TEST_APK
 [[ -f "$TEST_APK" ]] || fail "E2E-owned UI Automator helper APK was not produced"
-(
+build_flutter_debug_apk() {
+  (
   cd "$ROOT_DIR/app"
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" env \
     ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
     flutter build apk \
       --debug --target-platform=android-arm64 \
       --dart-define="GAMEBOX_API_BASE_URL=$api_base"
-)
+  )
+}
+gamebox_run_step "E2E Flutter debug APK build" build_flutter_debug_apk
 APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
 readonly APK
 [[ -f "$APK" ]] || fail "debug APK was not produced"
@@ -2344,6 +2544,7 @@ packaged_abis="$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u 
 for required_asset in \
   assets/games/gomoku/gomoku_scene.tscn \
   assets/games/gomoku/gomoku_board.gd \
+  assets/games/gomoku/gomoku_preferences.gd \
   assets/design_system/components/gamebox_back_button.tscn \
   assets/design_system/gamebox_theme.gd; do
   unzip -Z1 "$APK" | grep -Fx "$required_asset" >/dev/null || fail "APK is missing $required_asset"
@@ -2353,11 +2554,14 @@ TEST_APK_SHA256="$(shasum -a 256 "$TEST_APK" | awk '{print $1}')"
 [[ "$APK_SHA256" =~ ^[0-9a-f]{64}$ && "$TEST_APK_SHA256" =~ ^[0-9a-f]{64}$ ]] \
   || fail "built APK SHA-256 provenance was invalid"
 readonly APK_SHA256 TEST_APK_SHA256
-(
+build_server_tools() {
+  (
   cd "$ROOT_DIR/server"
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" go build -o "$SERVER_BIN" ./cmd/gameboxd
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" go build -o "$CTL_BIN" ./cmd/gameboxctl
-)
+  )
+}
+gamebox_run_step "E2E server tools build" build_server_tools
 
 install_app() {
   local serial="$1"
@@ -2472,6 +2676,21 @@ wait_for_identifier_after_scroll() {
   return 1
 }
 
+wait_for_visible_text() {
+  local serial="$1"
+  local expected="$2"
+  local deadline=$((SECONDS + WAIT_SECONDS))
+  local xml="$TEMP_DIR/ui-visible-text-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  while ((SECONDS < deadline)); do
+    if dump_ui "$serial" "$xml" \
+      && xml_query visible-text "$xml" "$expected" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 tap_identifier_after_scroll() {
   local serial="$1"
   local identifier="$2"
@@ -2479,6 +2698,14 @@ tap_identifier_after_scroll() {
   center="$(wait_for_identifier_after_scroll "$serial" "$identifier")" || return 1
   read -r x y <<<"$center"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+assert_visible_text_absent() {
+  local serial="$1"
+  local unexpected="$2"
+  local xml="$TEMP_DIR/ui-absent-text-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  dump_ui "$serial" "$xml" || return 1
+  [[ "$(xml_query visible-text-count "$xml" "$unexpected")" == "0" ]]
 }
 
 tap_identifier() {
@@ -2570,6 +2797,16 @@ wait_for_log_marker() {
   wait_for_log_marker_with_timeout "$1" "$2" "$WAIT_SECONDS"
 }
 
+wait_for_presence_state() {
+  local serial="$1"
+  local match_id="$2"
+  local revision="$3"
+  local presence="$4"
+  local fragment
+  fragment="$(presence_state_fragment "$match_id" "$revision" "$presence")" || return $?
+  wait_for_log_marker "$serial" "$fragment"
+}
+
 wait_for_new_ready_match_id() {
   local serial="$1"
   local excluded_id="${2:-}"
@@ -2601,14 +2838,11 @@ wait_for_first_connect_loading_and_pause() {
     fi
     if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
       LOADING_MATCH_ID="$candidate"
-      pause_e2e_server || {
-        stop_first_connect_loading_watch || true
-        return 1
-      }
-      stop_first_connect_loading_watch || {
+      pause_e2e_server || return 1
+      if ! stop_first_connect_loading_watch; then
         resume_e2e_server || true
         return 1
-      }
+      fi
       sleep 0.2
       if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
         | grep -F "$GAMEBOX_STATE_MARKER match=$candidate revision=0" >/dev/null; then
@@ -2621,6 +2855,16 @@ wait_for_first_connect_loading_and_pause() {
   done
   stop_first_connect_loading_watch
   return 1
+}
+
+assert_first_connect_loading_held() {
+  local serial="$1"
+  local match_id="$2"
+  [[ "$match_id" =~ ^[0-9a-f-]{36}$ ]] || return 2
+  if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+    | grep -F "$GAMEBOX_STATE_MARKER match=$match_id revision=0" >/dev/null; then
+    return 1
+  fi
 }
 
 JWT_SECRET="$(openssl rand -hex 32)"
@@ -2665,13 +2909,19 @@ register_user() {
     || fail "registration did not reach the catalog on $serial"
   printf -v "$secret_flag" '%s' 0
 }
+gamebox_test_progress 'Gamebox E2E: registering both users and creating the first match...'
 register_user "$SERIAL_A" "$INVITE_A" "$NICKNAME_A" SECRETS_ON_UI_A
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the light idle lobby UI state"
 register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 
+wait_for_visible_text "$SERIAL_B" '检查更新' \
+  || fail "B update action did not become ready after its automatic check"
 tap_identifier "$SERIAL_B" app-update
-sleep 2
+wait_for_identifier "$SERIAL_B" update-feedback >/dev/null \
+  || fail "B did not show terminal non-modal update feedback"
+assert_visible_text_absent "$SERIAL_B" '应用更新' \
+  || fail "B showed a modal update dialog for terminal update feedback"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
   || fail "could not verify the dark routine-update feedback state"
 wait_for_identifier "$SERIAL_B" game-gomoku >/dev/null \
@@ -2698,6 +2948,8 @@ wait_for_first_connect_loading_and_pause "$SERIAL_A" \
   || fail "could not hold the real first-connect loading state before its initial snapshot"
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the real first-connect loading UI state"
+assert_first_connect_loading_held "$SERIAL_A" "$LOADING_MATCH_ID" \
+  || fail "first-connect snapshot arrived while the held loading UI was inspected"
 resume_e2e_server \
   || fail "could not resume the E2E server after first-connect loading assertion"
 
@@ -2769,6 +3021,10 @@ tap_identifier_after_scroll "$SERIAL_B" continue-match \
   || fail "B could not activate the narrow active-match action"
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "B Godot did not report ready for the first match"
+wait_for_presence_state "$SERIAL_A" "$MATCH_ID" 0 online \
+  || fail "A did not render B as online in the first match"
+wait_for_presence_state "$SERIAL_B" "$MATCH_ID" 0 online \
+  || fail "B did not render A as online in the first match"
 
 display_size() {
   device_effective_size "$1"
@@ -2785,6 +3041,54 @@ design_point_for_serial() {
     scale = [width / design_width, height / design_height].min
     puts "#{(x * scale).round} #{(y * scale).round}"
   ' "$width" "$height" "$DESIGN_WIDTH" "$DESIGN_HEIGHT" "$design_x" "$design_y"
+}
+
+design_point_from_bottom_for_serial() {
+  local serial="$1"
+  local design_x="$2"
+  local bottom_offset="$3"
+  local width height
+  read -r width height <<<"$(display_size "$serial")"
+  ruby -e '
+    width, height, design_width, design_height, x, bottom_offset = ARGV.map(&:to_f)
+    scale = [width / design_width, height / design_height].min
+    puts "#{(x * scale).round} #{(height - bottom_offset * scale).round}"
+  ' "$width" "$height" "$DESIGN_WIDTH" "$DESIGN_HEIGHT" "$design_x" "$bottom_offset"
+}
+
+tap_godot_settings() {
+  local serial="$1" point x y
+  point="$(design_point_for_serial "$serial" 936 120)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_godot_move_confirmation_toggle() {
+  local serial="$1" point x y
+  point="$(design_point_from_bottom_for_serial "$serial" 540 434)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_godot_settings_done() {
+  local serial="$1" point x y
+  point="$(design_point_from_bottom_for_serial "$serial" 540 240)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_godot_move_cancel() {
+  local serial="$1" point x y
+  point="$(design_point_for_serial "$serial" 314 1604)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_godot_move_confirm() {
+  local serial="$1" point x y
+  point="$(design_point_for_serial "$serial" 766 1604)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
 
 tap_board_cell() {
@@ -2872,6 +3176,75 @@ perform_pending_logic_move() {
   wait_match_revision "$revision" "$x" "$y" "$color" \
     || fail "pending logic move ($x,$y) did not commit as revision $revision after resume"
   assert_both_state_revision "$revision"
+}
+
+exercise_optional_move_confirmation() {
+  local serial="$1"
+  local x="$2"
+  local y="$3"
+  local revision="$4"
+  local color="$5"
+  local snapshot cell_index
+  cell_index=$((y * 15 + x))
+
+  refresh_game_log_boundaries optional-confirmation-enable \
+    || fail "could not establish optional confirmation log boundaries"
+  tap_godot_settings "$serial" || fail "could not open Gomoku settings"
+  wait_for_log_marker "$serial" 'GAMEBOX_SETTINGS_SHEET visible=true' \
+    || fail "Gomoku settings sheet did not open"
+  tap_godot_move_confirmation_toggle "$serial" || fail "could not enable move confirmation"
+  wait_for_log_marker "$serial" 'GAMEBOX_MOVE_CONFIRMATION enabled=true' \
+    || fail "move confirmation did not enable"
+  tap_godot_settings_done "$serial" || fail "could not close Gomoku settings"
+  wait_for_log_marker "$serial" 'GAMEBOX_SETTINGS_SHEET visible=false' \
+    || fail "Gomoku settings sheet did not close"
+
+  tap_board_cell "$serial" "$x" "$y"
+  wait_for_log_marker "$serial" "GAMEBOX_MOVE_SELECTION state=selected x=$x y=$y" \
+    || fail "the first board tap did not remain a local selection"
+  sleep 2
+  snapshot="$(match_show "$MATCH_ID")" || fail "could not inspect the match after local selection"
+  [[ "$(jq -r '.revision' <<<"$snapshot")" == "$((revision - 1))" \
+    && "$(jq -r --argjson index "$cell_index" '.board[$index]' <<<"$snapshot")" == "0" ]] \
+    || fail "local move selection changed the authoritative match before confirmation"
+  tap_godot_move_cancel "$serial" || fail "could not cancel the local move selection"
+  wait_for_log_marker "$serial" "GAMEBOX_MOVE_SELECTION state=cancelled x=$x y=$y" \
+    || fail "local move selection did not cancel"
+  snapshot="$(match_show "$MATCH_ID")" || fail "could not inspect the match after cancellation"
+  [[ "$(jq -r '.revision' <<<"$snapshot")" == "$((revision - 1))" \
+    && "$(jq -r --argjson index "$cell_index" '.board[$index]' <<<"$snapshot")" == "0" ]] \
+    || fail "cancelling a local move selection changed the authoritative match"
+
+  refresh_game_log_boundaries optional-confirmation-submit \
+    || fail "could not establish optional confirmation submit boundaries"
+  tap_board_cell "$serial" "$x" "$y"
+  wait_for_log_marker "$serial" "GAMEBOX_MOVE_SELECTION state=selected x=$x y=$y" \
+    || fail "the second board tap did not create a local selection"
+  pause_e2e_server \
+    || fail "could not pause the E2E server before confirming the selected move"
+  tap_godot_move_confirm "$serial" || fail "could not confirm the selected move"
+  wait_for_log_marker_with_timeout \
+    "$serial" \
+    "GAMEBOX_BOARD_CANMOVE can=false conn=connected await=false status=active pend_empty=false" \
+    "$WAIT_SECONDS" \
+    || fail "confirmed selection did not become pending before acknowledgement"
+  resume_e2e_server \
+    || fail "could not resume the E2E server after confirming the selected move"
+  wait_match_revision "$revision" "$x" "$y" "$color" \
+    || fail "confirmed move ($x,$y) did not commit as revision $revision"
+  assert_both_state_revision "$revision"
+
+  refresh_game_log_boundaries optional-confirmation-disable \
+    || fail "could not establish optional confirmation disable boundaries"
+  tap_godot_settings "$serial" || fail "could not reopen Gomoku settings"
+  wait_for_log_marker "$serial" 'GAMEBOX_SETTINGS_SHEET visible=true' \
+    || fail "Gomoku settings sheet did not reopen"
+  tap_godot_move_confirmation_toggle "$serial" || fail "could not disable move confirmation"
+  wait_for_log_marker "$serial" 'GAMEBOX_MOVE_CONFIRMATION enabled=false' \
+    || fail "move confirmation did not disable"
+  tap_godot_settings_done "$serial" || fail "could not finish Gomoku settings"
+  wait_for_log_marker "$serial" 'GAMEBOX_SETTINGS_SHEET visible=false' \
+    || fail "Gomoku settings sheet did not close after disabling confirmation"
 }
 
 tap_godot_resign() {
@@ -2984,11 +3357,7 @@ capture_connection_recovery_states() {
   recover_both_clients_after_server_restart "$expected_revision"
 }
 
-if [[ "$BLACK_SERIAL" == "$SERIAL_A" ]]; then
-  perform_pending_logic_move "$BLACK_SERIAL" 3 3 1 1
-else
-  perform_move "$BLACK_SERIAL" 3 3 1 1
-fi
+exercise_optional_move_confirmation "$BLACK_SERIAL" 3 3 1 1
 capture_resign_confirmation "$SERIAL_A"
 if [[ "$WHITE_SERIAL" == "$SERIAL_A" ]]; then
   perform_pending_logic_move "$WHITE_SERIAL" 3 5 2 2
@@ -2998,10 +3367,20 @@ fi
 capture_connection_recovery_states 2
 exercise_active_system_back "$SERIAL_A" 2
 perform_move "$BLACK_SERIAL" 4 3 3 1
+gamebox_test_progress 'Gamebox E2E: validating process recovery and resumed state...'
 
 RECOVERY_SERIAL="$WHITE_SERIAL"
+if [[ "$RECOVERY_SERIAL" == "$SERIAL_A" ]]; then
+  SURVIVING_SERIAL="$SERIAL_B"
+else
+  SURVIVING_SERIAL="$SERIAL_A"
+fi
+refresh_game_log_boundaries presence-recovery \
+  || fail "could not establish presence recovery log boundaries"
 adb_for "$RECOVERY_SERIAL" shell am force-stop "$PACKAGE" >/dev/null \
   || fail "could not force-stop only $PACKAGE on the recovery device"
+wait_for_presence_state "$SURVIVING_SERIAL" "$MATCH_ID" 3 offline \
+  || fail "surviving client did not render the force-stopped opponent as offline"
 sleep 1
 recovery_snapshot="$(match_show "$MATCH_ID")" || fail "match became unreadable after force-stop"
 [[ "$(jq -r '.revision' <<<"$recovery_snapshot")" == "3" ]] \
@@ -3022,10 +3401,16 @@ fi
 start_flutter "$RECOVERY_SERIAL"
 tap_identifier_after_scroll "$RECOVERY_SERIAL" continue-match \
   || fail "force-stopped client could not activate the resumable match"
+ wait_for_presence_state "$RECOVERY_SERIAL" "$MATCH_ID" -1 unknown \
+   || fail "relaunching client did not report unknown presence before its snapshot"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "force-stopped client did not relaunch Godot"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=3" \
   || fail "force-stopped client did not resume at authoritative revision 3"
+wait_for_presence_state "$RECOVERY_SERIAL" "$MATCH_ID" 3 online \
+  || fail "relaunching client did not restore the opponent to online"
+wait_for_presence_state "$SURVIVING_SERIAL" "$MATCH_ID" 3 online \
+  || fail "surviving client did not restore the relaunched opponent to online"
 assert_both_state_revision 3
 
 perform_move "$WHITE_SERIAL" 4 5 4 2
@@ -3065,6 +3450,7 @@ second_opponent_identifier="$(wait_for_opponent_identifier "$SERIAL_A")" \
 [[ "$second_opponent_identifier" == "opponent-$USER_ID_B" ]] \
   || fail "second opponent resource-id did not identify B"
 tap_identifier "$SERIAL_A" "$second_opponent_identifier"
+gamebox_test_progress 'Gamebox E2E: validating zero-step cancellation and slot release...'
 SECOND_MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A" "$MATCH_ID")" \
   || fail "A did not emit exactly one second-match ready ID within ${WAIT_SECONDS}s"
 [[ "$SECOND_MATCH_ID" =~ $uuid_pattern ]] || fail "second Godot ready marker did not contain a canonical match ID"
@@ -3178,7 +3564,8 @@ MATCH_ID="$FIRST_MATCH_ID"
 restore_selected_device_visuals \
   || fail "could not restore both selected devices to their original ui mode and display override"
 [[ "$UI_MODE_MUTATED_A" == "0" && "$UI_MODE_MUTATED_B" == "0" \
-  && "$DISPLAY_MUTATED_A" == "0" && "$DISPLAY_MUTATED_B" == "0" ]] \
+  && "$DISPLAY_MUTATED_A" == "0" && "$DISPLAY_MUTATED_B" == "0" \
+  && "$DENSITY_MUTATED_A" == "0" && "$DENSITY_MUTATED_B" == "0" ]] \
   || fail "device visual restoration left a tracked mutation active"
 
 SOURCE_REVISION_END="$(git -C "$ROOT_DIR" rev-parse HEAD)"
@@ -3231,6 +3618,8 @@ jq -n \
       "second-match-created","cancel-confirmed-once","zero-step-cancelled","slots-released",
       "active-system-back-resumable","confirmed-resignation-once","authoritative-resignation-result",
       "pending-before-authoritative-ack","real-reconnecting-and-failed-states",
+      "optional-move-confirmation-enable-cancel-confirm-disable",
+      "presence-online-offline-unknown-restored-online",
       "exact-owned-server-pause-stop-restart","ui-mode-and-display-restored",
       "selected-device-semantics-integration","clean-build-provenance",
       "installed-apk-sha256-equality"
@@ -3243,4 +3632,10 @@ if ! protect_artifact_directory \
   fail "artifact secret scanner removed unsafe or unverifiable output"
 fi
 
-printf 'Gamebox two-emulator E2E passed. Artifacts: %s\n' "$ARTIFACT_DIR"
+warning_count="$(gamebox_test_output_warning_count)"
+if ((warning_count > 0)); then
+  printf 'Gamebox two-emulator E2E passed (%s warning lines). Artifacts: %s\n' \
+    "$warning_count" "$ARTIFACT_DIR"
+else
+  printf 'Gamebox two-emulator E2E passed. Artifacts: %s\n' "$ARTIFACT_DIR"
+fi

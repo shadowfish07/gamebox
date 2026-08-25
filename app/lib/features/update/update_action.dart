@@ -21,7 +21,9 @@ final class UpdateActionButton extends StatelessWidget {
           button: true,
           child: IconButton(
             tooltip: hasUpdate ? '安装更新' : '检查更新',
-            onPressed: () => showUpdateDialog(context, controller),
+            onPressed: controller.isBusy
+                ? null
+                : () => showUpdateDialog(context, controller),
             icon: Badge(
               isLabelVisible: hasUpdate,
               child: controller.isBusy
@@ -54,8 +56,14 @@ Future<void> showUpdateDialog(
       _ => null,
     };
     if (message != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Semantics(
+            identifier: 'update-feedback',
+            child: Text(message),
+          ),
+        ),
+      );
     }
     return;
   }
@@ -133,9 +141,13 @@ final class _UpdateDialog extends StatelessWidget {
                       : '下载并安装',
                 ),
               ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
+            Semantics(
+              identifier: 'dismiss-update',
+              button: true,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('关闭'),
+              ),
             ),
           ],
         );

@@ -422,6 +422,36 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 }
 
+func TestGomokuStatusFailureWritesAIsolatedDiagnosticLog(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "diagnostic-a", "Alice")
+	bob := fixture.register(t, "diagnostic-b", "Bob")
+	created := fixture.request(t, http.MethodPost, "/v1/games/gomoku/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	var matchBody struct {
+		Match struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &matchBody)
+	if _, err := fixture.db.Exec(`UPDATE matches SET revision=revision+1 WHERE id=?`, matchBody.Match.ID); err != nil {
+		t.Fatalf("corrupt active match for diagnostic test: %v", err)
+	}
+
+	response := fixture.request(t, http.MethodGet, "/v1/games/gomoku/status", "", alice.Session.AccessToken)
+	if response.Code != http.StatusInternalServerError || responseErrorCode(t, response) != "internal_error" {
+		t.Fatalf("status=(%d,%s)", response.Code, response.Body.String())
+	}
+	logged := fixture.logs.String()
+	if !strings.Contains(logged, "event=service_error") ||
+		!strings.Contains(logged, "phase=gomoku_status") ||
+		!strings.Contains(logged, "category=internal") {
+		t.Fatalf("missing isolated status diagnostic: %s", logged)
+	}
+	if strings.Contains(logged, "diagnostic-a") || strings.Contains(logged, alice.Session.AccessToken) {
+		t.Fatalf("diagnostic log leaked user data or credential: %s", logged)
+	}
+}
+
 func authTokenBytes(token string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(token)
 }
@@ -459,7 +489,7 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial response=%v err=%v", response, err)
 		}
-		message := fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"%s":%s}}`, tokenKey, quote(token))
+		message := fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"%s":%s,"capabilities":["player_presence_v1"]}}`, tokenKey, quote(token))
 		if err := connection.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
 			t.Fatalf("write connect: %v", err)
 		}
@@ -472,8 +502,16 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 	}
 	aliceWS, aliceConnected, aliceSnapshot := connect("launchTicket", aliceTicket, 0)
 	defer aliceWS.CloseNow()
-	bobWS, _, bobSnapshot := connect("launchTicket", bobTicket, 0)
+	bobWS, bobConnected, bobSnapshot := connect("launchTicket", bobTicket, 0)
 	defer bobWS.CloseNow()
+	presenceChanged := readWSEnvelope(t, aliceWS)
+	var presencePayload struct {
+		UserID string `json:"userId"`
+		Online bool   `json:"online"`
+	}
+	if presenceChanged.Type != protocol.TypePlatformPresenceChanged || presenceChanged.Revision == nil || *presenceChanged.Revision != 0 || json.Unmarshal(presenceChanged.Payload, &presencePayload) != nil || presencePayload.UserID != bob.Session.User.ID || !presencePayload.Online {
+		t.Fatalf("presence change=%+v payload=%s", presenceChanged, presenceChanged.Payload)
+	}
 	if !bytes.Equal(aliceSnapshot.Payload, bobSnapshot.Payload) {
 		t.Fatalf("initial snapshots differ: %s / %s", aliceSnapshot.Payload, bobSnapshot.Payload)
 	}
@@ -514,9 +552,21 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 		ConnectionID    string `json:"connectionId"`
 		ResumeToken     string `json:"resumeToken"`
 		ResumeExpiresAt int64  `json:"resumeExpiresAt"`
+		Players         []struct {
+			UserID string `json:"userId"`
+			Online bool   `json:"online"`
+		} `json:"players"`
 	}
-	if err := json.Unmarshal(aliceConnected.Payload, &connectedPayload); err != nil || connectedPayload.ResumeToken == "" || connectedPayload.UserID != alice.Session.User.ID || !canonicalRequestID(connectedPayload.ConnectionID) || connectedPayload.ResumeExpiresAt != fixture.clock.Now().UTC().Add(30*time.Minute).UnixMilli() {
+	if err := json.Unmarshal(aliceConnected.Payload, &connectedPayload); err != nil || connectedPayload.ResumeToken == "" || connectedPayload.UserID != alice.Session.User.ID || !canonicalRequestID(connectedPayload.ConnectionID) || connectedPayload.ResumeExpiresAt != fixture.clock.Now().UTC().Add(30*time.Minute).UnixMilli() || len(connectedPayload.Players) != 2 || !connectedPayload.Players[0].Online || connectedPayload.Players[1].Online {
 		t.Fatalf("connected payload=%s err=%v", aliceConnected.Payload, err)
+	}
+	var bobConnectedPayload struct {
+		Players []struct {
+			Online bool `json:"online"`
+		} `json:"players"`
+	}
+	if err := json.Unmarshal(bobConnected.Payload, &bobConnectedPayload); err != nil || len(bobConnectedPayload.Players) != 2 || !bobConnectedPayload.Players[0].Online || !bobConnectedPayload.Players[1].Online {
+		t.Fatalf("bob connected payload=%s err=%v", bobConnected.Payload, err)
 	}
 	oldAliceWS := aliceWS
 	aliceWS, _, resumedSnapshot := connect("resumeToken", connectedPayload.ResumeToken, 1)
@@ -606,7 +656,8 @@ func TestWebSocketRejectsInvalidHandshakeCredentialReuseAndCrossOrigin(t *testin
 			t.Fatal(err)
 		}
 		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
-		if first, second := readWSEnvelope(t, connection), readWSEnvelope(t, connection); first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot {
+		first, second := readWSEnvelope(t, connection), readWSEnvelope(t, connection)
+		if first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot || bytes.Contains(first.Payload, []byte(`"players"`)) {
 			t.Fatalf("connected=(%+v,%+v)", first, second)
 		}
 		_ = connection.Close(websocket.StatusNormalClosure, "")

@@ -102,8 +102,14 @@ jobs:
 
       - name: Run source tests
         run: |
-          bash tool/verify_fast.sh
-          (cd app/android && ./gradlew :app:testDebugUnitTest)
+          source tool/lib/check_output.sh
+          gamebox_test_output_init
+          trap gamebox_test_output_cleanup EXIT
+          gamebox_run_step "fast verification" \
+            env GAMEBOX_TEST_NESTED=1 bash tool/verify_fast.sh
+          gamebox_run_step "Android app unit tests" \
+            bash -c 'cd app/android && ./gradlew :app:testDebugUnitTest'
+          gamebox_test_output_finish release-source-tests
 
       - name: Configure release signing
         env:

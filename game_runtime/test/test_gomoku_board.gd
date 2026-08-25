@@ -14,6 +14,7 @@ static func cases() -> Array:
 		{"name": "gomoku board mapping survives expanded viewport stretch", "run": _maps_expanded_viewports},
 		{"name": "gomoku board submits one safe single-finger release", "run": _submits_only_safe_release},
 		{"name": "gomoku board advances pressed pending and authoritative states", "run": _advances_interaction_states},
+		{"name": "gomoku board keeps selected move separate from server pending", "run": _keeps_selected_separate},
 		{"name": "gomoku board keeps authoritative stones separate from pending", "run": _keeps_pending_separate},
 		{"name": "gomoku board maps every rendered state to game tokens", "run": _maps_game_tokens},
 	]
@@ -111,6 +112,27 @@ static func _keeps_pending_separate() -> bool:
 		and _check(board.stone_at(8, 7) == 0, "pending move was painted into authoritative board") \
 		and _check(board.pending_cell == Vector2i(8, 7), "pending marker missing") \
 		and _check(board.last_move_cell == Vector2i(7, 7), "last move marker missing")
+	board.free()
+	return result
+
+
+static func _keeps_selected_separate() -> bool:
+	var board := GomokuBoard.new()
+	board.size = Vector2(960.0, 960.0)
+	var cells: Array = []
+	cells.resize(225)
+	cells.fill(0)
+	var target := Vector2i(4, 6)
+	if not _check(board.present(cells, Vector2i(-1, -1), Vector2i(-1, -1), target), "valid selection was rejected"):
+		board.free()
+		return false
+	if not _check(board.selected_cell == target, "selected cell was not exposed") \
+		or not _check(board.pending_cell == Vector2i(-1, -1), "local selection became server pending") \
+		or not _check(board.stone_at(target.x, target.y) == 0, "local selection became an authoritative stone"):
+		board.free()
+		return false
+	board.present(cells)
+	var result := _check(board.selected_cell == Vector2i(-1, -1), "authoritative refresh did not clear local selection")
 	board.free()
 	return result
 

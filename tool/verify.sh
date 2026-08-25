@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 cd "$ROOT_DIR"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
 
 godot_imported_asset_is_allowed() {
   local asset_path="$1"
@@ -258,16 +260,21 @@ if [[ "${1:-}" == "--self-test" ]]; then
     printf 'usage: %s [--self-test]\n' "$0" >&2
     exit 2
   }
-  verify_asset_path_fixtures
-  verify_native_runtime_fixtures
+  gamebox_test_output_init
+  trap gamebox_test_output_cleanup EXIT
+  gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
+  gamebox_run_step "APK native runtime fixtures" verify_native_runtime_fixtures
+  gamebox_test_output_finish verify-self-test
   exit 0
 fi
 [[ $# -eq 0 ]] || {
   printf 'usage: %s [--self-test]\n' "$0" >&2
   exit 2
 }
-verify_asset_path_fixtures
-verify_native_runtime_fixtures
+gamebox_test_output_init
+trap gamebox_test_output_cleanup EXIT
+gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
+gamebox_run_step "APK native runtime fixtures" verify_native_runtime_fixtures
 
 # setup-godot exposes the executable on PATH in CI, while the local bootstrap
 # retains its macOS application-bundle default.
@@ -281,103 +288,116 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
-bash tool/bootstrap.sh --build-only
-bash tool/verify_fast.sh
+gamebox_run_step "toolchain bootstrap" bash tool/bootstrap.sh --build-only
+gamebox_run_step "fast verification" env GAMEBOX_TEST_NESTED=1 bash tool/verify_fast.sh
 
-(cd app/android && ./gradlew \
-  :app:testDebugUnitTest \
-  :flutter_release_updater:testDebugUnitTest)
-(cd app && flutter build apk --debug)
-
-readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
-[[ -f "$APK" ]] || {
-  printf 'Debug APK was not produced at %s\n' "$APK" >&2
-  exit 1
+run_android_unit_tests() {
+  (cd app/android && ./gradlew \
+    :app:testDebugUnitTest \
+    :flutter_release_updater:testDebugUnitTest)
 }
 
-merged_manifests="$(find "$ROOT_DIR/app/build/app/intermediates/merged_manifests" \
-  -type f -name AndroidManifest.xml -path '*debug*' 2>/dev/null || true)"
-readonly merged_manifests
-[[ -n "$merged_manifests" ]] || {
-  printf 'No merged debug Android manifest was produced.\n' >&2
-  exit 1
+run_flutter_debug_build() {
+  (cd app && flutter build apk --debug)
 }
-while IFS= read -r merged_manifest; do
-  install_permission_count="$({
-    grep -oF 'android.permission.REQUEST_INSTALL_PACKAGES' "$merged_manifest" || true
-  } | wc -l | tr -d ' ')"
-  if [[ "$install_permission_count" != "1" ]]; then
-    printf 'Merged debug manifest must contain one updater permission (found %s): %s\n' \
-      "$install_permission_count" "$merged_manifest" >&2
-    exit 1
-  fi
-  if grep -F 'android.permission.INSTALL_PACKAGES' "$merged_manifest" >/dev/null; then
-    printf 'Merged debug manifest requests privileged silent installation: %s\n' \
-      "$merged_manifest" >&2
-    exit 1
-  fi
-done <<<"$merged_manifests"
 
-apk_entries="$(unzip -Z1 "$APK")"
-readonly apk_entries
-apk_listing="$(unzip -l "$APK")"
-readonly apk_listing
-validate_apk_native_runtime "$apk_listing" "$APK"
-for required_asset in \
-  assets/project.godot \
-  assets/main.gd \
-  assets/main.gd.uid \
-  assets/main.tscn \
-  assets/core/game_registry.gd \
-  assets/core/launch_config.gd \
-  assets/core/match_client.gd \
-  assets/core/protocol.gd \
-  assets/games/gomoku/gomoku_board.gd \
-  assets/games/gomoku/gomoku_controller.gd \
-  assets/games/gomoku/gomoku_scene.tscn \
-  assets/games/gomoku/gomoku_state.gd \
-  assets/design_system/generated/gamebox_tokens.gd \
-  assets/design_system/gamebox_theme.gd \
-  assets/design_system/components/gamebox_back_button.tscn \
-  assets/design_system/components/gamebox_connection_banner.tscn \
-  assets/design_system/components/gamebox_connection_banner.gd \
-  assets/design_system/components/gamebox_snackbar.tscn \
-  assets/design_system/components/gamebox_snackbar.gd \
-  assets/design_system/components/gamebox_confirmation_dialog.tscn \
-  assets/design_system/components/gamebox_confirmation_dialog.gd \
-  assets/design_system/components/gamebox_loading_overlay.tscn \
-  assets/design_system/components/gamebox_loading_overlay.gd \
-  assets/design_system/components/gamebox_result_panel.tscn \
-  assets/design_system/components/gamebox_result_panel.gd; do
-  grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {
-    printf 'Debug APK is missing required Godot asset %s\n' "$required_asset" >&2
+gamebox_run_step "Android unit tests" run_android_unit_tests
+gamebox_run_step "Flutter debug APK build" run_flutter_debug_build
+
+verify_debug_apk() (
+  readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
+  [[ -f "$APK" ]] || {
+    printf 'Debug APK was not produced at %s\n' "$APK" >&2
     exit 1
   }
-done
 
-rejected_assets=""
-while IFS= read -r asset_path; do
-  if asset_path_is_forbidden "$asset_path"; then
-    rejected_assets+="$asset_path"$'\n'
+  merged_manifests="$(find "$ROOT_DIR/app/build/app/intermediates/merged_manifests" \
+    -type f -name AndroidManifest.xml -path '*debug*' 2>/dev/null || true)"
+  readonly merged_manifests
+  [[ -n "$merged_manifests" ]] || {
+    printf 'No merged debug Android manifest was produced.\n' >&2
+    exit 1
+  }
+  while IFS= read -r merged_manifest; do
+    install_permission_count="$({
+      grep -oF 'android.permission.REQUEST_INSTALL_PACKAGES' "$merged_manifest" || true
+    } | wc -l | tr -d ' ')"
+    if [[ "$install_permission_count" != "1" ]]; then
+      printf 'Merged debug manifest must contain one updater permission (found %s): %s\n' \
+        "$install_permission_count" "$merged_manifest" >&2
+      exit 1
+    fi
+    if grep -F 'android.permission.INSTALL_PACKAGES' "$merged_manifest" >/dev/null; then
+      printf 'Merged debug manifest requests privileged silent installation: %s\n' \
+        "$merged_manifest" >&2
+      exit 1
+    fi
+  done <<<"$merged_manifests"
+
+  apk_entries="$(unzip -Z1 "$APK")"
+  readonly apk_entries
+  apk_listing="$(unzip -l "$APK")"
+  readonly apk_listing
+  validate_apk_native_runtime "$apk_listing" "$APK"
+  for required_asset in \
+    assets/project.godot \
+    assets/main.gd \
+    assets/main.gd.uid \
+    assets/main.tscn \
+    assets/core/game_registry.gd \
+    assets/core/launch_config.gd \
+    assets/core/match_client.gd \
+    assets/core/protocol.gd \
+    assets/games/gomoku/gomoku_board.gd \
+    assets/games/gomoku/gomoku_controller.gd \
+    assets/games/gomoku/gomoku_preferences.gd \
+    assets/games/gomoku/gomoku_scene.tscn \
+    assets/games/gomoku/gomoku_state.gd \
+    assets/games/gomoku/gomoku_switch_visual.gd \
+    assets/design_system/generated/gamebox_tokens.gd \
+    assets/design_system/gamebox_theme.gd \
+    assets/design_system/components/gamebox_back_button.tscn \
+    assets/design_system/components/gamebox_connection_banner.tscn \
+    assets/design_system/components/gamebox_connection_banner.gd \
+    assets/design_system/components/gamebox_snackbar.tscn \
+    assets/design_system/components/gamebox_snackbar.gd \
+    assets/design_system/components/gamebox_confirmation_dialog.tscn \
+    assets/design_system/components/gamebox_confirmation_dialog.gd \
+    assets/design_system/components/gamebox_loading_overlay.tscn \
+    assets/design_system/components/gamebox_loading_overlay.gd \
+    assets/design_system/components/gamebox_result_panel.tscn \
+    assets/design_system/components/gamebox_result_panel.gd; do
+    grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {
+      printf 'Debug APK is missing required Godot asset %s\n' "$required_asset" >&2
+      exit 1
+    }
+  done
+
+  rejected_assets=""
+  while IFS= read -r asset_path; do
+    if asset_path_is_forbidden "$asset_path"; then
+      rejected_assets+="$asset_path"$'\n'
+    fi
+  done <<<"$apk_entries"
+  readonly rejected_assets
+  if [[ -n "$rejected_assets" ]]; then
+    printf 'Debug APK contains excluded Godot test/editor/cache or secret-named assets:\n' >&2
+    printf '%s' "$rejected_assets" >&2
+    exit 1
   fi
-done <<<"$apk_entries"
-readonly rejected_assets
-if [[ -n "$rejected_assets" ]]; then
-  printf 'Debug APK contains excluded Godot test/editor/cache or secret-named assets:\n' >&2
-  printf '%s' "$rejected_assets" >&2
-  exit 1
-fi
 
-asset_stream="$(mktemp -t gamebox-apk-assets.XXXXXX)"
-readonly asset_stream
-cleanup() {
-  rm -f "$asset_stream"
-}
-trap cleanup EXIT
-unzip -p "$APK" 'assets/*' >"$asset_stream"
-if LC_ALL=C grep -aE 'GAMEBOX_(JWT_SECRET|TOKEN_PEPPER)' "$asset_stream" >/dev/null; then
-  printf 'Debug APK assets contain server-only secret configuration names.\n' >&2
-  exit 1
-fi
+  asset_stream="$(mktemp -t gamebox-apk-assets.XXXXXX)"
+  readonly asset_stream
+  cleanup_apk_check() {
+    rm -f "$asset_stream"
+  }
+  trap cleanup_apk_check EXIT
+  unzip -p "$APK" 'assets/*' >"$asset_stream"
+  if LC_ALL=C grep -aE 'GAMEBOX_(JWT_SECRET|TOKEN_PEPPER)' "$asset_stream" >/dev/null; then
+    printf 'Debug APK assets contain server-only secret configuration names.\n' >&2
+    exit 1
+  fi
+)
 
-printf 'Verified debug APK Godot assets and exclusions: %s\n' "$APK"
+gamebox_run_step "debug APK assertions" verify_debug_apk
+gamebox_test_output_finish verify
