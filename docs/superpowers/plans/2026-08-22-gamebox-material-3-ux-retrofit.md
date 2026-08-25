@@ -12,12 +12,14 @@
 
 ## Locked Execution Baseline
 
-本计划唯一允许的 Flutter/Dart 执行基线是已通过仓库门禁的 Flutter 3.47.1 / Dart 3.13.1，安装于 `/Users/shadowfish/flutter/bin`。默认 `PATH` 中的其他 Flutter SDK 与当前 lockfile 不兼容，不能用于生成 scheme、执行测试、构建 APK 或形成验收证据。每个新 shell、agent task 和从计划恢复的会话都必须先运行：
+本计划唯一允许的 Flutter/Dart 执行基线是已通过仓库门禁的 Flutter 3.47.1 / Dart 3.13.1。SDK 路径由当前工作站的 `GAMEBOX_FLUTTER_SDK_ROOT`（如果设置）或 `PATH` 中的 `flutter`/`dart` 解析；不得依赖作者机器的绝对路径。默认 `PATH` 中的其他 Flutter SDK 与当前 lockfile 不兼容，不能用于生成 scheme、执行测试、构建 APK 或形成验收证据。每个新 shell、agent task 和从计划恢复的会话都必须先运行：
 
 ```bash
-export GAMEBOX_FLUTTER_SDK_ROOT=/Users/shadowfish/flutter
-export PATH="$GAMEBOX_FLUTTER_SDK_ROOT/bin:$PATH"
-test "$(command -v flutter)" = "$GAMEBOX_FLUTTER_SDK_ROOT/bin/flutter"
+if [[ -n "${GAMEBOX_FLUTTER_SDK_ROOT:-}" ]]; then
+  export PATH="$GAMEBOX_FLUTTER_SDK_ROOT/bin:$PATH"
+fi
+command -v flutter
+command -v dart
 flutter --version
 dart --version
 (cd app && flutter pub get --enforce-lockfile --dry-run)

@@ -6,8 +6,8 @@ readonly production_script="${root_dir}/deploy/macos/install.sh"
 readonly staging_script="${root_dir}/deploy/macos/install-staging.sh"
 readonly service_prefix_reference='${service_prefix}'
 
-production_prefix_line="$(grep '^readonly service_prefix=' "${production_script}")"
-staging_prefix_line="$(grep '^readonly service_prefix=' "${staging_script}")"
+production_prefix_line="$(grep '^readonly service_prefix=' "${production_script}" || true)"
+staging_prefix_line="$(grep '^readonly service_prefix=' "${staging_script}" || true)"
 
 [[ -n "${production_prefix_line}" && -n "${staging_prefix_line}" ]] \
   || { printf 'macOS deploy prefix declarations are missing\n' >&2; exit 1; }

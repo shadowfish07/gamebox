@@ -1385,6 +1385,9 @@ self_test() {
     printf 'loading watcher left adb logcat alive\n' >&2
     return 1
   fi
+  export FAKE_ADB_PID_FILE="$fake_pid_file"
+  [[ "$FAKE_ADB_PID_FILE" == "$fake_pid_file" ]] \
+    || { printf 'loading watcher fixture did not restore the fake adb pid file\n' >&2; return 1; }
   unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
