@@ -1802,6 +1802,11 @@ self_test() {
   grep -F 'tap_identifier_after_scroll "$SERIAL_B" continue-match' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'narrow active-match action is not atomically scroll-aware\n' >&2; return 1; }
+  if grep -E 'tap_identifier "\$[A-Za-z_][A-Za-z0-9_]*" continue-match' \
+    <<<"$runtime_source" >/dev/null; then
+    printf 'a continue-match action still uses the non-scroll-aware tap helper\n' >&2
+    return 1
+  fi
   if grep -E 'screencap|capture_ui_evidence|ui_evidence|screenshots/|\.png' \
     <<<"$runtime_source" >/dev/null; then
     printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
@@ -3015,7 +3020,8 @@ else
   LOG_BOUNDARY_B="$recovery_boundary"
 fi
 start_flutter "$RECOVERY_SERIAL"
-tap_identifier "$RECOVERY_SERIAL" continue-match
+tap_identifier_after_scroll "$RECOVERY_SERIAL" continue-match \
+  || fail "force-stopped client could not activate the resumable match"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "force-stopped client did not relaunch Godot"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=3" \
