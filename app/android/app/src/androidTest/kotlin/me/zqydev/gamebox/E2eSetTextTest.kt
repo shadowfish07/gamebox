@@ -52,7 +52,9 @@ class E2eSetTextTest {
             ),
             SELECTOR_TIMEOUT_MS,
         ) ?: throw AssertionError("Approved E2E text field focus was not stable")
-        val focusedEditable = findEditable(focusedField)
+        val focusedEditable = focusedField.findObject(
+            By.clazz(EDIT_TEXT_CLASS).focused(true),
+        ) ?: focusedField.takeIf { it.className == EDIT_TEXT_CLASS && it.isFocused }
             ?: throw AssertionError("Approved E2E text field structure was invalid after focus")
         // UiAutomator 2.4 injects text directly. Keeping the value inside this
         // process avoids exposing it through adb arguments or clipboard state.

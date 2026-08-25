@@ -9,6 +9,8 @@ import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
+import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_models.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
 import 'package:integration_test/integration_test.dart';
@@ -153,6 +155,35 @@ void main() {
       expect(fixture.homeApi.cancelCalls, 1);
     },
   );
+
+  testWidgets('match history fixture exposes stable return semantics', (
+    tester,
+  ) async {
+    final fixture = await _Fixture.authenticated(
+      status: const GomokuIdleStatus(),
+    );
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      fixture.dispose();
+    });
+
+    await tester.pumpWidget(fixture.app());
+    await _flush(tester);
+
+    await tester.tap(find.bySemanticsIdentifier('open-match-history'));
+    await _flush(tester);
+    expect(
+      find.bySemanticsIdentifier('match-history-statistics'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('match-history-entry-$_matchId'),
+      findsOneWidget,
+    );
+    await tester.tap(find.bySemanticsIdentifier('match-history-back'));
+    await _flush(tester);
+    expect(find.bySemanticsIdentifier('game-gomoku'), findsOneWidget);
+  });
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -167,6 +198,7 @@ final class _Fixture {
     required this.tokenStore,
     required this.session,
     required this.homeApi,
+    required this.historyApi,
     required this.launcher,
     required this.home,
   });
@@ -176,6 +208,7 @@ final class _Fixture {
     final tokenStore = _MemoryTokenStore();
     final session = SessionController(authApi: auth, tokenStore: tokenStore);
     final homeApi = _FakeHomeApi(const GomokuIdleStatus());
+    final historyApi = _FakeMatchHistoryApi();
     final launcher = _FakeLauncher();
     final home = HomeController(
       repository: GomokuRepository(
@@ -189,6 +222,7 @@ final class _Fixture {
       tokenStore: tokenStore,
       session: session,
       homeApi: homeApi,
+      historyApi: historyApi,
       launcher: launcher,
       home: home,
     );
@@ -206,6 +240,7 @@ final class _Fixture {
   final _MemoryTokenStore tokenStore;
   final SessionController session;
   final _FakeHomeApi homeApi;
+  final _FakeMatchHistoryApi historyApi;
   final _FakeLauncher launcher;
   final HomeController home;
 
@@ -213,6 +248,7 @@ final class _Fixture {
     gameLauncher: launcher,
     sessionController: session,
     homeController: home,
+    matchHistoryApi: historyApi,
   );
 
   void dispose() {
@@ -307,6 +343,35 @@ final class _FakeHomeApi implements HomeApi {
       gameId: gomokuGameId,
       launchTicket: 'fixture-launch-ticket',
       expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 1)),
+    );
+  }
+}
+
+final class _FakeMatchHistoryApi implements MatchHistoryApi {
+  @override
+  Future<MatchHistoryPageData> fetchPage({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    return MatchHistoryPageData(
+      statistics: const MatchHistoryStatistics(
+        validMatches: 1,
+        wins: 1,
+        losses: 0,
+        draws: 0,
+        winRate: 1,
+      ),
+      matches: [
+        MatchHistoryEntry(
+          id: _matchId,
+          outcome: MatchOutcome.win,
+          opponentNickname: 'Bob',
+          color: GomokuColor.black,
+          finishedAt: DateTime.utc(2026, 8, 25),
+          moveCount: 2,
+        ),
+      ],
+      nextCursor: null,
     );
   }
 }

@@ -72,6 +72,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
+	mux.Handle("GET /v1/games/gomoku/history", router.authenticated(http.HandlerFunc(router.gomokuHistory)))
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
@@ -84,6 +85,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/gomoku/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
@@ -321,6 +323,19 @@ func canonicalRequestID(value string) bool {
 
 type authenticatedUserContextKey struct{}
 
+type requestIDContextKey struct{}
+
+func requestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, ok := ctx.Value(requestIDContextKey{}).(string)
+	if !ok || !canonicalRequestID(requestID) {
+		return ""
+	}
+	return requestID
+}
+
 func (router *router) authenticated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		values := request.Header.Values("Authorization")
@@ -343,8 +358,6 @@ func (router *router) authenticated(next http.Handler) http.Handler {
 		next.ServeHTTP(writer, request.WithContext(contextWithUser))
 	})
 }
-
-type requestIDContextKey struct{}
 
 func requestIDFrom(request *http.Request) string {
 	if request == nil {

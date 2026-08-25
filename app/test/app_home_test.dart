@@ -12,6 +12,9 @@ import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
+import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_models.dart';
+import 'package:gamebox/features/history/match_history_page.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
 
@@ -28,6 +31,7 @@ void main() {
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
         homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
       ),
     );
     await _flush(tester);
@@ -36,6 +40,14 @@ void main() {
     expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
     expect(fixture.api.statusCalls, 1);
+
+    await tester.tap(find.byKey(const Key('open-match-history')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+    expect(fixture.historyApi.calls, 1);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     fixture.dispose();
@@ -50,6 +62,7 @@ void main() {
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
         homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
       ),
     );
     await _flush(tester);
@@ -81,6 +94,7 @@ void main() {
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
           homeController: fixture.home,
+          matchHistoryApi: fixture.historyApi,
         ),
       );
       await _flush(tester);
@@ -132,6 +146,7 @@ void main() {
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
           homeController: fixture.home,
+          matchHistoryApi: fixture.historyApi,
         ),
       );
       await _flush(tester);
@@ -198,6 +213,7 @@ void main() {
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
         homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
       ),
     );
     await _flush(tester);
@@ -215,6 +231,87 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     fixture.dispose();
   });
+
+  testWidgets(
+    'same-user refresh retains loaded History controller until route pop',
+    (tester) async {
+      const matchId = '77777777-7777-4777-8777-777777777777';
+      final fixture = await _Fixture.create(now);
+      fixture.historyApi.page = MatchHistoryPageData(
+        statistics: const MatchHistoryStatistics(
+          validMatches: 1,
+          wins: 1,
+          losses: 0,
+          draws: 0,
+          winRate: 1,
+        ),
+        matches: [
+          MatchHistoryEntry(
+            id: matchId,
+            outcome: MatchOutcome.win,
+            opponentNickname: '棋手乙',
+            color: GomokuColor.black,
+            finishedAt: DateTime.utc(2026, 8, 20, 11),
+            moveCount: 31,
+          ),
+        ],
+        nextCursor: 'older-page',
+      );
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: fixture.launcher,
+          sessionController: fixture.session,
+          homeController: fixture.home,
+          matchHistoryApi: fixture.historyApi,
+        ),
+      );
+      await _flush(tester);
+
+      await tester.tap(find.byKey(const Key('open-match-history')));
+      await tester.pumpAndSettle();
+      final original = tester
+          .widget<MatchHistoryPage>(find.byType(MatchHistoryPage))
+          .controller;
+      expect(
+        find.byKey(const Key('match-history-entry-$matchId')),
+        findsOneWidget,
+      );
+      expect(find.text('棋手乙'), findsOneWidget);
+      expect(fixture.historyApi.calls, 1);
+
+      expect(await fixture.session.refresh(), isTrue);
+      await _flush(tester);
+
+      expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+      expect(find.byKey(const Key('match-history-loading')), findsNothing);
+      expect(
+        find.byKey(const Key('match-history-entry-$matchId')),
+        findsOneWidget,
+      );
+      expect(find.text('棋手乙'), findsOneWidget);
+      expect(fixture.historyApi.calls, 1);
+      expect(
+        tester
+            .widget<MatchHistoryPage>(find.byType(MatchHistoryPage))
+            .controller,
+        same(original),
+      );
+      void probe() {}
+      expect(() => original.addListener(probe), returnsNormally);
+      original.removeListener(probe);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(() => original.addListener(probe), throwsFlutterError);
+      await original.loadMore();
+      expect(fixture.historyApi.calls, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      fixture.dispose();
+    },
+  );
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -231,6 +328,7 @@ final class _Fixture {
     required this.launcher,
     required this.authApi,
     required this.tokenStore,
+    required this.historyApi,
   });
 
   static Future<_Fixture> create(DateTime now) async {
@@ -255,6 +353,7 @@ final class _Fixture {
       scheduler: scheduler,
       now: () => now,
     );
+    final historyApi = _FakeMatchHistoryApi();
     return _Fixture(
       session: session,
       home: home,
@@ -263,6 +362,7 @@ final class _Fixture {
       launcher: launcher,
       authApi: authApi,
       tokenStore: tokenStore,
+      historyApi: historyApi,
     );
   }
 
@@ -273,10 +373,35 @@ final class _Fixture {
   final _FakeLauncher launcher;
   final _FakeAuthApi authApi;
   final _MemoryTokenStore tokenStore;
+  final _FakeMatchHistoryApi historyApi;
 
   void dispose() {
     home.dispose();
     session.dispose();
+  }
+}
+
+final class _FakeMatchHistoryApi implements MatchHistoryApi {
+  int calls = 0;
+  MatchHistoryPageData page = const MatchHistoryPageData(
+    statistics: MatchHistoryStatistics(
+      validMatches: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      winRate: 0,
+    ),
+    matches: [],
+    nextCursor: null,
+  );
+
+  @override
+  Future<MatchHistoryPageData> fetchPage({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    calls += 1;
+    return page;
   }
 }
 

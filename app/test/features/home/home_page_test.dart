@@ -11,6 +11,8 @@ import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
+import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_models.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
 import 'package:gamebox/features/home/home_page.dart';
@@ -414,6 +416,62 @@ void main() {
     fixture.dispose();
   });
 
+  testWidgets('history entry and visible back preserve the Home instance', (
+    tester,
+  ) async {
+    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+    await tester.pumpWidget(
+      _app(fixture.controller, aliceId, historyApi: fixture.historyApi),
+    );
+    await _flushWidget(tester);
+    final statusCalls = fixture.api.statusCalls;
+
+    expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('open-match-history')),
+        matching: find.byType(OutlinedButton),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('open-match-history')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('match-history-back')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
+    expect(
+      tester.widget<HomePage>(find.byType(HomePage)).controller,
+      same(fixture.controller),
+    );
+    expect(fixture.api.statusCalls, statusCalls);
+    fixture.dispose();
+  });
+
+  testWidgets('system back returns to the same Home instance', (tester) async {
+    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+    await tester.pumpWidget(
+      _app(fixture.controller, aliceId, historyApi: fixture.historyApi),
+    );
+    await _flushWidget(tester);
+    final statusCalls = fixture.api.statusCalls;
+
+    await tester.tap(find.byKey(const Key('open-match-history')));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
+    expect(
+      tester.widget<HomePage>(find.byType(HomePage)).controller,
+      same(fixture.controller),
+    );
+    expect(fixture.api.statusCalls, statusCalls);
+    fixture.dispose();
+  });
+
   for (final configuration in const [
     (size: Size(360, 800), status: 'idle', nickname: '一位名字很长但仍需要正常换行的玩家'),
     (size: Size(412, 915), status: 'active', nickname: '另一位名字很长的玩家'),
@@ -455,6 +513,7 @@ Widget _app(
   String userId, {
   String nickname = '自己',
   bool dark = false,
+  MatchHistoryApi? historyApi,
 }) => MaterialApp(
   theme: GameboxTheme.light(),
   darkTheme: GameboxTheme.dark(),
@@ -463,6 +522,7 @@ Widget _app(
     controller: controller,
     currentUserId: userId,
     nickname: nickname,
+    historyApi: historyApi ?? _FakeMatchHistoryApi(),
   ),
 );
 
@@ -500,9 +560,33 @@ final class _Fixture {
   final DateTime now;
   final _FakeHomeApi api = _FakeHomeApi();
   final _FakeLauncher launcher = _FakeLauncher();
+  final _FakeMatchHistoryApi historyApi = _FakeMatchHistoryApi();
   late final HomeController controller;
 
   void dispose() => controller.dispose();
+}
+
+final class _FakeMatchHistoryApi implements MatchHistoryApi {
+  int calls = 0;
+
+  @override
+  Future<MatchHistoryPageData> fetchPage({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    calls += 1;
+    return const MatchHistoryPageData(
+      statistics: MatchHistoryStatistics(
+        validMatches: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        winRate: 0,
+      ),
+      matches: [],
+      nextCursor: null,
+    );
+  }
 }
 
 final class _NoopScheduler implements HomePollScheduler {
@@ -544,9 +628,11 @@ final class _FakeHomeApi implements HomeApi {
   int opponentCalls = 0;
   int cancelCalls = 0;
   int createCalls = 0;
+  int statusCalls = 0;
 
   @override
   Future<GomokuStatus> fetchStatus() async {
+    statusCalls += 1;
     final error = statusError;
     if (error != null) throw error;
     return status;
