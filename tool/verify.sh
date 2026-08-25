@@ -150,6 +150,7 @@ verify_asset_path_fixtures() {
     assets/main.gd
     assets/core/match_client.gd
     assets/games/gomoku/gomoku_controller.gd
+    assets/games/gomoku/gomoku_preferences.gd
     assets/games/gomoku/gomoku_scene.tscn
     assets/flutter_assets/AssetManifest.bin
     assets/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf
@@ -334,6 +335,7 @@ for required_asset in \
   assets/core/protocol.gd \
   assets/games/gomoku/gomoku_board.gd \
   assets/games/gomoku/gomoku_controller.gd \
+  assets/games/gomoku/gomoku_preferences.gd \
   assets/games/gomoku/gomoku_scene.tscn \
   assets/games/gomoku/gomoku_state.gd \
   assets/design_system/generated/gamebox_tokens.gd \

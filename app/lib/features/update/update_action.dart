@@ -21,7 +21,9 @@ final class UpdateActionButton extends StatelessWidget {
           button: true,
           child: IconButton(
             tooltip: hasUpdate ? '安装更新' : '检查更新',
-            onPressed: () => showUpdateDialog(context, controller),
+            onPressed: controller.isBusy
+                ? null
+                : () => showUpdateDialog(context, controller),
             icon: Badge(
               isLabelVisible: hasUpdate,
               child: controller.isBusy
@@ -133,9 +135,13 @@ final class _UpdateDialog extends StatelessWidget {
                       : '下载并安装',
                 ),
               ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
+            Semantics(
+              identifier: 'dismiss-update',
+              button: true,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('关闭'),
+              ),
             ),
           ],
         );

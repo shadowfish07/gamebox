@@ -94,7 +94,8 @@ void main() {
 
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('新版本 v2.0.0'), findsOneWidget);
-    await tester.tap(find.text('关闭'));
+    expect(find.bySemanticsIdentifier('dismiss-update'), findsOneWidget);
+    await tester.tap(find.bySemanticsIdentifier('dismiss-update'));
     await tester.pump();
     updater.dispose();
   });
