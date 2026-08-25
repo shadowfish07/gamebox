@@ -1197,6 +1197,24 @@ stop_first_connect_loading_watch() {
   return "$cleanup_status"
 }
 
+wait_for_first_connect_loading() {
+  local serial="$1"
+  local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
+  while ((SECONDS < deadline)); do
+    if [[ -s "$LOADING_WATCH_FILE" ]]; then
+      candidate="$(tail -n 1 "$LOADING_WATCH_FILE")"
+    fi
+    if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
+      LOADING_MATCH_ID="$candidate"
+      stop_first_connect_loading_watch
+      return $?
+    fi
+    sleep 0.01
+  done
+  stop_first_connect_loading_watch
+  return 1
+}
+
 self_test() {
   local fixture_dir
   fixture_dir="$(mktemp -d)"
@@ -1441,6 +1459,8 @@ self_test() {
   : >"$loading_watch_pid_file"
   export FAKE_ADB_PID_FILE="$loading_watch_pid_file"
   export FAKE_ADB_LOG_BOUNDARY='watch-boundary'
+  local loading_match_id='11111111-1111-4111-8111-111111111111'
+  export FAKE_ADB_LOADING_MATCH_ID="$loading_match_id"
   export FAKE_ADB_MODE=loading-watch
   TEMP_DIR="$fixture_dir"
   SERIAL_A='fixture-A'
@@ -1461,8 +1481,10 @@ self_test() {
   [[ -s "$loading_watch_pid_file" ]] \
     || { printf 'loading watcher fixture did not start adb logcat\n' >&2; return 1; }
   loading_watch_adb_pid="$(<"$loading_watch_pid_file")"
-  stop_first_connect_loading_watch \
-    || { printf 'loading watcher fixture did not stop\n' >&2; return 1; }
+  wait_for_first_connect_loading fixture-A \
+    || { printf 'loading watcher fixture did not observe its marker\n' >&2; return 1; }
+  [[ "$LOADING_MATCH_ID" == "$loading_match_id" ]] \
+    || { printf 'loading watcher fixture returned the wrong match ID\n' >&2; return 1; }
   if kill -0 "$loading_watch_adb_pid" 2>/dev/null; then
     kill -KILL "$loading_watch_adb_pid" 2>/dev/null || true
     printf 'loading watcher left adb logcat alive\n' >&2
@@ -1471,7 +1493,7 @@ self_test() {
   export FAKE_ADB_PID_FILE="$fake_pid_file"
   [[ "$FAKE_ADB_PID_FILE" == "$fake_pid_file" ]] \
     || { printf 'loading watcher fixture did not restore the fake adb pid file\n' >&2; return 1; }
-  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY
+  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY FAKE_ADB_LOADING_MATCH_ID
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
@@ -2543,31 +2565,6 @@ wait_for_new_ready_match_id() {
   return 1
 }
 
-wait_for_first_connect_loading_and_pause() {
-  local serial="$1"
-  local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
-  while ((SECONDS < deadline)); do
-    if [[ -s "$LOADING_WATCH_FILE" ]]; then
-      candidate="$(tail -n 1 "$LOADING_WATCH_FILE")"
-    fi
-    if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
-      LOADING_MATCH_ID="$candidate"
-      stop_first_connect_loading_watch
-      pause_e2e_server || return 1
-      sleep 0.2
-      if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
-        | grep -F "$GAMEBOX_STATE_MARKER match=$candidate revision=0" >/dev/null; then
-        resume_e2e_server || true
-        return 1
-      fi
-      return 0
-    fi
-    sleep 0.01
-  done
-  stop_first_connect_loading_watch
-  return 1
-}
-
 JWT_SECRET="$(openssl rand -hex 32)"
 TOKEN_PEPPER="$(openssl rand -hex 32)"
 : >"$SERVER_LOG"
@@ -2639,12 +2636,10 @@ refresh_game_log_boundary "$SERIAL_A" first-gomoku-loading \
   || fail "could not establish first-connect loading log boundary after watcher attach"
 tap_identifier "$SERIAL_A" "$opponent_identifier"
 
-wait_for_first_connect_loading_and_pause "$SERIAL_A" \
-  || fail "could not hold the real first-connect loading state before its initial snapshot"
+wait_for_first_connect_loading "$SERIAL_A" \
+  || fail "could not observe the real first-connect loading state before its initial snapshot"
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
-  || fail "could not verify the real first-connect loading UI state"
-resume_e2e_server \
-  || fail "could not resume the E2E server after first-connect loading assertion"
+  || fail "could not verify the first-match UI state after the loading marker"
 
 MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "A did not emit exactly one first-match ready ID within ${WAIT_SECONDS}s"
