@@ -183,7 +183,6 @@ func _request_selected_move(cell: Vector2i) -> void:
 		_error_text = ""
 		_refresh_ui()
 	else:
-		_selected_move = INVALID_CELL
 		_error_text = "操作失败，请重试"
 		_refresh_ui()
 

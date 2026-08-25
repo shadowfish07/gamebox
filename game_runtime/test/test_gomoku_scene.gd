@@ -35,7 +35,7 @@ static func cases() -> Array:
 		{"name": "gomoku settings sheet persists move confirmation", "run": _settings_sheet_persists_move_confirmation},
 		{"name": "gomoku settings failure restores the saved value", "run": _settings_failure_restores_saved_value},
 		{"name": "gomoku move confirmation cancels or submits exactly once", "run": _move_confirmation_cancels_or_submits_once},
-		{"name": "gomoku failed confirmation clears the local selection", "run": _failed_confirmation_clears_selection},
+		{"name": "gomoku failed confirmation keeps a retryable selection", "run": _failed_confirmation_keeps_retryable_selection},
 		{"name": "gomoku recovery clears an unsubmitted selection", "run": _recovery_clears_unsubmitted_selection},
 		{"name": "gomoku Back closes settings before returning", "run": _back_closes_settings_before_returning},
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
@@ -624,7 +624,7 @@ static func _settings_failure_restores_saved_value() -> bool:
 	return _cleanup(scene, result)
 
 
-static func _failed_confirmation_clears_selection() -> bool:
+static func _failed_confirmation_keeps_retryable_selection() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID, FakePreferences.new(true))
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
@@ -634,9 +634,14 @@ static func _failed_confirmation_clears_selection() -> bool:
 	scene._on_cell_pressed(6, 8)
 	scene._on_move_confirm_pressed()
 	var result := _check(client.move_requests.is_empty(), "rejected confirmation reached the transport") \
-		and _check(board.selected_cell == Vector2i(-1, -1), "rejected confirmation retained the selected marker") \
-		and _check(not scene.get_node("MoveConfirmationBar").visible, "rejected confirmation left local actions visible") \
+		and _check(board.selected_cell == Vector2i(6, 8), "rejected confirmation lost the retryable selected marker") \
+		and _check(scene.get_node("MoveConfirmationBar").visible, "rejected confirmation hid the retry actions") \
 		and _check(_error_visible(scene) and _error(scene) == "操作失败，请重试", "rejected confirmation did not show retry guidance")
+	client.reject_moves = false
+	scene._on_move_confirm_pressed()
+	result = result \
+		and _check(client.move_requests.size() == 1, "retry did not submit exactly one move") \
+		and _check(board.selected_cell == Vector2i(-1, -1), "successful retry retained the selected marker")
 	return _cleanup(scene, result)
 
 

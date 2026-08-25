@@ -1940,6 +1940,12 @@ self_test() {
   grep -F 'start_first_connect_loading_watch "$SERIAL_A" first-gomoku-loading' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading watcher is not started with a post-attach boundary\n' >&2; return 1; }
+  grep -F 'wait_for_first_connect_loading_and_pause "$SERIAL_A"' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'first-connect loading flow does not pause before inspecting UI\n' >&2; return 1; }
+  grep -F 'resume_e2e_server' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'first-connect loading flow does not resume the paused server\n' >&2; return 1; }
   grep -F 'exercise_optional_move_confirmation "$BLACK_SERIAL" 3 3 1 1' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'optional move confirmation lifecycle is not exercised\n' >&2; return 1; }
@@ -2856,10 +2862,12 @@ refresh_game_log_boundary "$SERIAL_A" first-gomoku-loading \
   || fail "could not establish first-connect loading log boundary after watcher attach"
 tap_identifier "$SERIAL_A" "$opponent_identifier"
 
-wait_for_first_connect_loading "$SERIAL_A" \
-  || fail "could not observe the real first-connect loading state before its initial snapshot"
+wait_for_first_connect_loading_and_pause "$SERIAL_A" \
+  || fail "could not hold the real first-connect loading state before its initial snapshot"
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
-  || fail "could not verify the first-match UI state after the loading marker"
+  || fail "could not verify the real first-connect loading UI state"
+resume_e2e_server \
+  || fail "could not resume the E2E server after first-connect loading assertion"
 
 MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "A did not emit exactly one first-match ready ID within ${WAIT_SECONDS}s"
