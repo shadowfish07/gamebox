@@ -38,7 +38,14 @@ while (($#)); do
 done
 
 log() { ((VERBOSE == 1)) && printf '[lan-e2e] %s\n' "$*" || true; }
-fail() { printf 'Gamebox LAN E2E failed: %s\nArtifacts: %s\n' "$1" "$ARTIFACT_DIR" >&2; exit 1; }
+fail() {
+  local message="$1"
+  mkdir -p "$ARTIFACT_DIR"
+  jq -n --arg status failure --arg message "$message" --arg serialA "$SERIAL_A" --arg serialB "$SERIAL_B" \
+    '{status:$status,message:$message,serials:[$serialA,$serialB]}' >"$ARTIFACT_DIR/summary.json" 2>/dev/null || true
+  printf 'Gamebox LAN E2E failed: %s\nArtifacts: %s\n' "$message" "$ARTIFACT_DIR" >&2
+  exit 1
+}
 adb_for() { "$ADB_BIN" -s "$1" "${@:2}"; }
 
 cleanup() {
@@ -209,6 +216,25 @@ wait_id() {
   return 1
 }
 
+reveal_id() {
+  local serial="$1" id="$2" xml center size width height x start_y end_y attempt=0
+  xml="$TEMP_DIR/reveal-${serial//[^A-Za-z0-9]/_}.xml"
+  size="$(adb_for "$serial" shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1)"
+  read -r width height <<<"$size"
+  [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] || return 1
+  x=$((width / 2)); start_y=$((height * 3 / 4)); end_y=$((height / 4))
+  while ((attempt < 5)); do
+    attempt=$((attempt + 1))
+    if dump_ui "$serial" "$xml" && center="$(node_center "$xml" "$id" 2>/dev/null)"; then
+      printf '%s\n' "$center"
+      return 0
+    fi
+    adb_for "$serial" shell input swipe "$x" "$start_y" "$x" "$end_y" 250 >/dev/null || return 1
+    sleep 1
+  done
+  return 1
+}
+
 tap_id() {
   local point x y
   point="$(wait_id "$1" "$2")" || fail "$2 was not available on $1"
@@ -231,7 +257,8 @@ set_nickname() {
     -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name" "$TEST_RUNNER" >"$TEMP_DIR/nickname-${serial}.log" \
     || fail "nickname injection failed on $serial"
   tap_id "$serial" save-nickname
-  wait_id "$serial" open-lan-mode >/dev/null || fail "home did not load on $serial"
+  wait_id "$serial" open-game-history >/dev/null || fail "home did not load on $serial"
+  reveal_id "$serial" open-lan-mode >/dev/null || fail "LAN action could not be revealed on $serial"
 }
 
 set_nickname "$SERIAL_A" HostA
