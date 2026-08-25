@@ -20,6 +20,7 @@ design_system_asset_is_allowed() {
   local asset_path="$1"
   case "$asset_path" in
     assets/design_system/generated/gamebox_tokens.gd \
+    | assets/design_system/generated/gamebox_tokens.gd.uid \
     | assets/design_system/gamebox_theme.gd \
     | assets/design_system/components/gamebox_back_button.tscn \
     | assets/design_system/components/gamebox_connection_banner.tscn \
@@ -178,6 +179,7 @@ verify_asset_path_fixtures() {
     assets/privateKeynote.txt
     assets/contestResult.json
     assets/design_system/generated/gamebox_tokens.gd
+    assets/design_system/generated/gamebox_tokens.gd.uid
     assets/design_system/gamebox_theme.gd
     assets/design_system/components/gamebox_back_button.tscn
     assets/design_system/components/gamebox_connection_banner.tscn

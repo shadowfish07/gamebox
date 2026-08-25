@@ -15,7 +15,7 @@ static func cases() -> Array:
 		{"name": "rps locks once and advances a draw round", "run": _lock_and_draw},
 		{"name": "rps applies authoritative best-of-three completion", "run": _terminal_reveal},
 		{"name": "rps protocol binds choice actions to rps", "run": _protocol_choice},
-		{"name": "rps scene uses three equal portrait choice targets", "run": _scene_contract},
+		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
 	]
 
 
@@ -92,14 +92,28 @@ static func _protocol_choice() -> bool:
 
 static func _scene_contract() -> bool:
 	var scene: Node = RpsScene.instantiate()
+	var choices: HBoxContainer = scene.get_node("ChoicePanel/Choices")
 	var rock: Button = scene.get_node("ChoicePanel/Choices/RockButton")
 	var paper: Button = scene.get_node("ChoicePanel/Choices/PaperButton")
 	var scissors: Button = scene.get_node("ChoicePanel/Choices/ScissorsButton")
 	var passed := _check(scene is Control, "expected portrait control scene") \
+		and _check(choices.get_child(0) == rock, "rock must be the first choice") \
+		and _check(choices.get_child(1) == scissors, "scissors must be the second choice") \
+		and _check(choices.get_child(2) == paper, "paper must be the third choice") \
 		and _check(rock.custom_minimum_size == paper.custom_minimum_size, "choice targets must be equal") \
 		and _check(paper.custom_minimum_size == scissors.custom_minimum_size, "choice targets must be equal") \
 		and _check(rock.custom_minimum_size.x >= 96 and rock.custom_minimum_size.y >= 96, "choice targets must be touch safe") \
+		and _check(rock.flat and paper.flat and scissors.flat, "choice backgrounds must stay transparent") \
+		and _check(not scene.has_node("RevealPanel"), "previous-round details must not be displayed") \
 		and _check(scene.get_node("ResignButton").text == "认输并结束对局", "destructive action must name its consequence")
+	var image_nodes_present := rock.has_node("Content/Icon") \
+		and scissors.has_node("Content/Icon") and paper.has_node("Content/Icon")
+	passed = _check(image_nodes_present, "each choice must render an image") and passed
+	if image_nodes_present:
+		passed = _check(rock.get_node("Content/Icon").texture != null, "rock image must load") \
+			and _check(scissors.get_node("Content/Icon").texture != null, "scissors image must load") \
+			and _check(paper.get_node("Content/Icon").texture != null, "paper image must load") \
+			and passed
 	scene.free()
 	return passed
 

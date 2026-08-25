@@ -4,6 +4,8 @@ const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const RpsState = preload("res://games/rps/rps_state.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
+const CHOICE_SELECTED_SCALE := Vector2(0.92, 0.92)
 const SAFE_ERRORS := {
 	"choice_locked": "本轮已经出拳",
 	"stale_revision": "对局已更新，正在同步",
@@ -55,11 +57,18 @@ func set_quit_callback(callback: Callable) -> bool:
 
 
 func _ready() -> void:
-	theme = GameboxTheme.create(GameboxTheme.system_prefers_dark())
+	var dark_theme := GameboxTheme.system_prefers_dark()
+	theme = GameboxTheme.create(dark_theme)
+	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
+	$ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["section"])
 	$BackButton.pressed.connect(_on_back_pressed)
-	$ChoicePanel/Choices/RockButton.pressed.connect(_on_choice.bind("rock"))
-	$ChoicePanel/Choices/PaperButton.pressed.connect(_on_choice.bind("paper"))
-	$ChoicePanel/Choices/ScissorsButton.pressed.connect(_on_choice.bind("scissors"))
+	for entry in _choice_entries():
+		var button: Button = entry["button"]
+		button.get_node("Content").add_theme_constant_override("separation", GameboxTokens.SPACING["base"])
+		button.pressed.connect(_on_choice.bind(entry["choice"]))
+		button.button_down.connect(_on_choice_button_down.bind(button))
+		button.button_up.connect(_on_choice_button_up.bind(button))
+		button.get_node("Content/Indicator").color = colors["primary"]
 	$ResignButton.pressed.connect(_on_resign_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResignDialog/Dialog/Content/Title.text = "认输并结束本局？"
@@ -114,6 +123,16 @@ func _on_choice(choice: String) -> void:
 	else:
 		_error_text = ""
 	_refresh_ui()
+
+
+func _on_choice_button_down(button: Button) -> void:
+	if not button.disabled:
+		button.pivot_offset = button.size * 0.5
+		button.scale = CHOICE_SELECTED_SCALE
+
+
+func _on_choice_button_up(button: Button) -> void:
+	button.scale = CHOICE_SELECTED_SCALE if _selected_choice() == _choice_for_button(button) else Vector2.ONE
 
 
 func _on_resign_pressed() -> void:
@@ -210,13 +229,11 @@ func _refresh_ui() -> void:
 	$RoundLabel.text = "第 %d 轮" % _state.round_number if has_state else "准备对局"
 	$StateLabel.text = _status_text(local_user_id) if has_state else "正在连接"
 	$OpponentLockLabel.text = _opponent_text() if has_state else "对手状态未知"
-	$RevealPanel.visible = has_state and _state.last_reveal is Dictionary
-	if $RevealPanel.visible:
-		$RevealPanel/RevealLabel.text = _reveal_text(local_user_id)
 	var can_choose: bool = has_state and not terminal and not _awaiting_snapshot \
 		and _connection_state == "connected" and _state.can_request_choice("rock", local_user_id)
-	for button in [$ChoicePanel/Choices/RockButton, $ChoicePanel/Choices/PaperButton, $ChoicePanel/Choices/ScissorsButton]:
-		button.disabled = not can_choose
+	for entry in _choice_entries():
+		entry["button"].disabled = not can_choose
+	_refresh_choice_visuals()
 	$ChoicePanel.visible = not terminal
 	$ResignButton.visible = has_state and not terminal and _state.can_request_resign(local_user_id)
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot or _resign_submitted
@@ -248,17 +265,46 @@ func _opponent_text() -> String:
 	return "等待对手出拳"
 
 
-func _reveal_text(local_user_id: String) -> String:
-	var reveal: Dictionary = _state.last_reveal
-	var choices: Dictionary = reveal["choices"]
-	var mine := _choice_label(choices.get(local_user_id, ""))
-	var theirs := _choice_label(choices.get(_state.opponent_user_id, ""))
-	var outcome := "本轮平局" if reveal["draw"] else "你赢下本轮" if reveal["roundWinnerUserId"] == local_user_id else "对手赢下本轮"
-	return "上一轮：你出%s · 对手出%s\n%s" % [mine, theirs, outcome]
+func _refresh_choice_visuals() -> void:
+	var selected_choice := _selected_choice()
+	var full_color: Color = GameboxTokens.LIGHT["on_primary"]
+	var faded_alpha: float = full_color.a - float(GameboxTokens.GAME["pending_overlay_alpha"])
+	for entry in _choice_entries():
+		var button: Button = entry["button"]
+		var selected: bool = entry["choice"] == selected_choice
+		var choice_color := full_color
+		if not selected and not selected_choice.is_empty():
+			choice_color.a = faded_alpha
+		button.pivot_offset = button.size * 0.5
+		button.scale = CHOICE_SELECTED_SCALE if selected else Vector2.ONE
+		button.modulate = choice_color
+		button.get_node("Content/Indicator").visible = selected
 
 
-static func _choice_label(choice: String) -> String:
-	return {"rock": "石头", "paper": "布", "scissors": "剪刀"}.get(choice, "—")
+func _selected_choice() -> String:
+	if _state == null:
+		return ""
+	if _state.pending_action.get("type", "") == "rps.choice.requested":
+		return str(_state.pending_action.get("choice", ""))
+	if _state.me_locked and _state.me_choice is String:
+		return _state.me_choice
+	return ""
+
+
+func _choice_entries() -> Array:
+	return [
+		{"choice": "rock", "button": $ChoicePanel/Choices/RockButton},
+		{"choice": "scissors", "button": $ChoicePanel/Choices/ScissorsButton},
+		{"choice": "paper", "button": $ChoicePanel/Choices/PaperButton},
+	]
+
+
+static func _choice_for_button(button: Button) -> String:
+	return {
+		"RockButton": "rock",
+		"ScissorsButton": "scissors",
+		"PaperButton": "paper",
+	}.get(str(button.name), "")
 
 
 static func _format_label(value: String) -> String:

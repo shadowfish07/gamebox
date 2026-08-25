@@ -5,13 +5,12 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # shellcheck source=tool/lib/check_output.sh
 source "$root_dir/tool/lib/check_output.sh"
 gamebox_test_output_init
-warning_count_before="$(gamebox_test_output_warning_count)"
 
 godot_bin="${GODOT_BIN:-/Applications/Godot.app/Contents/MacOS/Godot}"
 test_script="${GODOT_TEST_SCRIPT:-res://test/run_tests.gd}"
 watchdog_seconds="${GODOT_TEST_WATCHDOG_SECONDS:-20}"
-log_file="$(mktemp -t gamebox-godot-tests.XXXXXX)"
 godot_pid=""
+phase_log_file=""
 
 terminate_godot() {
 	if [[ -z "$godot_pid" ]]; then
@@ -35,7 +34,9 @@ terminate_godot() {
 
 cleanup() {
 	terminate_godot
-	rm -f "$log_file"
+	if [[ -n "$phase_log_file" ]]; then
+		rm -f -- "$phase_log_file"
+	fi
 	gamebox_test_output_cleanup
 }
 trap cleanup EXIT
@@ -45,46 +46,72 @@ if ! [[ "$watchdog_seconds" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 
-"$godot_bin" --headless --path game_runtime --script "$test_script" >"$log_file" 2>&1 &
-godot_pid=$!
-elapsed_seconds=0
-while kill -0 "$godot_pid" 2>/dev/null; do
-	if (( elapsed_seconds >= watchdog_seconds )); then
-		echo "Godot test runner exceeded ${watchdog_seconds}s watchdog" >&2
-		terminate_godot
-		cat "$log_file" >&2
-		exit 1
+run_godot_with_watchdog() {
+	local phase_name="$1"
+	shift
+	phase_log_file="$(mktemp -t gamebox-godot-phase.XXXXXX)"
+	"$godot_bin" "$@" >"$phase_log_file" 2>&1 &
+	godot_pid=$!
+	local elapsed_seconds=0
+	while kill -0 "$godot_pid" 2>/dev/null; do
+		if (( elapsed_seconds >= watchdog_seconds )); then
+			printf '%s exceeded %ss watchdog\n' "$phase_name" "$watchdog_seconds" >&2
+			terminate_godot
+			cat "$phase_log_file" >&2
+			rm -f -- "$phase_log_file"
+			phase_log_file=""
+			return 1
+		fi
+		sleep 1
+		elapsed_seconds=$((elapsed_seconds + 1))
+	done
+
+	local godot_status=0
+	if wait "$godot_pid"; then
+		godot_status=0
+	else
+		godot_status=$?
 	fi
-	sleep 1
-	elapsed_seconds=$((elapsed_seconds + 1))
-done
+	godot_pid=""
+	cat "$phase_log_file"
+	rm -f -- "$phase_log_file"
+	phase_log_file=""
+	return "$godot_status"
+}
 
-if wait "$godot_pid"; then
-	godot_status=0
-else
-	godot_status=$?
-fi
-godot_pid=""
-gamebox_collect_step_warnings "$log_file" "$warning_count_before" 0
-if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
-	cat "$log_file"
-fi
+run_godot_phase() {
+	local phase_name="$1"
+	local required_marker="$2"
+	shift 2
+	local output_file phase_status=0
+	output_file="$(mktemp -t gamebox-godot-output.XXXXXX)"
+	if run_godot_with_watchdog "$phase_name" "$@" >"$output_file" 2>&1; then
+		phase_status=0
+	else
+		phase_status=$?
+	fi
+	cat "$output_file"
+	if (( phase_status != 0 )); then
+		rm -f -- "$output_file"
+		return "$phase_status"
+	fi
+	if grep -Eq '^ERROR:|SCRIPT ERROR:|Parse Error:|Compile Error:|Failed to load script|Invalid call\.' "$output_file"; then
+		printf '%s emitted fatal script diagnostics\n' "$phase_name" >&2
+		rm -f -- "$output_file"
+		return 1
+	fi
+	if [[ -n "$required_marker" ]] && ! grep -Fxq "$required_marker" "$output_file"; then
+		printf '%s success marker is missing\n' "$phase_name" >&2
+		rm -f -- "$output_file"
+		return 1
+	fi
+	rm -f -- "$output_file"
+}
 
-if (( godot_status != 0 )); then
-	[[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]] || cat "$log_file" >&2
-	echo "Godot test runner exited with status ${godot_status}" >&2
-	exit "$godot_status"
-fi
-if grep -Eq '^ERROR:|SCRIPT ERROR:|Parse Error:|Compile Error:|Failed to load script|Invalid call\.' "$log_file"; then
-	[[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]] || cat "$log_file" >&2
-	echo "Godot emitted fatal script diagnostics" >&2
-	exit 1
-fi
-if ! grep -Fxq 'GAMEBOX_GODOT_TESTS_PASSED' "$log_file"; then
-	[[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]] || cat "$log_file" >&2
-	echo "Godot test success marker is missing" >&2
-	exit 1
-fi
+gamebox_run_step "Godot resource import" run_godot_phase \
+	"Godot resource import" "" --headless --editor --path game_runtime --import
+gamebox_run_step "Godot tests" run_godot_phase \
+	"Godot tests" "GAMEBOX_GODOT_TESTS_PASSED" \
+	--headless --path game_runtime --script "$test_script"
 
-GAMEBOX_TEST_CHECK_COUNT=1
 gamebox_test_output_finish godot-tests

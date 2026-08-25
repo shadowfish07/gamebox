@@ -3611,8 +3611,8 @@ tap_rps_choice() {
   local design_x point x y
   case "$choice" in
     rock) design_x=188 ;;
-    paper) design_x=540 ;;
-    scissors) design_x=892 ;;
+    scissors) design_x=540 ;;
+    paper) design_x=892 ;;
     *) return 2 ;;
   esac
   point="$(design_point_for_serial "$serial" "$design_x" 950)"

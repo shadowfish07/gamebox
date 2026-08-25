@@ -41,6 +41,7 @@ abstract class StageGameRuntimeAssets : DefaultTask() {
                     ".godot/global_script_class_cache.cfg",
                     ".godot/filesystem_cache*",
                     ".godot/*metadata*",
+                    ".godot/imported/**/*.md5",
                     "test/**",
                 )
                 includeEmptyDirs = false
