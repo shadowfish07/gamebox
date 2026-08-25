@@ -22,6 +22,7 @@ import (
 	"me.zqydev/gamebox/server/internal/lan/journal"
 	"me.zqydev/gamebox/server/internal/nickname"
 	"me.zqydev/gamebox/server/internal/protocol"
+	"me.zqydev/gamebox/server/internal/results"
 )
 
 // Service owns the journal Store for its lifetime. Close must be called before
@@ -579,6 +580,48 @@ func (service *Service) Snapshot() Snapshot {
 	service.mu.RLock()
 	defer service.mu.RUnlock()
 	return cloneSnapshot(service.state.snapshot)
+}
+
+// Result builds the source-neutral terminal projection from verified journal state.
+func (service *Service) Result() (results.GameResult, []byte, error) {
+	if service == nil || service.store == nil {
+		return results.GameResult{}, nil, ErrInvalidConfiguration
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	snapshot := service.state.snapshot
+	if snapshot.Status != StatusFinished || snapshot.Result == nil || len(snapshot.Players) != 2 || len(service.state.events) == 0 {
+		return results.GameResult{}, nil, ErrResultNotReady
+	}
+	result := results.GameResult{
+		SchemaVersion: 1, MatchID: snapshot.RoomID, GameID: snapshot.GameID,
+		WinnerUserID: cloneStringPointer(snapshot.Result.WinnerPlayerID), Result: snapshot.Result.Reason,
+		StartedAt: service.state.createdAt, FinishedAt: service.state.events[len(service.state.events)-1].CommittedAt,
+		FinalRevision: snapshot.Revision, Events: make([]results.CanonicalEvent, 0, len(service.state.events)),
+	}
+	for index, player := range snapshot.Players {
+		result.Players[index] = results.PlayerSnapshot{UserID: player.PlayerID, Nickname: player.Nickname, Seat: player.Seat, Color: string(player.Color)}
+	}
+	for _, event := range service.state.events {
+		var actionID, actorID *string
+		if event.ActionID != "" {
+			value := event.ActionID
+			actionID = &value
+		}
+		if event.ActorPlayerID != "" {
+			value := event.ActorPlayerID
+			actorID = &value
+		}
+		result.Events = append(result.Events, results.CanonicalEvent{
+			Revision: event.Revision, Type: event.Type, ActionID: actionID, ActorID: actorID,
+			Payload: append(json.RawMessage(nil), event.Payload...), CommittedAt: event.CommittedAt,
+		})
+	}
+	encoded, err := results.ValidateAndEncode(result)
+	if err != nil {
+		return results.GameResult{}, nil, ErrInternal
+	}
+	return result, encoded, nil
 }
 
 // WriteManifestProjection updates only the non-authoritative endpoint locator.

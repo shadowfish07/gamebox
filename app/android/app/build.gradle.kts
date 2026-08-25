@@ -223,4 +223,5 @@ dependencies {
     // The self-targeting smoke runner cannot borrow runtime classes from the tested APK.
     androidTestImplementation(files(standaloneAndroidTestRuntime))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }

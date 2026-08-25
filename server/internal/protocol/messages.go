@@ -20,6 +20,7 @@ const (
 	TypePlatformError             = "platform.error"
 	TypePlatformMatchCancelled    = "platform.match.cancelled"
 	TypePlatformMatchAbandoned    = "platform.match.abandoned"
+	TypePlatformMatchResult       = "platform.match.result"
 	TypeGomokuMoveRequested       = "gomoku.move.requested"
 	TypeGomokuMoveAccepted        = "gomoku.move.accepted"
 	TypeGomokuResignRequested     = "gomoku.resign.requested"
@@ -36,6 +37,7 @@ var knownTypes = map[string]struct{}{
 	TypePlatformError:             {},
 	TypePlatformMatchCancelled:    {},
 	TypePlatformMatchAbandoned:    {},
+	TypePlatformMatchResult:       {},
 	TypeGomokuMoveRequested:       {},
 	TypeGomokuMoveAccepted:        {},
 	TypeGomokuResignRequested:     {},

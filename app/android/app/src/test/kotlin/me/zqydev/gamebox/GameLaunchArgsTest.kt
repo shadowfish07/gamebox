@@ -17,6 +17,7 @@ class GameLaunchArgsTest {
                 "matchId" to "550e8400-e29b-41d4-a716-446655440000",
                 "launchTicket" to ticket,
                 "wsUrl" to "wss://gamebox.example.com/matches/550e8400",
+                "source" to "public",
             ),
         )
 
@@ -52,6 +53,7 @@ class GameLaunchArgsTest {
             "matchId" to "550e8400-e29b-41d4-a716-446655440000",
             "launchTicket" to ticket,
             "wsUrl" to "wss://gamebox.example.com",
+            "source" to "public",
         )
         val invalidInputs = listOf<Any?>(
             null,
@@ -81,6 +83,7 @@ class GameLaunchArgsTest {
                 "matchId" to "550e8400-e29b-41d4-a716-446655440000",
                 "launchTicket" to ticket,
                 "wsUrl" to "wss://gamebox.example.com",
+                "source" to "public",
             ),
         )
 
@@ -110,6 +113,7 @@ class GameLaunchArgsTest {
                 "matchId" to "550e8400-e29b-41d4-a716-446655440000",
                 "launchTicket" to PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER,
                 "wsUrl" to "wss://gamebox.example.com",
+                "source" to "public",
             ),
         )
 

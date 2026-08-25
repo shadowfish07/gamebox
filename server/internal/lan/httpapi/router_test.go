@@ -89,7 +89,7 @@ func TestJoinResumeAndResultHTTPContracts(t *testing.T) {
 	assertStatusAndType(t, resultHTTP, http.StatusOK)
 	var result resultResponse
 	decodeResponse(t, resultHTTP, &result)
-	if result.SchemaVersion != 1 || len(result.ResultHash) != 64 || string(result.Result) != "null" {
+	if result.SchemaVersion != 1 || len(result.ResultHash) != 64 || string(result.Result) == "null" || len(result.Result) == 0 {
 		t.Fatalf("result response = %#v", result)
 	}
 	ackBody := `{"resumeToken":"` + testGuestResume + `","resultHash":"` + result.ResultHash + `"}`

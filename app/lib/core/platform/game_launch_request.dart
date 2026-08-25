@@ -1,3 +1,5 @@
+enum GameLaunchSource { public, lan }
+
 /// An immutable, validated request for launching a game in the native host.
 final class GameLaunchRequest {
   GameLaunchRequest({
@@ -5,6 +7,7 @@ final class GameLaunchRequest {
     required this.matchId,
     required this.launchTicket,
     required this.wsUrl,
+    this.source = GameLaunchSource.public,
   }) {
     if (gameId.trim().isEmpty) {
       throw ArgumentError('gameId must not be blank');
@@ -24,6 +27,7 @@ final class GameLaunchRequest {
   final String matchId;
   final String launchTicket;
   final String wsUrl;
+  final GameLaunchSource source;
 
   static final RegExp _canonicalUuid = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

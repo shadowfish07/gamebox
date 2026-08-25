@@ -21,6 +21,7 @@ var errorMessages = map[string]string{
 	"active_match_exists":   "你已在五子棋对局中",
 	"match_not_found":       "对局不存在",
 	"match_not_cancellable": "对局无法取消",
+	"match_not_finished":    "对局尚未结束",
 	"ticket_invalid":        "启动票据无效",
 	"stale_revision":        "对局状态已更新",
 	"not_your_turn":         "还未轮到你",
@@ -68,6 +69,8 @@ func writeServiceError(writer http.ResponseWriter, err error) {
 		status, code = http.StatusNotFound, "match_not_found"
 	case errors.Is(err, matches.ErrMatchNotCancellable):
 		status, code = http.StatusConflict, "match_not_cancellable"
+	case errors.Is(err, matches.ErrMatchNotFinished):
+		status, code = http.StatusConflict, "match_not_finished"
 	case errors.Is(err, matches.ErrStaleRevision):
 		status, code = http.StatusConflict, "stale_revision"
 	case errors.Is(err, gomoku.ErrNotYourTurn):

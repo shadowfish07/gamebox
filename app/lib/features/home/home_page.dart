@@ -16,6 +16,10 @@ final class HomePage extends StatefulWidget {
     this.currentUserId,
     this.publicSection,
     this.onEditNickname,
+    this.onOpenPublic,
+    this.onOpenLan,
+    this.lanRecovery,
+    this.onOpenHistory,
     this.updateController,
   });
 
@@ -24,6 +28,10 @@ final class HomePage extends StatefulWidget {
   final String nickname;
   final Widget? publicSection;
   final VoidCallback? onEditNickname;
+  final VoidCallback? onOpenPublic;
+  final VoidCallback? onOpenLan;
+  final Widget? lanRecovery;
+  final VoidCallback? onOpenHistory;
   final UpdateController? updateController;
 
   @override
@@ -109,6 +117,16 @@ final class _HomePageState extends State<HomePage> {
               ),
             if (widget.updateController case final controller?)
               UpdateActionButton(controller: controller),
+            Semantics(
+              identifier: 'open-game-history',
+              button: true,
+              child: IconButton(
+                key: const Key('open-game-history'),
+                tooltip: '对战记录',
+                onPressed: widget.onOpenHistory,
+                icon: const Icon(Icons.history),
+              ),
+            ),
           ],
         ),
         body: SafeArea(
@@ -120,32 +138,40 @@ final class _HomePageState extends State<HomePage> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 20),
-              if (widget.publicSection case final publicSection?)
+              if (widget.publicSection case final publicSection?) ...[
                 Card(
                   key: const Key('public-section'),
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: publicSection,
                   ),
-                )
-              else if (controller == null)
-                const SizedBox.shrink()
-              else if (controller.status == null && controller.isLoading)
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (widget.lanRecovery case final recovery?) ...[
+                recovery,
+                const SizedBox(height: 12),
+              ],
+              if (controller != null &&
+                  controller.status == null &&
+                  controller.isLoading)
                 const Center(child: CircularProgressIndicator())
-              else if (controller.status == null &&
+              else if (controller != null &&
+                  controller.status == null &&
                   controller.lastError != null)
                 _HomeError(
                   message: controller.lastError!.message,
                   onRetry: controller.refresh,
                 )
-              else if (controller.status == null)
+              else if (controller != null && controller.status == null)
                 const Center(child: CircularProgressIndicator())
               else
                 _GomokuCard(
-                  status: controller.status!,
-                  isLaunching: controller.isLaunching,
-                  isMutating: controller.isMutating,
-                  onChoose: _chooseOpponent,
+                  status: controller?.status,
+                  isLaunching: controller?.isLaunching ?? false,
+                  isMutating: controller?.isMutating ?? false,
+                  onChoose: widget.onOpenPublic ?? _chooseOpponent,
+                  onLan: widget.onOpenLan,
                   onContinue: _continueMatch,
                   onCancel: _cancelMatch,
                 ),
@@ -186,14 +212,16 @@ final class _GomokuCard extends StatelessWidget {
     required this.isLaunching,
     required this.isMutating,
     required this.onChoose,
+    required this.onLan,
     required this.onContinue,
     required this.onCancel,
   });
 
-  final GomokuStatus status;
+  final GomokuStatus? status;
   final bool isLaunching;
   final bool isMutating;
   final VoidCallback onChoose;
+  final VoidCallback? onLan;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
 
@@ -225,7 +253,15 @@ final class _GomokuCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            Text('公网对战', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
             switch (status) {
+              null => _ActionButton(
+                semanticKey: const Key('open-public-mode'),
+                semanticLabel: 'open-public-mode',
+                onPressed: isMutating ? null : onChoose,
+                child: const Text('使用邀请码注册'),
+              ),
               GomokuIdleStatus _ => _ActionButton(
                 semanticKey: const Key('choose-opponent'),
                 semanticLabel: 'choose-opponent',
@@ -240,6 +276,13 @@ final class _GomokuCard extends StatelessWidget {
                 onCancel: onCancel,
               ),
             },
+            const SizedBox(height: 8),
+            _ActionButton(
+              semanticKey: const Key('open-lan-mode'),
+              semanticLabel: 'open-lan-mode',
+              onPressed: onLan,
+              child: const Text('局域网对战'),
+            ),
           ],
         ),
       ),

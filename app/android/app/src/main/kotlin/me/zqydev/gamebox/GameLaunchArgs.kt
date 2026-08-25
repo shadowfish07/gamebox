@@ -1,6 +1,15 @@
 package me.zqydev.gamebox
 
-class GameLaunchArgs private constructor(private val params: Array<String>) {
+class GameLaunchArgs private constructor(
+    private val params: Array<String>,
+    val gameId: String,
+    val matchId: String,
+    val source: String,
+    val endpointKind: String,
+) {
+    val requiresResultTracking: Boolean
+        get() = gameId != "host-smoke"
+
     val commandLineParams: Array<String>
         get() = params.clone()
 
@@ -15,7 +24,8 @@ class GameLaunchArgs private constructor(private val params: Array<String>) {
     }
 
     companion object {
-        private val approvedKeys = setOf("gameId", "matchId", "launchTicket", "wsUrl")
+        private val approvedKeys = setOf("gameId", "matchId", "launchTicket", "wsUrl", "source")
+        private val canonicalUuid = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
         fun fromNative(arguments: Any?): ParseResult {
             if (arguments !is Map<*, *> || arguments.keys != approvedKeys) {
@@ -29,6 +39,8 @@ class GameLaunchArgs private constructor(private val params: Array<String>) {
             if (values.getValue("launchTicket") == PrivateCommandLineArgs.PRIVATE_TICKET_PLACEHOLDER) {
                 return ParseResult.Invalid
             }
+            val source = values.getValue("source")
+            if (source !in setOf("public", "lan") || !canonicalUuid.matches(values.getValue("matchId"))) return ParseResult.Invalid
 
             return ParseResult.Success(
                 GameLaunchArgs(
@@ -43,11 +55,21 @@ class GameLaunchArgs private constructor(private val params: Array<String>) {
                         "--ws-url",
                         values.getValue("wsUrl"),
                     ),
+                    values.getValue("gameId"),
+                    values.getValue("matchId"),
+                    source,
+                    source,
                 ),
             )
         }
 
         fun hostSmoke(): GameLaunchArgs =
-            GameLaunchArgs(arrayOf("--", "--host-smoke", "--auto-exit-ms", "800"))
+            GameLaunchArgs(
+                arrayOf("--", "--host-smoke", "--auto-exit-ms", "800"),
+                "host-smoke",
+                "host-smoke",
+                "public",
+                "public",
+            )
     }
 }

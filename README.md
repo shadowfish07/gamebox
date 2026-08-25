@@ -5,8 +5,9 @@ two-player, server-authoritative Gomoku match.
 
 ## Architecture and scope
 
-- `app/` is the Flutter entry point and Android host. It owns registration,
-  automatic login, the catalog, opponent selection, and launching a game.
+- `app/` is the Flutter entry point and Android host. It owns the local profile,
+  optional public registration/login, the catalog, offline LAN room UI, local
+  history, and launching a game.
 - `game_runtime/` is the embedded Godot runtime. It owns game rendering,
   input, reconnect behavior, and applying authoritative snapshots/events.
 - `server/` is the Go HTTP/WebSocket service and SQLite authority. It owns
@@ -19,10 +20,12 @@ bridges the Flutter host to the full-screen `GodotActivity`, and passes a
 `gameId`, one-time launch ticket, and required non-secret configuration. The Go
 service persists accepted events before broadcasting them.
 
-This phase is Android-only and includes registration, lobby/opponent selection,
-one Gomoku game, force-stop recovery, completion, slot release, and zero-move
-cancellation. It does not include AI, local multiplayer, friends, matchmaking,
-chat, spectating, push notifications, public deployment, or account migration.
+This phase is Android-only and includes both the public two-player loop and a
+fully offline phone-hosted LAN loop. LAN play uses one phone's foreground
+service as the authority, strict QR/manual join payloads, real Godot clients,
+force-stop recovery, canonical durable results, and source-neutral local
+history. It does not include AI, same-device multiplayer, friends, matchmaking,
+chat, spectating, push notifications, host migration, or LAN-to-public upload.
 
 ## Required development tools
 
@@ -248,6 +251,26 @@ The two-emulator local release gate is:
 bash tool/e2e_android.sh --self-test
 bash tool/e2e_android.sh
 ```
+
+The separate offline LAN gate uses the same lease and managed AVD pair:
+
+```bash
+bash tool/e2e_lan_android.sh --self-test
+bash tool/e2e_lan_android.sh
+```
+
+It creates the room through the built app, forwards only the host listener for
+the emulator topology, joins through the production strict parser/API, launches
+both packaged Godot clients, verifies guest reconnect plus host activity and
+process recovery, finishes a deterministic game, compares both durable result
+hashes, and captures credential-free masked/history screenshots under the
+ignored `artifacts/e2e-lan-android/` directory. Successful runner output is one
+summary line by default; pass `--verbose` only when diagnosing a run.
+
+Physical hotspot acceptance is intentionally separate because emulators cannot
+prove OEM hotspot routing or camera scanning. Use
+[`docs/testing/android-lan-hotspot-acceptance.md`](docs/testing/android-lan-hotspot-acceptance.md)
+with the exact same release-candidate APK on both phones.
 
 The full E2E requires a clean worktree and records the exact starting commit
 and built/installed APK SHA-256 values. It takes the Git common-directory lease

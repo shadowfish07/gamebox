@@ -21,6 +21,7 @@ class MethodChannelGameLauncher implements GameLauncher {
         'matchId': request.matchId,
         'launchTicket': request.launchTicket,
         'wsUrl': request.wsUrl,
+        'source': request.source.name,
       });
     } on PlatformException catch (error) {
       throw GameLaunchException(error.code);

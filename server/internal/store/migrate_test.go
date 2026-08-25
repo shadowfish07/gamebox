@@ -240,7 +240,7 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "future.sqlite")
 	db := openDatabase(t, ctx, path)
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (3, ?, unixepoch()), (2, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (4, ?, unixepoch()), (3, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
 		_ = db.Close()
 		t.Fatalf("insert future migration: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 		_ = db.Close()
 		t.Fatal("Open returned a database with an unknown future migration")
 	}
-	if err == nil || !strings.Contains(err.Error(), "unknown migration version 2") {
+	if err == nil || !strings.Contains(err.Error(), "unknown migration version 3") {
 		t.Fatalf("Open future-version error = %v, want stable unknown-version diagnostic", err)
 	}
 }
@@ -312,8 +312,8 @@ func TestTextPrimaryKeysRejectNull(t *testing.T) {
 		{name: "matches.id", query: `INSERT INTO matches(id,game_id,status,created_at,updated_at) VALUES (NULL,'gomoku','active',1,1)`},
 		{name: "launch_tickets.token_hash", query: `INSERT INTO launch_tickets(token_hash,match_id,user_id,game_id,expires_at,created_at) VALUES (NULL,'m1','u1','gomoku',2,1)`},
 		{name: "resume_tokens.token_hash", query: `INSERT INTO resume_tokens(token_hash,match_id,user_id,expires_at,last_used_at,created_at) VALUES (NULL,'m1','u1',2,1,1)`},
-		{name: "match_players.match_id", query: `INSERT INTO match_players(match_id,user_id,seat,color) VALUES (NULL,'u1',0,'black')`},
-		{name: "match_players.user_id", query: `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1',NULL,0,'black')`},
+		{name: "match_players.match_id", query: `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (NULL,'u1','Alice',0,'black')`},
+		{name: "match_players.user_id", query: `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1',NULL,'Alice',0,'black')`},
 		{name: "match_events.match_id", query: `INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES (NULL,1,'move','{}',1)`},
 		{name: "match_events.revision", query: `INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES ('m1',NULL,'move','{}',1)`},
 		{name: "active_game_slots.game_id", query: `INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (NULL,'u1','m1')`},
@@ -839,6 +839,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 		"match_players": {
 			"match_id TEXT NOT NULL REFERENCES matches(id)",
 			"user_id TEXT NOT NULL REFERENCES users(id)",
+			"nickname_snapshot TEXT NOT NULL",
 			"seat INTEGER NOT NULL CHECK (seat IN (0,1))",
 			"color TEXT NOT NULL CHECK (color IN ('black','white'))",
 			"PRIMARY KEY (match_id, user_id)",
@@ -923,11 +924,11 @@ func assertConstraints(t *testing.T, db *sql.DB) {
 	mustFail(t, db, `INSERT INTO matches(id,game_id,status,created_at,updated_at) VALUES ('m-bad','gomoku','pending',1,1)`)
 	mustFail(t, db, `INSERT INTO matches(id,game_id,status,winner_user_id,created_at,updated_at) VALUES ('m-fk','gomoku','finished','missing',1,1)`)
 
-	mustExec(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u1',0,'black')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',0,'white')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',1,'black')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',2,'white')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',1,'red')`)
+	mustExec(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u1','Alice',0,'black')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',0,'white')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',1,'black')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',2,'white')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',1,'red')`)
 
 	mustExec(t, db, `INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES ('m1',1,'move','a1','u1','{}',1)`)
 	mustFail(t, db, `INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES ('m1',1,'move','a2','u2','{}',1)`)

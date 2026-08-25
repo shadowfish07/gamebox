@@ -45,6 +45,7 @@ class LanHostExternalSmokeTest {
                 .put("joinAttemptId", UUID.randomUUID().toString())
                 .put("candidateResumeToken", canonicalToken())
                 .put("roomKey", secrets.roomKey)
+                .put("joinExpiresAt", created["joinExpiresAt"] as Long)
                 .toString(),
         )
         Os.chmod(handoff.path, 0x180)

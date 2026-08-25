@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gamebox/core/lan/lan_models.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
@@ -177,6 +178,9 @@ final class _FakeGameLauncher implements GameLauncher {
 }
 
 final class _FakeHomeApi implements HomeApi {
+  @override
+  Future<AuthoritativeGameResult> fetchResult(String matchId) =>
+      throw UnimplementedError();
   Future<CreatedGomokuMatch> Function(String opponentId)? onCreate;
   Future<GomokuLaunchTicket> Function(String matchId)? onTicket;
 

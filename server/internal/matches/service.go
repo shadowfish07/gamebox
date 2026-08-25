@@ -31,6 +31,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/protocol"
+	"me.zqydev/gamebox/server/internal/results"
 	"me.zqydev/gamebox/server/internal/users"
 )
 
@@ -40,6 +41,7 @@ var (
 	ErrActiveMatchExists    = errors.New("active_match_exists")
 	ErrOpponentBusy         = errors.New("opponent_busy")
 	ErrMatchNotFound        = errors.New("match_not_found")
+	ErrMatchNotFinished     = errors.New("match_not_finished")
 	ErrMatchNotCancellable  = errors.New("match_not_cancellable")
 	ErrStaleRevision        = errors.New("stale_revision")
 	ErrActionConflict       = errors.New("action_conflict")
@@ -755,7 +757,8 @@ func (service *Service) Create(ctx context.Context, gameID, initiatorID, opponen
 		_ = transaction.release()
 	}()
 
-	if enabled, queryErr := enabledUser(ctx, transaction.Tx, initiatorID); queryErr != nil {
+	initiatorNickname, enabled, queryErr := enabledUserNickname(ctx, transaction.Tx, initiatorID)
+	if queryErr != nil {
 		if errors.Is(queryErr, sql.ErrNoRows) {
 			return Match{}, ErrInvalidRequest
 		}
@@ -763,7 +766,8 @@ func (service *Service) Create(ctx context.Context, gameID, initiatorID, opponen
 	} else if !enabled {
 		return Match{}, ErrInvalidRequest
 	}
-	if enabled, queryErr := enabledUser(ctx, transaction.Tx, opponentID); queryErr != nil {
+	opponentNickname, enabled, queryErr := enabledUserNickname(ctx, transaction.Tx, opponentID)
+	if queryErr != nil {
 		if errors.Is(queryErr, sql.ErrNoRows) {
 			return Match{}, ErrInvalidRequest
 		}
@@ -793,13 +797,13 @@ VALUES (?,?,?,0,?,?)`, matchIDText, gameID, StatusActive, nowMillis, nowMillis)
 	}
 
 	players := []Player{
-		{UserID: initiatorID, Seat: 0, Color: initiatorColor},
-		{UserID: opponentID, Seat: 1, Color: opponentColor},
+		{UserID: initiatorID, Nickname: initiatorNickname, Seat: 0, Color: initiatorColor},
+		{UserID: opponentID, Nickname: opponentNickname, Seat: 1, Color: opponentColor},
 	}
 	for _, player := range players {
 		result, insertErr = transaction.ExecContext(ctx, `
-INSERT INTO match_players(match_id,user_id,seat,color)
-VALUES (?,?,?,?)`, matchIDText, player.UserID, player.Seat, player.Color)
+INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color)
+VALUES (?,?,?,?,?)`, matchIDText, player.UserID, player.Nickname, player.Seat, player.Color)
 		if insertErr != nil {
 			return Match{}, matchDatabaseError(ctx, insertErr)
 		}
@@ -994,6 +998,69 @@ func (service *Service) Snapshot(ctx context.Context, matchID string) (_ Snapsho
 		return Snapshot{}, matchDatabaseError(ctx, commitErr)
 	}
 	return cloneMatchSnapshot(snapshot), nil
+}
+
+// Result returns one participant-authorized, source-neutral terminal result.
+// Nicknames come from the immutable match-player snapshots, never current users.
+func (service *Service) Result(ctx context.Context, matchID, userID string) (_ results.GameResult, _ []byte, err error) {
+	if !service.configured() {
+		return results.GameResult{}, nil, ErrInvalidConfiguration
+	}
+	if ctx == nil || !canonicalUUID(matchID) || !canonicalUUID(userID) {
+		return results.GameResult{}, nil, ErrInvalidRequest
+	}
+	tx, beginErr := service.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if beginErr != nil {
+		return results.GameResult{}, nil, matchDatabaseError(ctx, beginErr)
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = matchDatabaseError(ctx, rollbackErr)
+		}
+	}()
+	match, players, loadErr := loadMatchAndPlayers(ctx, tx, matchID)
+	if loadErr != nil {
+		if errors.Is(loadErr, ErrMatchNotFound) {
+			return results.GameResult{}, nil, ErrMatchNotFound
+		}
+		return results.GameResult{}, nil, loadErr
+	}
+	if !playerMember(players, userID) {
+		return results.GameResult{}, nil, ErrMatchNotFound
+	}
+	if match.Status != StatusFinished || match.Result == nil || match.FinishedAt == nil {
+		return results.GameResult{}, nil, ErrMatchNotFinished
+	}
+	events, eventsErr := readMatchEvents(ctx, tx, matchID)
+	if eventsErr != nil {
+		return results.GameResult{}, nil, eventsErr
+	}
+	result := results.GameResult{
+		SchemaVersion: 1, MatchID: match.ID, GameID: match.GameID,
+		WinnerUserID: cloneStringPointer(match.WinnerUserID), Result: *match.Result,
+		StartedAt: match.CreatedAt.UnixMilli(), FinishedAt: match.FinishedAt.UnixMilli(),
+		FinalRevision: match.Revision, Events: make([]results.CanonicalEvent, 0, len(events)),
+	}
+	for index, player := range players {
+		result.Players[index] = results.PlayerSnapshot{
+			UserID: player.UserID, Nickname: player.Nickname, Seat: player.Seat, Color: string(player.Color),
+		}
+	}
+	for _, event := range events {
+		result.Events = append(result.Events, results.CanonicalEvent{
+			Revision: event.Revision, Type: event.Type,
+			ActionID: cloneStringPointer(event.ActionID), ActorID: cloneStringPointer(event.ActorUserID),
+			Payload: append(json.RawMessage(nil), event.Payload...), CommittedAt: event.CreatedAt.UnixMilli(),
+		})
+	}
+	encoded, encodeErr := results.ValidateAndEncode(result)
+	if encodeErr != nil {
+		return results.GameResult{}, nil, ErrInternal
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return results.GameResult{}, nil, matchDatabaseError(ctx, commitErr)
+	}
+	return result, encoded, nil
 }
 
 // ApplyAction validates, persists, and commits one authoritative action. A
@@ -1651,7 +1718,7 @@ WHERE id=?`, matchID).Scan(&match.GameID, &match.Status, &match.Revision, &resul
 	}
 
 	rows, queryErr := transaction.QueryContext(ctx, `
-SELECT user_id,seat,color
+SELECT user_id,nickname_snapshot,seat,color
 FROM match_players
 WHERE match_id=?
 ORDER BY seat`, matchID)
@@ -1662,7 +1729,7 @@ ORDER BY seat`, matchID)
 	players := make([]Player, 0, 2)
 	for rows.Next() {
 		var player Player
-		if scanErr := rows.Scan(&player.UserID, &player.Seat, &player.Color); scanErr != nil {
+		if scanErr := rows.Scan(&player.UserID, &player.Nickname, &player.Seat, &player.Color); scanErr != nil {
 			return Match{}, nil, matchDatabaseError(ctx, scanErr)
 		}
 		players = append(players, player)
@@ -1672,6 +1739,7 @@ ORDER BY seat`, matchID)
 	}
 	if len(players) != 2 || players[0].Seat != 0 || players[1].Seat != 1 || players[0].UserID == players[1].UserID ||
 		!validIdentifier(players[0].UserID) || !validIdentifier(players[1].UserID) ||
+		players[0].Nickname == "" || players[1].Nickname == "" ||
 		players[0].Color == players[1].Color ||
 		(players[0].Color != ColorBlack && players[0].Color != ColorWhite) ||
 		(players[1].Color != ColorBlack && players[1].Color != ColorWhite) {
@@ -2122,12 +2190,13 @@ func validIdentifier(value string) bool {
 	return value != "" && len(value) <= maximumIdentifierBytes && strings.TrimSpace(value) == value
 }
 
-func enabledUser(ctx context.Context, transaction *sql.Tx, userID string) (bool, error) {
+func enabledUserNickname(ctx context.Context, transaction *sql.Tx, userID string) (string, bool, error) {
 	var enabled int
-	if err := transaction.QueryRowContext(ctx, `SELECT enabled FROM users WHERE id=?`, userID).Scan(&enabled); err != nil {
-		return false, err
+	var nickname string
+	if err := transaction.QueryRowContext(ctx, `SELECT nickname,enabled FROM users WHERE id=?`, userID).Scan(&nickname, &enabled); err != nil {
+		return "", false, err
 	}
-	return enabled == 1, nil
+	return nickname, enabled == 1, nil
 }
 
 func readTwoMatchPlayers(ctx context.Context, transaction *sql.Tx, matchID string) ([2]string, error) {

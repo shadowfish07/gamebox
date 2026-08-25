@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_client.dart';
@@ -31,6 +32,27 @@ void main() {
       ),
       throwsUnsupportedError,
     );
+  });
+
+  test('result endpoint decodes the shared canonical projection', () async {
+    final resultObject = jsonDecode(
+      await File('../protocol/fixtures/game_result.json').readAsString(),
+    );
+    final fixture = await _ApiFixture.create(now, (request) async {
+      expect(request.method, 'GET');
+      expect(
+        request.url.path,
+        '/v1/matches/11111111-1111-4111-8111-111111111111/result',
+      );
+      expect(request.headers['authorization'], 'Bearer access-one');
+      return _json({'result': resultObject});
+    });
+
+    final result = await fixture.api.fetchResult(
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(result.finalRevision, 2);
+    expect(result.result, 'resignation');
   });
 
   test('status decodes the exact idle and active unions', () async {

@@ -71,6 +71,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
+	mux.Handle("GET /v1/matches/{matchId}/result", router.authenticated(http.HandlerFunc(router.matchResult)))
 	mux.HandleFunc("GET /v1/ws", router.webSocket)
 
 	registerMethodFallback(mux, "/healthz", http.MethodGet)
@@ -83,6 +84,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
+	registerMethodFallback(mux, "/v1/matches/{matchId}/result", http.MethodGet)
 	registerMethodFallback(mux, "/v1/ws", http.MethodGet)
 	mux.HandleFunc("/", func(writer http.ResponseWriter, _ *http.Request) {
 		writeAPIError(writer, http.StatusNotFound, "invalid_request")

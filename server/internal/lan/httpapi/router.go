@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"me.zqydev/gamebox/server/internal/lan/room"
+	"me.zqydev/gamebox/server/internal/results"
 )
 
 type RoomService interface {
@@ -19,6 +20,7 @@ type RoomService interface {
 	Apply(context.Context, room.ActionRequest) (room.Event, room.Snapshot, *room.GameResult, error)
 	AcknowledgeResult(context.Context, string, string) error
 	Snapshot() room.Snapshot
+	Result() (results.GameResult, []byte, error)
 }
 
 type Router struct {

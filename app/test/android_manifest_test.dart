@@ -108,18 +108,18 @@ void main() {
     ).firstMatch(manifest)?.group(0);
     expect(service, isNotNull);
     expect(service, contains('android:exported="false"'));
-    expect(service, contains('android:foregroundServiceType="connectedDevice"'));
+    expect(
+      service,
+      contains('android:foregroundServiceType="connectedDevice"'),
+    );
   });
 
   test('local-network permission policy follows the real target SDK pin', () {
     final manifest = File('android/app/src/main/AndroidManifest.xml')
         .readAsStringSync();
-    final gradleProperties = File(
-      'android/gradle.properties',
-    ).readAsStringSync();
-    final buildScript = File(
-      'android/app/build.gradle.kts',
-    ).readAsStringSync();
+    final gradleProperties = File('android/gradle.properties')
+        .readAsStringSync();
+    final buildScript = File('android/app/build.gradle.kts').readAsStringSync();
     final runtimePolicy = File(
       'android/app/src/main/kotlin/me/zqydev/gamebox/'
       'LanLocalNetworkPermissionPolicy.kt',

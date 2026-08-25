@@ -16,6 +16,8 @@ class MainActivity : FlutterActivity() {
     private var lanHostChannel: LanHostChannel? = null
     private var lanHostWorker: ExecutorService? = null
     private var localNetworkPermissionRequested = false
+    private lateinit var resultStore: AtomicResultStore
+    private lateinit var pendingResultStore: PendingGameResultStore
 
     override fun onResume() {
         super.onResume()
@@ -29,6 +31,8 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        resultStore = AtomicResultStore(java.io.File(filesDir, "game_results"))
+        pendingResultStore = PendingGameResultStore(java.io.File(filesDir, "pending_game_results"))
         appProfileChannel = AppProfileChannel(
             flutterEngine.dartExecutor.binaryMessenger,
         )
@@ -94,6 +98,63 @@ class MainActivity : FlutterActivity() {
                 result.error(INVALID_APK_CODE, INVALID_APK_MESSAGE, null)
             } catch (_: IllegalStateException) {
                 result.error(INSTALLER_UNAVAILABLE_CODE, INSTALLER_UNAVAILABLE_MESSAGE, null)
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            GAME_RESULTS_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "listCommitted" -> if (call.arguments == null) {
+                    result.success(resultStore.list().map(StoredGameResult::toMap))
+                } else {
+                    result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                }
+                "listPending" -> if (call.arguments == null) {
+                    result.success(pendingResultStore.list().map(PendingGameResult::toMap))
+                } else {
+                    result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                }
+                "persistRecovered" -> {
+                    if (!hasExactArguments(call.arguments, setOf("result"))) {
+                        result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                        return@setMethodCallHandler
+                    }
+                    val raw = call.argument<String>("result")
+                    val validated = raw?.let(GameResultValidator::validate)
+                    if (validated == null || pendingResultStore.list().none { it.matchId == validated.matchId }) {
+                        result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                    } else if (!resultStore.persist(raw)) {
+                        result.error(RESULT_STORAGE_CODE, RESULT_STORAGE_MESSAGE, null)
+                    } else {
+                        result.success(resultStore.get(validated.matchId)?.sha256)
+                    }
+                }
+                "completePending" -> {
+                    if (!hasExactArguments(call.arguments, setOf("matchId", "expectedSha256"))) {
+                        result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                        return@setMethodCallHandler
+                    }
+                    val matchId = call.argument<String>("matchId")
+                    val expectedSha256 = call.argument<String>("expectedSha256")
+                    val stored = matchId?.let(resultStore::get)
+                    if (stored == null || expectedSha256 == null || stored.sha256 != expectedSha256) {
+                        result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                    } else if (!pendingResultStore.remove(matchId)) {
+                        result.error(RESULT_STORAGE_CODE, RESULT_STORAGE_MESSAGE, null)
+                    } else {
+                        result.success(null)
+                    }
+                }
+                "quarantine" -> {
+                    if (!hasExactArguments(call.arguments, setOf("matchId"))) {
+                        result.error(INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, null)
+                        return@setMethodCallHandler
+                    }
+                    val matchId = call.argument<String>("matchId")
+                    result.success(matchId != null && pendingResultStore.quarantine(matchId))
+                }
+                else -> result.notImplemented()
             }
         }
     }
@@ -167,6 +228,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startNewGame(args: GameLaunchArgs, result: MethodChannel.Result) {
+        if (args.requiresResultTracking && !pendingResultStore.persist(args)) {
+            launchGate.onLaunchFailed()
+            result.error(RESULT_TRACKING_CODE, RESULT_TRACKING_MESSAGE, null)
+            return
+        }
         val intent = Intent(this, GameActivity::class.java).apply {
             putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, args.commandLineParams)
             addFlags(
@@ -207,9 +273,13 @@ class MainActivity : FlutterActivity() {
     }
 
     private companion object {
+        fun hasExactArguments(arguments: Any?, expected: Set<String>): Boolean =
+            arguments is Map<*, *> && arguments.keys == expected
+
         const val LOCAL_NETWORK_PERMISSION_REQUEST = 0x4c41
         const val GAME_LAUNCHER_CHANNEL = "me.zqydev.gamebox/game_launcher"
         const val APP_UPDATER_CHANNEL = "me.zqydev.gamebox/app_updater"
+        const val GAME_RESULTS_CHANNEL = "me.zqydev.gamebox/game_results"
         const val INVALID_ARGUMENTS_CODE = "invalid_arguments"
         const val INVALID_ARGUMENTS_MESSAGE = "Invalid game launch arguments."
         const val GAME_ALREADY_ACTIVE_CODE = "game_already_active"
@@ -220,6 +290,12 @@ class MainActivity : FlutterActivity() {
         const val INVALID_APK_MESSAGE = "Invalid or incompatible update package."
         const val INSTALLER_UNAVAILABLE_CODE = "installer_unavailable"
         const val INSTALLER_UNAVAILABLE_MESSAGE = "Unable to open package installer."
+        const val RESULT_TRACKING_CODE = "result_tracking_unavailable"
+        const val RESULT_TRACKING_MESSAGE = "Unable to track the game result."
+        const val INVALID_RESULT_CODE = "invalid_result"
+        const val INVALID_RESULT_MESSAGE = "Invalid authoritative game result."
+        const val RESULT_STORAGE_CODE = "result_storage_unavailable"
+        const val RESULT_STORAGE_MESSAGE = "Unable to store the game result."
         val launchGate = GameLaunchGate()
     }
 }

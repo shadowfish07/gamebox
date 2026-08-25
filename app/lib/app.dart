@@ -5,8 +5,12 @@ import 'package:http/http.dart' as http;
 
 import 'core/api/api_client.dart';
 import 'core/auth/token_store.dart';
+import 'core/lan/lan_api.dart';
+import 'core/lan/lan_credential_store.dart';
 import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
+import 'core/platform/method_channel_lan_host_platform.dart';
+import 'core/platform/method_channel_game_results_platform.dart';
 import 'core/profile/app_profile_store.dart';
 import 'core/profile/nickname_rules.dart';
 import 'features/auth/auth_api.dart';
@@ -16,6 +20,12 @@ import 'features/gomoku/gomoku_repository.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
+import 'features/history/game_history_controller.dart';
+import 'features/history/game_history_page.dart';
+import 'features/history/game_history_store.dart';
+import 'features/lan/lan_mode_page.dart';
+import 'features/lan/lan_recovery_card.dart';
+import 'features/lan/lan_room_controller.dart';
 import 'features/profile/nickname_page.dart';
 import 'features/profile/profile_controller.dart';
 import 'features/update/update_controller.dart';
@@ -28,6 +38,7 @@ class GameboxApp extends StatefulWidget {
     this.profileController,
     this.homeController,
     this.updateController,
+    this.lanRoomController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
   }) : hostSmokeEnabled =
@@ -41,6 +52,7 @@ class GameboxApp extends StatefulWidget {
   final ProfileController? profileController;
   final HomeController? homeController;
   final UpdateController? updateController;
+  final LanRoomController? lanRoomController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
 
@@ -62,15 +74,52 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   var _ownsHomeController = false;
   var _homeControllerAuthenticated = false;
   String? _protectedNavigationUserId;
+  LanRoomController? _lanRoomController;
+  var _ownsLanRoomController = false;
+  var _lanInitialized = false;
+  late final GameHistoryController _historyController;
 
   @override
   void initState() {
     super.initState();
     if (!widget.hostSmokeEnabled) {
       _configureProfile();
+      _configureHistory();
       _configureAuthentication();
+      _configureLan();
       unawaited(widget.updateController?.start());
     }
+  }
+
+  void _configureHistory() {
+    _historyController = GameHistoryController(
+      platform: MethodChannelGameResultsPlatform(),
+      store: GameHistoryStore(),
+      lanApi: LanApi(),
+      credentials: LanCredentialStore(),
+    );
+    unawaited(_historyController.refresh());
+  }
+
+  void _configureLan() {
+    final injected = widget.lanRoomController;
+    if (injected != null) {
+      _lanRoomController = injected;
+    } else {
+      _lanRoomController = LanRoomController(
+        host: MethodChannelLanHostPlatform(),
+        api: LanApi(),
+        credentialStore: LanCredentialStore(),
+        gameLauncher: widget.gameLauncher,
+      );
+      _ownsLanRoomController = true;
+    }
+    _lanRoomController!.addListener(_lanChanged);
+  }
+
+  void _lanChanged() {
+    unawaited(_historyController.refresh());
+    if (mounted) setState(() {});
   }
 
   void _configureProfile() {
@@ -166,6 +215,8 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _homeController?.pauseForeground();
       }
       _homeControllerAuthenticated = false;
+      _historyController.fetchPublicResult = null;
+      _historyController.publicUserId = null;
       return;
     }
     if (_homeController == null) {
@@ -186,8 +237,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsHomeController = true;
       }
     }
+    _historyController.publicUserId = sessionController.session!.user.id;
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
+    _historyController.fetchPublicResult = _homeController?.fetchResult;
+    unawaited(_historyController.refresh());
     _homeController?.resumeForeground();
   }
 
@@ -201,13 +255,18 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleAppResumed() async {
+    unawaited(_lanRoomController?.handleAppResumed());
     final sessionController = _sessionController;
-    if (sessionController == null) return;
-    await sessionController.handleAppResumed();
-    if (!mounted || sessionController.status != SessionStatus.authenticated) {
+    if (sessionController != null) {
+      await sessionController.handleAppResumed();
+      if (!mounted) return;
+      _syncHomeController();
+    }
+    await _historyController.refresh();
+    if (sessionController == null ||
+        sessionController.status != SessionStatus.authenticated) {
       return;
     }
-    _syncHomeController();
     _syncSessionProfile();
     await _profileController?.handleAppResumed();
     _homeController?.resumeForeground();
@@ -235,7 +294,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _homeController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
+    final lanController = _lanRoomController;
+    if (lanController != null) {
+      lanController.removeListener(_lanChanged);
+      if (_ownsLanRoomController) lanController.dispose();
+    }
     widget.updateController?.dispose();
+    if (!widget.hostSmokeEnabled) _historyController.dispose();
     super.dispose();
   }
 
@@ -364,6 +429,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         sessionController.status == SessionStatus.authenticated &&
         session != null &&
         _homeController != null;
+    final lanController = _lanRoomController!;
+    if (!_lanInitialized) {
+      _lanInitialized = true;
+      unawaited(lanController.initialize());
+    }
     return HomePage(
       controller: authenticated ? _homeController : null,
       currentUserId: authenticated ? session.user.id : null,
@@ -372,7 +442,50 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
           ? null
           : _buildPublicSection(sessionController, profile.nickname),
       onEditNickname: _editNickname,
+      onOpenPublic: authenticated ? null : _openPublicRegistration,
+      onOpenLan: _openLan,
+      onOpenHistory: _openHistory,
+      lanRecovery: LanRecoveryCard(controller: lanController),
       updateController: widget.updateController,
+    );
+  }
+
+  void _openHistory() {
+    _navigatorKey.currentState?.push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'history'),
+        builder: (_) => GameHistoryPage(controller: _historyController),
+      ),
+    );
+  }
+
+  void _openLan() {
+    final profile = _profileController?.profile;
+    final controller = _lanRoomController;
+    if (profile == null || controller == null) return;
+    _navigatorKey.currentState?.push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'lan/mode'),
+        builder: (_) =>
+            LanModePage(controller: controller, nickname: profile.nickname),
+      ),
+    );
+  }
+
+  void _openPublicRegistration() {
+    final session = _sessionController;
+    final profile = _profileController?.profile;
+    if (session == null || profile == null) return;
+    _navigatorKey.currentState?.push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'public/register'),
+        builder: (_) => RegistrationPage(
+          controller: session,
+          nickname: profile.nickname,
+          onEditNickname: _editNickname,
+          updateController: widget.updateController,
+        ),
+      ),
     );
   }
 

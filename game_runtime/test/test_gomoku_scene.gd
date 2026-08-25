@@ -464,6 +464,7 @@ class FakeMatchClient:
 	signal snapshot_sync_started
 	signal snapshot_received(envelope: Dictionary)
 	signal event_received(envelope: Dictionary)
+	signal authoritative_result_received(result: Dictionary)
 	signal match_error(code: String)
 	signal return_to_lobby_requested(code: String)
 

@@ -27,6 +27,7 @@ func TestFixtures(t *testing.T) {
 	}
 	auxiliaryFixtures := map[string]struct{}{
 		"nickname_cases.json": {},
+		"game_result.json":    {},
 	}
 	if want := len(wantTypes) + len(auxiliaryFixtures); len(paths) != want {
 		t.Fatalf("fixture count = %d, want %d", len(paths), want)

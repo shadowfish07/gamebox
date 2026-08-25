@@ -5,6 +5,46 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 cd "$ROOT_DIR"
 
+if [[ "${GAMEBOX_VERIFY_INTERNAL:-0}" != "1" ]]; then
+  verify_verbose=0
+  verify_self_test=0
+  for argument in "$@"; do
+    case "$argument" in
+      --verbose) verify_verbose=1 ;;
+      --self-test) verify_self_test=1 ;;
+      *) printf 'usage: %s [--self-test] [--verbose]\n' "$0" >&2; exit 2 ;;
+    esac
+  done
+  internal_arguments=()
+  ((verify_self_test == 0)) || internal_arguments+=(--self-test)
+  if ((verify_verbose == 1)); then
+    export GAMEBOX_VERIFY_INTERNAL=1
+    exec bash "$0" "${internal_arguments[@]}"
+  fi
+  verify_log_dir="$ROOT_DIR/app/build/verify-logs"
+  mkdir -p "$verify_log_dir"
+  verify_log="$verify_log_dir/verify-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+  if GAMEBOX_VERIFY_INTERNAL=1 bash "$0" "${internal_arguments[@]}" >"$verify_log" 2>&1; then
+    warning_count="$(LC_ALL=C grep -Eic '(^|[^a-z])(warning|deprecated)([^a-z]|$)' "$verify_log" || true)"
+    printf 'Gamebox verification passed (%s warnings summarized). Log: %s\n' "$warning_count" "$verify_log"
+    exit 0
+  else
+    verify_exit=$?
+  fi
+  failed_phase="$(sed -n 's/^GAMEBOX_VERIFY_PHASE=//p' "$verify_log" | tail -1)"
+  printf 'Gamebox verification failed in phase: %s (exit %s)\n' "${failed_phase:-initialization}" "$verify_exit" >&2
+  awk -v marker="GAMEBOX_VERIFY_PHASE=${failed_phase}" '
+    $0 == marker { printing=1; next }
+    printing { print }
+  ' "$verify_log" >&2
+  printf 'Full log: %s\n' "$verify_log" >&2
+  exit "$verify_exit"
+fi
+
+verify_phase() {
+  printf 'GAMEBOX_VERIFY_PHASE=%s\n' "$1"
+}
+
 godot_imported_asset_is_allowed() {
   local asset_path="$1"
   [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.ctex$ ]]
@@ -279,8 +319,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
     printf 'usage: %s [--self-test]\n' "$0" >&2
     exit 2
   }
+  verify_phase asset-path-fixtures
   verify_asset_path_fixtures
+  verify_phase native-runtime-fixtures
   verify_native_runtime_fixtures
+  verify_phase lan-aar-fixtures
   verify_lan_aar_fixtures
   exit 0
 fi
@@ -288,8 +331,11 @@ fi
   printf 'usage: %s [--self-test]\n' "$0" >&2
   exit 2
 }
+verify_phase asset-path-fixtures
 verify_asset_path_fixtures
+verify_phase native-runtime-fixtures
 verify_native_runtime_fixtures
+verify_phase lan-aar-fixtures
 verify_lan_aar_fixtures
 
 # setup-godot exposes the executable on PATH in CI, while the local bootstrap
@@ -304,10 +350,14 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
+verify_phase bootstrap
 bash tool/bootstrap.sh --build-only
+verify_phase source-tests
 bash tool/verify_fast.sh
 
+verify_phase kotlin-unit-tests
 (cd app/android && ./gradlew :app:testDebugUnitTest)
+verify_phase debug-apk-build
 (cd app && flutter build apk --debug)
 
 readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
@@ -321,6 +371,7 @@ readonly apk_entries
 apk_listing="$(unzip -l "$APK")"
 readonly apk_listing
 validate_apk_native_runtime "$apk_listing" "$APK"
+verify_phase apk-contract
 for required_asset in \
   assets/project.godot \
   assets/main.gd \
@@ -362,6 +413,36 @@ trap cleanup EXIT
 unzip -p "$APK" 'assets/*' >"$asset_stream"
 if LC_ALL=C grep -aE 'GAMEBOX_(JWT_SECRET|TOKEN_PEPPER)' "$asset_stream" >/dev/null; then
   printf 'Debug APK assets contain server-only secret configuration names.\n' >&2
+  exit 1
+fi
+
+manifest_source="$ROOT_DIR/app/android/app/src/main/AndroidManifest.xml"
+for required_manifest_contract in \
+  'android.permission.INTERNET' \
+  'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' \
+  'android.permission.CHANGE_NETWORK_STATE' \
+  'android:name=".LanHostService"' \
+  'android:foregroundServiceType="connectedDevice"'; do
+  grep -F "$required_manifest_contract" "$manifest_source" >/dev/null || {
+    printf 'Android manifest is missing required LAN contract %s.\n' "$required_manifest_contract" >&2
+    exit 1
+  }
+done
+python3 - "$manifest_source" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+android = "{http://schemas.android.com/apk/res/android}"
+root = ET.parse(sys.argv[1]).getroot()
+services = [
+    service for service in root.findall("./application/service")
+    if service.get(android + "name") == ".LanHostService"
+]
+if len(services) != 1 or services[0].get(android + "exported") != "false" or services[0].get(android + "foregroundServiceType") != "connectedDevice":
+    raise SystemExit("LanHostService must be exactly one non-exported connectedDevice service.")
+PY
+if grep -F 'android.permission.ACCESS_LOCAL_NETWORK' "$manifest_source" >/dev/null; then
+  printf 'Target SDK 36 must not declare the Android 17 ACCESS_LOCAL_NETWORK permission.\n' >&2
   exit 1
 fi
 

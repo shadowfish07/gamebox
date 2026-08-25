@@ -125,6 +125,7 @@ type projection struct {
 	issued        map[string]issuedCredential
 	activeTicket  map[string]string
 	actions       map[string]committedAction
+	events        []Event
 	acknowledged  map[string]bool
 }
 
@@ -325,6 +326,7 @@ func (state *projection) applyAction(record journal.Record, terminal bool) error
 	state.snapshot.Revision = payload.Event.Revision
 	state.snapshot.Game = nextGame
 	state.actions[*record.ActionID] = committedAction{event: cloneEvent(payload.Event), requestType: payload.RequestType, fingerprint: payload.ActionFingerprint, expectedRevision: payload.ExpectedRevision}
+	state.events = append(state.events, cloneEvent(payload.Event))
 	if terminal {
 		state.snapshot.Status = StatusFinished
 		state.snapshot.Result = &GameResult{ResultHash: record.Hash, WinnerPlayerID: cloneStringPointer(payload.WinnerPlayerID), Reason: payload.Reason, Revision: payload.Event.Revision}

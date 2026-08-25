@@ -41,12 +41,14 @@ void main() {
       'matchId': '550e8400-e29b-41d4-a716-446655440000',
       'launchTicket': '--opaque-launch-ticket',
       'wsUrl': 'wss://gamebox.example.com/matches/550e8400',
+      'source': 'public',
     });
     expect((calls.single.arguments as Map<Object?, Object?>).keys, {
       'gameId',
       'matchId',
       'launchTicket',
       'wsUrl',
+      'source',
     });
   });
 

@@ -1,7 +1,9 @@
 import '../../core/api/api_client.dart';
 import '../../core/api/api_error.dart';
+import '../../core/api/strict_json.dart';
 import '../auth/session_controller.dart';
 import '../gomoku/gomoku_models.dart';
+import '../../core/lan/lan_models.dart';
 
 abstract interface class HomeApi {
   Future<GomokuStatus> fetchStatus();
@@ -13,6 +15,8 @@ abstract interface class HomeApi {
   Future<void> cancelMatch(String matchId);
 
   Future<GomokuLaunchTicket> createLaunchTicket(String matchId);
+
+  Future<AuthoritativeGameResult> fetchResult(String matchId);
 }
 
 final class HttpHomeApi implements HomeApi {
@@ -79,6 +83,25 @@ final class HttpHomeApi implements HomeApi {
       throw _invalidResponse;
     }
     return ticket;
+  }
+
+  @override
+  Future<AuthoritativeGameResult> fetchResult(String matchId) async {
+    _requireUuid(matchId);
+    final envelope = await _client.getJson(
+      '/v1/matches/$matchId/result',
+      accessToken: _accessToken,
+      onUnauthorized: _session.refresh,
+    );
+    if (!hasExactJsonKeys(envelope, const {'result'}) ||
+        envelope['result'] is! Map<String, Object?>) {
+      throw _invalidResponse;
+    }
+    return _decode(
+      () => AuthoritativeGameResult.fromObject(
+        envelope['result']! as Map<String, Object?>,
+      ),
+    );
   }
 
   String? _accessToken() => _session.accessToken;

@@ -164,11 +164,16 @@ func (router *Router) result(writer http.ResponseWriter, request *http.Request) 
 		writeAPIError(writer, http.StatusConflict, "match_not_finished")
 		return
 	}
+	_, encoded, resultErr := router.service.Result()
+	if resultErr != nil {
+		writeServiceError(writer, resultErr)
+		return
+	}
 	writeJSON(writer, http.StatusOK, struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		ResultHash    string `json:"resultHash"`
-		Result        any    `json:"result"`
-	}{SchemaVersion: 1, ResultHash: snapshot.Result.ResultHash, Result: nil})
+		SchemaVersion int             `json:"schemaVersion"`
+		ResultHash    string          `json:"resultHash"`
+		Result        json.RawMessage `json:"result"`
+	}{SchemaVersion: 1, ResultHash: snapshot.Result.ResultHash, Result: encoded})
 }
 
 func (router *Router) resultAck(writer http.ResponseWriter, request *http.Request) {

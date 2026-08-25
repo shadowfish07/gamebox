@@ -13,7 +13,9 @@ fi
 (cd app && flutter pub get --enforce-lockfile && dart analyze && flutter test)
 bash -n tool/worktree.sh tool/lib/android_lease.sh tool/test_android_lease.sh \
   tool/e2e_android.sh tool/ensure_test_avds.sh \
+  tool/e2e_lan_android.sh tool/fixtures/e2e_lan_fake_adb.sh \
   tool/smoke_android_host.sh tool/smoke_android_release_apk.sh
 bash tool/test_android_lease.sh
 bash tool/verify_godot_tests.sh
 bash tool/test_android_smoke_log.sh
+bash tool/e2e_lan_android.sh --self-test

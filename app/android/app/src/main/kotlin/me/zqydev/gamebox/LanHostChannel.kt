@@ -17,6 +17,7 @@ internal interface LanHostCommands {
     fun closeRoom(mode: String): Map<String, Any?>
 
     fun stopCompletedRoom(allowMissingGuestAck: Boolean): Map<String, Any?>
+
 }
 
 internal sealed class LanChannelReply {

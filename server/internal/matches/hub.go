@@ -290,6 +290,15 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if marshalErr != nil || !connection.enqueueInitial(connected, snapshotMessage, snapshot.Match.Revision) {
 		return
 	}
+	if snapshot.Match.Status == StatusFinished {
+		operationContext, cancelOperation = context.WithTimeout(connection.ctx, webSocketOperationTimeout)
+		_, encodedResult, resultErr := hub.service.Result(operationContext, connection.matchID, connection.userID)
+		cancelOperation()
+		resultMessage, resultMarshalErr := resultEnvelope(connection.gameID, connection.matchID, snapshot.Match.Revision, encodedResult)
+		if resultErr != nil || resultMarshalErr != nil || connection.enqueueState(resultMessage, snapshot.Match.Revision) != enqueueStateQueued {
+			return
+		}
+	}
 	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
 		ready, stale := hub.markReady(connection, snapshot.Match.Revision, snapshotMessage)
 		if ready {
@@ -808,13 +817,16 @@ func outstandingPingLimit(activityTimeout, heartbeatInterval time.Duration) int 
 
 func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
 	operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
-	event, _, err := connection.hub.service.ApplyAction(operationContext, ActionRequest{
+	event, snapshot, err := connection.hub.service.ApplyAction(operationContext, ActionRequest{
 		MatchID: connection.matchID, ActorUserID: connection.userID, ActionID: envelope.ActionID,
 		ExpectedRevision: *envelope.ExpectedRevision, Type: envelope.Type, Payload: append(json.RawMessage(nil), envelope.Payload...),
 	})
 	cancel()
 	if err == nil {
 		connection.hub.Publish(connection.matchID, event)
+		if snapshot.Match.Status == StatusFinished {
+			connection.hub.publishResult(connection.matchID, connection.userID, snapshot.Match.Revision)
+		}
 		return
 	}
 	if errors.Is(err, ErrStaleRevision) {
@@ -822,6 +834,29 @@ func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
 		return
 	}
 	connection.enqueueError(safeActionErrorCode(err), envelope.ActionID)
+}
+
+func (hub *Hub) publishResult(matchID, userID string, revision int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), webSocketOperationTimeout)
+	_, encoded, err := hub.service.Result(ctx, matchID, userID)
+	cancel()
+	message, marshalErr := resultEnvelope("gomoku", matchID, revision, encoded)
+	if err != nil || marshalErr != nil {
+		return
+	}
+	var slow []*hubConnection
+	hub.mu.Lock()
+	if match := hub.matches[matchID]; match != nil && match.publishedRevision == revision {
+		for connection := range match.connections {
+			if connection.ready && connection.enqueueState(message, revision) != enqueueStateQueued {
+				slow = append(slow, connection)
+			}
+		}
+	}
+	hub.mu.Unlock()
+	for _, connection := range slow {
+		connection.close()
+	}
 }
 
 func (connection *hubConnection) sendLatestSnapshot() {
@@ -942,6 +977,13 @@ func eventEnvelope(gameID string, event Event) ([]byte, error) {
 		actionID = *event.ActionID
 	}
 	return boundEnvelope(gameID, event.MatchID, event.Revision, event.Type, actionID, json.RawMessage(event.Payload))
+}
+
+func resultEnvelope(gameID, matchID string, revision int64, encoded []byte) ([]byte, error) {
+	if len(encoded) == 0 {
+		return nil, ErrInternal
+	}
+	return boundEnvelope(gameID, matchID, revision, protocol.TypePlatformMatchResult, "", json.RawMessage(encoded))
 }
 
 func boundEnvelope(gameID, matchID string, revision int64, messageType, actionID string, payload any) ([]byte, error) {

@@ -52,6 +52,7 @@ var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
 var _ready_marker_emitted := false
 var _ready_marker_text := ""
+var _result_persisted := false
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -208,6 +209,20 @@ func _on_match_error(code: String) -> void:
 	_refresh_ui()
 
 
+func _on_authoritative_result_received(result: Dictionary) -> void:
+	if _result_persisted:
+		return
+	var persisted := false
+	if Engine.has_singleton("GameboxResultBridge"):
+		var bridge: Variant = Engine.get_singleton("GameboxResultBridge")
+		if bridge != null and bridge.has_method("persistAuthoritativeResult"):
+			persisted = bridge.persistAuthoritativeResult(JSON.stringify(result, "", true, true))
+	_result_persisted = persisted
+	if not persisted:
+		_error_text = "战绩保存待重试"
+	_refresh_ui()
+
+
 func _on_return_to_lobby_requested(code: String) -> void:
 	_error_text = str(SAFE_ERROR_COPY.get(code, "连接失败，请返回大厅"))
 	_force_return = true
@@ -323,6 +338,7 @@ func _connect_client_signals() -> void:
 	_client.snapshot_sync_started.connect(_on_snapshot_sync_started)
 	_client.snapshot_received.connect(_on_snapshot_received)
 	_client.event_received.connect(_on_event_received)
+	_client.authoritative_result_received.connect(_on_authoritative_result_received)
 	_client.match_error.connect(_on_match_error)
 	_client.return_to_lobby_requested.connect(_on_return_to_lobby_requested)
 
@@ -333,7 +349,7 @@ func _valid_client(client: Variant) -> bool:
 	for method in ["start", "poll", "request_move", "request_resign", "dispose"]:
 		if not client.has_method(method):
 			return false
-	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "match_error", "return_to_lobby_requested"]:
+	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "authoritative_result_received", "match_error", "return_to_lobby_requested"]:
 		if not client.has_signal(signal_name):
 			return false
 	return true
@@ -352,6 +368,9 @@ func _disconnect_client_signals() -> void:
 		_client.snapshot_received.disconnect(_on_snapshot_received)
 	if _client.has_signal("event_received") and _client.event_received.is_connected(_on_event_received):
 		_client.event_received.disconnect(_on_event_received)
+	if _client.has_signal("authoritative_result_received") \
+		and _client.authoritative_result_received.is_connected(_on_authoritative_result_received):
+		_client.authoritative_result_received.disconnect(_on_authoritative_result_received)
 	if _client.has_signal("match_error") and _client.match_error.is_connected(_on_match_error):
 		_client.match_error.disconnect(_on_match_error)
 	if _client.has_signal("return_to_lobby_requested") \

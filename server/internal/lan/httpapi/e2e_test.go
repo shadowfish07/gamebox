@@ -172,17 +172,18 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 
 	reconnected := dialWebSocket(t, wsURL)
 	writeConnect(t, reconnected, "", testGuestResume)
-	if first, second := readEnvelope(t, reconnected), readEnvelope(t, reconnected); first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot || *second.Revision != 2 {
+	if first, second, third := readEnvelope(t, reconnected), readEnvelope(t, reconnected), readEnvelope(t, reconnected); first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot || third.Type != protocol.TypePlatformMatchResult || *second.Revision != 2 || *third.Revision != 2 {
 		t.Fatalf(
-			"terminal reconnect order = first(type=%q revision=%v payloadBytes=%d payloadPresent=%v) second(type=%q revision=%v payloadBytes=%d payloadPresent=%v)",
+			"terminal reconnect order = first(type=%q revision=%v payloadBytes=%d payloadPresent=%v) second(type=%q revision=%v payloadBytes=%d payloadPresent=%v) third(type=%q revision=%v)",
 			first.Type, first.Revision, len(first.Payload), len(first.Payload) != 0,
 			second.Type, second.Revision, len(second.Payload), len(second.Payload) != 0,
+			third.Type, third.Revision,
 		)
 	}
 	readContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, _, err := reconnected.Read(readContext); err == nil {
-		t.Fatal("terminal reconnect sent an unapproved third frame")
+		t.Fatal("terminal reconnect sent an unapproved fourth frame")
 	}
 	_ = reconnected.CloseNow()
 }

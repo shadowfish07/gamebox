@@ -235,6 +235,15 @@ func (hub *Hub) registerWithInitial(connection *hubConnection) bool {
 	}
 	connection.send <- connected
 	connection.send <- snapshotMessage
+	if snapshot.Status == room.StatusFinished {
+		_, encodedResult, resultErr := hub.service.Result()
+		resultMessage, resultMarshalErr := resultEnvelope(snapshot.RoomID, snapshot.Revision, encodedResult)
+		if resultErr != nil || resultMarshalErr != nil || len(connection.send) == cap(connection.send) {
+			hub.mu.Unlock()
+			return false
+		}
+		connection.send <- resultMessage
+	}
 	connection.revision.Store(snapshot.Revision)
 	previous := make([]*hubConnection, 0, 1)
 	for existing := range hub.connections {
@@ -282,6 +291,30 @@ func (hub *Hub) publish(event room.Event) {
 			if !connection.enqueueCommittedEvent(data, next) {
 				slow = append(slow, connection)
 			}
+		}
+	}
+	hub.mu.Unlock()
+	for _, connection := range slow {
+		connection.close()
+	}
+	snapshot := hub.service.Snapshot()
+	if snapshot.Status == room.StatusFinished && snapshot.Revision == event.Revision {
+		hub.publishResult(snapshot.Revision)
+	}
+}
+
+func (hub *Hub) publishResult(revision int64) {
+	_, encoded, err := hub.service.Result()
+	snapshot := hub.service.Snapshot()
+	message, marshalErr := resultEnvelope(snapshot.RoomID, revision, encoded)
+	if err != nil || marshalErr != nil || snapshot.Status != room.StatusFinished || snapshot.Revision != revision {
+		return
+	}
+	var slow []*hubConnection
+	hub.mu.Lock()
+	for connection := range hub.connections {
+		if connection.revision.Load() == revision && !connection.enqueueRevision(message, revision) {
+			slow = append(slow, connection)
 		}
 	}
 	hub.mu.Unlock()
@@ -443,6 +476,14 @@ func (connection *hubConnection) enqueueSnapshot() {
 	data, err := snapshotEnvelope(snapshot)
 	if err != nil || !connection.enqueueRevision(data, snapshot.Revision) {
 		connection.close()
+		return
+	}
+	if snapshot.Status == room.StatusFinished {
+		_, encoded, resultErr := connection.hub.service.Result()
+		resultMessage, marshalErr := resultEnvelope(snapshot.RoomID, snapshot.Revision, encoded)
+		if resultErr != nil || marshalErr != nil || !connection.enqueueRevision(resultMessage, snapshot.Revision) {
+			connection.close()
+		}
 	}
 }
 
@@ -569,6 +610,13 @@ func eventEnvelope(event room.Event) ([]byte, error) {
 		return nil, room.ErrInvalidRequest
 	}
 	return boundEnvelope(gomoku.GameID, event.RoomID, event.Revision, event.Type, event.ActionID, json.RawMessage(event.Payload))
+}
+
+func resultEnvelope(roomID string, revision int64, encoded []byte) ([]byte, error) {
+	if len(encoded) == 0 {
+		return nil, room.ErrInternal
+	}
+	return boundEnvelope(gomoku.GameID, roomID, revision, protocol.TypePlatformMatchResult, "", json.RawMessage(encoded))
 }
 
 func errorEnvelope(roomID string, revision int64, code, actionID string) ([]byte, error) {

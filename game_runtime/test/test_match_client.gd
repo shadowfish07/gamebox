@@ -249,6 +249,7 @@ static func cases() -> Array:
 		{"name": "match client production transport handles real policy closes", "run": _handles_real_policy_closes},
 		{"name": "match client answers ping and requests snapshots on gaps", "run": _handles_ping_and_gap},
 		{"name": "match client signals every transition into snapshot recovery once", "run": _signals_snapshot_recovery_once},
+		{"name": "match client accepts one exact terminal result and rejects conflicts", "run": _accepts_terminal_result_once},
 		{"name": "match client sends UUIDv4 actions without optimistic stones", "run": _sends_actions_authoritatively},
 		{"name": "match client sends a fresh resignation action after the first move", "run": _sends_resignation},
 		{"name": "match client rolls back pending when send fails", "run": _rolls_back_failed_send},
@@ -629,6 +630,26 @@ static func _sends_resignation() -> bool:
 		and _check(not fixture.state.pending_action.is_empty() and fixture.state.cell(7, 7) == 1, "resign pending corrupted board state")
 
 
+static func _accepts_terminal_result_once() -> bool:
+	var fixture := _connected_fixture()
+	var accepted: Array[Dictionary] = []
+	fixture.client.authoritative_result_received.connect(func(result: Dictionary) -> void: accepted.append(result))
+	fixture.transport.queue(_move(1, "44444444-4444-4444-8444-444444444444", BLACK_ID, "black", 7, 7))
+	fixture.transport.queue(_resigned(2))
+	fixture.transport.queue(_result_envelope())
+	fixture.transport.queue(_result_envelope())
+	fixture.client.poll()
+	if not _check(accepted.size() == 1, "identical terminal result was not idempotent") \
+		or not _check(fixture.client.connection_state == "connected", "valid terminal result disconnected client"):
+		return false
+	var conflict := _result_envelope()
+	conflict["payload"]["players"][0]["nickname"] = "conflict"
+	fixture.transport.queue(conflict)
+	fixture.client.poll()
+	return _check(fixture.client.connection_state == "reconnecting", "conflicting terminal result was accepted") \
+		and _check(accepted.size() == 1, "conflicting result was emitted")
+
+
 static func _never_replays_pending() -> bool:
 	var fixture := _connected_fixture()
 	var action_id: String = fixture.client.request_move(7, 7)
@@ -767,6 +788,34 @@ static func _move(revision: int, action_id: String, user_id: String, color: Stri
 		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID, "revision": revision,
 		"type": "gomoku.move.accepted", "actionId": action_id,
 		"payload": {"x": x, "y": y, "color": color, "userId": user_id},
+	}
+
+
+static func _resigned(revision: int) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID, "revision": revision,
+		"type": "gomoku.resigned", "actionId": "55555555-5555-4555-8555-555555555555",
+		"payload": {"userId": WHITE_ID, "winnerUserId": BLACK_ID},
+	}
+
+
+static func _result_envelope() -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID, "revision": 2,
+		"type": "platform.match.result",
+		"payload": {
+			"schemaVersion": 1, "matchId": MATCH_ID, "gameId": "gomoku",
+			"players": [
+				{"userId": BLACK_ID, "nickname": "Black", "seat": 0, "color": "black"},
+				{"userId": WHITE_ID, "nickname": "White", "seat": 1, "color": "white"},
+			],
+			"winnerUserId": BLACK_ID, "result": "resignation",
+			"startedAt": 1700000000000, "finishedAt": 1700000002000, "finalRevision": 2,
+			"events": [
+				{"revision": 1, "type": "gomoku.move.accepted", "actionId": "44444444-4444-4444-8444-444444444444", "actorId": BLACK_ID, "payload": {"x": 7, "y": 7, "color": "black", "userId": BLACK_ID}, "committedAt": 1700000001000},
+				{"revision": 2, "type": "gomoku.resigned", "actionId": "55555555-5555-4555-8555-555555555555", "actorId": WHITE_ID, "payload": {"userId": WHITE_ID, "winnerUserId": BLACK_ID}, "committedAt": 1700000002000},
+			],
+		},
 	}
 
 

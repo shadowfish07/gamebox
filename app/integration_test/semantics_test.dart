@@ -4,6 +4,7 @@ import 'package:gamebox/app.dart';
 import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
+import 'package:gamebox/core/lan/lan_models.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/core/profile/app_profile.dart';
@@ -292,6 +293,9 @@ final class _MemoryTokenStore implements TokenStore {
 }
 
 final class _FakeHomeApi implements HomeApi {
+  @override
+  Future<AuthoritativeGameResult> fetchResult(String matchId) =>
+      throw UnimplementedError();
   _FakeHomeApi(this.status);
 
   GomokuStatus status;
