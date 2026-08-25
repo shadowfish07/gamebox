@@ -7,6 +7,9 @@ import '../../design_system/components/gamebox_page_body.dart';
 import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
+import '../history/match_history_api.dart';
+import '../history/match_history_controller.dart';
+import '../history/match_history_page.dart';
 import '../update/update_action.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
@@ -18,12 +21,14 @@ final class HomePage extends StatefulWidget {
     required this.controller,
     required this.currentUserId,
     required this.nickname,
+    required this.historyApi,
     this.updateController,
   });
 
   final HomeController controller;
   final String currentUserId;
   final String nickname;
+  final MatchHistoryApi historyApi;
   final UpdateController? updateController;
 
   @override
@@ -75,6 +80,14 @@ final class _HomePageState extends State<HomePage> {
     if (mounted && error != null) _showError(error);
   }
 
+  Future<void> _openHistory() => Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (_) => MatchHistoryPage(
+        controller: MatchHistoryController(api: widget.historyApi),
+      ),
+    ),
+  );
+
   Future<void> _cancelMatch() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -124,9 +137,29 @@ final class _HomePageState extends State<HomePage> {
       ),
       body: GameboxPageBody(
         children: [
-          Text(
-            '你好，${widget.nickname}',
-            style: Theme.of(context).textTheme.titleLarge,
+          Card(
+            child: Padding(
+              padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '你好，${widget.nickname}',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  SizedBox(height: GameboxTokens.spacing.page),
+                  Semantics(
+                    key: const Key('open-match-history'),
+                    identifier: 'open-match-history',
+                    child: OutlinedButton.icon(
+                      onPressed: _openHistory,
+                      icon: const Icon(Icons.history),
+                      label: const Text('我的战绩'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
           if (controller.status == null && controller.isLoading)
             const GameboxAsyncPanel(

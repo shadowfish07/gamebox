@@ -13,6 +13,7 @@ import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
 import 'features/gomoku/gomoku_repository.dart';
+import 'features/history/match_history_api.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
@@ -23,6 +24,7 @@ class GameboxApp extends StatefulWidget {
     required this.gameLauncher,
     this.sessionController,
     this.homeController,
+    this.matchHistoryApi,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
@@ -35,6 +37,7 @@ class GameboxApp extends StatefulWidget {
   final GameLauncher gameLauncher;
   final SessionController? sessionController;
   final HomeController? homeController;
+  final MatchHistoryApi? matchHistoryApi;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -288,10 +291,20 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (homeController == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final MatchHistoryApi historyApi;
+    if (widget.matchHistoryApi case final injected?) {
+      historyApi = injected;
+    } else {
+      final apiClient = _ownedApiClient ??= ApiClient(
+        httpClient: http.Client(),
+      );
+      historyApi = HttpMatchHistoryApi(apiClient, controller);
+    }
     return HomePage(
       controller: homeController,
       currentUserId: session.user.id,
       nickname: session.user.nickname,
+      historyApi: historyApi,
       updateController: widget.updateController,
     );
   }

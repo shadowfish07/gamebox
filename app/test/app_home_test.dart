@@ -12,6 +12,8 @@ import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
+import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_models.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
 
@@ -28,6 +30,7 @@ void main() {
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
         homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
       ),
     );
     await _flush(tester);
@@ -36,6 +39,14 @@ void main() {
     expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
     expect(fixture.api.statusCalls, 1);
+
+    await tester.tap(find.byKey(const Key('open-match-history')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+    expect(fixture.historyApi.calls, 1);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     fixture.dispose();
@@ -50,6 +61,7 @@ void main() {
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
         homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
       ),
     );
     await _flush(tester);
@@ -81,6 +93,7 @@ void main() {
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
           homeController: fixture.home,
+          matchHistoryApi: fixture.historyApi,
         ),
       );
       await _flush(tester);
@@ -132,6 +145,7 @@ void main() {
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
           homeController: fixture.home,
+          matchHistoryApi: fixture.historyApi,
         ),
       );
       await _flush(tester);
@@ -198,6 +212,7 @@ void main() {
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
         homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
       ),
     );
     await _flush(tester);
@@ -231,6 +246,7 @@ final class _Fixture {
     required this.launcher,
     required this.authApi,
     required this.tokenStore,
+    required this.historyApi,
   });
 
   static Future<_Fixture> create(DateTime now) async {
@@ -255,6 +271,7 @@ final class _Fixture {
       scheduler: scheduler,
       now: () => now,
     );
+    final historyApi = _FakeMatchHistoryApi();
     return _Fixture(
       session: session,
       home: home,
@@ -263,6 +280,7 @@ final class _Fixture {
       launcher: launcher,
       authApi: authApi,
       tokenStore: tokenStore,
+      historyApi: historyApi,
     );
   }
 
@@ -273,10 +291,34 @@ final class _Fixture {
   final _FakeLauncher launcher;
   final _FakeAuthApi authApi;
   final _MemoryTokenStore tokenStore;
+  final _FakeMatchHistoryApi historyApi;
 
   void dispose() {
     home.dispose();
     session.dispose();
+  }
+}
+
+final class _FakeMatchHistoryApi implements MatchHistoryApi {
+  int calls = 0;
+
+  @override
+  Future<MatchHistoryPageData> fetchPage({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    calls += 1;
+    return const MatchHistoryPageData(
+      statistics: MatchHistoryStatistics(
+        validMatches: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        winRate: 0,
+      ),
+      matches: [],
+      nextCursor: null,
+    );
   }
 }
 

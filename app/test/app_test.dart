@@ -9,6 +9,8 @@ import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
+import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_models.dart';
 
 void main() {
   testWidgets('default host-smoke setting renders invite registration', (
@@ -19,16 +21,19 @@ void main() {
       tokenStore: _EmptyTokenStore(),
     );
     await controller.restore();
+    final historyApi = _RecordingMatchHistoryApi();
     await tester.pumpWidget(
       GameboxApp(
         gameLauncher: _FakeGameLauncher(),
         sessionController: controller,
+        matchHistoryApi: historyApi,
       ),
     );
 
     expect(find.byKey(const Key('invite-code')), findsOneWidget);
     expect(find.byKey(const Key('register')), findsOneWidget);
     expect(find.byKey(const Key('host-smoke.launch')), findsNothing);
+    expect(historyApi.calls, 0);
   });
 
   testWidgets('explicit host-smoke override renders one stable launch button', (
@@ -151,6 +156,29 @@ void main() {
     expect(tester.takeException(), isA<StateError>());
     expect(find.text('无法启动宿主烟测，请重试'), findsNothing);
   });
+}
+
+final class _RecordingMatchHistoryApi implements MatchHistoryApi {
+  int calls = 0;
+
+  @override
+  Future<MatchHistoryPageData> fetchPage({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    calls += 1;
+    return const MatchHistoryPageData(
+      statistics: MatchHistoryStatistics(
+        validMatches: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        winRate: 0,
+      ),
+      matches: [],
+      nextCursor: null,
+    );
+  }
 }
 
 class _FakeGameLauncher implements GameLauncher {
