@@ -70,6 +70,14 @@ fail() {
         | tail -200 >"$ARTIFACT_DIR/failure-$label-crash.log" || true
     done
   fi
+  local serial label
+  for label in A B; do
+    [[ "$label" == A ]] && serial="$SERIAL_A" || serial="$SERIAL_B"
+    [[ -n "$serial" ]] || continue
+    adb_for "$serial" logcat -d -v brief 2>/dev/null \
+      | grep -E 'GAMEBOX_(GODOT_STATE|GODOT_READY|MATCH_RESULT)|AndroidRuntime.*FATAL EXCEPTION' \
+      | tail -300 >"$ARTIFACT_DIR/failure-$label-runtime.log" || true
+  done
   printf 'Gamebox LAN E2E failed: %s\nArtifacts: %s\n' "$message" "$ARTIFACT_DIR" >&2
   exit "$exit_code"
 }
