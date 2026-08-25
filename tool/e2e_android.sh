@@ -1084,12 +1084,21 @@ start_first_connect_loading_watch() {
   [[ -x "$ROOT_DIR/tool/run_in_session.rb" ]] || return 1
   LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
   LOADING_WATCH_READY_FILE="$TEMP_DIR/first-connect-loading-session"
+  LOADING_WATCH_STREAM_READY_FILE="$TEMP_DIR/first-connect-loading-stream"
   rm -f -- "$LOADING_WATCH_FILE"
   rm -f -- "$LOADING_WATCH_READY_FILE"
+  rm -f -- "$LOADING_WATCH_STREAM_READY_FILE"
   {
     ruby "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
       "$ADB_BIN" -s "$serial" logcat -b all -v threadtime -T 100 2>/dev/null \
-      | awk -v marker="$boundary" '
+      | awk -v marker="$boundary" -v stream_ready_file="$LOADING_WATCH_STREAM_READY_FILE" '
+          {
+            if (!stream_ready) {
+              print "ready" > stream_ready_file
+              close(stream_ready_file)
+              stream_ready = 1
+            }
+          }
           index($0, marker) {
             found = 1
             next
@@ -1123,6 +1132,16 @@ start_first_connect_loading_watch() {
   LOADING_WATCH_SESSION="$watcher_session"
   if ! session_identity_is_safe \
     "$LOADING_WATCH_LEADER_PID" "$LOADING_WATCH_PROCESS_GROUP" "$LOADING_WATCH_SESSION"; then
+    stop_first_connect_loading_watch
+    return 1
+  fi
+  local stream_deadline=$((SECONDS + 2))
+  while [[ ! -s "$LOADING_WATCH_STREAM_READY_FILE" ]] \
+    && kill -0 "$LOADING_WATCH_PID" 2>/dev/null; do
+    ((SECONDS < stream_deadline)) || break
+    sleep 0.05
+  done
+  if [[ ! -s "$LOADING_WATCH_STREAM_READY_FILE" ]]; then
     stop_first_connect_loading_watch
     return 1
   fi
@@ -1167,11 +1186,14 @@ stop_first_connect_loading_watch() {
   fi
   [[ -z "${LOADING_WATCH_READY_FILE:-}" ]] \
     || rm -f -- "$LOADING_WATCH_READY_FILE"
+  [[ -z "${LOADING_WATCH_STREAM_READY_FILE:-}" ]] \
+    || rm -f -- "$LOADING_WATCH_STREAM_READY_FILE"
   LOADING_WATCH_PID=""
   LOADING_WATCH_LEADER_PID=""
   LOADING_WATCH_PROCESS_GROUP=""
   LOADING_WATCH_SESSION=""
   LOADING_WATCH_READY_FILE=""
+  LOADING_WATCH_STREAM_READY_FILE=""
   return "$cleanup_status"
 }
 
