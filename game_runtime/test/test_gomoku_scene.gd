@@ -361,6 +361,7 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
 		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
 		and _check(scene.get_node("ResultPanel").size.y <= 300.0, "terminal result panel keeps excessive empty height: %s" % str(scene.get_node("ResultPanel").size.y)) \
+		and _check(not scene.get_node("SettingsButton").visible, "settings action remained visible after terminal state") \
 		and _check(not scene.get_node("ResignButton").visible, "resign visible after terminal state")
 	return _cleanup(scene, result)
 

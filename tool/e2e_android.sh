@@ -798,6 +798,7 @@ dump_ui_remote() {
 assert_ui_state_safe() {
   local serial="$1"
   local secret_flag="$2"
+  local required_text="${3:-}"
   [[ "$secret_flag" == "0" ]] || return 1
   local safe_serial="${serial//[^A-Za-z0-9_.-]/_}"
   local local_path="$TEMP_DIR/ui-state-$safe_serial.xml"
@@ -811,6 +812,10 @@ assert_ui_state_safe() {
   identifier_count="$(xml_query identifier-count "$local_path" invite-code 2>/dev/null)" || status=1
   if ((status == 0)) && [[ "$identifier_count" != "0" ]]; then
     [[ "$identifier_count" == "1" ]] && xml_query field-empty "$local_path" invite-code >/dev/null 2>&1 \
+      || status=1
+  fi
+  if ((status == 0)) && [[ -n "$required_text" ]]; then
+    xml_query visible-text "$local_path" "$required_text" >/dev/null 2>&1 \
       || status=1
   fi
   for value in "${INVITE_A:-}" "${INVITE_B:-}" "${JWT_SECRET:-}" "${TOKEN_PEPPER:-}"; do
@@ -1860,6 +1865,9 @@ self_test() {
   [[ "$(logical_viewport 1080 2400 420)" == "411 914" \
     && "$(logical_viewport 720 1600 320)" == "360 800" ]] \
     || { printf 'logical Android viewport conversion fixture failed\n' >&2; return 1; }
+  grep -F '410-414x912-918dp' "$ROOT_DIR/README.md" >/dev/null \
+    && grep -F '358-362x798-802dp' "$ROOT_DIR/README.md" >/dev/null \
+    || { printf 'documented supplied-device viewport contract is inconsistent with the harness\n' >&2; return 1; }
 
   SERIAL_A='fixture-A'
   SERIAL_B='fixture-B'
@@ -1943,6 +1951,9 @@ self_test() {
   grep -F 'wait_for_first_connect_loading_and_pause "$SERIAL_A"' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading flow does not pause before inspecting UI\n' >&2; return 1; }
+  grep -F 'assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '\''正在同步对局…'\''' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'first-connect loading flow does not verify loading copy in its safe UI snapshot\n' >&2; return 1; }
   grep -F 'resume_e2e_server' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'first-connect loading flow does not resume the paused server\n' >&2; return 1; }
@@ -2829,7 +2840,7 @@ register_user() {
   printf -v "$secret_flag" '%s' 0
 }
 register_user "$SERIAL_A" "$INVITE_A" "$NICKNAME_A" SECRETS_ON_UI_A
-assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
+assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '正在同步对局…' \
   || fail "could not verify the light idle lobby UI state"
 register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 

@@ -409,6 +409,7 @@ func _refresh_ui() -> void:
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
 	$ErrorLabel.present(_error_text, "error")
 	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
+	$SettingsButton.visible = not terminal
 
 	if terminal:
 		_selected_move = INVALID_CELL
