@@ -15,6 +15,7 @@ const (
 	TypePlatformConnected         = "platform.connected"
 	TypePlatformPing              = "platform.ping"
 	TypePlatformPong              = "platform.pong"
+	TypePlatformPresenceChanged   = "platform.presence.changed"
 	TypePlatformSnapshot          = "platform.snapshot"
 	TypePlatformSnapshotRequested = "platform.snapshot.requested"
 	TypePlatformError             = "platform.error"
@@ -24,6 +25,7 @@ const (
 	TypeGomokuMoveAccepted        = "gomoku.move.accepted"
 	TypeGomokuResignRequested     = "gomoku.resign.requested"
 	TypeGomokuResigned            = "gomoku.resigned"
+	CapabilityPlayerPresence      = "player_presence_v1"
 )
 
 var knownTypes = map[string]struct{}{
@@ -31,6 +33,7 @@ var knownTypes = map[string]struct{}{
 	TypePlatformConnected:         {},
 	TypePlatformPing:              {},
 	TypePlatformPong:              {},
+	TypePlatformPresenceChanged:   {},
 	TypePlatformSnapshot:          {},
 	TypePlatformSnapshotRequested: {},
 	TypePlatformError:             {},
@@ -72,16 +75,27 @@ func DecodeClient(data []byte) (Envelope, error) {
 func validateClientMessage(envelope Envelope) error {
 	switch envelope.Type {
 	case TypePlatformConnect:
-		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"launchTicket": {}, "resumeToken": {}})
-		if err != nil || len(fields) != 1 {
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"launchTicket": {}, "resumeToken": {}, "capabilities": {}})
+		if err != nil || len(fields) < 1 || len(fields) > 2 {
 			return protocolFailure(codeInvalidEnvelope)
 		}
+		credentials := 0
 		for _, key := range []string{"launchTicket", "resumeToken"} {
 			if raw, ok := fields[key]; ok {
+				credentials++
 				var token string
 				if json.Unmarshal(raw, &token) != nil || token == "" || len(token) > 256 || !utf8.ValidString(token) {
 					return protocolFailure(codeInvalidEnvelope)
 				}
+			}
+		}
+		if credentials != 1 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		if raw, ok := fields["capabilities"]; ok {
+			var capabilities []string
+			if json.Unmarshal(raw, &capabilities) != nil || len(capabilities) != 1 || capabilities[0] != CapabilityPlayerPresence {
+				return protocolFailure(codeInvalidEnvelope)
 			}
 		}
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,50 @@ type presenceCall struct {
 	online  bool
 	matchID string
 	userID  string
+}
+
+type recordingPresenceObserver struct {
+	mu      sync.Mutex
+	changes []presenceCall
+}
+
+func (observer *recordingPresenceObserver) playerPresenceChanged(matchID, userID string, online bool) {
+	observer.mu.Lock()
+	observer.changes = append(observer.changes, presenceCall{online: online, matchID: matchID, userID: userID})
+	observer.mu.Unlock()
+}
+
+func (observer *recordingPresenceObserver) snapshot() []presenceCall {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	return append([]presenceCall(nil), observer.changes...)
+}
+
+type delayedOfflinePresenceObserver struct {
+	recordingPresenceObserver
+	offlineEntered chan struct{}
+	releaseOffline chan struct{}
+	blocked        atomic.Bool
+}
+
+func (observer *delayedOfflinePresenceObserver) playerPresenceChanged(matchID, userID string, online bool) {
+	if !online && observer.blocked.CompareAndSwap(false, true) {
+		close(observer.offlineEntered)
+		<-observer.releaseOffline
+	}
+	observer.recordingPresenceObserver.playerPresenceChanged(matchID, userID, online)
+}
+
+func waitForPresenceChanges(t *testing.T, observer *recordingPresenceObserver, count int) []presenceCall {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if changes := observer.snapshot(); len(changes) >= count {
+			return changes
+		}
+		runtime.Gosched()
+	}
+	return observer.snapshot()
 }
 
 type fakePresenceStore struct {
@@ -192,6 +237,8 @@ func TestPresenceTracksConnectionIdentityAndOnlyPersistsPlayerBoundaries(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	observer := &recordingPresenceObserver{}
+	presence.setObserver(observer)
 	ctx := context.Background()
 
 	if err := presence.Connect(ctx, presenceMatchID, presenceUserID, presenceOldConn); err != nil {
@@ -238,6 +285,108 @@ func TestPresenceTracksConnectionIdentityAndOnlyPersistsPlayerBoundaries(t *test
 				t.Fatalf("calls[%d]=%+v want=%+v", index, got[index], want[index])
 			}
 		}
+	}
+	wantChanges := []presenceCall{
+		{online: true, matchID: presenceMatchID, userID: presenceUserID},
+		{online: true, matchID: presenceMatchID, userID: presenceOtherID},
+		{matchID: presenceMatchID, userID: presenceUserID},
+		{matchID: presenceMatchID, userID: presenceOtherID},
+	}
+	if got := waitForPresenceChanges(t, observer, len(wantChanges)); !reflect.DeepEqual(got, wantChanges) {
+		t.Fatalf("presence changes=%+v want=%+v", got, wantChanges)
+	}
+}
+
+func TestPresenceSweepNotifiesAPlayerBoundaryWhilePeerRemainsOnline(t *testing.T) {
+	fakeClock := clock.NewFake(time.Now())
+	store := &fakePresenceStore{}
+	presence, err := NewPresence(store, fakeClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &recordingPresenceObserver{}
+	presence.setObserver(observer)
+	ctx := context.Background()
+	if err := presence.Connect(ctx, presenceMatchID, presenceUserID, presenceOldConn); err != nil {
+		t.Fatal(err)
+	}
+	if err := presence.Connect(ctx, presenceMatchID, presenceOtherID, presenceOtherConn); err != nil {
+		t.Fatal(err)
+	}
+	fakeClock.Advance(presenceConnectionTimeout + time.Millisecond)
+	if !presence.Touch(presenceMatchID, presenceOtherID, presenceOtherConn) {
+		t.Fatal("peer heartbeat was not accepted")
+	}
+	if err := presence.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if presence.IsOnline(presenceMatchID, presenceUserID) || !presence.IsOnline(presenceMatchID, presenceOtherID) {
+		t.Fatal("sweep did not preserve the peer's fresh connection")
+	}
+	want := []presenceCall{
+		{online: true, matchID: presenceMatchID, userID: presenceUserID},
+		{online: true, matchID: presenceMatchID, userID: presenceOtherID},
+		{matchID: presenceMatchID, userID: presenceUserID},
+	}
+	if got := waitForPresenceChanges(t, observer, len(want)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("presence changes=%+v want=%+v", got, want)
+	}
+	if got := store.snapshotCalls(); len(got) != 2 {
+		t.Fatalf("single-player offline boundary persisted both-offline state: %+v", got)
+	}
+}
+
+func TestPresenceNotifiesReconnectBoundariesInCommitOrder(t *testing.T) {
+	presence, err := NewPresence(&fakePresenceStore{}, clock.NewFake(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &delayedOfflinePresenceObserver{
+		offlineEntered: make(chan struct{}),
+		releaseOffline: make(chan struct{}),
+	}
+	presence.setObserver(observer)
+	ctx := context.Background()
+	if err := presence.Connect(ctx, presenceMatchID, presenceUserID, presenceOldConn); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitForPresenceChanges(t, &observer.recordingPresenceObserver, 1); len(got) != 1 {
+		t.Fatalf("initial presence changes=%+v", got)
+	}
+
+	disconnectDone := make(chan error, 1)
+	go func() {
+		disconnectDone <- presence.Disconnect(ctx, presenceMatchID, presenceUserID, presenceOldConn)
+	}()
+	select {
+	case <-observer.offlineEntered:
+	case <-time.After(time.Second):
+		t.Fatal("offline notification did not start")
+	}
+	connectDone := make(chan error, 1)
+	go func() {
+		connectDone <- presence.Connect(ctx, presenceMatchID, presenceUserID, presenceNewConn)
+	}()
+	select {
+	case err := <-connectDone:
+		t.Fatalf("reconnect completed before the preceding offline notification: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(observer.releaseOffline)
+	if err := <-disconnectDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-connectDone; err != nil {
+		t.Fatal(err)
+	}
+
+	want := []presenceCall{
+		{online: true, matchID: presenceMatchID, userID: presenceUserID},
+		{matchID: presenceMatchID, userID: presenceUserID},
+		{online: true, matchID: presenceMatchID, userID: presenceUserID},
+	}
+	if got := waitForPresenceChanges(t, &observer.recordingPresenceObserver, len(want)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("presence changes=%+v want=%+v", got, want)
 	}
 }
 

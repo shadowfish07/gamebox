@@ -202,10 +202,22 @@ func TestFixturesAllowSemanticallyOmittedMatchFields(t *testing.T) {
 	}
 }
 
+func TestDecodeAcceptsPlatformPresenceAsARevisionAnchoredServerMessage(t *testing.T) {
+	input := []byte(`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","revision":3,"type":"platform.presence.changed","payload":{"userId":"33333333-3333-4333-8333-333333333333","online":true}}`)
+	envelope, err := Decode(input)
+	if err != nil {
+		t.Fatalf("Decode presence change: %v", err)
+	}
+	if envelope.Type != TypePlatformPresenceChanged || envelope.Revision == nil || *envelope.Revision != 3 {
+		t.Fatalf("presence envelope=%+v", envelope)
+	}
+}
+
 func TestDecodeClientRequiresExactControlPayloadsAndCanonicalBindings(t *testing.T) {
 	valid := []string{
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"opaque"}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":"opaque"}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"opaque","capabilities":["player_presence_v1"]}}`,
 		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"00000000-0000-4000-8000-000000000001"}}`,
 		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.snapshot.requested","payload":{"currentRevision":3}}`,
 		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":3,"type":"gomoku.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"x":7,"y":7}}`,
@@ -221,6 +233,9 @@ func TestDecodeClientRequiresExactControlPayloadsAndCanonicalBindings(t *testing
 		`{"protocolVersion":1,"type":"platform.connect","payload":{}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","resumeToken":"b"}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","extra":true}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","capabilities":[]}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","capabilities":["unknown"]}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","capabilities":["player_presence_v1","player_presence_v1"]}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"a","launchTicket":"b"}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launch\u0054icket":"a"}}`,
 		`{"protocolVersion":1,"gameId":"gomoku","matchId":"11111111-1111-4111-8111-111111111111","type":"platform.pong","payload":{"nonce":"bad"}}`,

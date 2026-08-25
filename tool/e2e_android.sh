@@ -514,6 +514,16 @@ xml_query() {
       exit 3 unless values.all?(&:empty?)
     when "identifier-count"
       puts nodes.count { |node| node.attributes["resource-id"] == expected }
+    when "visible-text", "visible-text-count"
+      matches = nodes.select do |node|
+        (node.attributes["text"].to_s == expected || node.attributes["content-desc"].to_s == expected) \
+          && enabled.call(node) && bounds.call(node)
+      end
+      if mode == "visible-text-count"
+        puts matches.length
+      else
+        exit 3 unless matches.length == 1
+      end
     when "diagnostics"
       nodes.each do |node|
         identifier = node.attributes["resource-id"].to_s
@@ -1197,6 +1207,39 @@ stop_first_connect_loading_watch() {
   return "$cleanup_status"
 }
 
+wait_for_first_connect_loading() {
+  local serial="$1"
+  local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
+  while ((SECONDS < deadline)); do
+    if [[ -s "$LOADING_WATCH_FILE" ]]; then
+      candidate="$(tail -n 1 "$LOADING_WATCH_FILE")"
+    fi
+    if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
+      LOADING_MATCH_ID="$candidate"
+      stop_first_connect_loading_watch
+      return $?
+    fi
+    sleep 0.01
+  done
+  stop_first_connect_loading_watch
+  return 1
+}
+
+presence_state_fragment() {
+  local match_id="$1"
+  local revision="$2"
+  local presence="$3"
+  [[ "$match_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ \
+    && "$revision" =~ ^-?[0-9]+$ \
+    && ("$presence" == "online" || "$presence" == "offline" || "$presence" == "unknown") ]] \
+    || return 2
+  printf '%s match=%s revision=%s status=%s connection=%s opponent_presence=%s\n' \
+    "$GAMEBOX_STATE_MARKER" "$match_id" "$revision" \
+    "$( [[ "$revision" == "-1" ]] && printf loading || printf active )" \
+    "$( [[ "$revision" == "-1" ]] && printf connecting || printf connected )" \
+    "$presence"
+}
+
 self_test() {
   local fixture_dir
   fixture_dir="$(mktemp -d)"
@@ -1216,6 +1259,7 @@ self_test() {
     '  <node resource-id="invite-code" text="" content-desc="not-a-selector" enabled="true" visible-to-user="true" bounds="[10,20][110,220]"><node resource-id="" text="fixture-secret" enabled="true" bounds="[10,20][110,220]" /></node>' \
     '  <node resource-id="nickname" text="fixture-nickname" content-desc="" enabled="true" visible-to-user="true" bounds="[120,20][220,220]"><node resource-id="" text="fixture-nickname" enabled="true" bounds="[120,20][220,220]" /></node>' \
     '  <node resource-id="disabled" text="" content-desc="invite-code" enabled="false" visible-to-user="true" bounds="[0,0][50,50]" />' \
+    '  <node resource-id="" text="" content-desc="当前已是最新版本" enabled="true" visible-to-user="true" bounds="[20,520][400,600]" />' \
     "  <node resource-id=\"$opponent_id\" text=\"Bob\" content-desc=\"Bob\" enabled=\"true\" visible-to-user=\"true\" bounds=\"[100,300][500,500]\" />" \
     '</hierarchy>' >"$fixture"
 
@@ -1239,6 +1283,30 @@ self_test() {
   fi
   [[ "$(xml_query opponent "$fixture")" == "$opponent_id" ]] \
     || { printf 'opponent fixture failed\n' >&2; return 1; }
+  xml_query visible-text "$fixture" '当前已是最新版本' >/dev/null \
+    || { printf 'visible Snackbar text fixture failed\n' >&2; return 1; }
+  [[ "$(xml_query visible-text-count "$fixture" '当前已是最新版本')" == "1" ]] \
+    || { printf 'single visible text count fixture failed\n' >&2; return 1; }
+  [[ "$(xml_query visible-text-count "$fixture" '不存在的提示')" == "0" ]] \
+    || { printf 'missing visible text count fixture failed\n' >&2; return 1; }
+  if xml_query visible-text "$fixture" '不存在的提示' >/dev/null 2>&1; then
+    printf 'missing visible text fixture was accepted\n' >&2
+    return 1
+  fi
+
+  local duplicate_visible_text="$fixture_dir/duplicate-visible-text.xml"
+  printf '%s\n' \
+    '<hierarchy>' \
+    '  <node text="应用更新" enabled="true" visible-to-user="true" bounds="[0,0][10,10]" />' \
+    '  <node content-desc="应用更新" enabled="true" visible-to-user="true" bounds="[10,10][20,20]" />' \
+    '</hierarchy>' >"$duplicate_visible_text"
+  [[ "$(xml_query visible-text-count "$duplicate_visible_text" '应用更新')" == "2" ]] \
+    || { printf 'duplicate visible text count fixture failed\n' >&2; return 1; }
+
+  local fixture_match_id='11111111-1111-4111-8111-111111111111'
+  [[ "$(presence_state_fragment "$fixture_match_id" 3 offline)" \
+    == 'GAMEBOX_GODOT_STATE match=11111111-1111-4111-8111-111111111111 revision=3 status=active connection=connected opponent_presence=offline' ]] \
+    || { printf 'offline presence marker fixture failed\n' >&2; return 1; }
 
   local duplicate="$fixture_dir/duplicate.xml"
   printf '<hierarchy><node resource-id="register" enabled="true" bounds="[0,0][10,10]"/><node resource-id="register" enabled="true" bounds="[10,10][20,20]"/></hierarchy>\n' >"$duplicate"
@@ -1441,6 +1509,8 @@ self_test() {
   : >"$loading_watch_pid_file"
   export FAKE_ADB_PID_FILE="$loading_watch_pid_file"
   export FAKE_ADB_LOG_BOUNDARY='watch-boundary'
+  local loading_match_id='11111111-1111-4111-8111-111111111111'
+  export FAKE_ADB_LOADING_MATCH_ID="$loading_match_id"
   export FAKE_ADB_MODE=loading-watch
   TEMP_DIR="$fixture_dir"
   SERIAL_A='fixture-A'
@@ -1461,8 +1531,10 @@ self_test() {
   [[ -s "$loading_watch_pid_file" ]] \
     || { printf 'loading watcher fixture did not start adb logcat\n' >&2; return 1; }
   loading_watch_adb_pid="$(<"$loading_watch_pid_file")"
-  stop_first_connect_loading_watch \
-    || { printf 'loading watcher fixture did not stop\n' >&2; return 1; }
+  wait_for_first_connect_loading fixture-A \
+    || { printf 'loading watcher fixture did not observe its marker\n' >&2; return 1; }
+  [[ "$LOADING_MATCH_ID" == "$loading_match_id" ]] \
+    || { printf 'loading watcher fixture returned the wrong match ID\n' >&2; return 1; }
   if kill -0 "$loading_watch_adb_pid" 2>/dev/null; then
     kill -KILL "$loading_watch_adb_pid" 2>/dev/null || true
     printf 'loading watcher left adb logcat alive\n' >&2
@@ -1471,7 +1543,7 @@ self_test() {
   export FAKE_ADB_PID_FILE="$fake_pid_file"
   [[ "$FAKE_ADB_PID_FILE" == "$fake_pid_file" ]] \
     || { printf 'loading watcher fixture did not restore the fake adb pid file\n' >&2; return 1; }
-  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY
+  unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY FAKE_ADB_LOADING_MATCH_ID
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
@@ -2432,6 +2504,29 @@ wait_for_identifier() {
   return 1
 }
 
+wait_for_visible_text() {
+  local serial="$1"
+  local expected="$2"
+  local deadline=$((SECONDS + WAIT_SECONDS))
+  local xml="$TEMP_DIR/ui-visible-text-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  while ((SECONDS < deadline)); do
+    if dump_ui "$serial" "$xml" \
+      && xml_query visible-text "$xml" "$expected" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+assert_visible_text_absent() {
+  local serial="$1"
+  local unexpected="$2"
+  local xml="$TEMP_DIR/ui-absent-text-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  dump_ui "$serial" "$xml" || return 1
+  [[ "$(xml_query visible-text-count "$xml" "$unexpected")" == "0" ]]
+}
+
 tap_identifier() {
   local serial="$1"
   local identifier="$2"
@@ -2521,6 +2616,16 @@ wait_for_log_marker() {
   wait_for_log_marker_with_timeout "$1" "$2" "$WAIT_SECONDS"
 }
 
+wait_for_presence_state() {
+  local serial="$1"
+  local match_id="$2"
+  local revision="$3"
+  local presence="$4"
+  local fragment
+  fragment="$(presence_state_fragment "$match_id" "$revision" "$presence")" || return $?
+  wait_for_log_marker "$serial" "$fragment"
+}
+
 wait_for_new_ready_match_id() {
   local serial="$1"
   local excluded_id="${2:-}"
@@ -2540,31 +2645,6 @@ wait_for_new_ready_match_id() {
     fi
     sleep 1
   done
-  return 1
-}
-
-wait_for_first_connect_loading_and_pause() {
-  local serial="$1"
-  local deadline=$((SECONDS + WAIT_SECONDS)) candidate=""
-  while ((SECONDS < deadline)); do
-    if [[ -s "$LOADING_WATCH_FILE" ]]; then
-      candidate="$(tail -n 1 "$LOADING_WATCH_FILE")"
-    fi
-    if [[ "$candidate" =~ ^[0-9a-f-]{36}$ ]]; then
-      LOADING_MATCH_ID="$candidate"
-      stop_first_connect_loading_watch
-      pause_e2e_server || return 1
-      sleep 0.2
-      if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
-        | grep -F "$GAMEBOX_STATE_MARKER match=$candidate revision=0" >/dev/null; then
-        resume_e2e_server || true
-        return 1
-      fi
-      return 0
-    fi
-    sleep 0.01
-  done
-  stop_first_connect_loading_watch
   return 1
 }
 
@@ -2615,14 +2695,17 @@ assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the light idle lobby UI state"
 register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 
+wait_for_visible_text "$SERIAL_B" '检查更新' \
+  || fail "B update action did not become ready after its automatic check"
 tap_identifier "$SERIAL_B" app-update
-sleep 2
+wait_for_visible_text "$SERIAL_B" '当前已是最新版本' \
+  || fail "B did not show the routine up-to-date Snackbar"
+assert_visible_text_absent "$SERIAL_B" '应用更新' \
+  || fail "B showed a modal update dialog for routine up-to-date feedback"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
-  || fail "could not verify the dark update dialog UI state"
-adb_for "$SERIAL_B" shell input keyevent KEYCODE_BACK >/dev/null \
-  || fail "could not close the dark update dialog"
+  || fail "could not verify the dark routine-update feedback state"
 wait_for_identifier "$SERIAL_B" game-gomoku >/dev/null \
-  || fail "B did not return to the lobby after closing the update dialog"
+  || fail "B left the lobby after routine update feedback"
 
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 
@@ -2641,12 +2724,10 @@ refresh_game_log_boundary "$SERIAL_A" first-gomoku-loading \
   || fail "could not establish first-connect loading log boundary after watcher attach"
 tap_identifier "$SERIAL_A" "$opponent_identifier"
 
-wait_for_first_connect_loading_and_pause "$SERIAL_A" \
-  || fail "could not hold the real first-connect loading state before its initial snapshot"
+wait_for_first_connect_loading "$SERIAL_A" \
+  || fail "could not observe the real first-connect loading state before its initial snapshot"
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
-  || fail "could not verify the real first-connect loading UI state"
-resume_e2e_server \
-  || fail "could not resume the E2E server after first-connect loading assertion"
+  || fail "could not verify the first-match UI state after the loading marker"
 
 MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A")" \
   || fail "A did not emit exactly one first-match ready ID within ${WAIT_SECONDS}s"
@@ -2715,6 +2796,10 @@ assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
 tap_identifier "$SERIAL_B" continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "B Godot did not report ready for the first match"
+wait_for_presence_state "$SERIAL_A" "$MATCH_ID" 0 online \
+  || fail "A did not render B as online in the first match"
+wait_for_presence_state "$SERIAL_B" "$MATCH_ID" 0 online \
+  || fail "B did not render A as online in the first match"
 
 display_size() {
   device_effective_size "$1"
@@ -2944,8 +3029,17 @@ exercise_active_system_back "$SERIAL_A" 2
 perform_move "$BLACK_SERIAL" 4 3 3 1
 
 RECOVERY_SERIAL="$WHITE_SERIAL"
+if [[ "$RECOVERY_SERIAL" == "$SERIAL_A" ]]; then
+  SURVIVING_SERIAL="$SERIAL_B"
+else
+  SURVIVING_SERIAL="$SERIAL_A"
+fi
+refresh_game_log_boundaries presence-recovery \
+  || fail "could not establish presence recovery log boundaries"
 adb_for "$RECOVERY_SERIAL" shell am force-stop "$PACKAGE" >/dev/null \
   || fail "could not force-stop only $PACKAGE on the recovery device"
+wait_for_presence_state "$SURVIVING_SERIAL" "$MATCH_ID" 3 offline \
+  || fail "surviving client did not render the force-stopped opponent as offline"
 sleep 1
 recovery_snapshot="$(match_show "$MATCH_ID")" || fail "match became unreadable after force-stop"
 [[ "$(jq -r '.revision' <<<"$recovery_snapshot")" == "3" ]] \
@@ -2965,10 +3059,16 @@ else
 fi
 start_flutter "$RECOVERY_SERIAL"
 tap_identifier "$RECOVERY_SERIAL" continue-match
+wait_for_presence_state "$RECOVERY_SERIAL" "$MATCH_ID" -1 unknown \
+  || fail "relaunching client did not report unknown presence before its snapshot"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
   || fail "force-stopped client did not relaunch Godot"
 wait_for_log_marker "$RECOVERY_SERIAL" "$GAMEBOX_STATE_MARKER match=$MATCH_ID revision=3" \
   || fail "force-stopped client did not resume at authoritative revision 3"
+wait_for_presence_state "$RECOVERY_SERIAL" "$MATCH_ID" 3 online \
+  || fail "relaunching client did not restore the opponent to online"
+wait_for_presence_state "$SURVIVING_SERIAL" "$MATCH_ID" 3 online \
+  || fail "surviving client did not restore the relaunched opponent to online"
 assert_both_state_revision 3
 
 perform_move "$WHITE_SERIAL" 4 5 4 2
@@ -3156,6 +3256,7 @@ jq -n \
       "second-match-created","cancel-confirmed-once","zero-step-cancelled","slots-released",
       "active-system-back-resumable","confirmed-resignation-once","authoritative-resignation-result",
       "pending-before-authoritative-ack","real-reconnecting-and-failed-states",
+      "presence-online-offline-unknown-restored-online",
       "exact-owned-server-pause-stop-restart","ui-mode-and-display-restored",
       "selected-device-semantics-integration","clean-build-provenance",
       "installed-apk-sha256-equality"

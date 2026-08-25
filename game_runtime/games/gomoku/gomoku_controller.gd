@@ -266,6 +266,10 @@ func _on_event_received(envelope: Dictionary) -> void:
 	_refresh_ui()
 
 
+func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
+	_refresh_ui()
+
+
 func _on_match_error(code: String) -> void:
 	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
 	_resign_submitted = false
@@ -285,6 +289,7 @@ func _refresh_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var local_color: String = _local_color(local_user_id) if has_state else ""
+	var opponent_presence := _opponent_presence(local_user_id) if has_state else "unknown"
 	var pending: Vector2i = INVALID_CELL
 	if has_state:
 		var pending_action: Dictionary = _state.pending_action
@@ -294,16 +299,19 @@ func _refresh_ui() -> void:
 	else:
 		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
 
+	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
 	var status_text: String = _status_text(local_user_id) if has_state else _connection_text()
 	if _force_return:
 		status_text = _error_text if not _error_text.is_empty() else "请返回大厅"
 	$StatusLabel.text = status_text
 	$ConnectionLabel.present(_connection_state, _connection_detail())
+	$OpponentPresence.visible = has_state and not terminal
+	$OpponentPresence/Content/PresenceDot.text = _opponent_presence_mark(opponent_presence)
+	$OpponentPresence/Content/OpponentPresenceLabel.text = _opponent_presence_text(opponent_presence)
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
 	$ErrorLabel.present(_error_text, "error")
 	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
 
-	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
 	$StatusLabel.visible = _force_return or (has_state and _connection_state == "connected" \
 		and not _awaiting_snapshot and not terminal)
 	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
@@ -322,7 +330,7 @@ func _refresh_ui() -> void:
 	print("GAMEBOX_BOARD_CANMOVE can=%s conn=%s await=%s status=%s pend_empty=%s next=%s local=%s" \
 		% [can_move, _connection_state, _awaiting_snapshot, _state.status if has_state else "?", \
 			_state.pending_action.is_empty() if has_state else "?", _state.next_color if has_state else "?", _local_color(local_user_id)])
-	_log_safe_state(has_state)
+	_log_safe_state(has_state, opponent_presence)
 
 
 func _can_offer_resign() -> bool:
@@ -380,6 +388,39 @@ func _connection_detail() -> String:
 			return "正在连接服务器…"
 
 
+func _opponent_presence(local_user_id: String) -> String:
+	if _connection_state != "connected" or _awaiting_snapshot or _client == null:
+		return "unknown"
+	var opponent_id := ""
+	if local_user_id == _state.black_user_id:
+		opponent_id = _state.white_user_id
+	elif local_user_id == _state.white_user_id:
+		opponent_id = _state.black_user_id
+	if opponent_id.is_empty() or not _client.has_player_presence(opponent_id):
+		return "unknown"
+	return "online" if _client.is_player_online(opponent_id) else "offline"
+
+
+func _opponent_presence_text(presence: String) -> String:
+	match presence:
+		"online":
+			return "对手在线"
+		"offline":
+			return "对手离线"
+		_:
+			return "对手状态未知"
+
+
+func _opponent_presence_mark(presence: String) -> String:
+	match presence:
+		"online":
+			return "●"
+		"offline":
+			return "○"
+		_:
+			return "·"
+
+
 func _local_color(local_user_id: String) -> String:
 	if _state == null:
 		return ""
@@ -413,6 +454,7 @@ func _connect_client_signals() -> void:
 	_client.snapshot_sync_started.connect(_on_snapshot_sync_started)
 	_client.snapshot_received.connect(_on_snapshot_received)
 	_client.event_received.connect(_on_event_received)
+	_client.player_presence_changed.connect(_on_player_presence_changed)
 	_client.match_error.connect(_on_match_error)
 	_client.return_to_lobby_requested.connect(_on_return_to_lobby_requested)
 
@@ -420,10 +462,10 @@ func _connect_client_signals() -> void:
 func _valid_client(client: Variant) -> bool:
 	if client == null:
 		return false
-	for method in ["start", "poll", "request_move", "request_resign", "dispose"]:
+	for method in ["start", "poll", "request_move", "request_resign", "has_player_presence", "is_player_online", "dispose"]:
 		if not client.has_method(method):
 			return false
-	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "match_error", "return_to_lobby_requested"]:
+	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "player_presence_changed", "match_error", "return_to_lobby_requested"]:
 		if not client.has_signal(signal_name):
 			return false
 	return true
@@ -442,6 +484,9 @@ func _disconnect_client_signals() -> void:
 		_client.snapshot_received.disconnect(_on_snapshot_received)
 	if _client.has_signal("event_received") and _client.event_received.is_connected(_on_event_received):
 		_client.event_received.disconnect(_on_event_received)
+	if _client.has_signal("player_presence_changed") \
+		and _client.player_presence_changed.is_connected(_on_player_presence_changed):
+		_client.player_presence_changed.disconnect(_on_player_presence_changed)
 	if _client.has_signal("match_error") and _client.match_error.is_connected(_on_match_error):
 		_client.match_error.disconnect(_on_match_error)
 	if _client.has_signal("return_to_lobby_requested") \
@@ -505,15 +550,15 @@ func _cancel_ready_marker() -> void:
 	_ready_marker_callback = Callable()
 
 
-func _log_safe_state(has_state: bool) -> void:
+func _log_safe_state(has_state: bool, opponent_presence: String) -> void:
 	if _match_id.is_empty():
 		return
 	var revision: int = _state.revision if has_state else -1
 	var status: String = _state.status if has_state else "loading"
-	var signature := "%d|%s|%s" % [revision, status, _connection_state]
+	var signature := "%d|%s|%s|%s" % [revision, status, _connection_state, opponent_presence]
 	if signature != _last_log_signature:
 		_last_log_signature = signature
-		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s" % [_match_id, revision, status, _connection_state])
+		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s opponent_presence=%s" % [_match_id, revision, status, _connection_state, opponent_presence])
 	if has_state and status in TERMINAL_STATUSES:
 		var result: String = str(_state.result) if _state.result in ["five", "resignation", "draw"] else status
 		var terminal_signature := "%d|%s" % [revision, result]

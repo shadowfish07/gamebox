@@ -262,10 +262,16 @@ func decodeStrictJSON(data []byte, destination any) error {
 }
 
 type Connected struct {
-	UserID          string `json:"userId"`
-	ConnectionID    string `json:"connectionId"`
-	ResumeToken     string `json:"resumeToken"`
-	ResumeExpiresAt int64  `json:"resumeExpiresAt"`
+	UserID          string           `json:"userId"`
+	ConnectionID    string           `json:"connectionId"`
+	ResumeToken     string           `json:"resumeToken"`
+	ResumeExpiresAt int64            `json:"resumeExpiresAt"`
+	Players         []PlayerPresence `json:"players"`
+}
+
+type PlayerPresence struct {
+	UserID string `json:"userId"`
+	Online bool   `json:"online"`
 }
 
 type GomokuSnapshot struct {
@@ -349,7 +355,10 @@ func (client *WebSocketClient) connect(ctx context.Context, credentialName, cred
 	if !validOpaqueToken(credential) || (credentialName != "launchTicket" && credentialName != "resumeToken") {
 		return WebSocketHandshake{}, errors.New("invalid websocket credential")
 	}
-	payload, err := json.Marshal(map[string]string{credentialName: credential})
+	payload, err := json.Marshal(map[string]any{
+		credentialName: credential,
+		"capabilities": []string{protocol.CapabilityPlayerPresence},
+	})
 	if err != nil {
 		return WebSocketHandshake{}, errors.New("invalid websocket credential")
 	}
@@ -373,7 +382,7 @@ func (client *WebSocketClient) connect(ctx context.Context, credentialName, cred
 		return WebSocketHandshake{}, errors.New("invalid websocket connected response")
 	}
 	var connected Connected
-	if decodeStrictJSON(first.Payload, &connected) != nil || !canonicalUUID(connected.UserID) || !canonicalUUID(connected.ConnectionID) || !validOpaqueToken(connected.ResumeToken) || connected.ResumeExpiresAt <= 0 {
+	if decodeStrictJSON(first.Payload, &connected) != nil || !canonicalUUID(connected.UserID) || !canonicalUUID(connected.ConnectionID) || !validOpaqueToken(connected.ResumeToken) || connected.ResumeExpiresAt <= 0 || !validPlayerPresences(connected.Players, connected.UserID) {
 		return WebSocketHandshake{}, errors.New("invalid websocket connected response")
 	}
 	snapshotEnvelope, err := client.ReadEnvelope(ctx)
@@ -388,6 +397,24 @@ func (client *WebSocketClient) connect(ctx context.Context, credentialName, cred
 		client.onConnected(snapshot.MatchID, connected.UserID)
 	}
 	return WebSocketHandshake{Connected: connected, Snapshot: snapshot}, nil
+}
+
+func validPlayerPresences(players []PlayerPresence, localUserID string) bool {
+	if len(players) == 0 || len(players) > 64 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(players))
+	for _, player := range players {
+		if !canonicalUUID(player.UserID) {
+			return false
+		}
+		if _, duplicate := seen[player.UserID]; duplicate {
+			return false
+		}
+		seen[player.UserID] = struct{}{}
+	}
+	_, includesLocal := seen[localUserID]
+	return includesLocal
 }
 
 func (client *WebSocketClient) WriteEnvelope(ctx context.Context, envelope protocol.Envelope) error {

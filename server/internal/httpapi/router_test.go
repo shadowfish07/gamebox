@@ -459,7 +459,7 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial response=%v err=%v", response, err)
 		}
-		message := fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"%s":%s}}`, tokenKey, quote(token))
+		message := fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"%s":%s,"capabilities":["player_presence_v1"]}}`, tokenKey, quote(token))
 		if err := connection.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
 			t.Fatalf("write connect: %v", err)
 		}
@@ -472,8 +472,16 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 	}
 	aliceWS, aliceConnected, aliceSnapshot := connect("launchTicket", aliceTicket, 0)
 	defer aliceWS.CloseNow()
-	bobWS, _, bobSnapshot := connect("launchTicket", bobTicket, 0)
+	bobWS, bobConnected, bobSnapshot := connect("launchTicket", bobTicket, 0)
 	defer bobWS.CloseNow()
+	presenceChanged := readWSEnvelope(t, aliceWS)
+	var presencePayload struct {
+		UserID string `json:"userId"`
+		Online bool   `json:"online"`
+	}
+	if presenceChanged.Type != protocol.TypePlatformPresenceChanged || presenceChanged.Revision == nil || *presenceChanged.Revision != 0 || json.Unmarshal(presenceChanged.Payload, &presencePayload) != nil || presencePayload.UserID != bob.Session.User.ID || !presencePayload.Online {
+		t.Fatalf("presence change=%+v payload=%s", presenceChanged, presenceChanged.Payload)
+	}
 	if !bytes.Equal(aliceSnapshot.Payload, bobSnapshot.Payload) {
 		t.Fatalf("initial snapshots differ: %s / %s", aliceSnapshot.Payload, bobSnapshot.Payload)
 	}
@@ -514,9 +522,21 @@ func TestWebSocketTwoClientsCommitBroadcastStaleAndResume(t *testing.T) {
 		ConnectionID    string `json:"connectionId"`
 		ResumeToken     string `json:"resumeToken"`
 		ResumeExpiresAt int64  `json:"resumeExpiresAt"`
+		Players         []struct {
+			UserID string `json:"userId"`
+			Online bool   `json:"online"`
+		} `json:"players"`
 	}
-	if err := json.Unmarshal(aliceConnected.Payload, &connectedPayload); err != nil || connectedPayload.ResumeToken == "" || connectedPayload.UserID != alice.Session.User.ID || !canonicalRequestID(connectedPayload.ConnectionID) || connectedPayload.ResumeExpiresAt != fixture.clock.Now().UTC().Add(30*time.Minute).UnixMilli() {
+	if err := json.Unmarshal(aliceConnected.Payload, &connectedPayload); err != nil || connectedPayload.ResumeToken == "" || connectedPayload.UserID != alice.Session.User.ID || !canonicalRequestID(connectedPayload.ConnectionID) || connectedPayload.ResumeExpiresAt != fixture.clock.Now().UTC().Add(30*time.Minute).UnixMilli() || len(connectedPayload.Players) != 2 || !connectedPayload.Players[0].Online || connectedPayload.Players[1].Online {
 		t.Fatalf("connected payload=%s err=%v", aliceConnected.Payload, err)
+	}
+	var bobConnectedPayload struct {
+		Players []struct {
+			Online bool `json:"online"`
+		} `json:"players"`
+	}
+	if err := json.Unmarshal(bobConnected.Payload, &bobConnectedPayload); err != nil || len(bobConnectedPayload.Players) != 2 || !bobConnectedPayload.Players[0].Online || !bobConnectedPayload.Players[1].Online {
+		t.Fatalf("bob connected payload=%s err=%v", bobConnected.Payload, err)
 	}
 	oldAliceWS := aliceWS
 	aliceWS, _, resumedSnapshot := connect("resumeToken", connectedPayload.ResumeToken, 1)
@@ -606,7 +626,8 @@ func TestWebSocketRejectsInvalidHandshakeCredentialReuseAndCrossOrigin(t *testin
 			t.Fatal(err)
 		}
 		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticketBody.LaunchTicket)))
-		if first, second := readWSEnvelope(t, connection), readWSEnvelope(t, connection); first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot {
+		first, second := readWSEnvelope(t, connection), readWSEnvelope(t, connection)
+		if first.Type != protocol.TypePlatformConnected || second.Type != protocol.TypePlatformSnapshot || bytes.Contains(first.Payload, []byte(`"players"`)) {
 			t.Fatalf("connected=(%+v,%+v)", first, second)
 		}
 		_ = connection.Close(websocket.StatusNormalClosure, "")
