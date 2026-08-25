@@ -748,15 +748,14 @@ func (connection *hubConnection) enqueueErrorAndSnapshot(code, actionID string, 
 }
 
 func (connection *hubConnection) enqueuePresence(userID string, online bool) bool {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
 	message, err := boundEnvelope(connection.gameID, connection.matchID, connection.revision.Load(), protocol.TypePlatformPresenceChanged, "",
 		playerPresencePayload{UserID: userID, Online: online})
 	if err != nil {
 		return false
 	}
-	connection.outboundMu.Lock()
-	queued := connection.enqueue(message)
-	connection.outboundMu.Unlock()
-	return queued
+	return connection.enqueue(message)
 }
 
 func (connection *hubConnection) writeLoop() {
