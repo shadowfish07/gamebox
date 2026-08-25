@@ -1066,9 +1066,21 @@ boundary_for_serial() {
 
 start_first_connect_loading_watch() {
   local serial="$1"
+  local boundary_suffix="${2:-}"
   local boundary watcher_pid watcher_group watcher_session extra=""
   [[ -z "${LOADING_WATCH_PID:-}" ]] || return 2
-  boundary="$(boundary_for_serial "$serial")"
+  if [[ -n "$boundary_suffix" ]]; then
+    [[ "$boundary_suffix" =~ ^[A-Za-z0-9_-]{1,48}$ ]] || return 2
+    if [[ "$serial" == "$SERIAL_A" ]]; then
+      boundary="GAMEBOX_E2E_A_${boundary_suffix}_$RUN_ID"
+    elif [[ "$serial" == "$SERIAL_B" ]]; then
+      boundary="GAMEBOX_E2E_B_${boundary_suffix}_$RUN_ID"
+    else
+      return 2
+    fi
+  else
+    boundary="$(boundary_for_serial "$serial")"
+  fi
   LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
   LOADING_WATCH_READY_FILE="$TEMP_DIR/first-connect-loading-session"
   rm -f -- "$LOADING_WATCH_FILE"
@@ -1721,6 +1733,9 @@ self_test() {
     || { printf 'failure UI dump safety gate is missing\n' >&2; return 1; }
   grep -F 'failure-artifact-scan.txt' <<<"$runtime_source" >/dev/null \
     || { printf 'failure artifact scanner is missing\n' >&2; return 1; }
+  grep -F 'start_first_connect_loading_watch "$SERIAL_A" first-gomoku-loading' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'first-connect loading watcher is not started with a post-attach boundary\n' >&2; return 1; }
   if grep -E 'screencap|capture_ui_evidence|ui_evidence|screenshots/|\.png' \
     <<<"$runtime_source" >/dev/null; then
     printf 'fixed E2E runtime still contains screenshot capture or evidence paths\n' >&2
@@ -2566,10 +2581,10 @@ USER_ID_B="${opponent_identifier#opponent-}"
 [[ "$USER_ID_B" =~ $uuid_pattern && "$opponent_identifier" == "opponent-$USER_ID_B" ]] \
   || fail "A opponent resource-id did not contain B's canonical user ID"
 readonly USER_ID_B
-refresh_game_log_boundaries first-gomoku-loading \
-  || fail "could not establish first-connect loading log boundaries"
-start_first_connect_loading_watch "$SERIAL_A" \
+start_first_connect_loading_watch "$SERIAL_A" first-gomoku-loading \
   || fail "could not start the first-connect loading event watcher"
+refresh_game_log_boundary "$SERIAL_A" first-gomoku-loading \
+  || fail "could not establish first-connect loading log boundary after watcher attach"
 tap_identifier "$SERIAL_A" "$opponent_identifier"
 
 wait_for_first_connect_loading_and_pause "$SERIAL_A" \
