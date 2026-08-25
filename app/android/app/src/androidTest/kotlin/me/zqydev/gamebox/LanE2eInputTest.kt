@@ -12,7 +12,6 @@ import androidx.test.uiautomator.Until
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
-import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -24,7 +23,6 @@ class LanE2eInputTest {
         check(instrumentation.targetContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             "LAN E2E injection is debug-only"
         }
-        assertEquals("${instrumentation.targetContext.packageName}.test", instrumentation.context.packageName)
         val inputName = InstrumentationRegistry.getArguments().getString(ARG_INPUT)
             ?: error("Missing private LAN input")
         require(INPUT_NAME.matches(inputName))

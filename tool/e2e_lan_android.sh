@@ -299,7 +299,7 @@ set_nickname() {
     "$HELPER_TEST_RUNNER" \
     -e class 'me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue' \
     -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name" \
-    || fail "nickname injection failed on $serial"
+    || { cp "$TEMP_DIR/nickname-${serial}.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail "nickname injection failed on $serial"; }
   tap_id "$serial" save-nickname
   wait_id "$serial" open-game-history >/dev/null || fail "home did not load on $serial"
   reveal_id "$serial" open-lan-mode >/dev/null || fail "LAN action could not be revealed on $serial"
@@ -317,7 +317,7 @@ adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/host-waiting-masked.pn
 run_instrumentation "$SERIAL_A" "$TEMP_DIR/host-export.log" \
   "$APP_TEST_RUNNER" \
   -e class me.zqydev.gamebox.LanE2eHostExportTest \
-  || fail 'host private handoff export failed'
+  || { cp "$TEMP_DIR/host-export.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail 'host private handoff export failed'; }
 adb_for "$SERIAL_A" exec-out run-as "$PACKAGE" cat files/lan-e2e-handoff.json >"$TEMP_DIR/handoff.json" \
   || fail 'host private handoff could not be read'
 adb_for "$SERIAL_A" shell run-as "$PACKAGE" rm files/lan-e2e-handoff.json >/dev/null 2>&1 || true
@@ -345,7 +345,7 @@ printf '%s' "$JOIN_QR" | stage_test_input "$SERIAL_B" "$LAN_INPUT_NAME"
 run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-input.log" \
   "$HELPER_TEST_RUNNER" \
   -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
-  || fail 'guest private LAN input failed'
+  || { cp "$TEMP_DIR/lan-input.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail 'guest private LAN input failed'; }
 tap_id "$SERIAL_B" submit-lan-manual-input
 
 adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
@@ -397,7 +397,7 @@ for x in 0 1 2 3 4; do
     run_instrumentation "$SERIAL_B" "$TEMP_DIR/lan-resume.log" \
       "$HELPER_TEST_RUNNER" \
       -e class me.zqydev.gamebox.LanE2eInputTest -e gameboxLanInputName "$LAN_INPUT_NAME" \
-      || fail 'guest resume input failed'
+      || { cp "$TEMP_DIR/lan-resume.log" "$ARTIFACT_DIR/failed-phase.log" 2>/dev/null || true; fail 'guest resume input failed'; }
     tap_id "$SERIAL_B" submit-lan-manual-input
     wait_log_revision "$SERIAL_B" "$revision" || fail 'guest resume snapshot did not converge'
     adb_for "$SERIAL_B" exec-out screencap -p >"$ARTIFACT_DIR/recovered-guest.png"
