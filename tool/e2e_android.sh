@@ -41,6 +41,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 # shellcheck source=tool/lib/android_lease.sh
 source "$ROOT_DIR/tool/lib/android_lease.sh"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
 HARNESS_PGID="$(ps -p "$HARNESS_PID" -o pgid= | tr -d ' ')"
 readonly HARNESS_PGID
 [[ "$HARNESS_PGID" =~ ^[1-9][0-9]*$ ]] || {
@@ -2229,12 +2231,14 @@ cleanup() {
     rm -f -- "$ARTIFACT_DIR/summary.json"
     ((exit_code == 0)) && exit_code=1
   fi
+  gamebox_test_output_cleanup
   rm -rf "$TEMP_DIR"
   exit "$exit_code"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+gamebox_test_output_init
 
 clear_secret_field_for_failure() {
   local serial="$1"
@@ -2494,23 +2498,29 @@ printf 'Building single-ABI debug APK and server tools...\n'
 # Build the repository-owned UI Automator helper first. Gradle also assembles a
 # default app APK for androidTest; the Flutter build below must run last so the
 # installed app retains this run's isolated API base URL.
-(
+build_android_test_apk() {
+  (
   cd "$ROOT_DIR/app/android"
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" env \
     ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
     ./gradlew :app:assembleDebugAndroidTest
-)
+  )
+}
+gamebox_run_step "E2E Android test APK build" build_android_test_apk
 TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 readonly TEST_APK
 [[ -f "$TEST_APK" ]] || fail "E2E-owned UI Automator helper APK was not produced"
-(
+build_flutter_debug_apk() {
+  (
   cd "$ROOT_DIR/app"
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" env \
     ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
     flutter build apk \
       --debug --target-platform=android-arm64 \
       --dart-define="GAMEBOX_API_BASE_URL=$api_base"
-)
+  )
+}
+gamebox_run_step "E2E Flutter debug APK build" build_flutter_debug_apk
 APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
 readonly APK
 [[ -f "$APK" ]] || fail "debug APK was not produced"
@@ -2529,11 +2539,14 @@ TEST_APK_SHA256="$(shasum -a 256 "$TEST_APK" | awk '{print $1}')"
 [[ "$APK_SHA256" =~ ^[0-9a-f]{64}$ && "$TEST_APK_SHA256" =~ ^[0-9a-f]{64}$ ]] \
   || fail "built APK SHA-256 provenance was invalid"
 readonly APK_SHA256 TEST_APK_SHA256
-(
+build_server_tools() {
+  (
   cd "$ROOT_DIR/server"
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" go build -o "$SERVER_BIN" ./cmd/gameboxd
   run_with_timeout "$BUILD_TIMEOUT_SECONDS" go build -o "$CTL_BIN" ./cmd/gameboxctl
-)
+  )
+}
+gamebox_run_step "E2E server tools build" build_server_tools
 
 install_app() {
   local serial="$1"
@@ -2839,6 +2852,7 @@ register_user() {
     || fail "registration did not reach the catalog on $serial"
   printf -v "$secret_flag" '%s' 0
 }
+gamebox_test_progress 'Gamebox E2E: registering both users and creating the first match...'
 register_user "$SERIAL_A" "$INVITE_A" "$NICKNAME_A" SECRETS_ON_UI_A
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" '正在同步对局…' \
   || fail "could not verify the light idle lobby UI state"
@@ -3291,6 +3305,7 @@ fi
 capture_connection_recovery_states 2
 exercise_active_system_back "$SERIAL_A" 2
 perform_move "$BLACK_SERIAL" 4 3 3 1
+gamebox_test_progress 'Gamebox E2E: validating process recovery and resumed state...'
 
 RECOVERY_SERIAL="$WHITE_SERIAL"
 if [[ "$RECOVERY_SERIAL" == "$SERIAL_A" ]]; then
@@ -3372,6 +3387,7 @@ second_opponent_identifier="$(wait_for_opponent_identifier "$SERIAL_A")" \
 [[ "$second_opponent_identifier" == "opponent-$USER_ID_B" ]] \
   || fail "second opponent resource-id did not identify B"
 tap_identifier "$SERIAL_A" "$second_opponent_identifier"
+gamebox_test_progress 'Gamebox E2E: validating zero-step cancellation and slot release...'
 SECOND_MATCH_ID="$(wait_for_new_ready_match_id "$SERIAL_A" "$MATCH_ID")" \
   || fail "A did not emit exactly one second-match ready ID within ${WAIT_SECONDS}s"
 [[ "$SECOND_MATCH_ID" =~ $uuid_pattern ]] || fail "second Godot ready marker did not contain a canonical match ID"
@@ -3535,4 +3551,10 @@ if ! protect_artifact_directory \
   fail "artifact secret scanner removed unsafe or unverifiable output"
 fi
 
-printf 'Gamebox two-emulator E2E passed. Artifacts: %s\n' "$ARTIFACT_DIR"
+warning_count="$(gamebox_test_output_warning_count)"
+if ((warning_count > 0)); then
+  printf 'Gamebox two-emulator E2E passed (%s warning lines). Artifacts: %s\n' \
+    "$warning_count" "$ARTIFACT_DIR"
+else
+  printf 'Gamebox two-emulator E2E passed. Artifacts: %s\n' "$ARTIFACT_DIR"
+fi

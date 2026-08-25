@@ -37,6 +37,8 @@ readonly TEST_APK="$ROOT_DIR/app/build/app/outputs/apk/androidTest/debug/app-deb
 source "$ROOT_DIR/tool/lib/android_smoke_log.sh"
 # shellcheck source=tool/lib/android_lease.sh
 source "$ROOT_DIR/tool/lib/android_lease.sh"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
 
 RUN_NONCE="run_$(date +%s)_$$_$RANDOM"
 readonly RUN_NONCE
@@ -112,9 +114,11 @@ cleanup() {
   set +e
   remove_helper_package >/dev/null 2>&1
   gamebox_android_lease_release
+  gamebox_test_output_cleanup
   exit "$exit_status"
 }
 trap cleanup EXIT
+gamebox_test_output_init
 
 dump_failure_context() {
   echo "--- resumed activity ---" >&2
@@ -164,7 +168,9 @@ case "$device_abi" in
 esac
 readonly APK="$APK_DIR/$apk_name"
 
-(
+gamebox_test_progress 'Android host smoke: building application and instrumentation APKs...'
+build_host_smoke_apk() {
+  (
   cd "$ROOT_DIR/app"
   ORG_GRADLE_PROJECT_gameboxAndroidAbi="$device_abi" flutter build apk \
     "--$SMOKE_BUILD_TYPE" \
@@ -172,14 +178,19 @@ readonly APK="$APK_DIR/$apk_name"
     --target-platform="$flutter_target" \
     --dart-define=GAMEBOX_HOST_SMOKE=true \
     --dart-define="GAMEBOX_INSTRUMENTATION_CANARY_NONCE=$RUN_NONCE"
-)
+  )
+}
+gamebox_run_step "Android host smoke APK build" build_host_smoke_apk
 [[ -f "$APK" ]] || fail "$SMOKE_BUILD_TYPE APK was not produced at $APK"
 
-(
+build_host_smoke_test_apk() {
+  (
   cd "$ROOT_DIR/app/android"
   ORG_GRADLE_PROJECT_gameboxAndroidAbi="$device_abi" \
     ./gradlew :app:assembleDebugAndroidTest
-)
+  )
+}
+gamebox_run_step "Android host smoke instrumentation build" build_host_smoke_test_apk
 [[ -f "$TEST_APK" ]] || fail "instrumentation APK was not produced at $TEST_APK"
 
 packaged_abis="$(
@@ -223,7 +234,9 @@ native_library_bytes="$(unzip -l "$APK" | awk -v prefix="lib/$device_abi/" '
   END { printf "%.0f", total }
 ')"
 initial_free_bytes="$("${ADB[@]}" shell df -k /data | awk 'NR == 2 { printf "%.0f\n", $4 * 1024 }')"
-echo "device $SERIAL build_type=$SMOKE_BUILD_TYPE ABI=$device_abi initial_free_bytes=$initial_free_bytes main_apk_bytes=$apk_bytes native_library_bytes=$native_library_bytes test_apk_bytes=$test_apk_bytes"
+if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
+  echo "device $SERIAL build_type=$SMOKE_BUILD_TYPE ABI=$device_abi initial_free_bytes=$initial_free_bytes main_apk_bytes=$apk_bytes native_library_bytes=$native_library_bytes test_apk_bytes=$test_apk_bytes"
+fi
 
 # Reinstalling only the two Gamebox-owned packages frees their previous code paths
 # before Android's package installer evaluates its low-storage reserve.
@@ -249,7 +262,9 @@ while ((free_bytes < required_bytes && SECONDS < space_deadline)); do
   sleep 1
   free_bytes="$("${ADB[@]}" shell df -k /data | awk 'NR == 2 { printf "%.0f\n", $4 * 1024 }')"
 done
-echo "preinstall_free_bytes=$free_bytes conservative_required_bytes=$required_bytes device_low_bytes=$low_bytes"
+if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
+  echo "preinstall_free_bytes=$free_bytes conservative_required_bytes=$required_bytes device_low_bytes=$low_bytes"
+fi
 if ((free_bytes < required_bytes)); then
   fail "insufficient safe install space: free=$free_bytes required=$required_bytes; free space without removing unrelated apps or use a device with more storage"
 fi
@@ -428,6 +443,7 @@ initial_pid="$(main_pid)"
 "${ADB[@]}" shell log -p e -t "$LOG_TAG" \
   "Process: $GAME_PROCESS, PID: 1 pre-boundary synthetic $RUN_NONCE" >/dev/null
 
+gamebox_test_progress 'Android host smoke: validating the normal launch canary...'
 canary_boundary="GAMEBOX_CANARY_BOUNDARY_$RUN_NONCE"
 emit_boundary "$canary_boundary" || fail "could not establish canary log boundary"
 run_instrumentation "$CLICK_CANARY_TEST" \
@@ -484,13 +500,14 @@ if grep -F "$CANARY_TICKET" <<<"$canary_logs" >/dev/null; then
 fi
 assert_no_crash_or_anr "$canary_logs" "$canary_game_pid"
 initial_pid="$recreated_main_pid"
-if [[ "$SMOKE_BUILD_TYPE" == "profile" ]]; then
+if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose && "$SMOKE_BUILD_TYPE" == "profile" ]]; then
   echo "normal canary passed: ticket absent from all-buffer logs, game PID $canary_game_pid survived main PID $old_main_pid -> $recreated_main_pid recreation, resumed without restart, and returned to Flutter automatically"
-else
+elif [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
   echo "normal canary passed: release Godot JNI initialized, ticket absent from all-buffer logs, and the game returned to Flutter automatically"
 fi
 
 # A key-shaped gameId must never redirect ticket privatization to the wrong slot.
+gamebox_test_progress 'Android host smoke: validating the collision canary...'
 collision_boundary="GAMEBOX_COLLISION_BOUNDARY_$RUN_NONCE"
 emit_boundary "$collision_boundary" || fail "could not establish collision-canary log boundary"
 run_instrumentation "$CLICK_COLLISION_CANARY_TEST" \
@@ -516,9 +533,12 @@ if grep -F "$CANARY_TICKET" <<<"$collision_logs" >/dev/null; then
   fail "collision canary ticket appeared during exit in all-buffer logcat"
 fi
 assert_no_crash_or_anr "$collision_logs" "$collision_game_pid"
-echo "collision canary passed: key-shaped gameId reached safe rejection, ticket absent from all-buffer logs, clean marked exit"
+if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
+  echo "collision canary passed: key-shaped gameId reached safe rejection, ticket absent from all-buffer logs, clean marked exit"
+fi
 
 for cycle in 1 2; do
+  gamebox_test_progress "Android host smoke: validating runtime cycle $cycle/2..."
   before_pid="$(main_pid)"
   [[ "$before_pid" == "$initial_pid" ]] \
     || fail "cycle $cycle main process PID changed before launch"
@@ -548,7 +568,9 @@ for cycle in 1 2; do
   [[ "$ready_count" -eq 1 && "$exiting_count" -eq 1 ]] \
     || fail "cycle $cycle expected one READY and EXITING marker (got $ready_count/$exiting_count)"
   assert_no_crash_or_anr "$cycle_logs" "$observed_game_pid"
-  echo "cycle $cycle passed: READY then EXITING, game PID $observed_game_pid exited cleanly, MainActivity resumed, main PID $after_pid unchanged"
+  if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
+    echo "cycle $cycle passed: READY then EXITING, game PID $observed_game_pid exited cleanly, MainActivity resumed, main PID $after_pid unchanged"
+  fi
 done
 
 current_accelerometer_rotation="$("${ADB[@]}" shell settings get system accelerometer_rotation | tr -d '\r')"
@@ -565,4 +587,9 @@ if [[ -n "$("${ADB[@]}" shell pidof "$TEST_PACKAGE" 2>/dev/null | tr -d '\r')" ]
   fail "$TEST_PACKAGE helper process remained after cleanup"
 fi
 
-echo "Android host smoke passed twice on $SERIAL."
+warning_count="$(gamebox_test_output_warning_count)"
+if ((warning_count > 0)); then
+  echo "Android host smoke passed twice on $SERIAL ($warning_count warning lines)."
+else
+  echo "Android host smoke passed twice on $SERIAL."
+fi
