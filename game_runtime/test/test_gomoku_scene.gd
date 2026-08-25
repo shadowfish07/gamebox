@@ -30,6 +30,7 @@ static func cases() -> Array:
 		{"name": "gomoku terminal return stays non-destructive", "run": _terminal_return_is_non_destructive},
 		{"name": "gomoku scene wires move once and shows pending marker", "run": _wires_move_once},
 		{"name": "gomoku scene uses mobile move confirmation surfaces", "run": _uses_mobile_move_confirmation_surfaces},
+		{"name": "gomoku settings Done target survives the large Android viewport", "run": _settings_done_target_survives_large_viewport},
 		{"name": "gomoku settings sheet persists move confirmation", "run": _settings_sheet_persists_move_confirmation},
 		{"name": "gomoku settings failure restores the saved value", "run": _settings_failure_restores_saved_value},
 		{"name": "gomoku move confirmation cancels or submits exactly once", "run": _move_confirmation_cancels_or_submits_once},
@@ -559,6 +560,30 @@ static func _settings_sheet_persists_move_confirmation() -> bool:
 	var result := _check(preferences.saved_values == [true], "settings change was not persisted exactly once") \
 		and _check(toggle.button_pressed, "reopened settings sheet did not retain enabled confirmation")
 	return _cleanup(scene, result)
+
+
+static func _settings_done_target_survives_large_viewport() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	var host := Control.new()
+	host.size = Vector2(1080.0, 2400.0)
+	tree.root.add_child(host)
+	var client := FakeMatchClient.new()
+	client.local_user_id = BLACK_ID
+	var scene := GomokuScene.instantiate()
+	scene.configure_launch(_launch_config())
+	scene.set_match_client_factory(func() -> Variant: return client)
+	scene.set_preferences_store(FakePreferences.new(false))
+	scene.set_quit_callback(func() -> void: pass)
+	host.add_child(scene)
+	await tree.process_frame
+	scene._on_settings_pressed()
+	await tree.process_frame
+	await tree.process_frame
+	var done_button := scene.get_node("SettingsSheet/Sheet/Content/DoneButton") as Button
+	var done_rect := done_button.get_global_rect()
+	var result := _check(done_rect.has_point(Vector2(540.0, 2160.0)), "large Android Done tap left its button: %s" % done_rect)
+	host.free()
+	return result
 
 
 static func _settings_failure_restores_saved_value() -> bool:

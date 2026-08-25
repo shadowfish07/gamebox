@@ -1889,6 +1889,8 @@ self_test() {
   fi
   grep -F 'point="$(design_point_for_serial "$serial" 640 1230)"' <<<"$runtime_source" >/dev/null \
     || { printf 'large portrait resign confirmation tap point is stale\n' >&2; return 1; }
+  grep -F 'point="$(design_point_from_bottom_for_serial "$serial" 540 240)"' <<<"$runtime_source" >/dev/null \
+    || { printf 'large portrait settings Done tap point is stale\n' >&2; return 1; }
   grep -F "flutter test -d \"\$SERIAL_A\" integration_test/semantics_test.dart" <<<"$runtime_source" >/dev/null \
     || { printf 'selected-device semantics command is missing\n' >&2; return 1; }
   if grep -F 'SECONDS + 10' <<<"$runtime_source" >/dev/null; then
@@ -2885,7 +2887,7 @@ tap_godot_move_confirmation_toggle() {
 
 tap_godot_settings_done() {
   local serial="$1" point x y
-  point="$(design_point_from_bottom_for_serial "$serial" 540 180)"
+  point="$(design_point_from_bottom_for_serial "$serial" 540 240)"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
