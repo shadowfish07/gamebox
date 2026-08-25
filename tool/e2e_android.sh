@@ -495,6 +495,11 @@ xml_query() {
       matches = nodes.select { |node| pattern.match?(node.attributes["resource-id"].to_s) && enabled.call(node) && bounds.call(node) }
       exit 3 unless matches.length == 1
       puts matches.first.attributes["resource-id"]
+    when "rps-opponent"
+      pattern = /\Arps-opponent-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
+      matches = nodes.select { |node| pattern.match?(node.attributes["resource-id"].to_s) && enabled.call(node) && bounds.call(node) }
+      exit 3 unless matches.length == 1
+      puts matches.first.attributes["resource-id"]
     when "field-text"
       matches = nodes.select { |node| node.attributes["resource-id"] == expected }
       exit 3 unless matches.length == 1
@@ -2545,6 +2550,8 @@ for required_asset in \
   assets/games/gomoku/gomoku_scene.tscn \
   assets/games/gomoku/gomoku_board.gd \
   assets/games/gomoku/gomoku_preferences.gd \
+  assets/games/rps/rps_scene.tscn \
+  assets/games/rps/rps_state.gd \
   assets/design_system/components/gamebox_back_button.tscn \
   assets/design_system/gamebox_theme.gd; do
   unzip -Z1 "$APK" | grep -Fx "$required_asset" >/dev/null || fail "APK is missing $required_asset"
@@ -2736,6 +2743,23 @@ wait_for_opponent_identifier() {
   return 1
 }
 
+wait_for_rps_opponent_identifier() {
+  local serial="$1"
+  local deadline=$((SECONDS + WAIT_SECONDS))
+  local xml="$TEMP_DIR/ui-rps-opponent-${serial//[^A-Za-z0-9_.-]/_}.xml"
+  while ((SECONDS < deadline)); do
+    if dump_ui "$serial" "$xml"; then
+      local identifier
+      identifier="$(xml_query rps-opponent "$xml" 2>/dev/null)" && {
+        printf '%s\n' "$identifier"
+        return 0
+      }
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 input_text_by_identifier() {
   local serial="$1"
   local identifier="$2"
@@ -2817,6 +2841,26 @@ wait_for_new_ready_match_id() {
       game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
         | sed -E -n 's/.*GAMEBOX_GODOT_READY game=gomoku match=([0-9a-f-]{36}).*/\1/p' \
         | awk -v excluded="$excluded_id" '$0 != excluded' \
+        | sort -u
+    )"
+    candidate_count="$(printf '%s\n' "$candidates" | awk 'NF { count++ } END { print count + 0 }')"
+    if [[ "$candidate_count" == "1" ]]; then
+      printf '%s\n' "$candidates"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_new_rps_ready_match_id() {
+  local serial="$1"
+  local deadline=$((SECONDS + WAIT_SECONDS))
+  while ((SECONDS < deadline)); do
+    local candidates candidate_count
+    candidates="$(
+      game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+        | sed -E -n 's/.*GAMEBOX_GODOT_READY game=rps match=([0-9a-f-]{36}).*/\1/p' \
         | sort -u
     )"
     candidate_count="$(printf '%s\n' "$candidates" | awk 'NF { count++ } END { print count + 0 }')"
@@ -3561,6 +3605,136 @@ wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null \
   || fail "Android Back did not return A to the idle lobby"
 MATCH_ID="$FIRST_MATCH_ID"
 
+tap_rps_choice() {
+  local serial="$1"
+  local choice="$2"
+  local design_x point x y
+  case "$choice" in
+    rock) design_x=188 ;;
+    paper) design_x=540 ;;
+    scissors) design_x=892 ;;
+    *) return 2 ;;
+  esac
+  point="$(design_point_for_serial "$serial" "$design_x" 950)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+wait_for_rps_revision() {
+  local match_id="$1"
+  local expected_revision="$2"
+  local expected_status="$3"
+  local deadline=$((SECONDS + WAIT_SECONDS)) snapshot
+  while ((SECONDS < deadline)); do
+    snapshot="$(match_show "$match_id" 2>/dev/null || true)"
+    if [[ "$(jq -r '.revision // -1' <<<"$snapshot" 2>/dev/null)" == "$expected_revision" \
+      && "$(jq -r '.status // ""' <<<"$snapshot" 2>/dev/null)" == "$expected_status" ]]; then
+      printf '%s\n' "$snapshot"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+assert_rps_client_state() {
+  local serial="$1"
+  local match_id="$2"
+  local revision="$3"
+  local round_number="$4"
+  local me_locked="$5"
+  local opponent_locked="$6"
+  wait_for_log_marker "$serial" \
+    "GAMEBOX_RPS_STATE match=$match_id revision=$revision round=$round_number me_locked=$me_locked opponent_locked=$opponent_locked"
+}
+
+gamebox_test_progress 'Gamebox E2E: validating RPS draw, best-of-three, sealed reconnect, and completion...'
+refresh_game_log_boundaries rps-best-of-three \
+  || fail "could not establish RPS log boundaries"
+tap_identifier "$SERIAL_A" rps-choose-opponent
+tap_identifier "$SERIAL_A" rps-format-best_of_three
+rps_opponent_identifier="$(wait_for_rps_opponent_identifier "$SERIAL_A")" \
+  || fail "A did not expose exactly one enabled RPS opponent resource-id"
+[[ "$rps_opponent_identifier" == "rps-opponent-$USER_ID_B" ]] \
+  || fail "RPS opponent resource-id did not identify B"
+tap_identifier "$SERIAL_A" "$rps_opponent_identifier"
+RPS_MATCH_ID="$(wait_for_new_rps_ready_match_id "$SERIAL_A")" \
+  || fail "A did not launch the RPS best-of-three match"
+[[ "$RPS_MATCH_ID" =~ $uuid_pattern ]] \
+  || fail "RPS ready marker did not contain a canonical match ID"
+wait_for_identifier "$SERIAL_B" rps-continue-match >/dev/null \
+  || fail "B did not expose the invited RPS match"
+wait_for_visible_text "$SERIAL_B" '赛制：三局两胜' \
+  || fail "B could not see the persisted RPS format before launch"
+tap_identifier "$SERIAL_B" rps-continue-match
+wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH_ID" \
+  || fail "B did not launch the invited RPS match"
+rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 0 active)" \
+  || fail "RPS match did not expose its initial authoritative state"
+[[ "$(jq -r '.gameId' <<<"$rps_snapshot")" == "rps" \
+  && "$(jq -r '.format' <<<"$rps_snapshot")" == "best_of_three" \
+  && "$(jq -r '.round' <<<"$rps_snapshot")" == "1" ]] \
+  || fail "RPS match did not persist the selected best-of-three format"
+
+tap_rps_choice "$SERIAL_A" rock || fail "A could not choose rock in the draw round"
+tap_rps_choice "$SERIAL_B" rock || fail "B could not choose rock in the draw round"
+rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 2 active)" \
+  || fail "RPS draw did not commit exactly one lock and reveal per player"
+[[ "$(jq -r '.round' <<<"$rps_snapshot")" == "2" \
+  && "$(jq -r --arg a "$USER_ID_A" '.scores[$a] // 0' <<<"$rps_snapshot")" == "0" \
+  && "$(jq -r --arg b "$USER_ID_B" '.scores[$b] // 0' <<<"$rps_snapshot")" == "0" ]] \
+  || fail "RPS draw changed score or failed to advance the round"
+assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 2 2 false false \
+  || fail "A did not render the repeated round after a draw"
+assert_rps_client_state "$SERIAL_B" "$RPS_MATCH_ID" 2 2 false false \
+  || fail "B did not render the repeated round after a draw"
+
+tap_rps_choice "$SERIAL_A" paper || fail "A could not choose paper in round two"
+tap_rps_choice "$SERIAL_B" rock || fail "B could not choose rock in round two"
+rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 4 active)" \
+  || fail "RPS second round did not reveal authoritatively"
+[[ "$(jq -r '.round' <<<"$rps_snapshot")" == "3" \
+  && "$(jq -r --arg a "$USER_ID_A" '.scores[$a] // 0' <<<"$rps_snapshot")" == "1" ]] \
+  || fail "RPS second round did not award A exactly one point"
+
+tap_rps_choice "$SERIAL_A" rock || fail "A could not lock rock before reconnect"
+rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 5 active)" \
+  || fail "RPS sealed choice was not persisted before reconnect"
+assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 5 3 true false \
+  || fail "A did not render its local locked state"
+assert_rps_client_state "$SERIAL_B" "$RPS_MATCH_ID" 5 3 false true \
+  || fail "B did not render only the opponent lock state"
+refresh_game_log_boundary "$SERIAL_A" rps-sealed-reconnect \
+  || fail "could not establish the RPS reconnect log boundary"
+adb_for "$SERIAL_A" shell am force-stop "$PACKAGE" >/dev/null \
+  || fail "could not force-stop A during the sealed RPS round"
+start_flutter "$SERIAL_A"
+wait_for_identifier "$SERIAL_A" rps-continue-match >/dev/null \
+  || fail "A did not retain the active RPS match after force-stop"
+tap_identifier "$SERIAL_A" rps-continue-match
+wait_for_log_marker "$SERIAL_A" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH_ID" \
+  || fail "A did not relaunch RPS after force-stop"
+assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 5 3 true false \
+  || fail "A reconnect did not restore its own sealed choice without revealing B"
+
+tap_rps_choice "$SERIAL_B" scissors || fail "B could not complete the deciding RPS round"
+rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 6 finished)" \
+  || fail "RPS best-of-three match did not complete at two wins"
+[[ "$(jq -r '.result' <<<"$rps_snapshot")" == "rounds" \
+  && "$(jq -r '.winnerUserId' <<<"$rps_snapshot")" == "$USER_ID_A" \
+  && "$(jq -r --arg a "$USER_ID_A" '.scores[$a] // 0' <<<"$rps_snapshot")" == "2" ]] \
+  || fail "RPS terminal state did not preserve the authoritative winner and score"
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+  wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$RPS_MATCH_ID result=rounds" \
+    || fail "$serial did not render the shared RPS result"
+done
+tap_design_back "$SERIAL_A" || fail "A could not leave the RPS result"
+tap_design_back "$SERIAL_B" || fail "B could not leave the RPS result"
+wait_for_identifier "$SERIAL_A" rps-choose-opponent >/dev/null \
+  || fail "A RPS slot was not released after completion"
+wait_for_identifier "$SERIAL_B" rps-choose-opponent >/dev/null \
+  || fail "B RPS slot was not released after completion"
+
 restore_selected_device_visuals \
   || fail "could not restore both selected devices to their original ui mode and display override"
 [[ "$UI_MODE_MUTATED_A" == "0" && "$UI_MODE_MUTATED_B" == "0" \
@@ -3596,6 +3770,7 @@ jq -n \
   --arg matchId "$MATCH_ID" \
   --arg secondMatchId "$SECOND_MATCH_ID" \
   --arg thirdMatchId "$THIRD_MATCH_ID" \
+  --arg rpsMatchId "$RPS_MATCH_ID" \
   --arg recoverySerial "$RECOVERY_SERIAL" \
   --argjson recoveryBefore 3 \
   --argjson recoveryAfter 3 \
@@ -3611,6 +3786,7 @@ jq -n \
     recovery:{serial:$recoverySerial,beforeRevision:$recoveryBefore,afterRevision:$recoveryAfter,eventLoss:false},
     secondMatch:{id:$secondMatchId,revision:1,status:"cancelled",slotsReleased:true},
     thirdMatch:{id:$thirdMatchId,revision:2,status:"finished",result:"resignation",slotsReleased:true},
+    rpsMatch:{id:$rpsMatchId,revision:6,status:"finished",result:"rounds",format:"best_of_three",slotsReleased:true},
     assertions:[
       "resource-id-only-ui-driving","two-registered-users","random-color-mapping",
       "revision-and-board-after-each-move","dual-device-state-markers",
@@ -3623,6 +3799,8 @@ jq -n \
       "exact-owned-server-pause-stop-restart","ui-mode-and-display-restored",
       "selected-device-semantics-integration","clean-build-provenance",
       "installed-apk-sha256-equality"
+      ,"rps-invitee-format-visible","rps-draw-repeat-round","rps-best-of-three-completion",
+      "rps-sealed-choice-reconnect","rps-opponent-choice-not-exposed"
     ]
   }' >"$ARTIFACT_DIR/summary.json"
 

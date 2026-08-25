@@ -1,0 +1,174 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://games/rps/rps_controller.gd" id="1_controller"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_back_button.tscn" id="2_back"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_connection_banner.tscn" id="3_connection"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_snackbar.tscn" id="4_snackbar"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="5_dialog"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_loading_overlay.tscn" id="6_loading"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="7_result"]
+
+[node name="Rps" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_controller")
+
+[node name="Background" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="BackButton" parent="." instance=ExtResource("2_back")]
+offset_left = 48.0
+offset_top = 72.0
+offset_right = 240.0
+offset_bottom = 168.0
+custom_minimum_size = Vector2(192, 96)
+
+[node name="TitleLabel" type="Label" parent="."]
+offset_left = 260.0
+offset_top = 72.0
+offset_right = 820.0
+offset_bottom = 168.0
+theme_type_variation = &"HeaderMedium"
+text = "石头剪刀布"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FormatLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 196.0
+offset_right = 1032.0
+offset_bottom = 260.0
+text = "一局定胜负"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ConnectionBanner" parent="." instance=ExtResource("3_connection")]
+offset_left = 48.0
+offset_top = 176.0
+offset_right = 1032.0
+offset_bottom = 284.0
+
+[node name="ScorePanel" type="PanelContainer" parent="."]
+offset_left = 144.0
+offset_top = 312.0
+offset_right = 936.0
+offset_bottom = 492.0
+theme_type_variation = &"GameboxResultPanel"
+
+[node name="ScoreLabel" type="Label" parent="ScorePanel"]
+layout_mode = 2
+text = "你 0  :  0 对手"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RoundLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 540.0
+offset_right = 1032.0
+offset_bottom = 620.0
+text = "第 1 轮"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="StateLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 628.0
+offset_right = 1032.0
+offset_bottom = 708.0
+text = "请选择本轮手势"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="OpponentLockLabel" type="Label" parent="."]
+offset_left = 48.0
+offset_top = 716.0
+offset_right = 1032.0
+offset_bottom = 780.0
+text = "等待对手出拳"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ChoicePanel" type="PanelContainer" parent="."]
+offset_left = 48.0
+offset_top = 824.0
+offset_right = 1032.0
+offset_bottom = 1110.0
+
+[node name="Choices" type="HBoxContainer" parent="ChoicePanel"]
+layout_mode = 2
+alignment = 1
+
+[node name="RockButton" type="Button" parent="ChoicePanel/Choices"]
+custom_minimum_size = Vector2(280, 220)
+layout_mode = 2
+text = "●\n石头"
+
+[node name="PaperButton" type="Button" parent="ChoicePanel/Choices"]
+custom_minimum_size = Vector2(280, 220)
+layout_mode = 2
+text = "▰\n布"
+
+[node name="ScissorsButton" type="Button" parent="ChoicePanel/Choices"]
+custom_minimum_size = Vector2(280, 220)
+layout_mode = 2
+text = "✂\n剪刀"
+
+[node name="RevealPanel" type="PanelContainer" parent="."]
+visible = false
+offset_left = 96.0
+offset_top = 1160.0
+offset_right = 984.0
+offset_bottom = 1408.0
+theme_type_variation = &"GameboxResultPanel"
+
+[node name="RevealLabel" type="Label" parent="RevealPanel"]
+layout_mode = 2
+text = "上一轮：你出石头 · 对手出剪刀\n你赢下本轮"
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="ErrorSnackbar" parent="." instance=ExtResource("4_snackbar")]
+offset_left = 48.0
+offset_top = 1448.0
+offset_right = 1032.0
+offset_bottom = 1560.0
+z_index = 30
+
+[node name="ResignButton" type="Button" parent="."]
+visible = false
+offset_left = 354.0
+offset_top = 1600.0
+offset_right = 726.0
+offset_bottom = 1704.0
+custom_minimum_size = Vector2(372, 104)
+theme_type_variation = &"GameboxSecondaryButton"
+text = "认输并结束对局"
+
+[node name="ResignDialog" parent="." instance=ExtResource("5_dialog")]
+
+[node name="LoadingOverlay" parent="." instance=ExtResource("6_loading")]
+layout_mode = 0
+anchors_preset = 0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = 48.0
+offset_top = 312.0
+offset_right = 1032.0
+offset_bottom = 1408.0
+
+[node name="ResultPanel" parent="." instance=ExtResource("7_result")]
+offset_left = 240.0
+offset_top = 1448.0
+offset_right = 840.0
+offset_bottom = 1710.0

@@ -24,6 +24,7 @@ const TERMINAL_HANDSHAKE_REASONS := ["resume_expired", "ticket_invalid", "invali
 const KNOWN_ERROR_CODES := [
 	"ticket_invalid", "resume_expired", "stale_revision", "action_conflict",
 	"not_your_turn", "cell_occupied", "invalid_request", "match_not_found", "internal_error",
+	"choice_locked",
 ]
 
 var connection_state := STATE_CLOSED
@@ -36,6 +37,7 @@ var _random_source: Variant
 var _game_state: Variant
 var _ws_url := ""
 var _match_id := ""
+var _game_id := "gomoku"
 var _launch_ticket := ""
 var _resume_token := ""
 var _attempt_active := false
@@ -65,14 +67,21 @@ func _init(
 	)
 
 
-func start(ws_url: String, match_id: String, launch_ticket: String, game_state: Variant) -> bool:
+func start(
+	ws_url: String,
+	match_id: String,
+	launch_ticket: String,
+	game_state: Variant,
+	game_id: String = "gomoku"
+) -> bool:
 	if connection_state != STATE_CLOSED or not _dependencies_configured() \
 		or not _valid_ws_url(ws_url) or not _canonical_uuid(match_id) \
 		or launch_ticket.is_empty() or launch_ticket.length() > 256 or launch_ticket.to_utf8_buffer().size() > 256 \
-		or game_state == null:
+		or game_state == null or game_id not in ["gomoku", "rps"]:
 		return false
 	_ws_url = ws_url
 	_match_id = match_id
+	_game_id = game_id
 	_launch_ticket = launch_ticket
 	_game_state = game_state
 	_failure_count = 0
@@ -121,6 +130,7 @@ func request_move(x: int, y: int) -> String:
 		_game_state.revision,
 		action_id,
 		{"x": x, "y": y},
+		_game_id,
 	)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		_game_state.clear_pending(action_id)
@@ -137,11 +147,35 @@ func request_resign() -> String:
 	if action_id.is_empty() or not _game_state.mark_pending_resign(action_id, local_user_id):
 		return ""
 	var encoded: Dictionary = Protocol.encode_action(
-		Protocol.TYPE_GOMOKU_RESIGN_REQUESTED,
+		Protocol.TYPE_RPS_RESIGN_REQUESTED if _game_id == "rps" else Protocol.TYPE_GOMOKU_RESIGN_REQUESTED,
 		_match_id,
 		_game_state.revision,
 		action_id,
 		{},
+		_game_id,
+	)
+	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
+		_game_state.clear_pending(action_id)
+		_attempt_failed("send_failed")
+		return ""
+	return action_id
+
+
+func request_choice(choice: String) -> String:
+	if _game_id != "rps" or choice not in ["rock", "paper", "scissors"] \
+		or connection_state != STATE_CONNECTED or _awaiting_initial_snapshot or _snapshot_requested \
+		or not _game_state.can_request_choice(choice, local_user_id):
+		return ""
+	var action_id := _new_action_id()
+	if action_id.is_empty() or not _game_state.mark_pending_choice(action_id, choice, local_user_id):
+		return ""
+	var encoded: Dictionary = Protocol.encode_action(
+		Protocol.TYPE_RPS_CHOICE_REQUESTED,
+		_match_id,
+		_game_state.revision,
+		action_id,
+		{"choice": choice},
+		_game_id,
 	)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		_game_state.clear_pending(action_id)
@@ -171,6 +205,7 @@ func close() -> void:
 	_launch_ticket = ""
 	_resume_token = ""
 	_ws_url = ""
+	_game_id = "gomoku"
 	_player_presence.clear()
 	_awaiting_initial_snapshot = false
 	_handshake_revision = -1
@@ -259,6 +294,7 @@ func _handle_text(text: String) -> bool:
 		Protocol.TYPE_PLATFORM_ERROR:
 			handled = _handle_error(envelope)
 		Protocol.TYPE_GOMOKU_MOVE_ACCEPTED, Protocol.TYPE_GOMOKU_RESIGNED, \
+		Protocol.TYPE_RPS_CHOICE_LOCKED, Protocol.TYPE_RPS_ROUND_REVEALED, Protocol.TYPE_RPS_RESIGNED, \
 		Protocol.TYPE_PLATFORM_MATCH_CANCELLED, Protocol.TYPE_PLATFORM_MATCH_ABANDONED:
 			handled = _handle_event(envelope)
 		_:
@@ -348,7 +384,7 @@ func _handle_ping(envelope: Dictionary) -> bool:
 	var payload: Variant = envelope["payload"]
 	if not payload is Dictionary or not _exact_keys(payload, ["nonce"]) or not _canonical_uuid(payload.get("nonce")):
 		return _protocol_failure()
-	var encoded: Dictionary = Protocol.encode_pong(_match_id, payload["nonce"])
+	var encoded: Dictionary = Protocol.encode_pong(_match_id, payload["nonce"], _game_id)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		_attempt_failed("send_failed")
 		return false
@@ -415,7 +451,7 @@ func _request_snapshot() -> bool:
 		return true
 	_snapshot_requested = true
 	snapshot_sync_started.emit()
-	var encoded: Dictionary = Protocol.encode_snapshot_request(_match_id, max(_game_state.revision, 0))
+	var encoded: Dictionary = Protocol.encode_snapshot_request(_match_id, max(_game_state.revision, 0), _game_id)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		_attempt_failed("send_failed")
 		return false
@@ -481,7 +517,7 @@ func _set_connection_state(next_state: String) -> void:
 
 
 func _valid_bound(envelope: Dictionary, message_type: String) -> bool:
-	return envelope.get("protocolVersion") == 1 and envelope.get("gameId") == "gomoku" \
+	return envelope.get("protocolVersion") == 1 and envelope.get("gameId") == _game_id \
 		and envelope.get("matchId") == _match_id and envelope.get("type") == message_type \
 		and typeof(envelope.get("revision")) == TYPE_INT and envelope["revision"] >= 0 \
 		and not envelope.has("expectedRevision")

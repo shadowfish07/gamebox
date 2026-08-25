@@ -16,6 +16,7 @@ import (
 
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 )
 
@@ -146,6 +147,24 @@ type gomokuSnapshotPayload struct {
 	NextColor    string                                     `json:"nextColor"`
 	WinnerUserID *string                                    `json:"winnerUserId"`
 	Result       *string                                    `json:"result"`
+}
+
+type rpsPlayerSnapshot struct {
+	UserID string  `json:"userId"`
+	Score  int     `json:"score"`
+	Locked bool    `json:"locked"`
+	Choice *string `json:"choice,omitempty"`
+}
+
+type rpsSnapshotPayload struct {
+	Status       string            `json:"status"`
+	Format       string            `json:"format"`
+	Round        int               `json:"round"`
+	Me           rpsPlayerSnapshot `json:"me"`
+	Opponent     rpsPlayerSnapshot `json:"opponent"`
+	LastReveal   *rpsRevealPayload `json:"lastReveal"`
+	WinnerUserID *string           `json:"winnerUserId"`
+	Result       *string           `json:"result"`
 }
 
 func NewHub(service *Service, presence *Presence, serviceClock clock.Clock) (*Hub, error) {
@@ -303,7 +322,7 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if marshalErr != nil {
 		return
 	}
-	snapshotMessage, marshalErr := snapshotEnvelope(snapshot)
+	snapshotMessage, marshalErr := snapshotEnvelope(snapshot, connection.userID)
 	if marshalErr != nil || !connection.enqueueInitial(connected, snapshotMessage, snapshot.Match.Revision) {
 		return
 	}
@@ -322,7 +341,7 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		if snapshotErr != nil {
 			return
 		}
-		snapshotMessage, marshalErr = snapshotEnvelope(snapshot)
+		snapshotMessage, marshalErr = snapshotEnvelope(snapshot, connection.userID)
 		if marshalErr != nil || connection.enqueueState(snapshotMessage, snapshot.Match.Revision) != enqueueStateQueued {
 			return
 		}
@@ -721,7 +740,7 @@ func (connection *hubConnection) enqueueInitial(connected, snapshot []byte, revi
 }
 
 func (connection *hubConnection) enqueueErrorAndSnapshot(code, actionID string, snapshot Snapshot) enqueueStateResult {
-	snapshotMessage, err := snapshotEnvelope(snapshot)
+	snapshotMessage, err := snapshotEnvelope(snapshot, connection.userID)
 	if err != nil {
 		return enqueueStateInvalid
 	}
@@ -843,7 +862,7 @@ func (connection *hubConnection) readLoop() {
 				continue
 			}
 			connection.sendLatestSnapshot()
-		case protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested:
+		case protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
 			connection.applyAction(envelope)
 		default:
 			connection.enqueueError("invalid_request", envelope.ActionID)
@@ -973,7 +992,7 @@ func (connection *hubConnection) sendStaleResponse(actionID string) {
 }
 
 func (connection *hubConnection) enqueueSnapshot(snapshot Snapshot) enqueueStateResult {
-	message, err := snapshotEnvelope(snapshot)
+	message, err := snapshotEnvelope(snapshot, connection.userID)
 	if err != nil {
 		return enqueueStateInvalid
 	}
@@ -1011,7 +1030,16 @@ func (connection *hubConnection) close() {
 	})
 }
 
-func snapshotEnvelope(snapshot Snapshot) ([]byte, error) {
+func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
+	if snapshot.Match.GameID == rps.GameID {
+		if len(viewerIDs) != 1 {
+			return nil, ErrInternal
+		}
+		return rpsSnapshotEnvelope(snapshot, viewerIDs[0])
+	}
+	if snapshot.Match.GameID != gomoku.GameID {
+		return nil, ErrInternal
+	}
 	var payload gomokuSnapshotPayload
 	if json.Unmarshal(snapshot.Game.State, &payload) != nil || len(snapshot.Players) != 2 {
 		return nil, ErrInternal
@@ -1037,6 +1065,48 @@ func snapshotEnvelope(snapshot Snapshot) ([]byte, error) {
 	return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
 }
 
+func rpsSnapshotEnvelope(snapshot Snapshot, viewerID string) ([]byte, error) {
+	var full struct {
+		Status       string            `json:"status"`
+		Format       string            `json:"format"`
+		Round        int               `json:"round"`
+		Choices      map[string]string `json:"choices"`
+		Scores       map[string]int    `json:"scores"`
+		LastReveal   *rpsRevealPayload `json:"lastReveal"`
+		WinnerUserID *string           `json:"winnerUserId"`
+		Result       *string           `json:"result"`
+	}
+	if json.Unmarshal(snapshot.Game.State, &full) != nil || len(snapshot.Players) != 2 || full.Round < 1 || (full.Format != rps.FormatSingleRound && full.Format != rps.FormatBestOfThree) {
+		return nil, ErrInternal
+	}
+	var opponentID string
+	member := false
+	for _, player := range snapshot.Players {
+		if player.UserID == viewerID {
+			member = true
+		} else {
+			opponentID = player.UserID
+		}
+	}
+	if !member || opponentID == "" {
+		return nil, ErrInternal
+	}
+	payload := rpsSnapshotPayload{
+		Status: snapshot.Match.Status, Format: full.Format, Round: full.Round,
+		Me:         rpsPlayerSnapshot{UserID: viewerID, Score: full.Scores[viewerID]},
+		Opponent:   rpsPlayerSnapshot{UserID: opponentID, Score: full.Scores[opponentID]},
+		LastReveal: full.LastReveal, WinnerUserID: cloneStringPointer(snapshot.Match.WinnerUserID), Result: cloneStringPointer(snapshot.Match.Result),
+	}
+	if choice, ok := full.Choices[viewerID]; ok {
+		payload.Me.Locked = true
+		payload.Me.Choice = stringPointer(choice)
+	}
+	if _, ok := full.Choices[opponentID]; ok {
+		payload.Opponent.Locked = true
+	}
+	return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+}
+
 func eventEnvelope(gameID string, event Event) ([]byte, error) {
 	if gameID == "" || event.MatchID == "" || event.Revision <= 0 || event.Type == "" {
 		return nil, ErrInvalidRequest
@@ -1045,7 +1115,19 @@ func eventEnvelope(gameID string, event Event) ([]byte, error) {
 	if event.ActionID != nil {
 		actionID = *event.ActionID
 	}
-	return boundEnvelope(gameID, event.MatchID, event.Revision, event.Type, actionID, json.RawMessage(event.Payload))
+	payload := any(json.RawMessage(event.Payload))
+	if gameID == rps.GameID && event.Type == rps.ChoiceLocked {
+		locked, err := decodeRpsLocked(event.Payload)
+		if err != nil {
+			return nil, ErrInternal
+		}
+		payload = struct {
+			Round  int    `json:"round"`
+			UserID string `json:"userId"`
+			Locked bool   `json:"locked"`
+		}{Round: locked.Round, UserID: locked.UserID, Locked: true}
+	}
+	return boundEnvelope(gameID, event.MatchID, event.Revision, event.Type, actionID, payload)
 }
 
 func boundEnvelope(gameID, matchID string, revision int64, messageType, actionID string, payload any) ([]byte, error) {
@@ -1073,6 +1155,8 @@ func safeActionErrorCode(err error) string {
 		return "not_your_turn"
 	case errors.Is(err, gomoku.ErrCellOccupied):
 		return "cell_occupied"
+	case errors.Is(err, rps.ErrChoiceLocked):
+		return "choice_locked"
 	case errors.Is(err, ErrInvalidRequest):
 		return "invalid_request"
 	case errors.Is(err, ErrMatchNotFound):
@@ -1096,6 +1180,8 @@ func fixedErrorMessage(code string) string {
 		return "It is not your turn"
 	case "cell_occupied":
 		return "The board cell is occupied"
+	case "choice_locked":
+		return "Your choice is already locked"
 	case "match_not_found":
 		return "The match was not found"
 	case "internal_error":

@@ -7,7 +7,7 @@ static func cases() -> Array:
 	return [
 		{"name": "registry resolves gomoku to a packed scene", "run": _resolves_gomoku_scene},
 		{"name": "registry safely rejects unknown games", "run": _rejects_unknown_game},
-		{"name": "registry contains only gomoku", "run": _contains_only_gomoku},
+		{"name": "registry contains gomoku and rps", "run": _contains_supported_games},
 	]
 
 
@@ -24,10 +24,11 @@ static func _rejects_unknown_game() -> bool:
 		and _check(result.get("message", "").length() > 0, "expected safe error message")
 
 
-static func _contains_only_gomoku() -> bool:
+static func _contains_supported_games() -> bool:
 	var game_ids: PackedStringArray = GameRegistry.game_ids()
-	return _check(game_ids.size() == 1, "expected exactly one registered game") \
-		and _check(game_ids[0] == "gomoku", "expected gomoku to be the only game")
+	return _check(game_ids.size() == 2, "expected exactly two registered games") \
+		and _check(game_ids.has("gomoku"), "expected gomoku to remain registered") \
+		and _check(game_ids.has("rps"), "expected rps to be registered")
 
 
 static func _check(condition: bool, message: String) -> bool:

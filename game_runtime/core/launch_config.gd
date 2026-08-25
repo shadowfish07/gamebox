@@ -1,7 +1,7 @@
 class_name LaunchConfig
 extends RefCounted
 
-const GAME_ID := "gomoku"
+const GAME_IDS := ["gomoku", "rps"]
 const REQUIRED_KEYS := ["--game-id", "--match-id", "--launch-ticket", "--ws-url"]
 const SAFE_ERROR_MESSAGE := "Invalid launch configuration."
 
@@ -24,7 +24,7 @@ static func parse(args: PackedStringArray) -> Dictionary:
 		if not values.has(key):
 			return _failure("missing_required_argument")
 
-	if values["--game-id"] != GAME_ID:
+	if values["--game-id"] not in GAME_IDS:
 		return _failure("unsupported_game_id")
 	if not _is_canonical_uuid(values["--match-id"]):
 		return _failure("invalid_match_id")

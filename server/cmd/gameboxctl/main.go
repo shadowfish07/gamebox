@@ -17,6 +17,7 @@ import (
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/store"
 )
@@ -200,11 +201,20 @@ type matchShowResponse struct {
 	Players      []matchPlayerResponse                      `json:"players"`
 	BoardSize    int                                        `json:"boardSize"`
 	Board        [gomoku.BoardSize * gomoku.BoardSize]uint8 `json:"board"`
+	Format       string                                     `json:"format,omitempty"`
+	Round        int                                        `json:"round,omitempty"`
+	Scores       map[string]int                             `json:"scores,omitempty"`
 }
 
 type gomokuStateView struct {
 	Board     [gomoku.BoardSize * gomoku.BoardSize]uint8 `json:"board"`
 	BoardSize int                                        `json:"boardSize"`
+}
+
+type rpsStateView struct {
+	Format string         `json:"format"`
+	Round  int            `json:"round"`
+	Scores map[string]int `json:"scores"`
 }
 
 func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -241,20 +251,46 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	if snapshot.Match.GameID != gomoku.GameID || len(snapshot.Players) != 2 {
+	if len(snapshot.Players) != 2 {
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	var state gomokuStateView
-	if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != gomoku.BoardSize {
-		writeLine(stderr, matchFailed)
-		return exitFailure
-	}
-	for _, cell := range state.Board {
-		if cell > uint8(gomoku.White) {
+	var board [gomoku.BoardSize * gomoku.BoardSize]uint8
+	var boardSize int
+	var format string
+	var round int
+	var scores map[string]int
+	switch snapshot.Match.GameID {
+	case gomoku.GameID:
+		var state gomokuStateView
+		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != gomoku.BoardSize {
 			writeLine(stderr, matchFailed)
 			return exitFailure
 		}
+		for _, cell := range state.Board {
+			if cell > uint8(gomoku.White) {
+				writeLine(stderr, matchFailed)
+				return exitFailure
+			}
+		}
+		board, boardSize = state.Board, state.BoardSize
+	case rps.GameID:
+		var state rpsStateView
+		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.Round < 1 ||
+			(state.Format != rps.FormatSingleRound && state.Format != rps.FormatBestOfThree) || state.Scores == nil {
+			writeLine(stderr, matchFailed)
+			return exitFailure
+		}
+		for userID, score := range state.Scores {
+			if userID == "" || score < 0 || score > 2 {
+				writeLine(stderr, matchFailed)
+				return exitFailure
+			}
+		}
+		format, round, scores = state.Format, state.Round, state.Scores
+	default:
+		writeLine(stderr, matchFailed)
+		return exitFailure
 	}
 	players := make([]matchPlayerResponse, len(snapshot.Players))
 	for index, player := range snapshot.Players {
@@ -264,7 +300,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		ID: snapshot.Match.ID, GameID: snapshot.Match.GameID, Status: snapshot.Match.Status,
 		Revision: snapshot.Match.Revision, Result: cloneString(snapshot.Match.Result),
 		WinnerUserID: cloneString(snapshot.Match.WinnerUserID), Players: players,
-		BoardSize: state.BoardSize, Board: state.Board,
+		BoardSize: boardSize, Board: board, Format: format, Round: round, Scores: scores,
 	}
 	if err := json.NewEncoder(stdout).Encode(response); err != nil {
 		writeLine(stderr, matchFailed)
