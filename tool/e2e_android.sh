@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly PACKAGE="me.zqydev.gamebox"
 readonly MAIN_ACTIVITY="$PACKAGE/.MainActivity"
@@ -1459,16 +1459,17 @@ capture_failure() {
 
 fail() {
   local message="$1"
+  local exit_code="${2:-1}"
   printf 'Gamebox E2E failed: %s\nArtifacts: %s\n' "$message" "$ARTIFACT_DIR" >&2
   capture_failure "$message"
-  exit 1
+  exit "$exit_code"
 }
 
 unexpected_error() {
   local exit_code="$1"
   local line="$2"
   trap - ERR
-  fail "unexpected harness command failure at line $line (exit $exit_code)"
+  fail "unexpected harness command failure at line $line (exit $exit_code)" "$exit_code"
 }
 trap 'unexpected_error "$?" "$LINENO"' ERR
 
