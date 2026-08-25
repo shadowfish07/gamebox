@@ -388,6 +388,26 @@ refresh_game_log_boundaries() {
   LOG_BOUNDARY_B="$boundary_b"
 }
 
+refresh_game_log_boundary() {
+  local serial="$1"
+  local suffix="$2"
+  [[ "$suffix" =~ ^[A-Za-z0-9_-]{1,48}$ ]] || return 2
+  [[ "$serial" == "$SERIAL_A" || "$serial" == "$SERIAL_B" ]] || return 2
+  local device_label boundary
+  if [[ "$serial" == "$SERIAL_A" ]]; then
+    device_label=A
+  else
+    device_label=B
+  fi
+  boundary="GAMEBOX_E2E_${device_label}_${suffix}_$RUN_ID"
+  adb_for "$serial" shell log -p i -t GameboxE2E "$boundary" >/dev/null || return 1
+  if [[ "$device_label" == A ]]; then
+    LOG_BOUNDARY_A="$boundary"
+  else
+    LOG_BOUNDARY_B="$boundary"
+  fi
+}
+
 capture_adb_devices() {
   local output_variable="$1"
   local captured_listing
@@ -686,8 +706,8 @@ run_helper_instrumentation() {
   local test_name="$2"
   local output_variable="$3"
   shift 3
-  local output status
-  if output="$(
+  local instrumentation_output status
+  if instrumentation_output="$(
     adb_for_timeout "$INPUT_TIMEOUT_SECONDS" "$serial" shell am instrument -w -r \
       -e class "$test_name" "$@" "$TEST_RUNNER" 2>&1
   )"; then
@@ -695,10 +715,10 @@ run_helper_instrumentation() {
   else
     status=$?
   fi
-  printf -v "$output_variable" '%s' "$output"
+  printf -v "$output_variable" '%s' "$instrumentation_output"
   ((status == 0)) \
-    && grep -F 'OK (1 test)' <<<"$output" >/dev/null \
-    && ! grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' <<<"$output" >/dev/null
+    && grep -F 'OK (1 test)' <<<"$instrumentation_output" >/dev/null \
+    && ! grep -E 'FAILURES!!!|Process crashed|INSTRUMENTATION_FAILED' <<<"$instrumentation_output" >/dev/null
 }
 
 clear_helper_clipboard() {
@@ -719,6 +739,10 @@ set_text_from_private_input() {
     "$serial" "$SET_TEXT_TEST" output \
     -e gameboxTextTarget "$target" \
     -e gameboxTextInputName "$input_name"; then
+    if [[ -n "${ARTIFACT_DIR:-}" ]]; then
+      printf '%s\n' "${output-}" | sanitize_stream \
+        >"$ARTIFACT_DIR/helper-${serial//[^A-Za-z0-9_.-]/_}-$target.log" || true
+    fi
     remove_private_input "$serial" "$input_name" || true
     clear_helper_clipboard "$serial" || true
     return 1
@@ -1051,7 +1075,7 @@ start_first_connect_loading_watch() {
   rm -f -- "$LOADING_WATCH_READY_FILE"
   {
     "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
-      "$ADB_BIN" -s "$serial" logcat -b all -v threadtime 2>/dev/null \
+      "$ADB_BIN" -s "$serial" logcat -b all -v threadtime -T 100 2>/dev/null \
       | awk -v marker="$boundary" '
           index($0, marker) {
             found = 1
@@ -1549,6 +1573,11 @@ self_test() {
   unset FAKE_ADB_MODE
   [[ "$LOG_BOUNDARY_A" == "old-A" && "$LOG_BOUNDARY_B" == "old-B" ]] \
     || { printf 'failed dual-device log boundary was partially committed\n' >&2; return 1; }
+  refresh_game_log_boundary fixture-A revision-8-single \
+    || { printf 'single-device log boundary fixture failed\n' >&2; return 1; }
+  [[ "$LOG_BOUNDARY_A" == "GAMEBOX_E2E_A_revision-8-single_fixture-run" \
+    && "$LOG_BOUNDARY_B" == "old-B" ]] \
+    || { printf 'single-device log boundary changed the unrelated device\n' >&2; return 1; }
 
   local private_secret='FixtureInvite_1234567890'
   local private_secret_base64
@@ -2759,7 +2788,7 @@ exercise_active_system_back() {
   local expected_revision="$2"
   local before after
   before="$(match_show "$MATCH_ID")" || fail "could not read the active match before Android Back"
-  refresh_game_log_boundaries active-system-back \
+  refresh_game_log_boundary "$serial" active-system-back \
     || fail "could not establish active Android Back log boundaries"
   adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
     || fail "could not send Android Back during the active match"

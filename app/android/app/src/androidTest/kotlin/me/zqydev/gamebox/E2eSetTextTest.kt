@@ -61,13 +61,13 @@ class E2eSetTextTest {
         // On narrow screens the IME can resize Flutter enough to remove a
         // sibling field from the semantics tree. Close only a confirmed-open
         // keyboard before the host performs its round-trip lookup.
-        when (parseKeyboardVisibility(device.executeShellCommand("dumpsys input_method"))) {
-            KeyboardVisibility.SHOWN -> {
+        when (parseE2eKeyboardVisibility(device.executeShellCommand("dumpsys input_method"))) {
+            E2eKeyboardVisibility.SHOWN -> {
                 device.pressBack()
                 device.waitForIdle()
             }
-            KeyboardVisibility.HIDDEN -> Unit
-            KeyboardVisibility.UNKNOWN -> throw AssertionError(
+            E2eKeyboardVisibility.HIDDEN -> Unit
+            E2eKeyboardVisibility.UNKNOWN -> throw AssertionError(
                 "Could not determine keyboard visibility: "
                     + "dumpsys input_method omitted mInputShown",
             )
