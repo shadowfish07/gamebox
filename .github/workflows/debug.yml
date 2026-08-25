@@ -63,10 +63,32 @@ jobs:
       - name: Import Godot runtime assets
         run: godot --headless --path game_runtime --import
 
+      - name: Configure stable debug signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required GitHub secret: ${name}" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > app/android/app/release-key.jks
+          {
+            echo "storeFile=release-key.jks"
+            echo "storePassword=${STORE_PASSWORD}"
+            echo "keyAlias=${KEY_ALIAS}"
+            echo "keyPassword=${KEY_PASSWORD}"
+          } > app/android/key.properties
+
       - name: Build debug APK with independent package name
         working-directory: app
         env:
           GAMEBOX_DEBUG_ARTIFACT: "true"
+          GAMEBOX_REQUIRE_RELEASE_SIGNING: "true"
           API_BASE_URL: ${{ inputs.api_base_url || env.DEBUG_API_BASE_URL }}
         run: |
           pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)"
@@ -89,8 +111,10 @@ jobs:
       - name: Stage APK for release
         run: |
           mkdir -p debug-assets
-          cp app/build/app/outputs/flutter-apk/app-debug.apk debug-assets/gamebox-debug.apk
-          (cd debug-assets && sha256sum gamebox-debug.apk > checksums.txt)
+          asset_name="gamebox-debug-${GITHUB_SHA}.apk"
+          checksum_name="checksums-${GITHUB_SHA}.txt"
+          cp app/build/app/outputs/flutter-apk/app-debug.apk "debug-assets/${asset_name}"
+          (cd debug-assets && sha256sum "${asset_name}" > "${checksum_name}")
 
       - name: Publish rolling debug release
         env:
@@ -99,27 +123,51 @@ jobs:
         run: |
           short_sha="${GITHUB_SHA::7}"
           pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' app/pubspec.yaml)"
+          asset_name="gamebox-debug-${GITHUB_SHA}.apk"
+          checksum_name="checksums-${GITHUB_SHA}.txt"
           notes="Debug build from \`${GITHUB_SHA}\` (\`${GITHUB_REF_NAME}\`)
 
           - version: \`${pubspec_version}-dev.${short_sha}\`
           - package: \`me.zqydev.gamebox.debug\`
-          - api: \`${API_BASE_URL}\`"
+          - api: \`${API_BASE_URL}\`
+          - apk: \`${asset_name}\`
+          - checksums: \`${checksum_name}\`"
           release_ref="refs/tags/${DEBUG_RELEASE_TAG}"
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" \
-              -f sha="${GITHUB_SHA}" \
-              -F force=true >/dev/null
-          else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref="${release_ref}" \
-              -f sha="${GITHUB_SHA}" >/dev/null
-          fi
+
+          update_debug_tag() {
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
+              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" \
+                -f sha="${GITHUB_SHA}" \
+                -F force=true >/dev/null
+            else
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+                -f ref="${release_ref}" \
+                -f sha="${GITHUB_SHA}" >/dev/null
+            fi
+          }
+
           if ! gh release view "${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
+            update_debug_tag
             gh release create "${DEBUG_RELEASE_TAG}" \
               --verify-tag \
               --prerelease \
               --title "Gamebox debug build" \
               --notes "${notes}"
           fi
-          gh release upload "${DEBUG_RELEASE_TAG}" debug-assets/* --clobber
+          existing_assets="$(gh release view "${DEBUG_RELEASE_TAG}" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          assets_to_upload=()
+          for asset in "${asset_name}" "${checksum_name}"; do
+            if ! grep -Fx -- "${asset}" <<<"${existing_assets}" >/dev/null; then
+              assets_to_upload+=("debug-assets/${asset}")
+            fi
+          done
+          if (( ${#assets_to_upload[@]} > 0 )); then
+            gh release upload "${DEBUG_RELEASE_TAG}" "${assets_to_upload[@]}"
+          fi
+          # Move the public tag only after the immutable assets are available.
+          update_debug_tag
           gh release edit "${DEBUG_RELEASE_TAG}" --notes "${notes}"
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f app/android/app/release-key.jks app/android/key.properties

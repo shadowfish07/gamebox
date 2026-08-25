@@ -119,6 +119,8 @@ android {
                 // unaffected.
                 applicationIdSuffix = ".debug"
                 manifestPlaceholders["appLabel"] = "gamebox debug"
+                signingConfig = signingConfigs.findByName("release")
+                    ?: error("GAMEBOX_DEBUG_ARTIFACT requires android/key.properties")
             }
         }
         release {
