@@ -162,8 +162,13 @@ static func _renders_presence_updates() -> bool:
 		or not _check(_presence_mark(scene) == "○", "offline presence did not use the offline mark"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
+	var connection_rect: Rect2 = (scene.get_node("ConnectionLabel") as Control).get_global_rect()
+	var presence_rect: Rect2 = (scene.get_node("OpponentPresence") as Control).get_global_rect()
 	return _cleanup(scene, _check(_opponent_presence(scene) == "对手状态未知", "reconnect retained stale opponent presence") \
-		and _check(_presence_mark(scene) == "·", "unknown presence did not use the neutral mark"))
+		and _check(_presence_mark(scene) == "·", "unknown presence did not use the neutral mark") \
+		and _check(scene.get_node("OpponentPresence").visible, "unknown opponent presence was hidden during reconnect") \
+		and _check(not connection_rect.intersects(presence_rect), \
+			"unknown presence overlaps the reconnect banner: connection=%s presence=%s" % [connection_rect, presence_rect]))
 
 
 static func _renders_terminal_states() -> bool:

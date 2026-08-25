@@ -49,14 +49,16 @@ type presenceMatchOperation struct {
 // Presence tracks transport connections, not user sessions. A user remains
 // online while any distinct connection for the match remains live.
 type Presence struct {
-	mu          sync.Mutex
-	connections map[presenceConnectionKey]time.Time
-	operationMu sync.Mutex
-	operations  map[string]*presenceMatchOperation
-	observerMu  sync.RWMutex
-	observer    presenceObserver
-	store       PresenceStore
-	clock       clock.Clock
+	mu                sync.Mutex
+	connections       map[presenceConnectionKey]time.Time
+	operationMu       sync.Mutex
+	operations        map[string]*presenceMatchOperation
+	notificationMu    sync.Mutex
+	notificationTails map[string]chan struct{}
+	observerMu        sync.RWMutex
+	observer          presenceObserver
+	store             PresenceStore
+	clock             clock.Clock
 }
 
 func NewPresence(store PresenceStore, serviceClock clock.Clock) (*Presence, error) {
@@ -64,10 +66,11 @@ func NewPresence(store PresenceStore, serviceClock clock.Clock) (*Presence, erro
 		return nil, ErrInvalidConfiguration
 	}
 	return &Presence{
-		connections: make(map[presenceConnectionKey]time.Time),
-		operations:  make(map[string]*presenceMatchOperation),
-		store:       store,
-		clock:       serviceClock,
+		connections:       make(map[presenceConnectionKey]time.Time),
+		operations:        make(map[string]*presenceMatchOperation),
+		notificationTails: make(map[string]chan struct{}),
+		store:             store,
+		clock:             serviceClock,
 	}, nil
 }
 
@@ -89,9 +92,15 @@ func (presence *Presence) Connect(ctx context.Context, matchID, userID, connecti
 	}
 	changed := false
 	defer func() {
-		release()
+		var dispatch func()
+		var delivered <-chan struct{}
 		if changed {
-			presence.notify(matchID, userID, true)
+			dispatch, delivered = presence.prepareNotification(matchID, userID, true)
+		}
+		release()
+		if dispatch != nil {
+			dispatch()
+			<-delivered
 		}
 	}()
 
@@ -152,9 +161,13 @@ func (presence *Presence) Disconnect(ctx context.Context, matchID, userID, conne
 	}
 	changed := false
 	defer func() {
-		release()
+		var dispatch func()
 		if changed {
-			presence.notify(matchID, userID, false)
+			dispatch, _ = presence.prepareNotification(matchID, userID, false)
+		}
+		release()
+		if dispatch != nil {
+			dispatch()
 		}
 	}()
 
@@ -282,9 +295,14 @@ func (presence *Presence) sweepMatch(ctx context.Context, matchID string, candid
 	}
 	offlineUserIDs := make([]string, 0, 2)
 	defer func() {
-		release()
+		dispatches := make([]func(), 0, len(offlineUserIDs))
 		for _, userID := range offlineUserIDs {
-			presence.notify(matchID, userID, false)
+			dispatch, _ := presence.prepareNotification(matchID, userID, false)
+			dispatches = append(dispatches, dispatch)
+		}
+		release()
+		for _, dispatch := range dispatches {
+			dispatch()
 		}
 	}()
 
@@ -345,6 +363,33 @@ func (presence *Presence) notify(matchID, userID string, online bool) {
 	if observer != nil {
 		observer.playerPresenceChanged(matchID, userID, online)
 	}
+}
+
+// prepareNotification reserves this boundary's position while the caller still
+// owns the match operation, then returns a dispatcher that starts only after
+// the operation is released. Chaining completion channels preserves commit
+// order without invoking a reentrant observer under the operation lock.
+func (presence *Presence) prepareNotification(matchID, userID string, online bool) (func(), <-chan struct{}) {
+	presence.notificationMu.Lock()
+	predecessor := presence.notificationTails[matchID]
+	done := make(chan struct{})
+	presence.notificationTails[matchID] = done
+	presence.notificationMu.Unlock()
+	dispatch := func() {
+		go func() {
+			if predecessor != nil {
+				<-predecessor
+			}
+			presence.notify(matchID, userID, online)
+			close(done)
+			presence.notificationMu.Lock()
+			if presence.notificationTails[matchID] == done {
+				delete(presence.notificationTails, matchID)
+			}
+			presence.notificationMu.Unlock()
+		}()
+	}
+	return dispatch, done
 }
 
 // Run starts the production 15-second expiry worker and returns after
@@ -438,7 +483,8 @@ func (presence *Presence) releaseMatchOperation(matchID string, operation *prese
 }
 
 func (presence *Presence) configured() bool {
-	return presence != nil && presence.connections != nil && presence.operations != nil && !nilDependency(presence.store) && !nilDependency(presence.clock)
+	return presence != nil && presence.connections != nil && presence.operations != nil &&
+		presence.notificationTails != nil && !nilDependency(presence.store) && !nilDependency(presence.clock)
 }
 
 func sanitizePresenceError(ctx context.Context, err error) error {

@@ -54,9 +54,9 @@ vertical_alignment = 1
 
 [node name="ConnectionLabel" parent="." instance=ExtResource("4_connection")]
 offset_left = 48.0
-offset_top = 256.0
+offset_top = 172.0
 offset_right = 1032.0
-offset_bottom = 320.0
+offset_bottom = 276.0
 
 [node name="OpponentPresence" type="CenterContainer" parent="."]
 visible = false

@@ -305,8 +305,7 @@ func _refresh_ui() -> void:
 		status_text = _error_text if not _error_text.is_empty() else "请返回大厅"
 	$StatusLabel.text = status_text
 	$ConnectionLabel.present(_connection_state, _connection_detail())
-	$OpponentPresence.visible = has_state and not terminal and _connection_state == "connected" \
-		and not _awaiting_snapshot
+	$OpponentPresence.visible = has_state and not terminal
 	$OpponentPresence/Content/PresenceDot.text = _opponent_presence_mark(opponent_presence)
 	$OpponentPresence/Content/OpponentPresenceLabel.text = _opponent_presence_text(opponent_presence)
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""

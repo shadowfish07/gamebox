@@ -514,12 +514,16 @@ xml_query() {
       exit 3 unless values.all?(&:empty?)
     when "identifier-count"
       puts nodes.count { |node| node.attributes["resource-id"] == expected }
-    when "visible-text"
+    when "visible-text", "visible-text-count"
       matches = nodes.select do |node|
         (node.attributes["text"].to_s == expected || node.attributes["content-desc"].to_s == expected) \
           && enabled.call(node) && bounds.call(node)
       end
-      exit 3 unless matches.length == 1
+      if mode == "visible-text-count"
+        puts matches.length
+      else
+        exit 3 unless matches.length == 1
+      end
     when "diagnostics"
       nodes.each do |node|
         identifier = node.attributes["resource-id"].to_s
@@ -1281,10 +1285,23 @@ self_test() {
     || { printf 'opponent fixture failed\n' >&2; return 1; }
   xml_query visible-text "$fixture" '当前已是最新版本' >/dev/null \
     || { printf 'visible Snackbar text fixture failed\n' >&2; return 1; }
+  [[ "$(xml_query visible-text-count "$fixture" '当前已是最新版本')" == "1" ]] \
+    || { printf 'single visible text count fixture failed\n' >&2; return 1; }
+  [[ "$(xml_query visible-text-count "$fixture" '不存在的提示')" == "0" ]] \
+    || { printf 'missing visible text count fixture failed\n' >&2; return 1; }
   if xml_query visible-text "$fixture" '不存在的提示' >/dev/null 2>&1; then
     printf 'missing visible text fixture was accepted\n' >&2
     return 1
   fi
+
+  local duplicate_visible_text="$fixture_dir/duplicate-visible-text.xml"
+  printf '%s\n' \
+    '<hierarchy>' \
+    '  <node text="应用更新" enabled="true" visible-to-user="true" bounds="[0,0][10,10]" />' \
+    '  <node content-desc="应用更新" enabled="true" visible-to-user="true" bounds="[10,10][20,20]" />' \
+    '</hierarchy>' >"$duplicate_visible_text"
+  [[ "$(xml_query visible-text-count "$duplicate_visible_text" '应用更新')" == "2" ]] \
+    || { printf 'duplicate visible text count fixture failed\n' >&2; return 1; }
 
   local fixture_match_id='11111111-1111-4111-8111-111111111111'
   [[ "$(presence_state_fragment "$fixture_match_id" 3 offline)" \
@@ -2507,7 +2524,7 @@ assert_visible_text_absent() {
   local unexpected="$2"
   local xml="$TEMP_DIR/ui-absent-text-${serial//[^A-Za-z0-9_.-]/_}.xml"
   dump_ui "$serial" "$xml" || return 1
-  ! xml_query visible-text "$xml" "$unexpected" >/dev/null 2>&1
+  [[ "$(xml_query visible-text-count "$xml" "$unexpected")" == "0" ]]
 }
 
 tap_identifier() {
