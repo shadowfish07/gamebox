@@ -3098,6 +3098,23 @@ tap_design_back "$SERIAL_A" || fail "A could not leave the resignation result"
 tap_design_back "$SERIAL_B" || fail "B could not leave the resignation result"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after resignation"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after resignation"
+
+tap_identifier "$SERIAL_A" open-match-history
+wait_for_identifier "$SERIAL_A" match-history-statistics >/dev/null \
+  || fail "A history statistics did not load"
+wait_for_identifier "$SERIAL_A" "match-history-entry-$THIRD_MATCH_ID" >/dev/null \
+  || fail "A history did not include the authoritative resignation match"
+tap_identifier "$SERIAL_A" match-history-back
+wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null \
+  || fail "visible history Back did not return A to the idle lobby"
+
+tap_identifier "$SERIAL_A" open-match-history
+wait_for_identifier "$SERIAL_A" match-history-page >/dev/null \
+  || fail "A history page did not reopen"
+adb_for "$SERIAL_A" shell input keyevent KEYCODE_BACK >/dev/null \
+  || fail "could not send Android Back from history"
+wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null \
+  || fail "Android Back did not return A to the idle lobby"
 MATCH_ID="$FIRST_MATCH_ID"
 
 restore_selected_device_visuals \
