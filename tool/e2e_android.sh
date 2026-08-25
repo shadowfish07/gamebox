@@ -1948,8 +1948,13 @@ self_test() {
     || { printf 'optional move confirmation result assertion is missing\n' >&2; return 1; }
   local update_flow_source
   update_flow_source="$(sed -n '/^tap_identifier "\$SERIAL_B" app-update/,/^uuid_pattern=/p' "${BASH_SOURCE[0]}")"
-  grep -F 'settle_update_action "$SERIAL_B"' <<<"$update_flow_source" >/dev/null \
-    || { printf 'update flow does not use the dialog-or-feedback settlement gate\n' >&2; return 1; }
+  grep -F 'wait_for_visible_text "$SERIAL_B" '\''当前已是最新版本'\''' \
+    <<<"$update_flow_source" >/dev/null \
+    || { printf 'update flow does not wait for terminal routine-update feedback\n' >&2; return 1; }
+  if grep -F 'settle_update_action "$SERIAL_B"' <<<"$update_flow_source" >/dev/null; then
+    printf 'update flow still uses the premature toolbar settlement gate\n' >&2
+    return 1
+  fi
   if grep -F 'KEYCODE_BACK' <<<"$update_flow_source" >/dev/null; then
     printf 'update flow can still exit the app when no dialog opens\n' >&2
     return 1
@@ -2637,30 +2642,6 @@ tap_identifier() {
     || fail "could not tap resource-id $identifier on $serial"
 }
 
-settle_update_action() {
-  local serial="$1"
-  local deadline=$((SECONDS + WAIT_SECONDS))
-  local xml="$TEMP_DIR/ui-update-${serial//[^A-Za-z0-9_.-]/_}.xml"
-  local center x y
-  sleep 1
-  while ((SECONDS < deadline)); do
-    if dump_ui "$serial" "$xml"; then
-      if center="$(xml_query bounds "$xml" dismiss-update 2>/dev/null)"; then
-        read -r x y <<<"$center"
-        adb_for "$serial" shell input tap "$x" "$y" >/dev/null \
-          || fail "could not tap resource-id dismiss-update on $serial"
-        wait_for_identifier "$serial" game-gomoku >/dev/null
-        return
-      fi
-      if xml_query bounds "$xml" app-update >/dev/null 2>&1; then
-        return
-      fi
-    fi
-    sleep 1
-  done
-  return 1
-}
-
 wait_for_opponent_identifier() {
   local serial="$1"
   local deadline=$((SECONDS + WAIT_SECONDS))
@@ -2849,8 +2830,6 @@ register_user "$SERIAL_B" "$INVITE_B" "$NICKNAME_B" SECRETS_ON_UI_B
 wait_for_visible_text "$SERIAL_B" '检查更新' \
   || fail "B update action did not become ready after its automatic check"
 tap_identifier "$SERIAL_B" app-update
-settle_update_action "$SERIAL_B" \
-  || fail "B update action did not settle into dialog or non-modal feedback"
 wait_for_visible_text "$SERIAL_B" '当前已是最新版本' \
   || fail "B did not show the routine up-to-date Snackbar"
 assert_visible_text_absent "$SERIAL_B" '应用更新' \
