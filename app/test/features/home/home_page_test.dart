@@ -482,7 +482,7 @@ void main() {
     final fixture = _Fixture(now);
     final rpsController = RpsController(
       repository: RpsRepository(
-        api: _FakeRpsApi(),
+        api: _FakeRpsApi(revision: 5),
         gameLauncher: fixture.launcher,
         apiBaseUri: Uri.parse('https://gamebox.test'),
         now: () => now,
@@ -494,6 +494,8 @@ void main() {
     await _flushWidget(tester);
 
     expect(find.text('赛制：三局两胜'), findsOneWidget);
+    expect(find.text('当前轮次：第 3 轮'), findsOneWidget);
+    expect(find.textContaining('当前事件'), findsNothing);
     expect(
       find.bySemanticsIdentifier('rps-active-format-best_of_three'),
       findsOneWidget,
@@ -710,15 +712,19 @@ final class _FakeHomeApi implements HomeApi {
 }
 
 final class _FakeRpsApi implements RpsApi {
+  const _FakeRpsApi({this.revision = 0});
+
+  final int revision;
+
   @override
-  Future<RpsStatus> fetchStatus() async => const RpsActiveStatus(
+  Future<RpsStatus> fetchStatus() async => RpsActiveStatus(
     match: RpsActiveMatch(
       id: '33333333-3333-4333-8333-333333333333',
       opponent: GomokuOpponentIdentity(
         id: '22222222-2222-4222-8222-222222222222',
         nickname: '小猫',
       ),
-      revision: 0,
+      revision: revision,
       format: RpsFormat.bestOfThree,
     ),
   );

@@ -491,7 +491,7 @@ final class _RpsCard extends StatelessWidget {
                     identifier: 'rps-active-format-${match.format.wireValue}',
                     child: Text('赛制：${match.format.label}'),
                   ),
-                  Text('当前事件：${match.revision}'),
+                  Text('当前轮次：第 ${match.revision ~/ 2 + 1} 轮'),
                   SizedBox(height: GameboxTokens.spacing.page),
                   _ActionButton(
                     semanticKey: const Key('rps-continue-match'),
