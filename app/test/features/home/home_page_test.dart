@@ -16,6 +16,10 @@ import 'package:gamebox/features/history/match_history_models.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
 import 'package:gamebox/features/home/home_page.dart';
+import 'package:gamebox/features/rps/rps_api.dart';
+import 'package:gamebox/features/rps/rps_controller.dart';
+import 'package:gamebox/features/rps/rps_models.dart';
+import 'package:gamebox/features/rps/rps_repository.dart';
 
 void main() {
   const aliceId = '11111111-1111-4111-8111-111111111111';
@@ -472,6 +476,35 @@ void main() {
     fixture.dispose();
   });
 
+  testWidgets('invited RPS player sees the persisted best-of-three format', (
+    tester,
+  ) async {
+    final fixture = _Fixture(now);
+    final rpsController = RpsController(
+      repository: RpsRepository(
+        api: _FakeRpsApi(revision: 5),
+        gameLauncher: fixture.launcher,
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
+    await tester.pumpWidget(
+      _app(fixture.controller, aliceId, rpsController: rpsController),
+    );
+    await _flushWidget(tester);
+
+    expect(find.text('赛制：三局两胜'), findsOneWidget);
+    expect(find.text('当前轮次：第 3 轮'), findsOneWidget);
+    expect(find.textContaining('当前事件'), findsNothing);
+    expect(
+      find.bySemanticsIdentifier('rps-active-format-best_of_three'),
+      findsOneWidget,
+    );
+
+    rpsController.dispose();
+    fixture.dispose();
+  });
+
   for (final configuration in const [
     (size: Size(360, 800), status: 'idle', nickname: '一位名字很长但仍需要正常换行的玩家'),
     (size: Size(412, 915), status: 'active', nickname: '另一位名字很长的玩家'),
@@ -514,6 +547,7 @@ Widget _app(
   String nickname = '自己',
   bool dark = false,
   MatchHistoryApi? historyApi,
+  RpsController? rpsController,
 }) => MaterialApp(
   theme: GameboxTheme.light(),
   darkTheme: GameboxTheme.dark(),
@@ -523,6 +557,7 @@ Widget _app(
     currentUserId: userId,
     nickname: nickname,
     historyApi: historyApi ?? _FakeMatchHistoryApi(),
+    rpsController: rpsController,
   ),
 );
 
@@ -674,4 +709,37 @@ final class _FakeHomeApi implements HomeApi {
     return onCreate?.call(opponentId) ??
         Future<CreatedGomokuMatch>.error(StateError('unexpected create'));
   }
+}
+
+final class _FakeRpsApi implements RpsApi {
+  const _FakeRpsApi({this.revision = 0});
+
+  final int revision;
+
+  @override
+  Future<RpsStatus> fetchStatus() async => RpsActiveStatus(
+    match: RpsActiveMatch(
+      id: '33333333-3333-4333-8333-333333333333',
+      opponent: GomokuOpponentIdentity(
+        id: '22222222-2222-4222-8222-222222222222',
+        nickname: '小猫',
+      ),
+      revision: revision,
+      format: RpsFormat.bestOfThree,
+    ),
+  );
+
+  @override
+  Future<void> cancelMatch(String matchId) async {}
+
+  @override
+  Future<CreatedRpsMatch> createMatch(String opponentId, RpsFormat format) =>
+      Future.error(StateError('unexpected create'));
+
+  @override
+  Future<RpsLaunchTicket> createLaunchTicket(String matchId) =>
+      Future.error(StateError('unexpected ticket'));
+
+  @override
+  Future<List<GomokuOpponent>> fetchOpponents() async => const [];
 }

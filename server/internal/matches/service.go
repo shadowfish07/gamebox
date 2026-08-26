@@ -30,6 +30,7 @@ import (
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 	"me.zqydev/gamebox/server/internal/users"
 )
@@ -89,6 +90,7 @@ type ActiveMatch struct {
 	OpponentNickname string
 	Color            Color
 	Revision         int64
+	GameConfig       json.RawMessage
 }
 
 // Opponent is a non-secret lobby projection. Availability is derived from the
@@ -284,6 +286,7 @@ WHERE id=?`, opponent.UserID).Scan(&nickname, &normalizedNickname, &enabled); op
 	return &ActiveMatch{
 		ID: match.ID, GameID: match.GameID, OpponentID: opponent.UserID,
 		OpponentNickname: nickname, Color: player.Color, Revision: match.Revision,
+		GameConfig: append(json.RawMessage(nil), match.GameConfig...),
 	}, nil
 }
 
@@ -730,17 +733,26 @@ func isResumeTokenHashConflict(err error) bool {
 		strings.Contains(sqliteErr.Error(), "UNIQUE constraint failed: resume_tokens.token_hash")
 }
 
-// Create atomically creates a two-player match. Stable seats are based on the
-// call roles; only colors are random.
+// Create atomically creates a two-player match without game-specific options.
 func (service *Service) Create(ctx context.Context, gameID, initiatorID, opponentID string) (_ Match, err error) {
+	return service.CreateWithConfig(ctx, gameID, initiatorID, opponentID, nil)
+}
+
+// CreateWithConfig atomically creates a two-player match and persists the
+// configured game's immutable initial options.
+func (service *Service) CreateWithConfig(ctx context.Context, gameID, initiatorID, opponentID string, config json.RawMessage) (_ Match, err error) {
 	if !service.configured() {
 		return Match{}, ErrInvalidConfiguration
 	}
 	if ctx == nil || !validIdentifier(initiatorID) || !validIdentifier(opponentID) || initiatorID == opponentID {
 		return Match{}, ErrInvalidRequest
 	}
-	rules, ok := service.games.Lookup(gameID)
-	if !ok || rules.PlayerLimit() != 2 {
+	template, ok := service.games.Lookup(gameID)
+	if !ok || template.PlayerLimit() != 2 {
+		return Match{}, ErrInvalidRequest
+	}
+	rules, normalizedConfig, configErr := configureRules(template, config)
+	if configErr != nil {
 		return Match{}, ErrInvalidRequest
 	}
 
@@ -783,8 +795,8 @@ func (service *Service) Create(ctx context.Context, gameID, initiatorID, opponen
 	nowMillis := service.clock.Now().UTC().UnixMilli()
 	matchIDText := matchID.String()
 	result, insertErr := transaction.ExecContext(ctx, `
-INSERT INTO matches(id,game_id,status,revision,created_at,updated_at)
-VALUES (?,?,?,0,?,?)`, matchIDText, gameID, StatusActive, nowMillis, nowMillis)
+INSERT INTO matches(id,game_id,status,revision,game_config_json,created_at,updated_at)
+VALUES (?,?,?,0,?,?,?)`, matchIDText, gameID, StatusActive, nullableJSON(normalizedConfig), nowMillis, nowMillis)
 	if insertErr != nil {
 		return Match{}, matchDatabaseError(ctx, insertErr)
 	}
@@ -832,12 +844,13 @@ VALUES (?,?,?)`, gameID, player.UserID, matchIDText)
 	}
 	timestamp := time.UnixMilli(nowMillis).UTC()
 	return Match{
-		ID:        matchIDText,
-		GameID:    gameID,
-		Status:    StatusActive,
-		Revision:  0,
-		CreatedAt: timestamp,
-		UpdatedAt: timestamp,
+		ID:         matchIDText,
+		GameID:     gameID,
+		Status:     StatusActive,
+		Revision:   0,
+		GameConfig: append(json.RawMessage(nil), normalizedConfig...),
+		CreatedAt:  timestamp,
+		UpdatedAt:  timestamp,
 	}, nil
 }
 
@@ -884,15 +897,15 @@ WHERE id=?`, matchID).Scan(&gameID, &status, &revision)
 		return Event{}, ErrMatchNotCancellable
 	}
 
-	var acceptedMoves int
+	var gameplayEvents int
 	if queryErr := transaction.QueryRowContext(ctx, `
 SELECT EXISTS(
   SELECT 1 FROM match_events
-  WHERE match_id=? AND event_type=?
-)`, matchID, gomoku.MoveAccepted).Scan(&acceptedMoves); queryErr != nil {
+  WHERE match_id=? AND event_type IN (?,?,?)
+)`, matchID, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed).Scan(&gameplayEvents); queryErr != nil {
 		return Event{}, matchDatabaseError(ctx, queryErr)
 	}
-	if acceptedMoves != 0 {
+	if gameplayEvents != 0 {
 		return Event{}, ErrMatchNotCancellable
 	}
 
@@ -1021,9 +1034,13 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	if loadErr != nil {
 		return Event{}, Snapshot{}, loadErr
 	}
-	rules, ok := service.games.Lookup(match.GameID)
-	if !ok || rules.PlayerLimit() != 2 {
+	template, ok := service.games.Lookup(match.GameID)
+	if !ok || template.PlayerLimit() != 2 {
 		return Event{}, Snapshot{}, ErrInternal
+	}
+	rules, rulesErr := rulesForMatch(template, match.GameConfig)
+	if rulesErr != nil {
+		return Event{}, Snapshot{}, rulesErr
 	}
 
 	committed, found, lookupErr := readActionEvent(ctx, transaction.Tx, request.MatchID, request.ActorUserID, request.ActionID)
@@ -1051,12 +1068,18 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	if match.Status != StatusActive {
 		return Event{}, Snapshot{}, ErrInvalidRequest
 	}
-	if request.ExpectedRevision != match.Revision {
-		return Event{}, Snapshot{}, ErrStaleRevision
-	}
 	actor, opponent, member := actionPlayers(players, request.ActorUserID)
 	if !member {
 		return Event{}, Snapshot{}, ErrInvalidRequest
+	}
+	if request.ExpectedRevision != match.Revision {
+		acceptedPrevious, previousErr := acceptsPreviousRpsChoiceRevision(ctx, transaction.Tx, match, request)
+		if previousErr != nil {
+			return Event{}, Snapshot{}, previousErr
+		}
+		if !acceptedPrevious {
+			return Event{}, Snapshot{}, ErrStaleRevision
+		}
 	}
 	current, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players)
 	if snapshotErr != nil {
@@ -1108,6 +1131,32 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 				return Event{}, Snapshot{}, ErrInternal
 			}
 		}
+	case rps.ChoiceRequested:
+		if match.Revision >= maximumMatchEvents-2 {
+			return Event{}, Snapshot{}, ErrInvalidRequest
+		}
+		produced, producedSnapshot, applyErr := rules.Apply(current.Game, request.ActorUserID, games.Action{
+			Type: request.Type, Payload: append(json.RawMessage(nil), request.Payload...),
+		})
+		if applyErr != nil {
+			return Event{}, Snapshot{}, safeActionRuleError(applyErr)
+		}
+		if validateErr := validateProducedChoice(produced, producedSnapshot, request, semantics, nextRevision); validateErr != nil {
+			return Event{}, Snapshot{}, validateErr
+		}
+		gameEvent, nextGame = produced, producedSnapshot
+		outcome, outcomeErr := readGameStateSummary(nextGame)
+		if outcomeErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		if outcome.Status == StatusFinished {
+			if outcome.Result == nil || *outcome.Result != ResultRounds || outcome.WinnerUserID == nil || !playerMember(players, *outcome.WinnerUserID) {
+				return Event{}, Snapshot{}, ErrInternal
+			}
+			terminal = true
+			result = cloneStringPointer(outcome.Result)
+			winner = cloneStringPointer(outcome.WinnerUserID)
+		}
 	case protocol.TypeGomokuResignRequested:
 		if current.Game.Revision == 0 {
 			return Event{}, Snapshot{}, ErrInvalidRequest
@@ -1122,6 +1171,24 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			Type:     protocol.TypeGomokuResigned,
 			ActorID:  actor.UserID,
 			Payload:  append(json.RawMessage(nil), payload...),
+		}
+		nextGame = cloneGameSnapshot(current.Game)
+		resultValue := ResultResignation
+		result = &resultValue
+		winner = &winnerID
+		terminal = true
+	case protocol.TypeRpsResignRequested:
+		if current.Game.Revision == 0 {
+			return Event{}, Snapshot{}, ErrInvalidRequest
+		}
+		winnerID := opponent.UserID
+		payload, marshalErr := json.Marshal(resignedPayload{UserID: actor.UserID, WinnerUserID: winnerID})
+		if marshalErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		gameEvent = games.Event{
+			Revision: nextRevision, Type: protocol.TypeRpsResigned, ActorID: actor.UserID,
+			Payload: append(json.RawMessage(nil), payload...),
 		}
 		nextGame = cloneGameSnapshot(current.Game)
 		resultValue := ResultResignation
@@ -1210,6 +1277,22 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 		match.FinishedAt = &now
 	}
 	return committedEvent, cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: nextGame}), nil
+}
+
+func acceptsPreviousRpsChoiceRevision(ctx context.Context, transaction *sql.Tx, match Match, request ActionRequest) (bool, error) {
+	if match.GameID != rps.GameID || request.Type != rps.ChoiceRequested || match.Revision <= 0 ||
+		request.ExpectedRevision != match.Revision-1 {
+		return false, nil
+	}
+	var eventType, actorUserID string
+	err := transaction.QueryRowContext(ctx, `
+SELECT event_type,actor_user_id
+FROM match_events
+WHERE match_id=? AND revision=?`, match.ID, match.Revision).Scan(&eventType, &actorUserID)
+	if err != nil {
+		return false, matchDatabaseError(ctx, err)
+	}
+	return eventType == rps.ChoiceLocked && actorUserID != request.ActorUserID, nil
 }
 
 // SetPlayerOnline clears an active match's fully-offline timer. Inactive
@@ -1495,8 +1578,9 @@ WHERE status=? AND both_offline_since IS NULL`, nowMillis, StatusActive); update
 }
 
 type actionSemantics struct {
-	x int
-	y int
+	x      int
+	y      int
+	choice string
 }
 
 type resignedPayload struct {
@@ -1525,6 +1609,22 @@ func validateActionRequest(ctx context.Context, request ActionRequest) (actionSe
 		}
 		return actionSemantics{x: x, y: y}, nil
 	case protocol.TypeGomokuResignRequested:
+		fields, err := strictJSONObject(request.Payload, map[string]struct{}{})
+		if err != nil || len(fields) != 0 {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		return actionSemantics{}, nil
+	case rps.ChoiceRequested:
+		fields, err := strictJSONObject(request.Payload, map[string]struct{}{"choice": {}})
+		if err != nil || len(fields) != 1 {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		var choice string
+		if json.Unmarshal(fields["choice"], &choice) != nil || (choice != rps.Rock && choice != rps.Paper && choice != rps.Scissors) {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		return actionSemantics{choice: choice}, nil
+	case protocol.TypeRpsResignRequested:
 		fields, err := strictJSONObject(request.Payload, map[string]struct{}{})
 		if err != nil || len(fields) != 0 {
 			return actionSemantics{}, ErrInvalidRequest
@@ -1620,13 +1720,13 @@ func strictJSONInteger(raw json.RawMessage) (int, error) {
 
 func loadMatchAndPlayers(ctx context.Context, transaction *sql.Tx, matchID string) (Match, []Player, error) {
 	var match Match
-	var result, winner sql.NullString
+	var result, winner, gameConfig sql.NullString
 	var createdAt, updatedAt int64
 	var finishedAt sql.NullInt64
 	err := transaction.QueryRowContext(ctx, `
-SELECT game_id,status,revision,result,winner_user_id,created_at,updated_at,finished_at
+SELECT game_id,status,revision,result,winner_user_id,game_config_json,created_at,updated_at,finished_at
 FROM matches
-WHERE id=?`, matchID).Scan(&match.GameID, &match.Status, &match.Revision, &result, &winner, &createdAt, &updatedAt, &finishedAt)
+WHERE id=?`, matchID).Scan(&match.GameID, &match.Status, &match.Revision, &result, &winner, &gameConfig, &createdAt, &updatedAt, &finishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Match{}, nil, ErrMatchNotFound
 	}
@@ -1641,6 +1741,9 @@ WHERE id=?`, matchID).Scan(&match.GameID, &match.Status, &match.Revision, &resul
 	}
 	if winner.Valid {
 		match.WinnerUserID = stringPointer(winner.String)
+	}
+	if gameConfig.Valid {
+		match.GameConfig = append(json.RawMessage(nil), gameConfig.String...)
 	}
 	if finishedAt.Valid {
 		value := time.UnixMilli(finishedAt.Int64).UTC()
@@ -1681,15 +1784,25 @@ ORDER BY seat`, matchID)
 }
 
 func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx, match Match, players []Player) (Snapshot, error) {
-	rules, ok := service.games.Lookup(match.GameID)
-	if !ok || rules.PlayerLimit() != 2 || match.GameID != gomoku.GameID {
+	template, ok := service.games.Lookup(match.GameID)
+	if !ok || template.PlayerLimit() != 2 {
 		return Snapshot{}, ErrInternal
+	}
+	rules, rulesErr := rulesForMatch(template, match.GameConfig)
+	if rulesErr != nil {
+		return Snapshot{}, rulesErr
 	}
 	events, err := readMatchEvents(ctx, transaction, match.ID)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	if match.Revision != int64(len(events)) || len(events) > maximumMatchEvents {
+		return Snapshot{}, ErrInternal
+	}
+	if match.GameID == rps.GameID {
+		return service.rebuildRpsSnapshot(ctx, transaction, match, players, rules, events)
+	}
+	if match.GameID != gomoku.GameID {
 		return Snapshot{}, ErrInternal
 	}
 	black, white, ok := coloredPlayers(players)
@@ -1783,6 +1896,98 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 	playerIDs := [2]string{players[0].UserID, players[1].UserID}
 	expectActiveSlots := match.Status == StatusActive && singleActiveMatch(rules)
 	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction, match.GameID, match.ID, playerIDs, expectActiveSlots); slotsErr != nil {
+		return Snapshot{}, slotsErr
+	}
+	return cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: gameSnapshot}), nil
+}
+
+func (service *Service) rebuildRpsSnapshot(ctx context.Context, transaction *sql.Tx, match Match, players []Player, rules games.Rules, events []Event) (Snapshot, error) {
+	accepted := make([]games.Event, 0, len(events))
+	terminalType := ""
+	for index, event := range events {
+		if event.Revision != int64(index+1) || event.MatchID != match.ID {
+			return Snapshot{}, ErrInternal
+		}
+		switch event.Type {
+		case rps.ChoiceLocked:
+			payload, decodeErr := decodeRpsLocked(event.Payload)
+			if terminalType != "" || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil || !playerMember(players, *event.ActorUserID) || decodeErr != nil || payload.UserID != *event.ActorUserID {
+				return Snapshot{}, ErrInternal
+			}
+			accepted = append(accepted, games.Event{Revision: event.Revision, Type: event.Type, ActorID: *event.ActorUserID, Payload: append(json.RawMessage(nil), event.Payload...)})
+		case rps.RoundRevealed:
+			payload, decodeErr := decodeRpsReveal(event.Payload)
+			if terminalType != "" || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil || !playerMember(players, *event.ActorUserID) || decodeErr != nil || payload.Choices[*event.ActorUserID] == "" {
+				return Snapshot{}, ErrInternal
+			}
+			accepted = append(accepted, games.Event{Revision: event.Revision, Type: event.Type, ActorID: *event.ActorUserID, Payload: append(json.RawMessage(nil), event.Payload...)})
+		case protocol.TypeRpsResigned:
+			if index != len(events)-1 || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
+				return Snapshot{}, ErrInternal
+			}
+			actor, opponent, member := actionPlayers(players, *event.ActorUserID)
+			payload, decodeErr := decodeResignedPayload(event.Payload)
+			if !member || decodeErr != nil || payload.UserID != actor.UserID || payload.WinnerUserID != opponent.UserID {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		case protocol.TypePlatformMatchCancelled:
+			if index != len(events)-1 || len(accepted) != 0 || event.ActionID != nil || event.ActorUserID == nil || !playerMember(players, *event.ActorUserID) || !isStrictEmptyObject(event.Payload) {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		case protocol.TypePlatformMatchAbandoned:
+			if index != len(events)-1 || event.ActionID != nil || event.ActorUserID != nil || !isStrictEmptyObject(event.Payload) {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		default:
+			return Snapshot{}, ErrInternal
+		}
+	}
+	gameSnapshot, rebuildErr := rules.Rebuild(accepted)
+	if rebuildErr != nil || gameSnapshot.Revision != int64(len(accepted)) {
+		return Snapshot{}, ErrInternal
+	}
+	summary, summaryErr := readGameStateSummary(gameSnapshot)
+	if summaryErr != nil {
+		return Snapshot{}, ErrInternal
+	}
+	switch match.Status {
+	case StatusActive:
+		if terminalType != "" || match.Result != nil || match.WinnerUserID != nil || match.FinishedAt != nil || summary.Status != StatusActive || summary.Result != nil || summary.WinnerUserID != nil {
+			return Snapshot{}, ErrInternal
+		}
+	case StatusFinished:
+		if match.FinishedAt == nil || match.Result == nil {
+			return Snapshot{}, ErrInternal
+		}
+		switch *match.Result {
+		case ResultRounds:
+			if terminalType != "" || summary.Status != StatusFinished || summary.Result == nil || *summary.Result != ResultRounds || match.WinnerUserID == nil || summary.WinnerUserID == nil || *match.WinnerUserID != *summary.WinnerUserID || !playerMember(players, *match.WinnerUserID) {
+				return Snapshot{}, ErrInternal
+			}
+		case ResultResignation:
+			if terminalType != protocol.TypeRpsResigned || summary.Status != StatusActive || summary.Result != nil || summary.WinnerUserID != nil || match.WinnerUserID == nil || !playerMember(players, *match.WinnerUserID) {
+				return Snapshot{}, ErrInternal
+			}
+		default:
+			return Snapshot{}, ErrInternal
+		}
+	case StatusCancelled:
+		if terminalType != protocol.TypePlatformMatchCancelled || match.FinishedAt == nil || match.Result != nil || match.WinnerUserID != nil || summary.Status != StatusActive {
+			return Snapshot{}, ErrInternal
+		}
+	case StatusAbandoned:
+		if terminalType != protocol.TypePlatformMatchAbandoned || match.FinishedAt == nil || match.Result != nil || match.WinnerUserID != nil || summary.Status != StatusActive {
+			return Snapshot{}, ErrInternal
+		}
+	default:
+		return Snapshot{}, ErrInternal
+	}
+	playerIDs := [2]string{players[0].UserID, players[1].UserID}
+	expectSlots := match.Status == StatusActive && singleActiveMatch(rules)
+	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction, match.GameID, match.ID, playerIDs, expectSlots); slotsErr != nil {
 		return Snapshot{}, slotsErr
 	}
 	return cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: gameSnapshot}), nil
@@ -1932,6 +2137,33 @@ func committedActionMatches(event Event, request ActionRequest, semantics action
 			return false, ErrInternal
 		}
 		return true, nil
+	case rps.ChoiceRequested:
+		switch event.Type {
+		case rps.ChoiceLocked:
+			payload, err := decodeRpsLocked(event.Payload)
+			if err != nil || payload.UserID != request.ActorUserID {
+				return false, ErrInternal
+			}
+			return payload.Choice == semantics.choice, nil
+		case rps.RoundRevealed:
+			payload, err := decodeRpsReveal(event.Payload)
+			if err != nil {
+				return false, ErrInternal
+			}
+			return payload.Choices[request.ActorUserID] == semantics.choice, nil
+		default:
+			return false, nil
+		}
+	case protocol.TypeRpsResignRequested:
+		if event.Type != protocol.TypeRpsResigned {
+			return false, nil
+		}
+		payload, err := decodeResignedPayload(event.Payload)
+		actor, opponent, member := actionPlayers(players, request.ActorUserID)
+		if err != nil || !member || payload.UserID != actor.UserID || payload.WinnerUserID != opponent.UserID {
+			return false, ErrInternal
+		}
+		return true, nil
 	default:
 		return false, ErrInvalidRequest
 	}
@@ -1989,12 +2221,87 @@ func validateProducedMove(event games.Event, snapshot games.Snapshot, request Ac
 	return nil
 }
 
+type rpsLockedPayload struct {
+	Round  int    `json:"round"`
+	UserID string `json:"userId"`
+	Choice string `json:"choice"`
+}
+
+type rpsRevealPayload struct {
+	Round             int               `json:"round"`
+	Choices           map[string]string `json:"choices"`
+	RoundWinnerUserID *string           `json:"roundWinnerUserId"`
+	Draw              bool              `json:"draw"`
+	Scores            map[string]int    `json:"scores"`
+	MatchWinnerUserID *string           `json:"matchWinnerUserId"`
+	Result            *string           `json:"result"`
+}
+
+func decodeRpsLocked(payload json.RawMessage) (rpsLockedPayload, error) {
+	fields, err := strictJSONObject(payload, map[string]struct{}{"round": {}, "userId": {}, "choice": {}})
+	if err != nil || len(fields) != 3 {
+		return rpsLockedPayload{}, ErrInternal
+	}
+	var value rpsLockedPayload
+	if json.Unmarshal(payload, &value) != nil || value.Round < 1 || !validIdentifier(value.UserID) || !validRpsChoice(value.Choice) {
+		return rpsLockedPayload{}, ErrInternal
+	}
+	return value, nil
+}
+
+func decodeRpsReveal(payload json.RawMessage) (rpsRevealPayload, error) {
+	allowed := map[string]struct{}{"round": {}, "choices": {}, "roundWinnerUserId": {}, "draw": {}, "scores": {}, "matchWinnerUserId": {}, "result": {}}
+	fields, err := strictJSONObject(payload, allowed)
+	if err != nil || len(fields) != len(allowed) {
+		return rpsRevealPayload{}, ErrInternal
+	}
+	var value rpsRevealPayload
+	if json.Unmarshal(payload, &value) != nil || value.Round < 1 || len(value.Choices) != 2 || len(value.Scores) > 2 {
+		return rpsRevealPayload{}, ErrInternal
+	}
+	for userID, choice := range value.Choices {
+		if !validIdentifier(userID) || !validRpsChoice(choice) {
+			return rpsRevealPayload{}, ErrInternal
+		}
+	}
+	return value, nil
+}
+
+func validRpsChoice(choice string) bool {
+	return choice == rps.Rock || choice == rps.Paper || choice == rps.Scissors
+}
+
+func validateProducedChoice(event games.Event, snapshot games.Snapshot, request ActionRequest, semantics actionSemantics, revision int64) error {
+	if event.Revision != revision || snapshot.Revision != revision || event.ActorID != request.ActorUserID {
+		return ErrInternal
+	}
+	switch event.Type {
+	case rps.ChoiceLocked:
+		payload, err := decodeRpsLocked(event.Payload)
+		if err != nil || payload.UserID != request.ActorUserID || payload.Choice != semantics.choice {
+			return ErrInternal
+		}
+	case rps.RoundRevealed:
+		payload, err := decodeRpsReveal(event.Payload)
+		if err != nil || payload.Choices[request.ActorUserID] != semantics.choice {
+			return ErrInternal
+		}
+	default:
+		return ErrInternal
+	}
+	return nil
+}
+
 func safeActionRuleError(err error) error {
 	switch {
 	case errors.Is(err, gomoku.ErrNotYourTurn):
 		return gomoku.ErrNotYourTurn
 	case errors.Is(err, gomoku.ErrCellOccupied):
 		return gomoku.ErrCellOccupied
+	case errors.Is(err, rps.ErrChoiceLocked):
+		return rps.ErrChoiceLocked
+	case errors.Is(err, rps.ErrInvalidChoice), errors.Is(err, rps.ErrMatchFinished):
+		return ErrInvalidRequest
 	case errors.Is(err, games.ErrInvalidAction):
 		return ErrInvalidRequest
 	default:
@@ -2065,7 +2372,8 @@ func cloneMatchSnapshot(snapshot Snapshot) Snapshot {
 		Match: Match{
 			ID: snapshot.Match.ID, GameID: snapshot.Match.GameID, Status: snapshot.Match.Status, Revision: snapshot.Match.Revision,
 			Result: cloneStringPointer(snapshot.Match.Result), WinnerUserID: cloneStringPointer(snapshot.Match.WinnerUserID),
-			CreatedAt: snapshot.Match.CreatedAt, UpdatedAt: snapshot.Match.UpdatedAt, FinishedAt: cloneTimePointer(snapshot.Match.FinishedAt),
+			GameConfig: append(json.RawMessage(nil), snapshot.Match.GameConfig...),
+			CreatedAt:  snapshot.Match.CreatedAt, UpdatedAt: snapshot.Match.UpdatedAt, FinishedAt: cloneTimePointer(snapshot.Match.FinishedAt),
 		},
 		Players: append([]Player(nil), snapshot.Players...),
 		Game:    cloneGameSnapshot(snapshot.Game),
@@ -2227,6 +2535,44 @@ func (service *Service) randomColors() (Color, Color, error) {
 func singleActiveMatch(rules games.Rules) bool {
 	policy, ok := rules.(games.SingleActiveMatchPolicy)
 	return ok && policy.SingleActiveMatchPerUser()
+}
+
+func configureRules(template games.Rules, config json.RawMessage) (games.Rules, json.RawMessage, error) {
+	configurator, configurable := template.(games.Configurator)
+	if !configurable {
+		if len(config) != 0 {
+			return nil, nil, ErrInvalidRequest
+		}
+		return template, nil, nil
+	}
+	if len(config) == 0 || len(config) > 1024 || !utf8.Valid(config) {
+		return nil, nil, ErrInvalidRequest
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, config); err != nil {
+		return nil, nil, ErrInvalidRequest
+	}
+	normalized := append(json.RawMessage(nil), compact.Bytes()...)
+	configured, err := configurator.Configure(normalized)
+	if err != nil || configured == nil || configured.GameID() != template.GameID() || configured.PlayerLimit() != template.PlayerLimit() {
+		return nil, nil, ErrInvalidRequest
+	}
+	return configured, normalized, nil
+}
+
+func rulesForMatch(template games.Rules, config json.RawMessage) (games.Rules, error) {
+	rules, _, err := configureRules(template, config)
+	if err != nil {
+		return nil, ErrInternal
+	}
+	return rules, nil
+}
+
+func nullableJSON(value json.RawMessage) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return string(value)
 }
 
 func affectedExactlyOne(result sql.Result) error {

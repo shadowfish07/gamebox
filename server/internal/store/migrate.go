@@ -30,6 +30,7 @@ type loadedMigration struct {
 var migrations = []migration{
 	{version: 1, path: "migrations/001_initial.sql"},
 	{version: 2, path: "migrations/002_match_history_indexes.sql"},
+	{version: 3, path: "migrations/003_match_game_config.sql"},
 }
 
 // ErrIncompatibleMigrationLedger tells operators that a pre-release database

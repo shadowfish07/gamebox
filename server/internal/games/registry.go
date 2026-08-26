@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 )
 
 var (
@@ -26,10 +27,9 @@ type Registry struct {
 	descriptors []Descriptor
 }
 
-// NewRegistry returns the production registry. Gomoku is the only built-in
-// game in this release.
+// NewRegistry returns the production registry.
 func NewRegistry() *Registry {
-	registry, err := NewRegistryFrom(gomoku.NewRules())
+	registry, err := NewRegistryFrom(gomoku.NewRules(), rps.NewRules())
 	if err != nil {
 		panic("games: invalid built-in registry")
 	}

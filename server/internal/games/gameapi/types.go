@@ -48,6 +48,13 @@ type Rules interface {
 	Apply(snapshot Snapshot, actorID string, action Action) (Event, Snapshot, error)
 }
 
+// Configurator binds immutable, persisted match configuration to a rules
+// instance. Games without creation-time options do not implement it. The
+// returned Rules value must be safe to reuse for the lifetime of one match.
+type Configurator interface {
+	Configure(config json.RawMessage) (Rules, error)
+}
+
 // SingleActiveMatchPolicy is optional per-game capability metadata. Platform
 // code may honor it, but it is not part of every game's Rules contract.
 type SingleActiveMatchPolicy interface {

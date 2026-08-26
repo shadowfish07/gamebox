@@ -307,7 +307,14 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "future.sqlite")
 	db := openDatabase(t, ctx, path)
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (4, ?, unixepoch()), (3, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
+	firstFutureVersion := migrations[len(migrations)-1].version + 1
+	if _, err := db.Exec(
+		`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, unixepoch()), (?, ?, unixepoch())`,
+		firstFutureVersion+1,
+		strings.Repeat("b", sha256.Size*2),
+		firstFutureVersion,
+		strings.Repeat("a", sha256.Size*2),
+	); err != nil {
 		_ = db.Close()
 		t.Fatalf("insert future migration: %v", err)
 	}
@@ -320,7 +327,8 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 		_ = db.Close()
 		t.Fatal("Open returned a database with an unknown future migration")
 	}
-	if err == nil || !strings.Contains(err.Error(), "unknown migration version 3") {
+	wantDiagnostic := fmt.Sprintf("unknown migration version %d", firstFutureVersion)
+	if err == nil || !strings.Contains(err.Error(), wantDiagnostic) {
 		t.Fatalf("Open future-version error = %v, want stable unknown-version diagnostic", err)
 	}
 }

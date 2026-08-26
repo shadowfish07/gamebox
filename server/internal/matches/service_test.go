@@ -23,6 +23,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gameapi"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 	"me.zqydev/gamebox/server/internal/store"
 )
@@ -3154,9 +3155,9 @@ func TestHubSlowQueueDoesNotBlockAnotherConnection(t *testing.T) {
 }
 
 func TestHubSnapshotObservedAheadResnapshotsExistingPeerBeforeReady(t *testing.T) {
-	existing := &hubConnection{ready: true, send: make(chan []byte, 2), matchID: initiatorID}
+	existing := &hubConnection{ready: true, send: make(chan []byte, 2), matchID: initiatorID, userID: opponentID}
 	existing.revision.Store(0)
-	joining := &hubConnection{send: make(chan []byte, 2), matchID: initiatorID}
+	joining := &hubConnection{send: make(chan []byte, 2), matchID: initiatorID, userID: initiatorID}
 	joining.revision.Store(2)
 	hub := &Hub{matches: map[string]*hubMatch{
 		initiatorID: {
@@ -3165,8 +3166,11 @@ func TestHubSnapshotObservedAheadResnapshotsExistingPeerBeforeReady(t *testing.T
 			gameID:        gomoku.GameID,
 		},
 	}}
-	snapshot := []byte(`{"revision":2,"type":"platform.snapshot"}`)
-	if ready, stale := hub.markReady(joining, 2, snapshot); !ready || stale {
+	snapshots := map[string][]byte{
+		initiatorID: []byte(`{"revision":2,"viewer":"initiator"}`),
+		opponentID:  []byte(`{"revision":2,"viewer":"opponent"}`),
+	}
+	if ready, stale := hub.markReady(joining, 2, snapshots); !ready || stale {
 		t.Fatal("joining connection did not become ready")
 	}
 	if existing.revision.Load() != 2 || joining.revision.Load() != 2 {
@@ -3174,7 +3178,7 @@ func TestHubSnapshotObservedAheadResnapshotsExistingPeerBeforeReady(t *testing.T
 	}
 	select {
 	case message := <-existing.send:
-		if string(message) != string(snapshot) {
+		if string(message) != string(snapshots[opponentID]) {
 			t.Fatalf("existing resnapshot=%s", message)
 		}
 	default:
@@ -3192,9 +3196,44 @@ func TestHubOlderConcurrentSnapshotMustBeRetriedBeforeReady(t *testing.T) {
 			gameID:            gomoku.GameID,
 		},
 	}}
-	ready, stale := hub.markReady(joining, 0, []byte(`{"revision":0}`))
+	ready, stale := hub.markReady(joining, 0, map[string][]byte{initiatorID: []byte(`{"revision":0}`)})
 	if ready || !stale || joining.ready {
 		t.Fatalf("older snapshot ready=%t stale=%t connectionReady=%t", ready, stale, joining.ready)
+	}
+}
+
+func TestHubRpsSnapshotAheadUsesExistingRecipientsSealedView(t *testing.T) {
+	_, service, match := createRps(t, rps.FormatBestOfThree)
+	_, snapshot, err := service.ApplyAction(context.Background(), rpsAction(match, initiatorID, 0, 7001, rps.Rock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots, snapshotErr := snapshotEnvelopesByUser(snapshot)
+	if snapshotErr != nil {
+		t.Fatal(snapshotErr)
+	}
+	if !bytes.Contains(snapshots[initiatorID], []byte(`"choice":"rock"`)) {
+		t.Fatalf("joining player's own choice missing: %s", snapshots[initiatorID])
+	}
+	existing := &hubConnection{ready: true, send: make(chan []byte, 2), matchID: match.ID, userID: opponentID}
+	joining := &hubConnection{send: make(chan []byte, 2), matchID: match.ID, userID: initiatorID}
+	hub := &Hub{matches: map[string]*hubMatch{
+		match.ID: {
+			connections:   map[*hubConnection]struct{}{existing: {}, joining: {}},
+			pendingEvents: make(map[int64][]byte),
+			gameID:        rps.GameID,
+		},
+	}}
+	if ready, stale := hub.markReady(joining, 1, snapshots); !ready || stale {
+		t.Fatal("joining connection did not become ready")
+	}
+	select {
+	case message := <-existing.send:
+		if bytes.Contains(message, []byte(`"choice"`)) || bytes.Contains(message, []byte(`rock`)) {
+			t.Fatalf("existing opponent received joining player's view: %s", message)
+		}
+	default:
+		t.Fatal("existing opponent was not resnapshotted")
 	}
 }
 

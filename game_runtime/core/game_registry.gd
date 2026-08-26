@@ -3,6 +3,7 @@ extends RefCounted
 
 const SCENES := {
 	"gomoku": preload("res://games/gomoku/gomoku_scene.tscn"),
+	"rps": preload("res://games/rps/rps_scene.tscn"),
 }
 const UNSUPPORTED_GAME_MESSAGE := "This game is not available in Gamebox."
 

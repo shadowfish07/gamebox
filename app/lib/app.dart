@@ -17,6 +17,9 @@ import 'features/history/match_history_api.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
+import 'features/rps/rps_api.dart';
+import 'features/rps/rps_controller.dart';
+import 'features/rps/rps_repository.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
@@ -25,6 +28,7 @@ class GameboxApp extends StatefulWidget {
     this.sessionController,
     this.homeController,
     this.matchHistoryApi,
+    this.rpsController,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
@@ -38,6 +42,7 @@ class GameboxApp extends StatefulWidget {
   final SessionController? sessionController;
   final HomeController? homeController;
   final MatchHistoryApi? matchHistoryApi;
+  final RpsController? rpsController;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -52,8 +57,10 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   SessionController? _sessionController;
   ApiClient? _ownedApiClient;
   HomeController? _homeController;
+  RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
+  var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
 
   @override
@@ -103,6 +110,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       } else if (_homeControllerAuthenticated) {
         _homeController?.pauseForeground();
       }
+      if (_ownsRpsController) {
+        _rpsController?.dispose();
+        _rpsController = null;
+        _ownsRpsController = false;
+      } else if (_homeControllerAuthenticated) {
+        _rpsController?.pauseForeground();
+      }
       _homeControllerAuthenticated = false;
       return;
     }
@@ -124,9 +138,29 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsHomeController = true;
       }
     }
+    if (_rpsController == null &&
+        (widget.rpsController != null || widget.homeController == null)) {
+      final injected = widget.rpsController;
+      if (injected != null) {
+        _rpsController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _rpsController = RpsController(
+          repository: RpsRepository(
+            api: HttpRpsApi(apiClient, sessionController),
+            gameLauncher: widget.gameLauncher,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsRpsController = true;
+      }
+    }
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _homeController?.resumeForeground();
+    _rpsController?.resumeForeground();
   }
 
   @override
@@ -135,6 +169,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       unawaited(_handleAppResumed());
     } else {
       _homeController?.pauseForeground();
+      _rpsController?.pauseForeground();
     }
   }
 
@@ -147,6 +182,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     }
     _syncHomeController();
     _homeController?.resumeForeground();
+    _rpsController?.resumeForeground();
   }
 
   @override
@@ -163,7 +199,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsHomeController) {
       _homeController?.dispose();
     }
+    if (_ownsRpsController) {
+      _rpsController?.dispose();
+    }
     _homeController = null;
+    _rpsController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     widget.updateController?.dispose();
@@ -305,6 +345,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       currentUserId: session.user.id,
       nickname: session.user.nickname,
       historyApi: historyApi,
+      rpsController: _rpsController,
       updateController: widget.updateController,
     );
   }
