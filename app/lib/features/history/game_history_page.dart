@@ -301,27 +301,31 @@ final class _StatisticsCard extends StatelessWidget {
     final winRate = statistics.matches == 0
         ? 0
         : (statistics.wins / statistics.matches * 100).round();
-    return Card(
+    return Semantics(
       key: const Key('match-history-statistics'),
-      child: Padding(
-        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('战绩统计', style: Theme.of(context).textTheme.titleMedium),
-            SizedBox(height: GameboxTokens.spacing.compact),
-            Wrap(
-              spacing: GameboxTokens.spacing.page,
-              runSpacing: GameboxTokens.spacing.layout,
-              children: [
-                Text('胜率 $winRate%'),
-                Text('有效对局 ${statistics.matches}'),
-                Text('胜 ${statistics.wins}'),
-                Text('负 ${statistics.losses}'),
-                Text('和 ${statistics.draws}'),
-              ],
-            ),
-          ],
+      identifier: 'match-history-statistics',
+      container: true,
+      child: Card(
+        child: Padding(
+          padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('战绩统计', style: Theme.of(context).textTheme.titleMedium),
+              SizedBox(height: GameboxTokens.spacing.compact),
+              Wrap(
+                spacing: GameboxTokens.spacing.page,
+                runSpacing: GameboxTokens.spacing.layout,
+                children: [
+                  Text('胜率 $winRate%'),
+                  Text('有效对局 ${statistics.matches}'),
+                  Text('胜 ${statistics.wins}'),
+                  Text('负 ${statistics.losses}'),
+                  Text('和 ${statistics.draws}'),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -396,24 +400,28 @@ final class _LocalResultCard extends StatelessWidget {
       _ => '棋盘已满',
     };
     final color = result.localPlayer.color == 'black' ? '黑方' : '白方';
-    return Card(
-      key: Key('history-${authoritative.matchId}'),
-      child: ExpansionTile(
-        title: Text(
-          '${result.localPlayer.nickname} · ${result.opponent.nickname}',
+    return Semantics(
+      identifier: 'match-history-entry-${authoritative.matchId}',
+      container: true,
+      child: Card(
+        key: Key('history-${authoritative.matchId}'),
+        child: ExpansionTile(
+          title: Text(
+            '${result.localPlayer.nickname} · ${result.opponent.nickname}',
+          ),
+          subtitle: Text(
+            '$outcome · $color · $reason · ${authoritative.finalRevision} 步 · '
+            '${_date(authoritative.finishedAt)}',
+          ),
+          children: [
+            for (final event in authoritative.events)
+              ListTile(
+                dense: true,
+                title: Text('第 ${event.revision} 步'),
+                subtitle: Text(event.type),
+              ),
+          ],
         ),
-        subtitle: Text(
-          '$outcome · $color · $reason · ${authoritative.finalRevision} 步 · '
-          '${_date(authoritative.finishedAt)}',
-        ),
-        children: [
-          for (final event in authoritative.events)
-            ListTile(
-              dense: true,
-              title: Text('第 ${event.revision} 步'),
-              subtitle: Text(event.type),
-            ),
-        ],
       ),
     );
   }
@@ -432,13 +440,17 @@ final class _PublicResultCard extends StatelessWidget {
       MatchOutcome.abandoned => '已中止',
     };
     final color = result.color.name == 'black' ? '黑方' : '白方';
-    return Card(
-      key: Key('history-${result.id}'),
-      child: ListTile(
-        title: Text('对手：${result.opponentNickname}'),
-        subtitle: Text(
-          '$outcome · $color · ${result.moveCount} 步 · '
-          '${_date(result.finishedAt.millisecondsSinceEpoch)}',
+    return Semantics(
+      identifier: 'match-history-entry-${result.id}',
+      container: true,
+      child: Card(
+        key: Key('history-${result.id}'),
+        child: ListTile(
+          title: Text('对手：${result.opponentNickname}'),
+          subtitle: Text(
+            '$outcome · $color · ${result.moveCount} 步 · '
+            '${_date(result.finishedAt.millisecondsSinceEpoch)}',
+          ),
         ),
       ),
     );

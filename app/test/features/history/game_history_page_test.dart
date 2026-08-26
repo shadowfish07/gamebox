@@ -83,6 +83,14 @@ void main() {
 
     expect(find.textContaining('胜利'), findsOneWidget);
     expect(find.textContaining('失败'), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('match-history-statistics'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('match-history-entry-${original.matchId}'),
+      findsOneWidget,
+    );
     expect(find.textContaining('公网'), findsNothing);
     expect(find.textContaining('局域网'), findsNothing);
     expect(find.textContaining('public'), findsNothing);
