@@ -127,19 +127,15 @@ final class _LanJoinPageState extends State<LanJoinPage> {
               decoration: const InputDecoration(labelText: '手动输入加入信息'),
             ),
           ),
-          Semantics(
+          GameboxPendingButton(
+            key: const Key('submit-lan-manual-input'),
             identifier: 'submit-lan-manual-input',
-            button: true,
-            child: GameboxPendingButton(
-              key: const Key('submit-lan-manual-input'),
-              identifier: 'submit-lan-manual-input',
-              label: '加入房间',
-              pendingLabel: '正在加入房间',
-              isPending: state is LanJoining,
-              onPressed: state is LanJoining
-                  ? null
-                  : () => _submit(_textController.text),
-            ),
+            label: '加入房间',
+            pendingLabel: '正在加入房间',
+            isPending: state is LanJoining,
+            onPressed: state is LanJoining
+                ? null
+                : () => _submit(_textController.text),
           ),
           if (state case LanRoomFailure(:final code)) ...[
             Semantics(

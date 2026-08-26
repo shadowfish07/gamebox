@@ -29,5 +29,9 @@ void main() {
     expect(find.byType(MobileScanner), findsNothing);
     expect(find.byKey(const Key('lan-manual-input')), findsOneWidget);
     expect(find.byKey(const Key('start-lan-scanner')), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('submit-lan-manual-input'),
+      findsOneWidget,
+    );
   });
 }
