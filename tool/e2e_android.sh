@@ -1948,6 +1948,9 @@ self_test() {
   grep -F 'tap_identifier_after_scroll "$SERIAL_B" continue-match' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'narrow active-match action is not atomically scroll-aware\n' >&2; return 1; }
+  grep -F 'tap_identifier_after_scroll "$serial" register' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'embedded registration action is not atomically scroll-aware\n' >&2; return 1; }
   if grep -E 'tap_identifier "\$[A-Za-z_][A-Za-z0-9_]*" continue-match' \
     <<<"$runtime_source" >/dev/null; then
     printf 'a continue-match action still uses the non-scroll-aware tap helper\n' >&2
@@ -2654,36 +2657,6 @@ wait_for_identifier() {
   return 1
 }
 
-reveal_identifier_after_text_input() {
-  local serial="$1"
-  local identifier="$2"
-  local xml="$TEMP_DIR/ui-reveal-${serial//[^A-Za-z0-9_.-]/_}.xml"
-  local size width height x start_y end_y center
-  adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
-    || fail "could not dismiss the text input keyboard on $serial"
-  size="$(adb_for "$serial" shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1)"
-  read -r width height <<<"$size"
-  [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] \
-    || fail "could not determine the display size on $serial"
-  x=$((width / 2))
-  start_y=$((height * 3 / 4))
-  end_y=$((height / 4))
-  local attempt=0
-  while ((attempt < 5)); do
-    attempt=$((attempt + 1))
-    if dump_ui "$serial" "$xml"; then
-      center="$(xml_query bounds "$xml" "$identifier" 2>/dev/null)" && {
-        printf '%s\n' "$center"
-        return 0
-      }
-    fi
-    adb_for "$serial" shell input swipe "$x" "$start_y" "$x" "$end_y" 250 >/dev/null \
-      || return 1
-    sleep 1
-  done
-  return 1
-}
-
 wait_for_identifier_after_scroll() {
   local serial="$1"
   local identifier="$2"
@@ -2938,9 +2911,10 @@ register_user() {
   printf -v "$secret_flag" '%s' 1
   input_text_by_identifier "$serial" invite-code "$invite"
   assert_field_text "$serial" invite-code "$invite"
-  reveal_identifier_after_text_input "$serial" register >/dev/null \
-    || fail "register could not be revealed by resource-id on $serial"
-  tap_identifier "$serial" register
+  adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
+    || fail "could not dismiss the registration keyboard on $serial"
+  tap_identifier_after_scroll "$serial" register \
+    || fail "register could not be revealed and tapped by resource-id on $serial"
   wait_for_identifier "$serial" game-gomoku >/dev/null \
     || fail "registration did not reach the catalog on $serial"
   printf -v "$secret_flag" '%s' 0
