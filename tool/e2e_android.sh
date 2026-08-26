@@ -1965,6 +1965,9 @@ self_test() {
   grep -F 'tap_identifier_after_scroll "$SERIAL_B" continue-match' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'narrow active-match action is not atomically scroll-aware\n' >&2; return 1; }
+  grep -F 'refresh_game_log_boundary "$SERIAL_B" first-gomoku-ready' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'B first-match launch does not refresh its log boundary\n' >&2; return 1; }
   grep -F 'tap_identifier_after_scroll "$serial" register' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'embedded registration action is not atomically scroll-aware\n' >&2; return 1; }
@@ -3065,6 +3068,8 @@ wait_for_identifier_after_scroll "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the active-match automation identifier"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
   || fail "could not verify the dark narrow active lobby UI state"
+refresh_game_log_boundary "$SERIAL_B" first-gomoku-ready \
+  || fail "could not establish B first-match log boundary"
 tap_identifier_after_scroll "$SERIAL_B" continue-match \
   || fail "B could not activate the narrow active-match action"
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
