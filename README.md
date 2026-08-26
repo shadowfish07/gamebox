@@ -194,6 +194,19 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
+The local release helper automates this flow from the current synchronized branch
+and automatically increments the semantic version and Android build number:
+
+```bash
+bash tool/release.sh patch
+bash tool/release.sh minor
+bash tool/release.sh major
+```
+
+It commits and pushes by default, which triggers the release workflow. Use
+`bash tool/release.sh patch --dry-run` to validate the next version without
+changing files or Git state.
+
 The workflow checks that the tag and pubspec versions match, runs the complete
 repository verification gate, builds signed APK and AAB files, verifies the APK
 signature, generates `checksums.txt` for manual verification, and publishes all
