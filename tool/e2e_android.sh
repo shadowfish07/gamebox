@@ -3640,7 +3640,9 @@ tap_rps_choice() {
     paper) design_x=892 ;;
     *) return 2 ;;
   esac
-  point="$(design_point_for_serial "$serial" "$design_x" 950)"
+  # RPS now reserves the upper half for the opponent and stable round stage;
+  # the three full-column choice targets occupy the lower player zone.
+  point="$(design_point_for_serial "$serial" "$design_x" 1450)"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
