@@ -2327,8 +2327,10 @@ capture_failure() {
         >"$ARTIFACT_DIR/failure-$label-media-omitted.txt" || true
     fi
     if declare -F game_logs_after_boundary >/dev/null 2>&1 && declare -F boundary_for_serial >/dev/null 2>&1; then
-      game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
-        | sanitize_stream >"$ARTIFACT_DIR/failure-$label-logcat.txt" || true
+      {
+        game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")"
+        adb_for "$serial" logcat -b all -d -v threadtime 2>/dev/null || true
+      } | sanitize_stream >"$ARTIFACT_DIR/failure-$label-logcat.txt" || true
     fi
   done
   if [[ -n "$MATCH_ID" && -n "$SERVER_PID" ]] \
@@ -2636,6 +2638,19 @@ game_logs_after_boundary() {
     | grep -E '[[:space:]]I[[:space:]]+godot[[:space:]]+:' || true
 }
 
+# A fresh match UUID makes an exact marker safe to use as a fallback when an
+# emulator loses the injected boundary record from its readable log buffers.
+game_logs_for_marker() {
+  local serial="$1"
+  local boundary="$2"
+  local marker="$3"
+  if game_logs_after_boundary "$serial" "$boundary" | grep -F "$marker" >/dev/null; then
+    return 0
+  fi
+  adb_for "$serial" logcat -b all -d -v threadtime 2>/dev/null \
+    | grep -F "$marker" >/dev/null
+}
+
 dump_ui() {
   local serial="$1"
   local local_path="$2"
@@ -2809,7 +2824,7 @@ wait_for_log_marker_with_timeout() {
   local timeout_seconds="$3"
   local deadline=$((SECONDS + timeout_seconds))
   while ((SECONDS < deadline)); do
-    if game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" | grep -F "$marker" >/dev/null; then
+    if game_logs_for_marker "$serial" "$(boundary_for_serial "$serial")" "$marker"; then
       return 0
     fi
     sleep 1
