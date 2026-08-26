@@ -509,7 +509,7 @@ run_required_phase host-private-handoff "$TEMP_DIR/host-export.log" run_instrume
 # App-target instrumentation stops the existing app process. Restore the real
 # Flutter/foreground-service process before exposing its listener to the guest.
 adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
-wait_id "$SERIAL_A" continue-lan-room >/dev/null || fail 'host recovery action did not return after private export'
+reveal_id "$SERIAL_A" continue-lan-room >/dev/null || fail 'host recovery action could not be revealed after private export'
 read_private_file "$SERIAL_A" files/lan-e2e-handoff.json "$TEMP_DIR/handoff.json" 8192 \
   || fail 'host private handoff could not be read'
 adb_for "$SERIAL_A" shell run-as "$PACKAGE" rm files/lan-e2e-handoff.json >/dev/null 2>&1 || true
@@ -605,6 +605,7 @@ for x in 0 1 2 3 4; do
       adb_for "$SERIAL_A" shell am force-stop "$PACKAGE"
       adb_for "$SERIAL_A" logcat -c
       adb_for "$SERIAL_A" shell am start -W -n "$MAIN_ACTIVITY" >/dev/null
+      reveal_id "$SERIAL_A" continue-lan-room >/dev/null || fail 'host force-stop recovery action could not be revealed'
       tap_id "$SERIAL_A" continue-lan-room
       wait_log_revision "$SERIAL_A" "$revision" || fail 'host force-stop recovery did not converge'
       adb_for "$SERIAL_A" exec-out screencap -p >"$ARTIFACT_DIR/recovered-host.png"
