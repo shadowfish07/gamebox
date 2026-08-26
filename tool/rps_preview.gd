@@ -50,6 +50,9 @@ class PreviewClient:
 	func _emit_state() -> void:
 		snapshot_received.emit({})
 		if _state_name in ["reveal", "finished"]:
+			# Leave the base state on screen long enough for the desktop window to
+			# become visible, then play the same timed reveal as production.
+			await (Engine.get_main_loop() as SceneTree).create_timer(1.5).timeout
 			_state.apply_event(_reveal_event(_state_name == "finished"))
 			event_received.emit({})
 
