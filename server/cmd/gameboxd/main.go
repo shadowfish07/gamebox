@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -367,9 +368,9 @@ func (logger *jsonLogger) write(event string, fields map[string]any) {
 	_ = json.NewEncoder(logger.output).Encode(record)
 }
 
-// componentLogWriter converts the fixed, secret-free key/value records from
-// the HTTP router and WebSocket hub into structured JSON. Unknown fields and
-// free-form net/http diagnostics are discarded instead of being echoed.
+// componentLogWriter converts fixed key/value records from the HTTP router and
+// WebSocket hub into structured JSON. Unknown fields and free-form net/http
+// diagnostics are discarded instead of being echoed.
 type componentLogWriter struct {
 	mu     sync.Mutex
 	buffer strings.Builder
@@ -410,6 +411,10 @@ func (writer *componentLogWriter) writeLine(line string) {
 			}
 		case "request_id", "method", "path", "connection_id", "match_id", "user_id", "phase", "category":
 			fields[key] = value
+		case "error_b64":
+			if detail, err := base64.RawURLEncoding.DecodeString(value); err == nil {
+				fields["error"] = string(detail)
+			}
 		case "status", "duration_ms":
 			if status, err := strconv.Atoi(value); err == nil {
 				fields[key] = status

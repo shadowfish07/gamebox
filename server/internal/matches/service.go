@@ -28,6 +28,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"me.zqydev/gamebox/server/internal/clock"
+	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
@@ -2696,7 +2697,7 @@ func matchBeginError(callerContext, operationContext context.Context, err error)
 		return callerErr
 	}
 	if operationContext.Err() != nil {
-		return ErrInternal
+		return diagnostics.Wrap(ErrInternal, err)
 	}
 	return matchDatabaseError(callerContext, err)
 }
@@ -2711,5 +2712,5 @@ func matchDatabaseError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	return ErrInternal
+	return diagnostics.Wrap(ErrInternal, err)
 }
