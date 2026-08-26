@@ -36,7 +36,7 @@ fi
 
 if [ "$serial" = "emulator-5560" ] \
   && [ "$*" = "-s emulator-5560 shell getprop ro.boot.qemu.avd_name" ]; then
-  printf 'Gamebox_A_API_36\n'
+  printf 'Gamebox_A0_API_36\n'
   exit 0
 fi
 if [ "$serial" = "emulator-5554" ] \

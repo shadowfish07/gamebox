@@ -332,13 +332,17 @@ bash tool/e2e_android.sh
 ```
 
 The full E2E requires a clean worktree and records the exact starting commit
-and built/installed APK SHA-256 values. It takes the Git common-directory lease
-before using Android. With no serial overrides it creates/starts only
-`Gamebox_A_API_36` and `Gamebox_B_API_36` on ports 5560/5562 and cleans up only
-those processes/packages; it does not stop, wipe, clear logcat, or change an
-unrelated emulator such as `emulator-5554`. Alternatively, set both
+and built/installed APK SHA-256 values. With no serial overrides it takes one
+available slot from the Git-common-directory Android lease pool. Slot 0 owns
+`Gamebox_A0_API_36`/`Gamebox_B0_API_36` on ports 5560/5562; slot 1 owns
+`Gamebox_A1_API_36`/`Gamebox_B1_API_36` on ports 5564/5566. Two linked
+worktrees can therefore run this command concurrently, each using only its
+leased pair and cleaning up only its own processes/packages. It does not stop,
+wipe, clear logcat, or change an unrelated emulator such as `emulator-5554`.
+Alternatively, set both
 `GAMEBOX_E2E_SERIAL_A` and `GAMEBOX_E2E_SERIAL_B`; supplied devices are selected
-but not created, wiped, restarted, or stopped. Managed AVD A runs in light mode
+but not created, wiped, restarted, or stopped, and this compatibility mode
+uses the exclusive lease so it cannot overlap a managed slot. Managed AVD A runs in light mode
 at a 1080x2400 large-phone viewport and B in dark mode at a 720x1600 narrow-
 phone viewport. Supplied devices keep their display overrides and must
 naturally provide the same portrait logical viewport matrix: A must resolve to
@@ -349,7 +353,7 @@ mode and every managed display override on success and through its exit trap.
 The semantics integration test always uses the selected A-device explicitly:
 
 ```bash
-(cd app && flutter test -d emulator-5560 \
+(cd app && flutter test -d <selected-A-serial> \
   integration_test/semantics_test.dart)
 ```
 
