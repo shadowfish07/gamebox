@@ -2599,9 +2599,11 @@ installed_package_sha256() {
   [[ "$(wc -l <<<"$paths" | tr -d ' ')" == "1" && "$paths" == package:* ]] || return 1
   remote="${paths#package:}"
   valid_installed_apk_path "$remote" || return 1
-  adb_for "$serial" exec-out cat "$remote" \
-    | shasum -a 256 \
-    | awk '{print $1}'
+  # The debug APK is intentionally large because it embeds the Godot runtime.
+  # Hash it on-device so provenance validation transfers only the digest rather
+  # than timing out while streaming hundreds of megabytes through adb.
+  adb_for "$serial" shell sha256sum "$remote" 2>/dev/null \
+    | awk 'NF == 2 { print $1 }'
 }
 
 INSTALLED_APK_SHA_A="$(installed_package_sha256 "$SERIAL_A" "$PACKAGE")" \
