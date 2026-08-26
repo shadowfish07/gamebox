@@ -322,12 +322,13 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if marshalErr != nil {
 		return
 	}
-	snapshotMessage, marshalErr := snapshotEnvelope(snapshot, connection.userID)
-	if marshalErr != nil || !connection.enqueueInitial(connected, snapshotMessage, snapshot.Match.Revision) {
+	snapshotMessages, marshalErr := snapshotEnvelopesByUser(snapshot)
+	snapshotMessage, viewerFound := snapshotMessages[connection.userID]
+	if marshalErr != nil || !viewerFound || !connection.enqueueInitial(connected, snapshotMessage, snapshot.Match.Revision) {
 		return
 	}
 	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
-		ready, stale := hub.markReady(connection, snapshot.Match.Revision, snapshotMessage)
+		ready, stale := hub.markReady(connection, snapshot.Match.Revision, snapshotMessages)
 		if ready {
 			connection.readLoop()
 			return
@@ -341,8 +342,9 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		if snapshotErr != nil {
 			return
 		}
-		snapshotMessage, marshalErr = snapshotEnvelope(snapshot, connection.userID)
-		if marshalErr != nil || connection.enqueueState(snapshotMessage, snapshot.Match.Revision) != enqueueStateQueued {
+		snapshotMessages, marshalErr = snapshotEnvelopesByUser(snapshot)
+		snapshotMessage, viewerFound = snapshotMessages[connection.userID]
+		if marshalErr != nil || !viewerFound || connection.enqueueState(snapshotMessage, snapshot.Match.Revision) != enqueueStateQueued {
 			return
 		}
 	}
@@ -485,7 +487,7 @@ func (hub *Hub) logf(format string, arguments ...any) {
 	}
 }
 
-func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, snapshotMessage []byte) (ready bool, stale bool) {
+func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, snapshotMessages map[string][]byte) (ready bool, stale bool) {
 	hub.mu.Lock()
 	match := hub.matches[connection.matchID]
 	if match == nil {
@@ -503,6 +505,12 @@ func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, sna
 		// the shared publication watermark advances, so no one is left behind.
 		for existing := range match.connections {
 			if existing == connection || !existing.ready || existing.revision.Load() >= snapshotRevision {
+				continue
+			}
+			snapshotMessage, found := snapshotMessages[existing.userID]
+			if !found {
+				existing.ready = false
+				slow = append(slow, existing)
 				continue
 			}
 			result := existing.enqueueState(snapshotMessage, snapshotRevision)
@@ -1063,6 +1071,21 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 	payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
 	payload.Result = cloneStringPointer(snapshot.Match.Result)
 	return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+}
+
+func snapshotEnvelopesByUser(snapshot Snapshot) (map[string][]byte, error) {
+	if len(snapshot.Players) != 2 || snapshot.Players[0].UserID == snapshot.Players[1].UserID {
+		return nil, ErrInternal
+	}
+	messages := make(map[string][]byte, len(snapshot.Players))
+	for _, player := range snapshot.Players {
+		message, err := snapshotEnvelope(snapshot, player.UserID)
+		if err != nil {
+			return nil, err
+		}
+		messages[player.UserID] = message
+	}
+	return messages, nil
 }
 
 func rpsSnapshotEnvelope(snapshot Snapshot, viewerID string) ([]byte, error) {
