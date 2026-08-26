@@ -106,18 +106,25 @@ static func _foreign_reveal_winner() -> bool:
 
 static func _scene_contract() -> bool:
 	var scene: Node = RpsScene.instantiate()
-	var choices: HBoxContainer = scene.get_node("ChoicePanel/Choices")
-	var rock: Button = scene.get_node("ChoicePanel/Choices/RockButton")
-	var paper: Button = scene.get_node("ChoicePanel/Choices/PaperButton")
-	var scissors: Button = scene.get_node("ChoicePanel/Choices/ScissorsButton")
+	var choices: HBoxContainer = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices")
+	var rock: Button = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton")
+	var paper: Button = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/PaperButton")
+	var scissors: Button = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/ScissorsButton")
 	var passed := _check(scene is Control, "expected portrait control scene") \
 		and _check(choices.get_child(0) == rock, "rock must be the first choice") \
 		and _check(choices.get_child(1) == scissors, "scissors must be the second choice") \
 		and _check(choices.get_child(2) == paper, "paper must be the third choice") \
 		and _check(rock.custom_minimum_size == paper.custom_minimum_size, "choice targets must be equal") \
 		and _check(paper.custom_minimum_size == scissors.custom_minimum_size, "choice targets must be equal") \
-		and _check(rock.custom_minimum_size.x >= 96 and rock.custom_minimum_size.y >= 96, "choice targets must be touch safe") \
+		and _check(rock.custom_minimum_size.x >= 96 and rock.custom_minimum_size.y >= 256, "choice targets must be touch safe") \
 		and _check(rock.flat and paper.flat and scissors.flat, "choice backgrounds must stay transparent") \
+		and _check(scene.has_node("SafeContent/Layout/OpponentSection/OpponentVisual/Unknown"), "sealed opponent placeholder must exist") \
+		and _check(scene.has_node("SafeContent/Layout/OpponentSection/OpponentVisual/Locked"), "sealed opponent lock state must exist") \
+		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/StateSupportLabel"), "round stage must keep primary and supporting copy together") \
+		and _check(scene.has_node("SafeContent/Layout/MySection/SelectedPanel"), "selected gesture slot must exist") \
+		and _check(scene.has_node("BackButton") == false, "navigation controls live in the safe constrained layout") \
+		and _check(scene.has_node("SafeContent/Layout/TopNavigation/BackButton"), "visible back control must remain available") \
+		and _check(scene.has_node("SafeContent/Layout/TopNavigation/MoreButton"), "resign menu control must remain available") \
 		and _check(scene.has_node("RevealPanel"), "previous-round result panel must exist") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/MyChoice/Icon").texture != null, "my reveal image must load") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load") \

@@ -6,6 +6,7 @@ const RpsState = preload("res://games/rps/rps_state.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 const CHOICE_SELECTED_SCALE := Vector2(0.92, 0.92)
+const REVEAL_DURATION_MS := 1600
 const SAFE_ERRORS := {
 	"choice_locked": "本轮已经出拳",
 	"stale_revision": "对局已更新，正在同步",
@@ -30,6 +31,8 @@ var _returning := false
 var _resign_submitted := false
 var _last_log_signature := ""
 var _terminal_logged := false
+var _reveal_until_ms := 0
+var _reveal_key := ""
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -60,8 +63,13 @@ func _ready() -> void:
 	var dark_theme := GameboxTheme.system_prefers_dark()
 	theme = GameboxTheme.create(dark_theme)
 	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
-	$ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["section"])
-	$BackButton.pressed.connect(_on_back_pressed)
+	$SafeContent/Layout.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
+	$SafeContent/Layout/MySection/ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
+	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
+	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
+	$SafeContent/Layout/MySection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
+	$SafeContent/Layout/TopNavigation/BackButton.pressed.connect(_on_back_pressed)
+	$SafeContent/Layout/TopNavigation/MoreButton.pressed.connect(_on_resign_pressed)
 	for entry in _choice_entries():
 		var button: Button = entry["button"]
 		button.get_node("Content").add_theme_constant_override("separation", GameboxTokens.SPACING["base"])
@@ -108,6 +116,9 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if not _disposed and _client != null:
 		_client.poll()
+	if _reveal_until_ms > 0 and Time.get_ticks_msec() >= _reveal_until_ms:
+		_reveal_until_ms = 0
+		_refresh_ui()
 
 
 func _exit_tree() -> void:
@@ -196,6 +207,8 @@ func _on_snapshot_received(_envelope: Dictionary) -> void:
 
 func _on_event_received(_envelope: Dictionary) -> void:
 	_resign_submitted = false
+	if _state != null and _state.last_reveal is Dictionary:
+		_start_reveal(_state.last_reveal)
 	_refresh_ui()
 
 
@@ -221,29 +234,33 @@ func _refresh_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var terminal: bool = has_state and _state.status in ["finished", "cancelled", "abandoned"]
-	$ConnectionBanner.present(_connection_state, "正在恢复对局")
+	$ConnectionBanner.present(_connection_state, "网络波动，正在恢复对局…\n已确认的出拳状态会保留")
 	$ErrorSnackbar.present(_error_text, "error")
 	$LoadingOverlay.set_loading(not has_state or _awaiting_snapshot, "正在同步对局…")
-	$FormatLabel.text = _format_label(_state.format) if has_state else "赛制加载中"
-	$ScorePanel/ScoreLabel.text = "你 %d  :  %d 对手" % [_state.me_score, _state.opponent_score] if has_state else "你 0  :  0 对手"
-	$RoundLabel.text = "第 %d 轮" % _state.round_number if has_state else "准备对局"
-	$StateLabel.text = _status_text(local_user_id) if has_state else "正在连接"
-	$OpponentLockLabel.text = _opponent_text() if has_state else "对手状态未知"
-	$OpponentLockLabel.visible = has_state and not terminal
+	$SafeContent/Layout/TopNavigation/TitleGroup/FormatLabel.text = _format_label(_state.format) if has_state else "赛制加载中"
+	$SafeContent/Layout/RoundStage/Content/ScoreLabel.text = "你 %d  VS  %d 对手" % [_state.me_score, _state.opponent_score] if has_state else "你 0  VS  0 对手"
+	$SafeContent/Layout/RoundStage/Content/RoundLabel.text = "最终结果" if terminal else "第 %d 轮" % _state.round_number if has_state else "准备对局"
+	$SafeContent/Layout/RoundStage/Content/StateLabel.text = _status_text(local_user_id) if has_state else "正在同步对局…"
+	$SafeContent/Layout/RoundStage/Content/StateSupportLabel.text = _status_support(local_user_id) if has_state else "收到权威快照前无法操作"
+	_refresh_player_statuses(has_state, terminal)
 	_refresh_reveal(has_state)
 	var can_choose: bool = has_state and not terminal and not _awaiting_snapshot \
-		and _connection_state == "connected" and _state.can_request_choice("rock", local_user_id)
+		and _connection_state == "connected" and not _is_revealing() and _state.can_request_choice("rock", local_user_id)
 	for entry in _choice_entries():
 		entry["button"].disabled = not can_choose
 	_refresh_choice_visuals()
-	$ChoicePanel.visible = not terminal
+	$SafeContent/Layout/MySection/ChoicePanel.visible = not terminal and _selected_choice().is_empty() and not _is_revealing()
+	$SafeContent/Layout/MySection/SelectedPanel.visible = not terminal and not _selected_choice().is_empty() and not _is_revealing()
 	$ResignButton.visible = has_state and not terminal and _state.can_request_resign(local_user_id)
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot or _resign_submitted
-	if terminal:
+	if terminal and not _is_revealing():
 		$ResignDialog.close()
 		$ResultPanel.present(_state.status, _state.winner_user_id == local_user_id)
+		$ResultPanel/Content/Details.text = "%s · 最终比分 你 %d VS %d 对手" % [_format_label(_state.format), _state.me_score, _state.opponent_score]
+		$ResultScrim.visible = true
 	else:
 		$ResultPanel.present("", false)
+		$ResultScrim.visible = false
 	_log_safe_state(has_state)
 
 
@@ -257,19 +274,50 @@ func _status_text(local_user_id: String) -> String:
 	if not _state.pending_action.is_empty():
 		return "正在锁定你的选择…"
 	if _state.me_locked:
-		return "已出拳，等待对手"
-	return "请选择本轮手势"
+		return "你的选择已锁定"
+	if _state.opponent_locked:
+		return "对手已经准备好"
+	return "选择你的手势"
 
 
 func _opponent_text() -> String:
 	if _state.opponent_locked:
-		return "对手已出拳 · 选择已保密"
-	return "等待对手出拳"
+		return "已出拳 · 保密"
+	return "等待出拳"
+
+
+func _status_support(local_user_id: String) -> String:
+	if _state.status == "finished":
+		return "最终比分已确认"
+	if _state.status in ["cancelled", "abandoned"]:
+		return "返回游戏大厅"
+	if not _state.pending_action.is_empty():
+		return "服务器确认前不会视为最终出拳"
+	if _state.me_locked:
+		return "等待对手后同时揭晓"
+	if _state.opponent_locked:
+		return "选择石头、剪刀或布"
+	return "手势会在双方锁定后同时揭晓"
+
+
+func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
+	var opponent_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else _opponent_text() if has_state else "等待"
+	var my_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "等待"
+	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Label.text = opponent_status
+	$SafeContent/Layout/MySection/StatusLine/StatusChip/Label.text = my_status
+	var locked: bool = has_state and _state.opponent_locked and not _is_revealing()
+	$SafeContent/Layout/OpponentSection/OpponentVisual/Unknown.visible = not locked
+	$SafeContent/Layout/OpponentSection/OpponentVisual/Locked.visible = locked
+	var selected := _selected_choice()
+	if not selected.is_empty():
+		$SafeContent/Layout/MySection/SelectedPanel/Icon.texture = _choice_texture(selected)
+		$SafeContent/Layout/MySection/SelectedPanel/Label.text = "你出了%s" % _choice_label(selected)
+		$SafeContent/Layout/MySection/SelectedPanel/Status.text = "正在锁定你的选择…" if not _state.pending_action.is_empty() else "已出拳 · 等待同时揭晓"
 
 
 func _refresh_choice_visuals() -> void:
 	var selected_choice := _selected_choice()
-	var full_color: Color = GameboxTokens.LIGHT["on_primary"]
+	var full_color: Color = GameboxTokens.DARK["on_surface"] if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT["on_surface"]
 	var faded_alpha: float = full_color.a - float(GameboxTokens.GAME["pending_overlay_alpha"])
 	for entry in _choice_entries():
 		var button: Button = entry["button"]
@@ -285,7 +333,7 @@ func _refresh_choice_visuals() -> void:
 
 func _refresh_reveal(has_state: bool) -> void:
 	var reveal: Variant = _state.last_reveal if has_state else null
-	$RevealPanel.visible = reveal is Dictionary
+	$RevealPanel.visible = reveal is Dictionary and _is_revealing()
 	if not reveal is Dictionary:
 		return
 	var choices: Dictionary = reveal["choices"]
@@ -296,7 +344,48 @@ func _refresh_reveal(has_state: bool) -> void:
 	$RevealPanel/Content/Choices/OpponentChoice/Icon.texture = _choice_texture(opponent_choice)
 	$RevealPanel/Content/Choices/OpponentChoice/Label.text = "对手 · %s" % _choice_label(opponent_choice)
 	$RevealPanel/Content/ResultLabel.text = "本轮平局" if reveal["draw"] else \
-		"本轮你获胜" if reveal["roundWinnerUserId"] == _state.me_user_id else "本轮对手获胜"
+		"本轮获胜" if reveal["roundWinnerUserId"] == _state.me_user_id else "本轮落败"
+	$RevealPanel/Content/ReasonLabel.text = _reveal_reason(my_choice, opponent_choice, bool(reveal["draw"]))
+
+
+func _start_reveal(reveal: Dictionary) -> void:
+	var key := "%s|%s" % [str(reveal.get("round", "")), str(_state.revision)]
+	if key == _reveal_key:
+		return
+	_reveal_key = key
+	_reveal_until_ms = Time.get_ticks_msec() + REVEAL_DURATION_MS
+	var panel: Control = $RevealPanel
+	panel.modulate.a = 0.0
+	var tween := create_tween()
+	tween.tween_property(panel, "modulate:a", 1.0, float(GameboxTokens.MOTION["slow"]) / 1000.0)
+
+
+func _is_revealing() -> bool:
+	return _reveal_until_ms > Time.get_ticks_msec()
+
+
+static func _reveal_reason(my_choice: String, opponent_choice: String, draw: bool) -> String:
+	if draw:
+		return "都是%s · 平局不计分，再来一轮" % _choice_label(my_choice)
+	var pair := "%s:%s" % [my_choice, opponent_choice]
+	if pair in ["rock:scissors", "scissors:rock"]:
+		return "石头砸碎剪刀。"
+	if pair in ["scissors:paper", "paper:scissors"]:
+		return "剪刀剪开布。"
+	if pair in ["paper:rock", "rock:paper"]:
+		return "布包住石头。"
+	return "比分已更新"
+
+
+func _chip_style(colors: Dictionary) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = colors["secondary_container"]
+	var radius := roundi(GameboxTokens.SHAPE["full"] * GameboxTheme.LOGICAL_SCALE)
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
 
 
 func _choice_texture(choice: String) -> Texture2D:
@@ -322,9 +411,9 @@ func _selected_choice() -> String:
 
 func _choice_entries() -> Array:
 	return [
-		{"choice": "rock", "button": $ChoicePanel/Choices/RockButton},
-		{"choice": "scissors", "button": $ChoicePanel/Choices/ScissorsButton},
-		{"choice": "paper", "button": $ChoicePanel/Choices/PaperButton},
+		{"choice": "rock", "button": $SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton},
+		{"choice": "scissors", "button": $SafeContent/Layout/MySection/ChoicePanel/Choices/ScissorsButton},
+		{"choice": "paper", "button": $SafeContent/Layout/MySection/ChoicePanel/Choices/PaperButton},
 	]
 
 
