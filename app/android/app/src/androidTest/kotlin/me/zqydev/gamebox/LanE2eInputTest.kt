@@ -39,6 +39,21 @@ class LanE2eInputTest {
         editable.text = payload
         device.waitForIdle()
         check(editable.text == payload) { "LAN payload did not round-trip" }
+        when (parseE2eKeyboardVisibility(device.executeShellCommand("dumpsys input_method"))) {
+            E2eKeyboardVisibility.SHOWN -> {
+                device.pressBack()
+                device.waitForIdle()
+            }
+            E2eKeyboardVisibility.HIDDEN -> Unit
+            E2eKeyboardVisibility.UNKNOWN -> error(
+                "Could not determine keyboard visibility: dumpsys input_method omitted mInputShown",
+            )
+        }
+        val refreshed = device.wait(Until.findObject(By.res("lan-manual-input")), 10_000)
+            ?: error("LAN manual input did not return after keyboard dismissal")
+        val refreshedEditable = refreshed.findObject(By.clazz("android.widget.EditText"))
+            ?: error("LAN manual input was not editable after keyboard dismissal")
+        check(refreshedEditable.text == payload) { "LAN payload was not retained" }
         val hash = MessageDigest.getInstance("SHA-256").digest(payload.toByteArray())
             .joinToString("") { "%02x".format(it) }
         android.util.Log.i("LanE2eInput", "LAN_INPUT_READY sha256=$hash")
