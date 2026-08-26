@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 
 import '../../core/api/api_error.dart';
+import '../../design_system/components/gamebox_async_panel.dart';
+import '../../design_system/components/gamebox_page_body.dart';
+import '../../design_system/components/gamebox_pending_button.dart';
+import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
 import '../update/update_action.dart';
-import '../update/update_controller.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
 import 'opponent_page.dart';
@@ -86,6 +90,30 @@ final class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _cancelMatch() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('取消这局尚未开始的对局？'),
+        content: const Text('取消后，双方将返回空闲状态。'),
+        actions: [
+          Semantics(
+            identifier: 'dismiss-cancel-match',
+            child: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('保留对局'),
+            ),
+          ),
+          Semantics(
+            identifier: 'confirm-cancel-match',
+            child: TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('取消对局'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     final error = await widget.controller?.cancelActiveMatch();
     if (mounted && error != null) _showError(error);
   }
@@ -117,66 +145,79 @@ final class _HomePageState extends State<HomePage> {
               ),
             if (widget.updateController case final controller?)
               UpdateActionButton(controller: controller),
-            Semantics(
-              identifier: 'open-game-history',
-              button: true,
-              child: IconButton(
-                key: const Key('open-game-history'),
-                tooltip: '对战记录',
-                onPressed: widget.onOpenHistory,
-                icon: const Icon(Icons.history),
-              ),
-            ),
           ],
         ),
-        body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(24),
-            children: [
-              Text(
-                '你好，${widget.nickname}',
-                style: Theme.of(context).textTheme.titleLarge,
+        body: GameboxPageBody(
+          children: [
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '你好，${widget.nickname}',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    SizedBox(height: GameboxTokens.spacing.page),
+                    Semantics(
+                      key: const Key('open-match-history'),
+                      identifier: 'open-match-history',
+                      child: OutlinedButton.icon(
+                        onPressed: widget.onOpenHistory,
+                        icon: const Icon(Icons.history),
+                        label: const Text('我的战绩'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 20),
-              if (widget.publicSection case final publicSection?) ...[
-                Card(
-                  key: const Key('public-section'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: publicSection,
-                  ),
+            ),
+            if (widget.publicSection case final publicSection?) ...[
+              Card(
+                key: const Key('public-section'),
+                child: Padding(
+                  padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+                  child: publicSection,
                 ),
-                const SizedBox(height: 12),
-              ],
-              if (widget.lanRecovery case final recovery?) ...[
-                recovery,
-                const SizedBox(height: 12),
-              ],
-              if (controller != null &&
-                  controller.status == null &&
-                  controller.isLoading)
-                const Center(child: CircularProgressIndicator())
-              else if (controller != null &&
-                  controller.status == null &&
-                  controller.lastError != null)
-                _HomeError(
-                  message: controller.lastError!.message,
-                  onRetry: controller.refresh,
-                )
-              else if (controller != null && controller.status == null)
-                const Center(child: CircularProgressIndicator())
-              else
-                _GomokuCard(
-                  status: controller?.status,
-                  isLaunching: controller?.isLaunching ?? false,
-                  isMutating: controller?.isMutating ?? false,
-                  onChoose: widget.onOpenPublic ?? _chooseOpponent,
-                  onLan: widget.onOpenLan,
-                  onContinue: _continueMatch,
-                  onCancel: _cancelMatch,
-                ),
+              ),
             ],
-          ),
+            if (widget.lanRecovery case final recovery?)
+              recovery
+            else if (controller != null &&
+                controller.status == null &&
+                controller.isLoading)
+              const GameboxAsyncPanel(
+                icon: Icons.sports_esports_outlined,
+                title: '正在加载游戏',
+                message: '请稍候，正在获取最新对局状态。',
+                isLoading: true,
+              )
+            else if (controller != null &&
+                controller.status == null &&
+                controller.lastError != null)
+              _HomeError(
+                message: controller.lastError!.message,
+                onRetry: controller.refresh,
+              )
+            else if (controller != null && controller.status == null)
+              const GameboxAsyncPanel(
+                icon: Icons.sports_esports_outlined,
+                title: '正在加载游戏',
+                message: '请稍候，正在获取最新对局状态。',
+                isLoading: true,
+              )
+            else
+              _GomokuCard(
+                status: controller?.status,
+                isLaunching: controller?.isLaunching ?? false,
+                isMutating: controller?.isMutating ?? false,
+                onChoose: widget.onOpenPublic ?? _chooseOpponent,
+                onLan: widget.onOpenLan,
+                onContinue: _continueMatch,
+                onCancel: _cancelMatch,
+              ),
+          ],
         ),
       ),
     );
@@ -193,13 +234,18 @@ final class _HomeError extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(message, textAlign: TextAlign.center),
-        const SizedBox(height: 16),
+        GameboxAsyncPanel(
+          icon: Icons.cloud_off_outlined,
+          title: '暂时无法加载',
+          message: message,
+        ),
+        SizedBox(height: GameboxTokens.spacing.page),
         _ActionButton(
           semanticKey: const Key('retry-home'),
           semanticLabel: 'retry-home',
+          label: '重试',
+          pendingLabel: '正在重试',
           onPressed: onRetry,
-          child: const Text('重试'),
         ),
       ],
     );
@@ -230,7 +276,7 @@ final class _GomokuCard extends StatelessWidget {
     final descriptor = gameCatalog.single;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -244,29 +290,41 @@ final class _GomokuCard extends StatelessWidget {
                   children: [
                     Text(
                       descriptor.title,
-                      style: Theme.of(context).textTheme.headlineSmall,
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 8),
-                    Text('${descriptor.playerCount} 人对战'),
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    Text('${descriptor.playerCount} 人 · 回合制'),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              status == null
+                  ? '可直接局域网对战，也可注册后使用公网匹配'
+                  : status is GomokuIdleStatus
+                  ? '可开始新对局'
+                  : '对局进行中',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
             Text('公网对战', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
+            SizedBox(height: GameboxTokens.spacing.layout),
             switch (status) {
               null => _ActionButton(
                 semanticKey: const Key('open-public-mode'),
                 semanticLabel: 'open-public-mode',
                 onPressed: isMutating ? null : onChoose,
-                child: const Text('使用邀请码注册'),
+                label: '使用邀请码注册',
+                pendingLabel: '正在打开注册',
               ),
               GomokuIdleStatus _ => _ActionButton(
                 semanticKey: const Key('choose-opponent'),
                 semanticLabel: 'choose-opponent',
                 onPressed: isMutating ? null : onChoose,
-                child: const Text('选择对手'),
+                label: '选择对手',
+                pendingLabel: '正在创建对局',
+                isPending: isMutating,
               ),
               GomokuActiveStatus active => _ActiveMatchActions(
                 active: active,
@@ -276,12 +334,17 @@ final class _GomokuCard extends StatelessWidget {
                 onCancel: onCancel,
               ),
             },
-            const SizedBox(height: 8),
-            _ActionButton(
-              semanticKey: const Key('open-lan-mode'),
-              semanticLabel: 'open-lan-mode',
-              onPressed: onLan,
-              child: const Text('局域网对战'),
+            SizedBox(height: GameboxTokens.spacing.page),
+            Text('局域网对战', style: Theme.of(context).textTheme.titleMedium),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Semantics(
+              key: const Key('open-lan-mode'),
+              identifier: 'open-lan-mode',
+              child: OutlinedButton.icon(
+                onPressed: onLan,
+                icon: const Icon(Icons.wifi_tethering),
+                label: const Text('打开局域网模式'),
+              ),
             ),
           ],
         ),
@@ -314,24 +377,17 @@ final class _ActiveMatchActions extends StatelessWidget {
         Text('对手：${match.opponent.nickname}'),
         Text('你的颜色：${match.color == GomokuColor.black ? '黑方' : '白方'}'),
         Text('当前步数：${match.revision}'),
-        const SizedBox(height: 16),
+        SizedBox(height: GameboxTokens.spacing.page),
         _ActionButton(
           semanticKey: const Key('continue-match'),
           semanticLabel: 'continue-match',
           onPressed: isMutating ? null : onContinue,
-          child: isLaunching
-              ? Semantics(
-                  label: '正在启动对局',
-                  liveRegion: true,
-                  child: const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : const Text('继续对局'),
+          label: '继续对局',
+          pendingLabel: '正在启动对局',
+          isPending: isLaunching,
         ),
         if (match.revision == 0) ...[
-          const SizedBox(height: 8),
+          SizedBox(height: GameboxTokens.spacing.layout),
           MergeSemantics(
             key: const Key('cancel-match'),
             child: Semantics(
@@ -353,22 +409,27 @@ final class _ActionButton extends StatelessWidget {
     required this.semanticKey,
     required this.semanticLabel,
     required this.onPressed,
-    required this.child,
+    required this.label,
+    required this.pendingLabel,
+    this.isPending = false,
   });
 
   final Key semanticKey;
   final String semanticLabel;
   final VoidCallback? onPressed;
-  final Widget child;
+  final String label;
+  final String pendingLabel;
+  final bool isPending;
 
   @override
   Widget build(BuildContext context) {
-    return MergeSemantics(
+    return GameboxPendingButton(
       key: semanticKey,
-      child: Semantics(
-        identifier: semanticLabel,
-        child: FilledButton(onPressed: onPressed, child: child),
-      ),
+      identifier: semanticLabel,
+      label: label,
+      pendingLabel: pendingLabel,
+      isPending: isPending,
+      onPressed: onPressed,
     );
   }
 }

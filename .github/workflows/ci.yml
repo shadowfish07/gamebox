@@ -42,5 +42,7 @@ jobs:
         with:
           version: '4.7.0'
           use-dotnet: false
+      - name: Install zsh for macOS deployment script checks
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zsh
       - name: Verify source and debug package
         run: bash tool/verify.sh

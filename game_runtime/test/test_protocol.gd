@@ -120,6 +120,7 @@ static func _allows_omitted_match_fields() -> bool:
 	var valid_messages := [
 		'{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"opaque"}}',
 		'{"protocolVersion":1,"type":"platform.error","payload":{"code":"ticket_invalid","message":"invalid","details":{}}}',
+		'{"protocolVersion":1,"gameId":"gomoku","matchId":"%s","revision":3,"type":"platform.presence.changed","payload":{"userId":"%s","online":true}}' % [MATCH_ID, ACTION_ID],
 	]
 	for message in valid_messages:
 		if not _check(Protocol.decode(message).get("ok", false), "rejected semantically omitted match fields"):

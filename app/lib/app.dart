@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_release_updater/flutter_release_updater.dart';
 import 'package:http/http.dart' as http;
 
 import 'core/api/api_client.dart';
@@ -13,10 +14,15 @@ import 'core/platform/method_channel_lan_host_platform.dart';
 import 'core/platform/method_channel_game_results_platform.dart';
 import 'core/profile/app_profile_store.dart';
 import 'core/profile/nickname_rules.dart';
+import 'design_system/components/gamebox_async_panel.dart';
+import 'design_system/components/gamebox_page_body.dart';
+import 'design_system/gamebox_theme.dart';
+import 'design_system/generated/gamebox_tokens.g.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
 import 'features/gomoku/gomoku_repository.dart';
+import 'features/history/match_history_api.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
@@ -28,7 +34,6 @@ import 'features/lan/lan_recovery_card.dart';
 import 'features/lan/lan_room_controller.dart';
 import 'features/profile/nickname_page.dart';
 import 'features/profile/profile_controller.dart';
-import 'features/update/update_controller.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
@@ -37,6 +42,7 @@ class GameboxApp extends StatefulWidget {
     this.sessionController,
     this.profileController,
     this.homeController,
+    this.matchHistoryApi,
     this.updateController,
     this.lanRoomController,
     bool? hostSmokeEnabled,
@@ -51,6 +57,7 @@ class GameboxApp extends StatefulWidget {
   final SessionController? sessionController;
   final ProfileController? profileController;
   final HomeController? homeController;
+  final MatchHistoryApi? matchHistoryApi;
   final UpdateController? updateController;
   final LanRoomController? lanRoomController;
   final bool hostSmokeEnabled;
@@ -373,10 +380,9 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       navigatorKey: _navigatorKey,
       navigatorObservers: [_routeObserver],
       title: 'Gamebox',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: GameboxTheme.light(),
+      darkTheme: GameboxTheme.dark(),
+      themeMode: ThemeMode.system,
       home: widget.hostSmokeEnabled ? _buildHostSmoke() : _buildProfileFlow(),
     );
   }
@@ -385,31 +391,35 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     final controller = _profileController!;
     return switch (controller.status) {
       ProfileStatus.loading => Scaffold(
-        body: Center(
-          child: Semantics(
-            label: 'profile-loading',
-            child: const CircularProgressIndicator(),
-          ),
+        body: GameboxPageBody(
+          children: [
+            Semantics(
+              label: 'profile-loading',
+              child: GameboxAsyncPanel(
+                icon: Icons.person_outline,
+                title: '正在读取本机资料',
+                message: '请稍候。',
+                isLoading: true,
+              ),
+            ),
+          ],
         ),
       ),
       ProfileStatus.loadFailure => Scaffold(
         appBar: AppBar(title: const Text('Gamebox')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('无法读取本机昵称，请重试'),
-                const SizedBox(height: 16),
-                FilledButton(
-                  key: const Key('profile-load-retry'),
-                  onPressed: controller.load,
-                  child: const Text('重试'),
-                ),
-              ],
+        body: GameboxPageBody(
+          children: [
+            const GameboxAsyncPanel(
+              icon: Icons.person_off_outlined,
+              title: '无法读取本机昵称',
+              message: '请重试读取本机资料。',
             ),
-          ),
+            FilledButton(
+              key: const Key('profile-load-retry'),
+              onPressed: controller.load,
+              child: const Text('重试'),
+            ),
+          ],
         ),
       ),
       ProfileStatus.needsNickname => NicknamePage(controller: controller),
@@ -445,16 +455,35 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       onOpenPublic: authenticated ? null : _openPublicRegistration,
       onOpenLan: _openLan,
       onOpenHistory: _openHistory,
-      lanRecovery: LanRecoveryCard(controller: lanController),
+      lanRecovery:
+          lanController.state is LanIdle ||
+              lanController.state is LanRoomFailure
+          ? null
+          : LanRecoveryCard(controller: lanController),
       updateController: widget.updateController,
     );
   }
 
   void _openHistory() {
+    final sessionController = _sessionController;
+    MatchHistoryApi? publicApi;
+    if (sessionController?.status == SessionStatus.authenticated &&
+        sessionController?.session != null) {
+      publicApi = widget.matchHistoryApi;
+      if (publicApi == null) {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        publicApi = HttpMatchHistoryApi(apiClient, sessionController!);
+      }
+    }
     _navigatorKey.currentState?.push<void>(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: 'history'),
-        builder: (_) => GameHistoryPage(controller: _historyController),
+        builder: (_) => GameHistoryPage(
+          controller: _historyController,
+          publicApi: publicApi,
+        ),
       ),
     );
   }
@@ -494,15 +523,15 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     String nickname,
   ) {
     if (sessionController.status == SessionStatus.restoring) {
-      return const Column(
-        key: Key('public-session-restoring'),
+      return Column(
+        key: const Key('public-session-restoring'),
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('公开匹配'),
-          SizedBox(height: 12),
-          CircularProgressIndicator(),
-          SizedBox(height: 8),
-          Text('正在恢复公开账号'),
+          const Text('公开匹配'),
+          SizedBox(height: GameboxTokens.spacing.compact),
+          const CircularProgressIndicator(),
+          SizedBox(height: GameboxTokens.spacing.layout),
+          const Text('正在恢复公开账号'),
         ],
       );
     }

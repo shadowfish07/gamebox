@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gamebox.local/design-system/tokens.schema.json",
+  "title": "Gamebox design tokens",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "version",
+    "brand",
+    "colorSchemes",
+    "game",
+    "typography",
+    "spacing",
+    "shape",
+    "motion",
+    "component"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "../schema/tokens.schema.json"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "brand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "schemeSource"],
+      "properties": {
+        "seed": {
+          "$ref": "#/$defs/color"
+        },
+        "schemeSource": {
+          "const": "flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0"
+        }
+      }
+    },
+    "colorSchemes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["light", "dark"],
+      "properties": {
+        "light": {
+          "$ref": "#/$defs/colorScheme"
+        },
+        "dark": {
+          "$ref": "#/$defs/colorScheme"
+        }
+      }
+    },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "board",
+        "grid",
+        "blackPiece",
+        "whitePiece",
+        "whitePieceOutline",
+        "lastMove",
+        "pressedMove",
+        "pendingMove",
+        "pendingOverlayAlpha"
+      ],
+      "properties": {
+        "board": { "$ref": "#/$defs/color" },
+        "grid": { "$ref": "#/$defs/color" },
+        "blackPiece": { "$ref": "#/$defs/color" },
+        "whitePiece": { "$ref": "#/$defs/color" },
+        "whitePieceOutline": { "$ref": "#/$defs/color" },
+        "lastMove": { "$ref": "#/$defs/color" },
+        "pressedMove": { "$ref": "#/$defs/color" },
+        "pendingMove": { "$ref": "#/$defs/color" },
+        "pendingOverlayAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "displayLarge",
+        "displayMedium",
+        "displaySmall",
+        "headlineLarge",
+        "headlineMedium",
+        "headlineSmall",
+        "titleLarge",
+        "titleMedium",
+        "titleSmall",
+        "bodyLarge",
+        "bodyMedium",
+        "bodySmall",
+        "labelLarge",
+        "labelMedium",
+        "labelSmall"
+      ],
+      "properties": {
+        "displayLarge": { "$ref": "#/$defs/typeStyle" },
+        "displayMedium": { "$ref": "#/$defs/typeStyle" },
+        "displaySmall": { "$ref": "#/$defs/typeStyle" },
+        "headlineLarge": { "$ref": "#/$defs/typeStyle" },
+        "headlineMedium": { "$ref": "#/$defs/typeStyle" },
+        "headlineSmall": { "$ref": "#/$defs/typeStyle" },
+        "titleLarge": { "$ref": "#/$defs/typeStyle" },
+        "titleMedium": { "$ref": "#/$defs/typeStyle" },
+        "titleSmall": { "$ref": "#/$defs/typeStyle" },
+        "bodyLarge": { "$ref": "#/$defs/typeStyle" },
+        "bodyMedium": { "$ref": "#/$defs/typeStyle" },
+        "bodySmall": { "$ref": "#/$defs/typeStyle" },
+        "labelLarge": { "$ref": "#/$defs/typeStyle" },
+        "labelMedium": { "$ref": "#/$defs/typeStyle" },
+        "labelSmall": { "$ref": "#/$defs/typeStyle" }
+      }
+    },
+    "spacing": {
+      "$ref": "#/$defs/positiveTokenMap",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "layout",
+        "compact",
+        "page",
+        "section",
+        "large",
+        "xlarge",
+        "xxlarge"
+      ],
+      "properties": {
+        "base": { "$ref": "#/$defs/positiveNumber" },
+        "layout": { "$ref": "#/$defs/positiveNumber" },
+        "compact": { "$ref": "#/$defs/positiveNumber" },
+        "page": { "$ref": "#/$defs/positiveNumber" },
+        "section": { "$ref": "#/$defs/positiveNumber" },
+        "large": { "$ref": "#/$defs/positiveNumber" },
+        "xlarge": { "$ref": "#/$defs/positiveNumber" },
+        "xxlarge": { "$ref": "#/$defs/positiveNumber" }
+      }
+    },
+    "shape": {
+      "$ref": "#/$defs/positiveTokenMap",
+      "additionalProperties": false,
+      "required": ["input", "card", "floating", "dialog", "full"],
+      "properties": {
+        "input": { "$ref": "#/$defs/positiveNumber" },
+        "card": { "$ref": "#/$defs/positiveNumber" },
+        "floating": { "$ref": "#/$defs/positiveNumber" },
+        "dialog": { "$ref": "#/$defs/positiveNumber" },
+        "full": { "$ref": "#/$defs/positiveNumber" }
+      }
+    },
+    "motion": {
+      "$ref": "#/$defs/positiveTokenMap",
+      "additionalProperties": false,
+      "required": ["fast", "standard", "slow", "pageEnter"],
+      "properties": {
+        "fast": { "$ref": "#/$defs/positiveInteger" },
+        "standard": { "$ref": "#/$defs/positiveInteger" },
+        "slow": { "$ref": "#/$defs/positiveInteger" },
+        "pageEnter": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "component": {
+      "$ref": "#/$defs/positiveTokenMap",
+      "additionalProperties": false,
+      "required": [
+        "dialogScrimOpacity",
+        "mediaViewportHeight",
+        "minimumTouchTarget",
+        "pageMaxWidth",
+        "pagePadding",
+        "sectionSpacing",
+        "smallProgressSize"
+      ],
+      "properties": {
+        "dialogScrimOpacity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "mediaViewportHeight": { "$ref": "#/$defs/positiveNumber" },
+        "minimumTouchTarget": { "$ref": "#/$defs/positiveNumber" },
+        "pageMaxWidth": { "$ref": "#/$defs/positiveNumber" },
+        "pagePadding": { "$ref": "#/$defs/positiveNumber" },
+        "sectionSpacing": { "$ref": "#/$defs/positiveNumber" },
+        "smallProgressSize": { "$ref": "#/$defs/positiveNumber" }
+      }
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9A-F]{6}$"
+    },
+    "positiveNumber": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "positiveTokenMap": {
+      "type": "object"
+    },
+    "typeStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fontSize", "fontWeight", "lineHeight"],
+      "properties": {
+        "fontSize": { "$ref": "#/$defs/positiveNumber" },
+        "fontWeight": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 900,
+          "multipleOf": 100
+        },
+        "lineHeight": { "$ref": "#/$defs/positiveNumber" }
+      }
+    },
+    "colorScheme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary",
+        "onPrimary",
+        "primaryContainer",
+        "onPrimaryContainer",
+        "primaryFixed",
+        "primaryFixedDim",
+        "onPrimaryFixed",
+        "onPrimaryFixedVariant",
+        "secondary",
+        "onSecondary",
+        "secondaryContainer",
+        "onSecondaryContainer",
+        "secondaryFixed",
+        "secondaryFixedDim",
+        "onSecondaryFixed",
+        "onSecondaryFixedVariant",
+        "tertiary",
+        "onTertiary",
+        "tertiaryContainer",
+        "onTertiaryContainer",
+        "tertiaryFixed",
+        "tertiaryFixedDim",
+        "onTertiaryFixed",
+        "onTertiaryFixedVariant",
+        "error",
+        "onError",
+        "errorContainer",
+        "onErrorContainer",
+        "surface",
+        "onSurface",
+        "surfaceDim",
+        "surfaceBright",
+        "surfaceContainerLowest",
+        "surfaceContainerLow",
+        "surfaceContainer",
+        "surfaceContainerHigh",
+        "surfaceContainerHighest",
+        "onSurfaceVariant",
+        "outline",
+        "outlineVariant",
+        "inverseSurface",
+        "onInverseSurface",
+        "inversePrimary",
+        "surfaceTint",
+        "shadow",
+        "scrim"
+      ],
+      "properties": {
+        "primary": { "$ref": "#/$defs/color" },
+        "onPrimary": { "$ref": "#/$defs/color" },
+        "primaryContainer": { "$ref": "#/$defs/color" },
+        "onPrimaryContainer": { "$ref": "#/$defs/color" },
+        "primaryFixed": { "$ref": "#/$defs/color" },
+        "primaryFixedDim": { "$ref": "#/$defs/color" },
+        "onPrimaryFixed": { "$ref": "#/$defs/color" },
+        "onPrimaryFixedVariant": { "$ref": "#/$defs/color" },
+        "secondary": { "$ref": "#/$defs/color" },
+        "onSecondary": { "$ref": "#/$defs/color" },
+        "secondaryContainer": { "$ref": "#/$defs/color" },
+        "onSecondaryContainer": { "$ref": "#/$defs/color" },
+        "secondaryFixed": { "$ref": "#/$defs/color" },
+        "secondaryFixedDim": { "$ref": "#/$defs/color" },
+        "onSecondaryFixed": { "$ref": "#/$defs/color" },
+        "onSecondaryFixedVariant": { "$ref": "#/$defs/color" },
+        "tertiary": { "$ref": "#/$defs/color" },
+        "onTertiary": { "$ref": "#/$defs/color" },
+        "tertiaryContainer": { "$ref": "#/$defs/color" },
+        "onTertiaryContainer": { "$ref": "#/$defs/color" },
+        "tertiaryFixed": { "$ref": "#/$defs/color" },
+        "tertiaryFixedDim": { "$ref": "#/$defs/color" },
+        "onTertiaryFixed": { "$ref": "#/$defs/color" },
+        "onTertiaryFixedVariant": { "$ref": "#/$defs/color" },
+        "error": { "$ref": "#/$defs/color" },
+        "onError": { "$ref": "#/$defs/color" },
+        "errorContainer": { "$ref": "#/$defs/color" },
+        "onErrorContainer": { "$ref": "#/$defs/color" },
+        "surface": { "$ref": "#/$defs/color" },
+        "onSurface": { "$ref": "#/$defs/color" },
+        "surfaceDim": { "$ref": "#/$defs/color" },
+        "surfaceBright": { "$ref": "#/$defs/color" },
+        "surfaceContainerLowest": { "$ref": "#/$defs/color" },
+        "surfaceContainerLow": { "$ref": "#/$defs/color" },
+        "surfaceContainer": { "$ref": "#/$defs/color" },
+        "surfaceContainerHigh": { "$ref": "#/$defs/color" },
+        "surfaceContainerHighest": { "$ref": "#/$defs/color" },
+        "onSurfaceVariant": { "$ref": "#/$defs/color" },
+        "outline": { "$ref": "#/$defs/color" },
+        "outlineVariant": { "$ref": "#/$defs/color" },
+        "inverseSurface": { "$ref": "#/$defs/color" },
+        "onInverseSurface": { "$ref": "#/$defs/color" },
+        "inversePrimary": { "$ref": "#/$defs/color" },
+        "surfaceTint": { "$ref": "#/$defs/color" },
+        "shadow": { "$ref": "#/$defs/color" },
+        "scrim": { "$ref": "#/$defs/color" }
+      }
+    }
+  }
+}

@@ -126,6 +126,9 @@ final class LanRoomController extends ChangeNotifier {
   }
 
   Future<void> refreshEndpoint() async {
+    if (_busy) return;
+    _busy = true;
+    _notifyListeners();
     try {
       final status = await _host.refreshEndpoint();
       final creation = _hostCreation;
@@ -141,6 +144,9 @@ final class LanRoomController extends ChangeNotifier {
       }
     } on LanHostException catch (error) {
       _set(LanRoomFailure(error.code));
+    } finally {
+      _busy = false;
+      _notifyListeners();
     }
   }
 
@@ -183,6 +189,9 @@ final class LanRoomController extends ChangeNotifier {
   }
 
   Future<void> continueHost() async {
+    if (_busy) return;
+    _busy = true;
+    _notifyListeners();
     try {
       final launch = await _host.issueHostLaunch();
       await _gameLauncher.launch(
@@ -208,10 +217,14 @@ final class LanRoomController extends ChangeNotifier {
       _set(LanRoomFailure(error.code));
     } on GameLaunchException catch (error) {
       _set(LanRoomFailure(error.code));
+    } finally {
+      _busy = false;
+      _notifyListeners();
     }
   }
 
   Future<void> cancelOrResign({required bool confirmed}) async {
+    if (_busy) return;
     final current = _state;
     final revision = switch (current) {
       LanActive(:final revision) => revision,
@@ -219,21 +232,31 @@ final class LanRoomController extends ChangeNotifier {
       _ => -1,
     };
     if (revision < 0 || revision > 0 && !confirmed) return;
+    _busy = true;
+    _notifyListeners();
     try {
       final status = await _host.closeRoom(revision == 0 ? 'cancel' : 'resign');
       _applyHostStatus(status);
     } on LanHostException catch (error) {
       _set(LanRoomFailure(error.code));
+    } finally {
+      _busy = false;
+      _notifyListeners();
     }
   }
 
   Future<void> discardCorrupt({required bool confirmed}) async {
-    if (!confirmed || _state is! LanRecoveryCorrupt) return;
+    if (!confirmed || _state is! LanRecoveryCorrupt || _busy) return;
+    _busy = true;
+    _notifyListeners();
     try {
       await _host.closeRoom('discard_corrupt');
       _set(const LanIdle());
     } on LanHostException catch (error) {
       _set(LanRoomFailure(error.code));
+    } finally {
+      _busy = false;
+      _notifyListeners();
     }
   }
 

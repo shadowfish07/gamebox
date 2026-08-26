@@ -18,6 +18,8 @@ readonly ROOT_DIR
 source "$ROOT_DIR/tool/lib/android_smoke_log.sh"
 # shellcheck source=tool/lib/android_lease.sh
 source "$ROOT_DIR/tool/lib/android_lease.sh"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 PATH_TO_SIGNED_RELEASE_APK" >&2
@@ -77,12 +79,19 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
-(
+gamebox_test_output_init
+trap gamebox_test_output_cleanup EXIT
+
+gamebox_test_progress 'Release APK smoke: building signed instrumentation APK...'
+build_release_smoke_test_apk() {
+  (
   cd "$ROOT_DIR/app/android"
   # Signing material is intentionally created after source tests in release CI.
   # Never restore a helper APK that was cached earlier with the debug signer.
   ./gradlew --no-build-cache --rerun-tasks :release-smoke:assembleRelease
-)
+  )
+}
+gamebox_run_step "release smoke instrumentation build" build_release_smoke_test_apk
 readonly TEST_APK="$ROOT_DIR/app/build/release-smoke/outputs/apk/release/release-smoke-release.apk"
 [[ -f "$TEST_APK" ]] || {
   echo "Release instrumentation APK was not produced at $TEST_APK" >&2
@@ -147,6 +156,7 @@ cleanup() {
   "${ADB[@]}" shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1
   "${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null 2>&1
   gamebox_android_lease_release
+  gamebox_test_output_cleanup
   exit "$exit_status"
 }
 trap cleanup EXIT
@@ -180,6 +190,7 @@ read_all_logcat() {
 }
 
 for cycle in 1 2; do
+  gamebox_test_progress "Release APK smoke: validating runtime cycle $cycle/2..."
   boundary="GAMEBOX_RELEASE_APK_CYCLE_${cycle}_$$_$RANDOM"
   "${ADB[@]}" shell log -p i -t "$LOG_TAG" "$boundary" >/dev/null
   output="$("${ADB[@]}" shell am instrument -w -r \
@@ -228,16 +239,25 @@ for cycle in 1 2; do
     echo "Release APK left $GAME_PROCESS running after cycle $cycle." >&2
     exit 1
   }
-  if [[ "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
+  if [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose && "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
     echo "release APK cycle $cycle passed: Godot native layer initialized and set up without crash or ANR"
-  else
+  elif [[ "${GAMEBOX_TEST_OUTPUT:-compact}" == verbose ]]; then
     echo "release APK cycle $cycle passed: Godot scene initialized and exited cleanly"
   fi
 done
 
+warning_count="$(gamebox_test_output_warning_count)"
 if [[ "$RENDERER_LIMITED_SMOKE" == "true" ]]; then
-  echo "Exact signed release APK native-startup smoke passed twice on $SERIAL: $APK"
+  if ((warning_count > 0)); then
+    echo "Exact signed release APK native-startup smoke passed twice on $SERIAL ($warning_count warning lines): $APK"
+  else
+    echo "Exact signed release APK native-startup smoke passed twice on $SERIAL: $APK"
+  fi
   echo "Renderer-limited mode does not claim that the Godot main loop or packaged scene reached READY."
 else
-  echo "Exact signed release APK scene smoke passed twice on $SERIAL: $APK"
+  if ((warning_count > 0)); then
+    echo "Exact signed release APK scene smoke passed twice on $SERIAL ($warning_count warning lines): $APK"
+  else
+    echo "Exact signed release APK scene smoke passed twice on $SERIAL: $APK"
+  fi
 fi

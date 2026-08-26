@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,35 +73,44 @@ const (
 )
 
 type hubConnection struct {
-	hub        *Hub
-	transport  *websocket.Conn
-	ctx        context.Context
-	cancel     context.CancelFunc
-	done       chan struct{}
-	send       chan []byte
-	closeOnce  sync.Once
-	matchID    string
-	gameID     string
-	userID     string
-	id         string
-	ready      bool
-	pending    []queuedMessage
-	revision   atomic.Int64
-	outboundMu sync.Mutex
-	pingMu     sync.Mutex
-	pings      map[string]time.Time
+	hub             *Hub
+	transport       *websocket.Conn
+	ctx             context.Context
+	cancel          context.CancelFunc
+	done            chan struct{}
+	send            chan []byte
+	closeOnce       sync.Once
+	matchID         string
+	gameID          string
+	userID          string
+	id              string
+	ready           bool
+	pending         []queuedMessage
+	presence        map[string]bool
+	presenceEnabled bool
+	revision        atomic.Int64
+	outboundMu      sync.Mutex
+	pingMu          sync.Mutex
+	pings           map[string]time.Time
 }
 
 type connectPayload struct {
-	LaunchTicket string `json:"launchTicket"`
-	ResumeToken  string `json:"resumeToken"`
+	LaunchTicket string   `json:"launchTicket"`
+	ResumeToken  string   `json:"resumeToken"`
+	Capabilities []string `json:"capabilities"`
 }
 
 type connectedPayload struct {
-	UserID          string `json:"userId"`
-	ConnectionID    string `json:"connectionId"`
-	ResumeToken     string `json:"resumeToken"`
-	ResumeExpiresAt int64  `json:"resumeExpiresAt"`
+	UserID          string                  `json:"userId"`
+	ConnectionID    string                  `json:"connectionId"`
+	ResumeToken     string                  `json:"resumeToken"`
+	ResumeExpiresAt int64                   `json:"resumeExpiresAt"`
+	Players         []playerPresencePayload `json:"players,omitempty"`
+}
+
+type playerPresencePayload struct {
+	UserID string `json:"userId"`
+	Online bool   `json:"online"`
 }
 
 type pingPayload struct {
@@ -158,11 +168,13 @@ func NewHubWithConfig(service *Service, presence *Presence, serviceClock clock.C
 	if config.ActivityTimeout == 0 {
 		config.ActivityTimeout = presenceConnectionTimeout
 	}
-	return &Hub{
+	hub := &Hub{
 		matches: make(map[string]*hubMatch), service: service, presence: presence, clock: serviceClock,
 		firstMessageTimeout: config.FirstMessageTimeout, heartbeatInterval: config.HeartbeatInterval, activityTimeout: config.ActivityTimeout,
 		logger: config.Logger, handlersDone: make(chan struct{}),
-	}, nil
+	}
+	presence.setObserver(hub)
+	return hub, nil
 }
 
 // ServeHTTP owns a single upgraded connection for its complete lifetime.
@@ -249,7 +261,8 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		hub: hub, transport: transport, ctx: connectionContext, cancel: cancelConnection,
 		done: make(chan struct{}), send: make(chan []byte, webSocketSendQueueSize),
 		matchID: credential.MatchID, gameID: credential.GameID, userID: credential.UserID, id: connectionID.String(),
-		pending: make([]queuedMessage, 0, 4),
+		pending: make([]queuedMessage, 0, 4), presence: make(map[string]bool),
+		presenceEnabled: supportsPlayerPresence(payload.Capabilities),
 	}
 	operationContext, cancelOperation = context.WithTimeout(context.Background(), webSocketOperationTimeout)
 	connectErr := hub.presence.Connect(operationContext, connection.matchID, connection.userID, connection.id)
@@ -279,10 +292,14 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		connection.enqueueError("internal_error", "")
 		return
 	}
-	connected, marshalErr := boundEnvelope(connection.gameID, connection.matchID, snapshot.Match.Revision, protocol.TypePlatformConnected, "", connectedPayload{
+	connectedData := connectedPayload{
 		UserID: credential.UserID, ConnectionID: connection.id, ResumeToken: credential.ResumeToken,
 		ResumeExpiresAt: credential.ResumeExpiresAt.UnixMilli(),
-	})
+	}
+	if connection.presenceEnabled {
+		connectedData.Players = hub.playerPresences(snapshot)
+	}
+	connected, marshalErr := boundEnvelope(connection.gameID, connection.matchID, snapshot.Match.Revision, protocol.TypePlatformConnected, "", connectedData)
 	if marshalErr != nil {
 		return
 	}
@@ -505,6 +522,18 @@ func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, sna
 		}
 	}
 	connection.pending = nil
+	userIDs := make([]string, 0, len(connection.presence))
+	for userID := range connection.presence {
+		userIDs = append(userIDs, userID)
+	}
+	sort.Strings(userIDs)
+	for _, userID := range userIDs {
+		if !queued || !connection.enqueuePresence(userID, connection.presence[userID]) {
+			queued = false
+			break
+		}
+	}
+	connection.presence = nil
 	connection.ready = queued
 	hub.mu.Unlock()
 	for _, slowConnection := range slow {
@@ -514,6 +543,70 @@ func (hub *Hub) markReady(connection *hubConnection, snapshotRevision int64, sna
 		connection.close()
 	}
 	return queued, false
+}
+
+// playerPresenceChanged fans out platform-owned presence without consuming a
+// durable game revision. Connections still handshaking retain only the latest
+// state per player and receive it after their initial snapshot.
+func (hub *Hub) playerPresenceChanged(matchID, userID string, online bool) {
+	if hub == nil || matchID == "" || userID == "" {
+		return
+	}
+	slow := make([]*hubConnection, 0)
+	hub.mu.Lock()
+	if hub.closed {
+		hub.mu.Unlock()
+		return
+	}
+	match := hub.matches[matchID]
+	if match == nil {
+		hub.mu.Unlock()
+		return
+	}
+	for connection := range match.connections {
+		if !connection.presenceEnabled {
+			continue
+		}
+		if !connection.ready {
+			if connection.presence == nil {
+				connection.presence = make(map[string]bool)
+			}
+			connection.presence[userID] = online
+			continue
+		}
+		if !connection.enqueuePresence(userID, online) {
+			connection.ready = false
+			slow = append(slow, connection)
+		}
+	}
+	hub.mu.Unlock()
+	for _, connection := range slow {
+		connection.close()
+	}
+}
+
+func supportsPlayerPresence(capabilities []string) bool {
+	for _, capability := range capabilities {
+		if capability == protocol.CapabilityPlayerPresence {
+			return true
+		}
+	}
+	return false
+}
+
+func (hub *Hub) playerPresences(snapshot Snapshot) []playerPresencePayload {
+	players := append([]Player(nil), snapshot.Players...)
+	sort.Slice(players, func(left, right int) bool { return players[left].Seat < players[right].Seat })
+	userIDs := make([]string, 0, len(players))
+	for _, player := range players {
+		userIDs = append(userIDs, player.UserID)
+	}
+	states := hub.presence.onlineStates(snapshot.Match.ID, userIDs)
+	payload := make([]playerPresencePayload, 0, len(players))
+	for _, player := range players {
+		payload = append(payload, playerPresencePayload{UserID: player.UserID, Online: states[player.UserID]})
+	}
+	return payload
 }
 
 // Publish performs only ordered best-effort fan-out. The event is already
@@ -661,6 +754,17 @@ func (connection *hubConnection) enqueueErrorAndSnapshot(code, actionID string, 
 		connection.revision.Store(snapshot.Match.Revision)
 	}
 	return enqueueStateQueued
+}
+
+func (connection *hubConnection) enqueuePresence(userID string, online bool) bool {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	message, err := boundEnvelope(connection.gameID, connection.matchID, connection.revision.Load(), protocol.TypePlatformPresenceChanged, "",
+		playerPresencePayload{UserID: userID, Online: online})
+	if err != nil {
+		return false
+	}
+	return connection.enqueue(message)
 }
 
 func (connection *hubConnection) writeLoop() {

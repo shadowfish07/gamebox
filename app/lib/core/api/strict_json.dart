@@ -7,7 +7,7 @@ const _maximumKeyCodeUnits = 64;
 const _maximumStringRunes = 64 * 1024;
 const _maximumSafeInteger = 9007199254740991;
 
-/// Decodes the deliberately small, integer-only JSON profile used by Gamebox.
+/// Decodes the deliberately small JSON profile used by Gamebox.
 ///
 /// Validation happens before [jsonDecode] so duplicate or escaped object keys
 /// cannot be normalized away by the standard decoder.
@@ -61,7 +61,7 @@ final class _StrictJsonScanner {
         _consumeLiteral('null');
       case 0x2d:
       case >= 0x30 && <= 0x39:
-        _parseSafeInteger();
+        _parseNumber();
       default:
         throw const FormatException('Invalid JSON value');
     }
@@ -217,7 +217,7 @@ final class _StrictJsonScanner {
     return value;
   }
 
-  void _parseSafeInteger() {
+  void _parseNumber() {
     final start = _index;
     _consumeIf(0x2d);
     if (_consumeIf(0x30)) {
@@ -234,15 +234,41 @@ final class _StrictJsonScanner {
         _index += 1;
       }
     }
-    final suffix = _peek();
-    if (suffix == 0x2e || suffix == 0x45 || suffix == 0x65) {
-      throw const FormatException('JSON numbers must be integers');
+    var isDouble = false;
+    if (_consumeIf(0x2e)) {
+      isDouble = true;
+      if (!_isDigit(_peek())) {
+        throw const FormatException('Invalid JSON number');
+      }
+      while (_isDigit(_peek())) {
+        _index += 1;
+      }
+    }
+    if (_consumeIf(0x45) || _consumeIf(0x65)) {
+      isDouble = true;
+      if (_peek() == 0x2b || _peek() == 0x2d) {
+        _index += 1;
+      }
+      if (!_isDigit(_peek())) {
+        throw const FormatException('Invalid JSON number');
+      }
+      while (_isDigit(_peek())) {
+        _index += 1;
+      }
+    }
+    final number = _source.substring(start, _index);
+    if (isDouble) {
+      final parsed = double.tryParse(number);
+      if (parsed == null || !parsed.isFinite) {
+        throw const FormatException('Invalid JSON number');
+      }
+      return;
     }
     if (_index - start > 17) {
       throw const FormatException('Unsafe JSON integer');
     }
-    final number = BigInt.parse(_source.substring(start, _index));
-    if (number.abs() > BigInt.from(_maximumSafeInteger)) {
+    final parsed = BigInt.parse(number);
+    if (parsed.abs() > BigInt.from(_maximumSafeInteger)) {
       throw const FormatException('Unsafe JSON integer');
     }
   }

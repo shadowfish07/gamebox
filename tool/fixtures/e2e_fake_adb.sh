@@ -50,6 +50,21 @@ if [ "${FAKE_ADB_MODE:-}" = "log-b-fail" ] && [ "$serial" = "fixture-B" ]; then
   esac
 fi
 
+case " $* " in
+  *' logcat -b all -v threadtime '*)
+    if [ "${FAKE_ADB_MODE:-}" = "loading-watch" ]; then
+      printf '%s\n' "${FAKE_ADB_LOG_BOUNDARY:?}"
+      if [ -n "${FAKE_ADB_LOADING_MATCH_ID:-}" ]; then
+        printf 'I godot : GAMEBOX_GODOT_STATE match=%s revision=-1 status=loading connection=connecting opponent_presence=unknown color=none\n' \
+          "$FAKE_ADB_LOADING_MATCH_ID"
+      fi
+      printf '%s\n' "$$" >"${FAKE_ADB_PID_FILE:?}"
+      trap '' TERM
+      while :; do sleep 1; done
+    fi
+    ;;
+esac
+
 last_argument=""
 for argument in "$@"; do
   last_argument="$argument"

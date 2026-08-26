@@ -75,33 +75,6 @@ class MainActivity : FlutterActivity() {
         }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            APP_UPDATER_CHANNEL,
-        ).setMethodCallHandler { call, result ->
-            if (call.method != "installApk") {
-                result.notImplemented()
-                return@setMethodCallHandler
-            }
-            val path = call.argument<String>("path")
-            if (path.isNullOrBlank()) {
-                result.error(INVALID_ARGUMENTS_CODE, INVALID_ARGUMENTS_MESSAGE, null)
-                return@setMethodCallHandler
-            }
-            try {
-                val installResult = ApkInstaller(this).install(path)
-                result.success(
-                    when (installResult) {
-                        ApkInstallResult.STARTED -> "started"
-                        ApkInstallResult.PERMISSION_REQUIRED -> "permission_required"
-                    },
-                )
-            } catch (_: IllegalArgumentException) {
-                result.error(INVALID_APK_CODE, INVALID_APK_MESSAGE, null)
-            } catch (_: IllegalStateException) {
-                result.error(INSTALLER_UNAVAILABLE_CODE, INSTALLER_UNAVAILABLE_MESSAGE, null)
-            }
-        }
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
             GAME_RESULTS_CHANNEL,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -281,7 +254,6 @@ class MainActivity : FlutterActivity() {
 
         const val LOCAL_NETWORK_PERMISSION_REQUEST = 0x4c41
         const val GAME_LAUNCHER_CHANNEL = "me.zqydev.gamebox/game_launcher"
-        const val APP_UPDATER_CHANNEL = "me.zqydev.gamebox/app_updater"
         const val GAME_RESULTS_CHANNEL = "me.zqydev.gamebox/game_results"
         const val INVALID_ARGUMENTS_CODE = "invalid_arguments"
         const val INVALID_ARGUMENTS_MESSAGE = "Invalid game launch arguments."
@@ -289,10 +261,6 @@ class MainActivity : FlutterActivity() {
         const val GAME_ALREADY_ACTIVE_MESSAGE = "A game is already active."
         const val LAUNCH_FAILED_CODE = "launch_failed"
         const val LAUNCH_FAILED_MESSAGE = "Unable to launch game."
-        const val INVALID_APK_CODE = "invalid_apk"
-        const val INVALID_APK_MESSAGE = "Invalid or incompatible update package."
-        const val INSTALLER_UNAVAILABLE_CODE = "installer_unavailable"
-        const val INSTALLER_UNAVAILABLE_MESSAGE = "Unable to open package installer."
         const val RESULT_TRACKING_CODE = "result_tracking_unavailable"
         const val RESULT_TRACKING_MESSAGE = "Unable to track the game result."
         const val INVALID_RESULT_CODE = "invalid_result"

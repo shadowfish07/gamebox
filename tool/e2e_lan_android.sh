@@ -437,11 +437,11 @@ dismiss_one_wait_dialog() {
 return_to_home() {
   local serial="$1" attempt
   for attempt in 1 2 3; do
-    has_id "$serial" open-game-history && return 0
+    has_id "$serial" open-match-history && return 0
     adb_for "$serial" shell input keyevent BACK >/dev/null || return 1
     sleep 1
   done
-  has_id "$serial" open-game-history
+  has_id "$serial" open-match-history
 }
 
 reveal_id() {
@@ -490,7 +490,7 @@ set_nickname() {
     -e class 'me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue' \
     -e gameboxTextTarget local-nickname -e gameboxTextInputName "$name"
   tap_id "$serial" save-nickname
-  wait_id "$serial" open-game-history >/dev/null || fail "home did not load on $serial"
+  wait_id "$serial" open-match-history >/dev/null || fail "home did not load on $serial"
   reveal_id "$serial" open-lan-mode >/dev/null || fail "LAN action could not be revealed on $serial"
 }
 
@@ -674,7 +674,7 @@ wait_id_gone() {
 
 for serial in "$SERIAL_A" "$SERIAL_B"; do
   return_to_home "$serial" || fail "home did not return on $serial"
-  tap_id "$serial" open-game-history
+  tap_id "$serial" open-match-history
   wait_id "$serial" game-history-list >/dev/null || fail "history page did not load on $serial"
   retry_id="retry-pending-$ROOM_ID"
   if has_id "$serial" "$retry_id"; then

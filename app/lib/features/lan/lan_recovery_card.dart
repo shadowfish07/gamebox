@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'lan_room_controller.dart';
 
 final class LanRecoveryCard extends StatelessWidget {
@@ -16,7 +17,7 @@ final class LanRecoveryCard extends StatelessWidget {
     return Card(
       key: const Key('lan-recovery-card'),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -24,23 +25,25 @@ final class LanRecoveryCard extends StatelessWidget {
               state is LanRecoveryCorrupt ? '局域网房间数据损坏' : '有未完成的局域网对局',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: GameboxTokens.spacing.layout),
             if (state is! LanRecoveryCorrupt)
               Semantics(
                 identifier: 'continue-lan-room',
                 button: true,
-                child: FilledButton(
+                child: FilledButton.tonal(
                   key: const Key('continue-lan-room'),
-                  onPressed: controller.continueHost,
-                  child: const Text('继续局域网对局'),
+                  onPressed: controller.isBusy ? null : controller.continueHost,
+                  child: Text(controller.isBusy ? '正在恢复对局' : '继续局域网对局'),
                 ),
               ),
-            const SizedBox(height: 8),
+            SizedBox(height: GameboxTokens.spacing.layout),
             OutlinedButton(
               key: const Key('abandon-lan-room'),
-              onPressed: () =>
-                  _confirm(context, corrupt: state is LanRecoveryCorrupt),
-              child: Text(state is LanRecoveryCorrupt ? '删除损坏房间' : '放弃'),
+              onPressed: controller.isBusy
+                  ? null
+                  : () =>
+                        _confirm(context, corrupt: state is LanRecoveryCorrupt),
+              child: Text(state is LanRecoveryCorrupt ? '删除损坏房间' : '放弃并结束对局'),
             ),
           ],
         ),
@@ -59,12 +62,14 @@ final class LanRecoveryCard extends StatelessWidget {
         ),
         actions: [
           TextButton(
+            key: const Key('dismiss-lan-abandon'),
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('返回'),
+            child: const Text('保留对局'),
           ),
           FilledButton(
+            key: const Key('confirm-lan-abandon'),
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(corrupt ? '确认删除' : '确认放弃'),
+            child: Text(corrupt ? '删除恢复数据' : '放弃并结束对局'),
           ),
         ],
       ),

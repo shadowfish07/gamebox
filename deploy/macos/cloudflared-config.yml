@@ -9,4 +9,9 @@ ingress:
     originRequest:
       connectTimeout: 10s
       httpHostHeader: gamebox.zqydev.me
+  - hostname: staging-gamebox.zqydev.me
+    service: http://127.0.0.1:18081
+    originRequest:
+      connectTimeout: 10s
+      httpHostHeader: staging-gamebox.zqydev.me
   - service: http_status:404

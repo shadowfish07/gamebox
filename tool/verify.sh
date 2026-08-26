@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 cd "$ROOT_DIR"
+# shellcheck source=tool/lib/check_output.sh
+source "$ROOT_DIR/tool/lib/check_output.sh"
 
 if [[ "${GAMEBOX_VERIFY_INTERNAL:-0}" != "1" ]]; then
   verify_verbose=0
@@ -50,6 +52,30 @@ godot_imported_asset_is_allowed() {
   [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.ctex$ ]]
 }
 
+# The packaged Gamebox design system is required by the APK asset gate below.
+# Its generated token file legitimately ends in "_tokens.gd", which the
+# secret-name scanner would otherwise flag; these exact paths are the reviewed,
+# versioned design assets and must never be treated as credentials.
+design_system_asset_is_allowed() {
+  local asset_path="$1"
+  case "$asset_path" in
+    assets/design_system/generated/gamebox_tokens.gd \
+    | assets/design_system/gamebox_theme.gd \
+    | assets/design_system/components/gamebox_back_button.tscn \
+    | assets/design_system/components/gamebox_connection_banner.tscn \
+    | assets/design_system/components/gamebox_connection_banner.gd \
+    | assets/design_system/components/gamebox_snackbar.tscn \
+    | assets/design_system/components/gamebox_snackbar.gd \
+    | assets/design_system/components/gamebox_confirmation_dialog.tscn \
+    | assets/design_system/components/gamebox_confirmation_dialog.gd \
+    | assets/design_system/components/gamebox_loading_overlay.tscn \
+    | assets/design_system/components/gamebox_loading_overlay.gd \
+    | assets/design_system/components/gamebox_result_panel.tscn \
+    | assets/design_system/components/gamebox_result_panel.gd) return 0 ;;
+  esac
+  return 1
+}
+
 asset_path_is_forbidden() {
   local asset_path="$1"
   local relative_path component lowercase_component normalized_component camel_spaced
@@ -58,6 +84,7 @@ asset_path_is_forbidden() {
   local -a path_components component_tokens
 
   [[ "$asset_path" == assets/* ]] || return 1
+  design_system_asset_is_allowed "$asset_path" && return 1
   godot_imported_asset_is_allowed "$asset_path" && allowed_imported=1
   if [[ "$asset_path" == assets/.godot/* && "$allowed_imported" -eq 0 ]]; then
     return 0
@@ -157,6 +184,8 @@ verify_asset_path_fixtures() {
     assets/.GDIGNORE
     assets/.GoDoT/imported/runtime-texture.ctex
     assets/.g-o_d.o-t/cache.bin
+    assets/design_system/generated/gamebox_secrets.gd
+    assets/design_system/components/gamebox_tokens.gd
   )
   local -a allowed_fixtures=(
     assets/project.godot
@@ -188,6 +217,19 @@ verify_asset_path_fixtures() {
     assets/credentialedConfig.json
     assets/privateKeynote.txt
     assets/contestResult.json
+    assets/design_system/generated/gamebox_tokens.gd
+    assets/design_system/gamebox_theme.gd
+    assets/design_system/components/gamebox_back_button.tscn
+    assets/design_system/components/gamebox_connection_banner.tscn
+    assets/design_system/components/gamebox_connection_banner.gd
+    assets/design_system/components/gamebox_snackbar.tscn
+    assets/design_system/components/gamebox_snackbar.gd
+    assets/design_system/components/gamebox_confirmation_dialog.tscn
+    assets/design_system/components/gamebox_confirmation_dialog.gd
+    assets/design_system/components/gamebox_loading_overlay.tscn
+    assets/design_system/components/gamebox_loading_overlay.gd
+    assets/design_system/components/gamebox_result_panel.tscn
+    assets/design_system/components/gamebox_result_panel.gd
   )
 
   for asset_path in "${forbidden_fixtures[@]}"; do
@@ -319,24 +361,23 @@ if [[ "${1:-}" == "--self-test" ]]; then
     printf 'usage: %s [--self-test]\n' "$0" >&2
     exit 2
   }
-  verify_phase asset-path-fixtures
-  verify_asset_path_fixtures
-  verify_phase native-runtime-fixtures
-  verify_native_runtime_fixtures
-  verify_phase lan-aar-fixtures
-  verify_lan_aar_fixtures
+  gamebox_test_output_init
+  trap gamebox_test_output_cleanup EXIT
+  gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
+  gamebox_run_step "APK native runtime fixtures" verify_native_runtime_fixtures
+  gamebox_run_step "LAN AAR fixtures" verify_lan_aar_fixtures
+  gamebox_test_output_finish verify-self-test
   exit 0
 fi
 [[ $# -eq 0 ]] || {
   printf 'usage: %s [--self-test]\n' "$0" >&2
   exit 2
 }
-verify_phase asset-path-fixtures
-verify_asset_path_fixtures
-verify_phase native-runtime-fixtures
-verify_native_runtime_fixtures
-verify_phase lan-aar-fixtures
-verify_lan_aar_fixtures
+gamebox_test_output_init
+trap gamebox_test_output_cleanup EXIT
+gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
+gamebox_run_step "APK native runtime fixtures" verify_native_runtime_fixtures
+gamebox_run_step "LAN AAR fixtures" verify_lan_aar_fixtures
 
 # setup-godot exposes the executable on PATH in CI, while the local bootstrap
 # retains its macOS application-bundle default.
@@ -350,85 +391,132 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
-verify_phase bootstrap
-bash tool/bootstrap.sh --build-only
-verify_phase source-tests
-bash tool/verify_fast.sh
+gamebox_run_step "toolchain bootstrap" bash tool/bootstrap.sh --build-only
+gamebox_run_step "fast verification" env GAMEBOX_TEST_NESTED=1 bash tool/verify_fast.sh
 
-verify_phase kotlin-unit-tests
-(cd app/android && ./gradlew :app:testDebugUnitTest)
-verify_phase debug-apk-build
-(cd app && flutter build apk --debug)
-
-readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
-[[ -f "$APK" ]] || {
-  printf 'Debug APK was not produced at %s\n' "$APK" >&2
-  exit 1
+run_android_unit_tests() {
+  (cd app/android && ./gradlew \
+    :app:testDebugUnitTest \
+    :flutter_release_updater:testDebugUnitTest)
 }
 
-apk_entries="$(unzip -Z1 "$APK")"
-readonly apk_entries
-apk_listing="$(unzip -l "$APK")"
-readonly apk_listing
-validate_apk_native_runtime "$apk_listing" "$APK"
-verify_phase apk-contract
-for required_asset in \
-  assets/project.godot \
-  assets/main.gd \
-  assets/main.gd.uid \
-  assets/main.tscn \
-  assets/core/game_registry.gd \
-  assets/core/launch_config.gd \
-  assets/core/match_client.gd \
-  assets/core/protocol.gd \
-  assets/games/gomoku/gomoku_board.gd \
-  assets/games/gomoku/gomoku_controller.gd \
-  assets/games/gomoku/gomoku_scene.tscn \
-  assets/games/gomoku/gomoku_state.gd; do
-  grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {
-    printf 'Debug APK is missing required Godot asset %s\n' "$required_asset" >&2
+run_flutter_debug_build() {
+  (cd app && flutter build apk --debug)
+}
+
+gamebox_run_step "Android unit tests" run_android_unit_tests
+gamebox_run_step "Flutter debug APK build" run_flutter_debug_build
+
+verify_debug_apk() (
+  readonly APK="$ROOT_DIR/app/build/app/outputs/flutter-apk/app-debug.apk"
+  [[ -f "$APK" ]] || {
+    printf 'Debug APK was not produced at %s\n' "$APK" >&2
     exit 1
   }
-done
 
-rejected_assets=""
-while IFS= read -r asset_path; do
-  if asset_path_is_forbidden "$asset_path"; then
-    rejected_assets+="$asset_path"$'\n'
+  merged_manifests="$(find "$ROOT_DIR/app/build/app/intermediates/merged_manifests" \
+    -type f -name AndroidManifest.xml -path '*debug*' 2>/dev/null || true)"
+  readonly merged_manifests
+  [[ -n "$merged_manifests" ]] || {
+    printf 'No merged debug Android manifest was produced.\n' >&2
+    exit 1
+  }
+  while IFS= read -r merged_manifest; do
+    install_permission_count="$({
+      grep -oF 'android.permission.REQUEST_INSTALL_PACKAGES' "$merged_manifest" || true
+    } | wc -l | tr -d ' ')"
+    if [[ "$install_permission_count" != "1" ]]; then
+      printf 'Merged debug manifest must contain one updater permission (found %s): %s\n' \
+        "$install_permission_count" "$merged_manifest" >&2
+      exit 1
+    fi
+    if grep -F 'android.permission.INSTALL_PACKAGES' "$merged_manifest" >/dev/null; then
+      printf 'Merged debug manifest requests privileged silent installation: %s\n' \
+        "$merged_manifest" >&2
+      exit 1
+    fi
+  done <<<"$merged_manifests"
+
+  apk_entries="$(unzip -Z1 "$APK")"
+  readonly apk_entries
+  apk_listing="$(unzip -l "$APK")"
+  readonly apk_listing
+  validate_apk_native_runtime "$apk_listing" "$APK"
+  for required_asset in \
+    assets/project.godot \
+    assets/main.gd \
+    assets/main.gd.uid \
+    assets/main.tscn \
+    assets/core/game_registry.gd \
+    assets/core/launch_config.gd \
+    assets/core/match_client.gd \
+    assets/core/protocol.gd \
+    assets/games/gomoku/gomoku_board.gd \
+    assets/games/gomoku/gomoku_controller.gd \
+    assets/games/gomoku/gomoku_preferences.gd \
+    assets/games/gomoku/gomoku_scene.tscn \
+    assets/games/gomoku/gomoku_state.gd \
+    assets/games/gomoku/gomoku_switch_visual.gd \
+    assets/design_system/generated/gamebox_tokens.gd \
+    assets/design_system/gamebox_theme.gd \
+    assets/design_system/components/gamebox_back_button.tscn \
+    assets/design_system/components/gamebox_connection_banner.tscn \
+    assets/design_system/components/gamebox_connection_banner.gd \
+    assets/design_system/components/gamebox_snackbar.tscn \
+    assets/design_system/components/gamebox_snackbar.gd \
+    assets/design_system/components/gamebox_confirmation_dialog.tscn \
+    assets/design_system/components/gamebox_confirmation_dialog.gd \
+    assets/design_system/components/gamebox_loading_overlay.tscn \
+    assets/design_system/components/gamebox_loading_overlay.gd \
+    assets/design_system/components/gamebox_result_panel.tscn \
+    assets/design_system/components/gamebox_result_panel.gd; do
+    grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {
+      printf 'Debug APK is missing required Godot asset %s\n' "$required_asset" >&2
+      exit 1
+    }
+  done
+
+  rejected_assets=""
+  while IFS= read -r asset_path; do
+    if asset_path_is_forbidden "$asset_path"; then
+      rejected_assets+="$asset_path"$'\n'
+    fi
+  done <<<"$apk_entries"
+  readonly rejected_assets
+  if [[ -n "$rejected_assets" ]]; then
+    printf 'Debug APK contains excluded Godot test/editor/cache or secret-named assets:\n' >&2
+    printf '%s' "$rejected_assets" >&2
+    exit 1
   fi
-done <<<"$apk_entries"
-readonly rejected_assets
-if [[ -n "$rejected_assets" ]]; then
-  printf 'Debug APK contains excluded Godot test/editor/cache or secret-named assets:\n' >&2
-  printf '%s' "$rejected_assets" >&2
-  exit 1
-fi
 
-asset_stream="$(mktemp -t gamebox-apk-assets.XXXXXX)"
-readonly asset_stream
-cleanup() {
-  rm -f "$asset_stream"
-}
-trap cleanup EXIT
-unzip -p "$APK" 'assets/*' >"$asset_stream"
-if LC_ALL=C grep -aE 'GAMEBOX_(JWT_SECRET|TOKEN_PEPPER)' "$asset_stream" >/dev/null; then
-  printf 'Debug APK assets contain server-only secret configuration names.\n' >&2
-  exit 1
-fi
-
-manifest_source="$ROOT_DIR/app/android/app/src/main/AndroidManifest.xml"
-for required_manifest_contract in \
-  'android.permission.INTERNET' \
-  'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' \
-  'android.permission.CHANGE_NETWORK_STATE' \
-  'android:name=".LanHostService"' \
-  'android:foregroundServiceType="connectedDevice"'; do
-  grep -F "$required_manifest_contract" "$manifest_source" >/dev/null || {
-    printf 'Android manifest is missing required LAN contract %s.\n' "$required_manifest_contract" >&2
-    exit 1
+  asset_stream="$(mktemp -t gamebox-apk-assets.XXXXXX)"
+  readonly asset_stream
+  cleanup_apk_check() {
+    rm -f "$asset_stream"
   }
-done
-python3 - "$manifest_source" <<'PY'
+  trap cleanup_apk_check EXIT
+  unzip -p "$APK" 'assets/*' >"$asset_stream"
+  if LC_ALL=C grep -aE 'GAMEBOX_(JWT_SECRET|TOKEN_PEPPER)' "$asset_stream" >/dev/null; then
+    printf 'Debug APK assets contain server-only secret configuration names.\n' >&2
+    exit 1
+  fi
+)
+
+verify_lan_manifest_contract() {
+  local manifest_source="$ROOT_DIR/app/android/app/src/main/AndroidManifest.xml"
+  local required_manifest_contract
+  for required_manifest_contract in \
+    'android.permission.INTERNET' \
+    'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' \
+    'android.permission.CHANGE_NETWORK_STATE' \
+    'android:name=".LanHostService"' \
+    'android:foregroundServiceType="connectedDevice"'; do
+    grep -F "$required_manifest_contract" "$manifest_source" >/dev/null || {
+      printf 'Android manifest is missing required LAN contract %s.\n' "$required_manifest_contract" >&2
+      return 1
+    }
+  done
+  python3 - "$manifest_source" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -441,9 +529,12 @@ services = [
 if len(services) != 1 or services[0].get(android + "exported") != "false" or services[0].get(android + "foregroundServiceType") != "connectedDevice":
     raise SystemExit("LanHostService must be exactly one non-exported connectedDevice service.")
 PY
-if grep -F 'android.permission.ACCESS_LOCAL_NETWORK' "$manifest_source" >/dev/null; then
-  printf 'Target SDK 36 must not declare the Android 17 ACCESS_LOCAL_NETWORK permission.\n' >&2
-  exit 1
-fi
+  if grep -F 'android.permission.ACCESS_LOCAL_NETWORK' "$manifest_source" >/dev/null; then
+    printf 'Target SDK 36 must not declare the Android 17 ACCESS_LOCAL_NETWORK permission.\n' >&2
+    return 1
+  fi
+}
 
-printf 'Verified debug APK Godot assets and exclusions: %s\n' "$APK"
+gamebox_run_step "debug APK assertions" verify_debug_apk
+gamebox_run_step "LAN Android manifest assertions" verify_lan_manifest_contract
+gamebox_test_output_finish verify

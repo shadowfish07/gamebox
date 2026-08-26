@@ -375,7 +375,12 @@ void main() {
           '{"value":${List.filled(100, '9').join()}}',
         ),
         'unbounded key': utf8.encode('{"${List.filled(65, 'k').join()}":true}'),
-        'fractional number': utf8.encode('{"value":1.5}'),
+        'fraction without digits': utf8.encode('{"value":1.}'),
+        'exponent without digits': utf8.encode('{"value":1e}'),
+        'exponent without signed digits': utf8.encode('{"value":1e+}'),
+        'nonfinite exponent': utf8.encode('{"value":1e999999}'),
+        'NaN': utf8.encode('{"value":NaN}'),
+        'infinity': utf8.encode('{"value":Infinity}'),
         'depth overflow': utf8.encode(_deepObject(33)),
       };
 
@@ -405,6 +410,24 @@ void main() {
       }
     },
   );
+
+  test('strict JSON accepts finite fractional and exponent numbers', () async {
+    final client = ApiClient(
+      baseUri: Uri.parse('https://gamebox.test'),
+      httpClient: MockClient(
+        (_) async => http.Response(
+          '{"fraction":0.625,"exponent":6.25e-1}',
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+    );
+
+    expect(await client.getJson('/strict'), {
+      'fraction': 0.625,
+      'exponent': 0.625,
+    });
+  });
 
   test('content type rejects non-UTF-8 charset', () async {
     final client = ApiClient(

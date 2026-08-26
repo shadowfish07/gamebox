@@ -58,7 +58,7 @@ packages:
     source: hosted
     version: "1.19.1"
   crypto:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: crypto
       sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
@@ -123,6 +123,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.0.0"
+  flutter_release_updater:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: "v0.1.2"
+      resolved-ref: "69589aa92bcb74aaefa55e91808a798c2aa53698"
+      url: "https://github.com/shadowfish07/flutter_release_updater.git"
+    source: git
+    version: "0.1.2"
   flutter_secure_storage:
     dependency: "direct main"
     description:
@@ -456,7 +465,7 @@ packages:
     source: hosted
     version: "1.1.1"
   shared_preferences:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: shared_preferences
       sha256: c3025c5534b01739267eb7d76959bbc25a6d10f6988e1c2a3036940133dd10bf

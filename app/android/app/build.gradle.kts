@@ -34,6 +34,7 @@ abstract class StageGameRuntimeAssets : DefaultTask() {
                     "main.gd.uid",
                     "main.tscn",
                     "core/**",
+                    "design_system/**",
                     "games/**",
                     ".godot/imported/**",
                 )
@@ -108,6 +109,8 @@ val signingProperties = Properties().apply {
 }
 val requireReleaseSigning = providers.environmentVariable("GAMEBOX_REQUIRE_RELEASE_SIGNING")
     .orNull == "true"
+val debugArtifact = providers.environmentVariable("GAMEBOX_DEBUG_ARTIFACT")
+    .orNull == "true"
 require(!requireReleaseSigning || signingPropertiesFile.isFile) {
     "GAMEBOX_REQUIRE_RELEASE_SIGNING requires android/key.properties"
 }
@@ -140,6 +143,8 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "me.zqydev.gamebox"
+        // CI-published debug artifacts override this to a distinct launcher label.
+        manifestPlaceholders["appLabel"] = "gamebox"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
@@ -165,6 +170,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (debugArtifact) {
+                // CI-published debug APKs get a distinct application id so they
+                // coexist with a release install on the same device, plus a
+                // distinguishable launcher label. Local debug builds are
+                // unaffected.
+                applicationIdSuffix = ".debug"
+                manifestPlaceholders["appLabel"] = "gamebox debug"
+                signingConfig = signingConfigs.findByName("release")
+                    ?: error("GAMEBOX_DEBUG_ARTIFACT requires android/key.properties")
+            }
+        }
         release {
             signingConfig = signingConfigs.findByName("release")
                 ?: signingConfigs.getByName("debug")

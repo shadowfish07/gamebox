@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/lan/lan_api.dart';
 import 'package:gamebox/core/lan/lan_credential_store.dart';
@@ -9,11 +10,13 @@ import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/core/platform/lan_host_platform.dart';
 import 'package:gamebox/features/lan/lan_room_controller.dart';
+import 'package:gamebox/features/lan/lan_host_page.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 final class TestHost implements LanHostPlatform {
   Completer<LanHostStatus>? statusGate;
+  int closeCalls = 0;
   LanHostStatus status = const LanHostStatus(
     state: LanNativeState.empty,
     roomId: null,
@@ -37,6 +40,7 @@ final class TestHost implements LanHostPlatform {
   Future<LanHostStatus> refreshEndpoint() async => status;
   @override
   Future<LanHostStatus> closeRoom(String mode) async {
+    closeCalls += 1;
     status = const LanHostStatus(
       state: LanNativeState.empty,
       roomId: null,
@@ -124,6 +128,59 @@ void main() {
       (controller.state as LanWaitingForGuest).qr!.encode(),
       startsWith('gamebox-lan://join?'),
     );
+  });
+
+  testWidgets('host cancellation states its consequence before closing', (
+    tester,
+  ) async {
+    final host = TestHost()
+      ..status = LanHostStatus(
+        state: LanNativeState.waiting,
+        roomId: room,
+        port: 50000,
+        gameRevision: 0,
+        endpointChanged: false,
+        endpoint: LanEndpoint.parse('192.168.4.1:50000'),
+      );
+    final api = LanApi(
+      client: MockClient((_) async => http.Response('{}', 500)),
+    );
+    addTearDown(api.close);
+    final controller = LanRoomController(
+      host: host,
+      api: api,
+      credentialStore: LanCredentialStore(storage: MemoryLanStorage()),
+      gameLauncher: RecordingLauncher(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LanHostPage(controller: controller, nickname: '玩家甲'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('credential-qr-sensitive')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cancel-lan-room')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('cancel-lan-room-confirmation')),
+      findsOneWidget,
+    );
+    expect(find.text('对方将无法再通过当前二维码加入。'), findsOneWidget);
+    expect(host.closeCalls, 0);
+
+    await tester.tap(find.byKey(const Key('dismiss-cancel-lan-room')));
+    await tester.pumpAndSettle();
+    expect(host.closeCalls, 0);
+
+    await tester.tap(find.byKey(const Key('cancel-lan-room')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-cancel-lan-room')));
+    await tester.pumpAndSettle();
+    expect(host.closeCalls, 1);
   });
 
   test('joins through production parser, commits credential and launches LAN', () async {

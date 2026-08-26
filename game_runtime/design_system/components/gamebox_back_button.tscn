@@ -1,0 +1,5 @@
+[gd_scene format=3]
+
+[node name="GameboxBackButton" type="Button"]
+custom_minimum_size = Vector2(96, 96)
+text = "← 返回大厅"

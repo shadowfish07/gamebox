@@ -14,6 +14,8 @@ import 'package:gamebox/core/profile/nickname_rules.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/profile/profile_controller.dart';
+import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_models.dart';
 
 void main() {
   testWidgets('first launch nickname setup does not wait for public restore', (
@@ -28,11 +30,13 @@ void main() {
       store: _MemoryProfileStore(),
       nicknameRules: const _FixtureNicknameRules(),
     );
+    final historyApi = _RecordingMatchHistoryApi();
     await tester.pumpWidget(
       GameboxApp(
         gameLauncher: _FakeGameLauncher(),
         sessionController: controller,
         profileController: profile,
+        matchHistoryApi: historyApi,
       ),
     );
     await tester.pump();
@@ -40,6 +44,7 @@ void main() {
     expect(find.byKey(const Key('local-nickname')), findsOneWidget);
     expect(controller.status, SessionStatus.restoring);
     expect(find.byKey(const Key('host-smoke.launch')), findsNothing);
+    expect(historyApi.calls, 0);
     refreshRead.complete(null);
     await tester.pump();
   });
@@ -408,6 +413,29 @@ void main() {
     expect(tester.takeException(), isA<StateError>());
     expect(find.text('无法启动宿主烟测，请重试'), findsNothing);
   });
+}
+
+final class _RecordingMatchHistoryApi implements MatchHistoryApi {
+  int calls = 0;
+
+  @override
+  Future<MatchHistoryPageData> fetchPage({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    calls += 1;
+    return const MatchHistoryPageData(
+      statistics: MatchHistoryStatistics(
+        validMatches: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        winRate: 0,
+      ),
+      matches: [],
+      nextCursor: null,
+    );
+  }
 }
 
 class _FakeGameLauncher implements GameLauncher {

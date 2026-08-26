@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../design_system/components/gamebox_async_panel.dart';
+import '../../design_system/components/gamebox_page_body.dart';
+import '../../design_system/components/gamebox_pending_button.dart';
+import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'lan_host_page.dart';
 import 'lan_room_controller.dart';
 
@@ -25,6 +29,7 @@ final class _LanJoinPageState extends State<LanJoinPage> {
   );
   var _scanning = false;
   var _accepted = false;
+  var _scannerError = false;
 
   @override
   void initState() {
@@ -37,11 +42,19 @@ final class _LanJoinPageState extends State<LanJoinPage> {
   }
 
   Future<void> _startScanner() async {
-    setState(() => _scanning = true);
+    setState(() {
+      _scanning = true;
+      _scannerError = false;
+    });
     try {
       await _scanner.start();
     } on MobileScannerException {
-      if (mounted) setState(() => _scanning = false);
+      if (mounted) {
+        setState(() {
+          _scanning = false;
+          _scannerError = true;
+        });
+      }
     }
   }
 
@@ -65,14 +78,25 @@ final class _LanJoinPageState extends State<LanJoinPage> {
   Widget build(BuildContext context) {
     final state = widget.controller.state;
     return Scaffold(
-      appBar: AppBar(title: const Text('加入局域网房间')),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(24),
-          children: [
-            if (_scanning)
-              SizedBox(
-                height: 260,
+      appBar: AppBar(
+        leading: Semantics(
+          identifier: 'lan-join-back',
+          child: BackButton(onPressed: () => Navigator.of(context).pop()),
+        ),
+        title: const Text('加入局域网房间'),
+      ),
+      body: GameboxPageBody(
+        children: [
+          const GameboxAsyncPanel(
+            icon: Icons.qr_code_scanner,
+            title: '扫描房主的二维码',
+            message: '相机只在你点击扫码后启动；也可以粘贴加入信息。',
+          ),
+          if (_scanning)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
+              child: SizedBox(
+                height: GameboxTokens.components.mediaViewportHeight,
                 child: MobileScanner(
                   controller: _scanner,
                   onDetect: (capture) {
@@ -80,57 +104,55 @@ final class _LanJoinPageState extends State<LanJoinPage> {
                     if (value != null) _submit(value);
                   },
                 ),
-              )
-            else
-              FilledButton.icon(
-                key: const Key('start-lan-scanner'),
-                onPressed: _startScanner,
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('扫码加入'),
               ),
-            const SizedBox(height: 24),
-            Semantics(
-              identifier: 'lan-manual-input',
-              textField: true,
-              child: TextField(
-                key: const Key('lan-manual-input'),
-                controller: _textController,
-                minLines: 3,
-                maxLines: 6,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: const InputDecoration(
-                  labelText: '手动输入二维码内容',
-                  border: OutlineInputBorder(),
-                ),
-              ),
+            )
+          else
+            OutlinedButton.icon(
+              key: const Key('start-lan-scanner'),
+              onPressed: _startScanner,
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('扫码加入'),
             ),
-            const SizedBox(height: 12),
-            Semantics(
+          if (_scannerError) const Text('相机暂时不可用，请使用下方手动输入。'),
+          Semantics(
+            identifier: 'lan-manual-input',
+            textField: true,
+            child: TextField(
+              key: const Key('lan-manual-input'),
+              controller: _textController,
+              minLines: 3,
+              maxLines: 6,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(labelText: '手动输入加入信息'),
+            ),
+          ),
+          Semantics(
+            identifier: 'submit-lan-manual-input',
+            button: true,
+            child: GameboxPendingButton(
+              key: const Key('submit-lan-manual-input'),
               identifier: 'submit-lan-manual-input',
-              button: true,
-              child: FilledButton(
-                key: const Key('submit-lan-manual-input'),
-                onPressed: state is LanJoining
-                    ? null
-                    : () => _submit(_textController.text),
-                child: state is LanJoining
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('加入'),
+              label: '加入房间',
+              pendingLabel: '正在加入房间',
+              isPending: state is LanJoining,
+              onPressed: state is LanJoining
+                  ? null
+                  : () => _submit(_textController.text),
+            ),
+          ),
+          if (state case LanRoomFailure(:final code)) ...[
+            Semantics(
+              identifier: 'lan-join-error-$code',
+              child: GameboxAsyncPanel(
+                key: const Key('lan-join-error'),
+                icon: Icons.cloud_off_outlined,
+                title: '暂时无法加入房间',
+                message: lanMessage(code),
               ),
             ),
-            if (state case LanRoomFailure(:final code)) ...[
-              const SizedBox(height: 16),
-              Semantics(
-                identifier: 'lan-join-error-$code',
-                child: Text(lanMessage(code), key: const Key('lan-join-error')),
-              ),
-            ],
           ],
-        ),
+        ],
       ),
     );
   }
