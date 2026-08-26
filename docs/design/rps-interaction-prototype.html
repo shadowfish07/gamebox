@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>石头剪刀布 · 对局页交互原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --primary: #006b60;
+      --on-primary: #ffffff;
+      --primary-container: #9ef2e3;
+      --on-primary-container: #005048;
+      --secondary-container: #cce8e2;
+      --on-secondary-container: #334b47;
+      --tertiary-container: #cce5ff;
+      --on-tertiary-container: #2d4960;
+      --surface: #f4fbf8;
+      --surface-low: #eff5f2;
+      --surface-high: #e3eae7;
+      --surface-highest: #dde4e1;
+      --on-surface: #161d1b;
+      --on-surface-variant: #3f4946;
+      --outline: #6f7976;
+      --outline-variant: #bec9c5;
+      --error-container: #ffdad6;
+      --on-error-container: #93000a;
+      --scrim: rgba(0, 32, 28, 0.28);
+      --shadow: rgba(0, 55, 49, 0.16);
+      --success: #0d7b55;
+      --success-container: #b9f1d4;
+      --warning: #8a5200;
+      --warning-container: #ffddb4;
+      --phone-width: min(390px, calc(100vw - 32px));
+      font-family: Inter, "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--on-surface);
+      background:
+        radial-gradient(circle at 12% 10%, rgba(158, 242, 227, 0.75), transparent 30rem),
+        linear-gradient(145deg, #e9f5f1 0%, #f5f6f0 50%, #e2f1ee 100%);
+    }
+
+    button { font: inherit; }
+
+    .prototype {
+      display: grid;
+      grid-template-columns: minmax(230px, 300px) minmax(390px, 1fr);
+      gap: 48px;
+      min-height: 100vh;
+      padding: 32px clamp(24px, 5vw, 80px);
+      align-items: center;
+    }
+
+    .control-panel {
+      align-self: stretch;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+    }
+
+    .intro {
+      margin: 12px 0 0;
+      color: var(--on-surface-variant);
+      line-height: 1.65;
+    }
+
+    .state-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .state-button,
+    .tool-button {
+      min-height: 48px;
+      border: 1px solid var(--outline-variant);
+      border-radius: 14px;
+      color: var(--on-surface-variant);
+      background: rgba(255, 255, 255, 0.62);
+      cursor: pointer;
+      transition: background 180ms ease, color 180ms ease, border-color 180ms ease, transform 100ms ease;
+    }
+
+    .state-button:hover,
+    .tool-button:hover { background: #fff; }
+    .state-button:active,
+    .tool-button:active { transform: scale(0.97); }
+
+    .state-button[aria-pressed="true"] {
+      border-color: var(--primary);
+      color: var(--on-primary-container);
+      background: var(--primary-container);
+      font-weight: 700;
+    }
+
+    .tools { display: flex; gap: 8px; }
+    .tool-button { flex: 1; padding-inline: 12px; }
+
+    .hint {
+      margin: 0;
+      padding: 16px;
+      border-radius: 16px;
+      color: var(--on-secondary-container);
+      background: color-mix(in srgb, var(--secondary-container) 75%, transparent);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .device-stage {
+      display: grid;
+      place-items: center;
+      min-width: 0;
+    }
+
+    .phone {
+      position: relative;
+      width: var(--phone-width);
+      aspect-ratio: 390 / 844;
+      max-height: calc(100vh - 48px);
+      overflow: clip;
+      border: 7px solid #1d2926;
+      border-radius: 42px;
+      color: var(--on-surface);
+      background: var(--surface);
+      box-shadow: 0 28px 70px var(--shadow), 0 4px 12px rgba(0, 0, 0, 0.12);
+      isolation: isolate;
+    }
+
+    .phone::before {
+      content: "";
+      position: absolute;
+      z-index: 40;
+      top: 8px;
+      left: 50%;
+      width: 82px;
+      height: 22px;
+      border-radius: 999px;
+      background: #17201e;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+
+    .game-page {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-rows: 80px 1fr 155px 1.28fr;
+      min-height: 0;
+      background:
+        radial-gradient(circle at 50% 26%, rgba(158, 242, 227, 0.48), transparent 38%),
+        var(--surface);
+    }
+
+    .app-bar {
+      z-index: 5;
+      display: grid;
+      grid-template-columns: 48px 1fr 48px;
+      align-items: end;
+      gap: 8px;
+      padding: 26px 12px 6px;
+    }
+
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--on-surface);
+      background: transparent;
+      cursor: pointer;
+      font-size: 26px;
+    }
+
+    .icon-button:active { background: var(--surface-highest); }
+
+    .title-block { min-width: 0; text-align: center; }
+    .title-block strong { display: block; font-size: 16px; line-height: 22px; }
+    .title-block span { color: var(--on-surface-variant); font-size: 11px; line-height: 16px; }
+
+    .arena {
+      position: relative;
+      min-height: 0;
+      padding: 8px 20px;
+    }
+
+    .opponent-arena {
+      display: grid;
+      grid-template-rows: 32px 1fr;
+      border-radius: 0 0 30px 30px;
+    }
+
+    .player-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--on-surface-variant);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .player-id { display: flex; align-items: center; gap: 8px; }
+
+    .avatar {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      color: var(--on-primary-container);
+      background: var(--primary-container);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      color: var(--on-surface-variant);
+      background: var(--surface-high);
+      white-space: nowrap;
+      font-size: 11px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--outline);
+    }
+
+    .gesture-stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 0;
+    }
+
+    .mystery-hand,
+    .locked-hand,
+    .revealed-hand {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      width: clamp(132px, 43vw, 168px);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      transition: opacity 200ms ease, transform 300ms cubic-bezier(.2,.8,.2,1);
+    }
+
+    .mystery-hand {
+      border: 2px dashed var(--outline-variant);
+      color: var(--outline);
+      background: color-mix(in srgb, var(--surface-high) 72%, transparent);
+      font-size: 54px;
+      font-weight: 300;
+    }
+
+    .mystery-hand::after {
+      content: "对手的选择保密中";
+      position: absolute;
+      bottom: -26px;
+      width: 190px;
+      text-align: center;
+      color: var(--on-surface-variant);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .locked-hand {
+      opacity: 0;
+      transform: scale(0.82);
+      background: var(--tertiary-container);
+      box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--on-tertiary-container) 18%, transparent);
+    }
+
+    .lock-symbol {
+      display: grid;
+      place-items: center;
+      width: 64px;
+      height: 64px;
+      border-radius: 22px;
+      color: var(--on-tertiary-container);
+      background: rgba(255, 255, 255, 0.55);
+      font-size: 28px;
+      box-shadow: 0 8px 20px rgba(45, 73, 96, 0.12);
+    }
+
+    .locked-hand::after {
+      content: "已出拳 · 等待同时揭晓";
+      position: absolute;
+      bottom: -26px;
+      width: 210px;
+      text-align: center;
+      color: var(--on-tertiary-container);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .revealed-hand { opacity: 0; transform: translateY(-70px) scale(0.78); }
+    .revealed-hand img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 10px 10px rgba(0,0,0,.16)); }
+
+    .round-stage {
+      position: relative;
+      z-index: 3;
+      display: grid;
+      grid-template-rows: 34px 60px 34px;
+      align-content: center;
+      gap: 6px;
+      margin: 0 16px;
+      padding: 10px 14px;
+      border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+      border-radius: 24px;
+      background: color-mix(in srgb, var(--surface-low) 88%, transparent);
+      box-shadow: 0 10px 28px rgba(0, 55, 49, 0.08);
+      backdrop-filter: blur(10px);
+    }
+
+    .round-meta { display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .round-chip {
+      padding: 4px 10px;
+      border-radius: 999px;
+      color: var(--on-primary-container);
+      background: var(--primary-container);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .scoreboard {
+      display: grid;
+      grid-template-columns: 1fr 44px 1fr;
+      align-items: center;
+      text-align: center;
+    }
+
+    .score-side { display: grid; grid-template-columns: 1fr 36px; align-items: baseline; gap: 6px; }
+    .score-side.opponent { grid-template-columns: 36px 1fr; }
+    .score-side span { color: var(--on-surface-variant); font-size: 12px; }
+    .score-side strong { font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
+    .versus { color: var(--outline); font-size: 12px; font-weight: 800; letter-spacing: 0.12em; }
+
+    .round-message { text-align: center; }
+    .round-message strong { display: block; font-size: 14px; line-height: 18px; }
+    .round-message span { display: block; color: var(--on-surface-variant); font-size: 11px; line-height: 16px; }
+
+    .me-arena {
+      display: grid;
+      grid-template-rows: 34px 1fr;
+      padding-top: 12px;
+      background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--primary-container) 28%, transparent));
+      border-radius: 30px 30px 0 0;
+    }
+
+    .choice-tray {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      align-items: end;
+      gap: 8px;
+      min-height: 0;
+      padding-bottom: 16px;
+      transition: opacity 180ms ease, transform 260ms cubic-bezier(.2,.8,.2,1);
+    }
+
+    .choice {
+      position: relative;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) 26px;
+      place-items: center;
+      min-width: 0;
+      min-height: 142px;
+      padding: 0 2px 8px;
+      border: 0;
+      border-radius: 24px;
+      color: var(--on-surface);
+      background: transparent;
+      cursor: pointer;
+      transition: background 180ms ease, opacity 180ms ease, transform 100ms ease;
+    }
+
+    .choice:hover { background: color-mix(in srgb, var(--primary-container) 38%, transparent); }
+    .choice:active { transform: scale(0.92); }
+    .choice img {
+      width: min(100%, 110px);
+      aspect-ratio: 1;
+      object-fit: contain;
+      filter: drop-shadow(0 9px 9px rgba(0,0,0,.13));
+      pointer-events: none;
+    }
+    .choice span { font-size: 14px; font-weight: 700; }
+
+    .my-locked-choice {
+      position: absolute;
+      inset: 38px 12px 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      gap: 8px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(42px) scale(0.92);
+      transition: opacity 180ms ease, transform 300ms cubic-bezier(.2,.8,.2,1);
+    }
+
+    .my-locked-choice img {
+      justify-self: end;
+      width: min(184px, 47vw);
+      aspect-ratio: 1;
+      object-fit: contain;
+      filter: drop-shadow(0 10px 10px rgba(0,0,0,.14));
+    }
+
+    .selection-copy { padding-right: 8px; }
+    .selection-copy strong { display: block; margin-bottom: 5px; font-size: 18px; }
+    .selection-copy span { color: var(--on-surface-variant); font-size: 12px; line-height: 1.5; }
+
+    .mini-spinner {
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      margin-right: 5px;
+      border: 2px solid var(--outline-variant);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      vertical-align: -2px;
+      animation: spin 800ms linear infinite;
+    }
+
+    .connection-banner {
+      position: absolute;
+      z-index: 22;
+      top: 74px;
+      left: 16px;
+      right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 10px 14px;
+      border-radius: 16px;
+      color: var(--warning);
+      background: var(--warning-container);
+      box-shadow: 0 10px 24px rgba(90, 52, 0, 0.15);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-14px);
+      transition: opacity 200ms ease, transform 300ms cubic-bezier(.2,.8,.2,1);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .result-scrim {
+      position: absolute;
+      z-index: 25;
+      inset: 0;
+      display: grid;
+      align-items: end;
+      padding: 16px;
+      background: var(--scrim);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 220ms ease;
+    }
+
+    .result-sheet {
+      padding: 20px 20px 16px;
+      border-radius: 30px;
+      text-align: center;
+      background: var(--surface);
+      transform: translateY(110%);
+      transition: transform 400ms cubic-bezier(.2,.8,.2,1);
+    }
+
+    .trophy {
+      display: grid;
+      place-items: center;
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 10px;
+      border-radius: 18px;
+      background: var(--primary-container);
+      font-size: 30px;
+    }
+
+    .result-sheet h2 { margin: 0; font-size: 24px; }
+    .result-sheet p { margin: 4px 0 14px; color: var(--on-surface-variant); font-size: 14px; }
+    .primary-action {
+      width: 100%;
+      min-height: 48px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--on-primary);
+      background: var(--primary);
+      font-weight: 750;
+    }
+
+    .impact-ring {
+      position: absolute;
+      z-index: -1;
+      left: 50%;
+      top: 50%;
+      width: 120px;
+      aspect-ratio: 1;
+      border: 8px solid var(--primary-container);
+      border-radius: 50%;
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(.4);
+      pointer-events: none;
+    }
+
+    .outcome-burst {
+      position: absolute;
+      z-index: 8;
+      left: 50%;
+      top: 50%;
+      min-width: 176px;
+      padding: 8px 18px;
+      border-radius: 999px;
+      text-align: center;
+      color: var(--on-primary-container);
+      background: var(--primary-container);
+      box-shadow: 0 10px 24px var(--shadow);
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(.65);
+      font-size: 18px;
+      font-weight: 850;
+      pointer-events: none;
+    }
+
+    /* State presentation */
+    .phone[data-state="opponent-locked"] .mystery-hand,
+    .phone[data-state="me-locked"] .mystery-hand,
+    .phone[data-state="me-pending"] .mystery-hand,
+    .phone[data-state="reconnecting"] .mystery-hand { opacity: 0; transform: scale(.82); }
+
+    .phone[data-state="opponent-locked"] .locked-hand,
+    .phone[data-state="me-locked"] .locked-hand,
+    .phone[data-state="me-pending"] .locked-hand,
+    .phone[data-state="reconnecting"] .locked-hand { opacity: 1; transform: scale(1); }
+
+    .phone[data-state="opponent-locked"] .status-pill,
+    .phone[data-state="me-locked"] .status-pill,
+    .phone[data-state="me-pending"] .status-pill {
+      color: var(--on-tertiary-container);
+      background: var(--tertiary-container);
+    }
+
+    .phone[data-state="opponent-locked"] .status-dot,
+    .phone[data-state="me-locked"] .status-dot,
+    .phone[data-state="me-pending"] .status-dot { background: var(--on-tertiary-container); }
+
+    .phone[data-mode="selected"] .choice-tray { opacity: 0; pointer-events: none; transform: translateY(40px) scale(.92); }
+    .phone[data-mode="selected"] .my-locked-choice { opacity: 1; transform: translateY(0) scale(1); }
+
+    .phone[data-state="reconnecting"] .connection-banner { opacity: 1; transform: translateY(0); }
+    .phone[data-state="reconnecting"] .game-page { filter: saturate(.72); }
+
+    .phone[data-state^="reveal-"] .mystery-hand,
+    .phone[data-state^="reveal-"] .locked-hand { opacity: 0; transform: scale(.76); }
+    .phone[data-state^="reveal-"] .revealed-hand { opacity: 1; transform: translateY(0) scale(1); }
+    .phone[data-state^="reveal-"] .choice-tray { opacity: 0; pointer-events: none; transform: translateY(34px); }
+    .phone[data-state^="reveal-"] .my-locked-choice { opacity: 1; transform: translateY(0) scale(1); }
+
+    .phone.replay[data-state^="reveal-"] .opponent-arena .revealed-hand {
+      animation: reveal-opponent 760ms cubic-bezier(.18,.85,.2,1) both;
+    }
+    .phone.replay[data-state^="reveal-"] .my-locked-choice img {
+      animation: reveal-me 760ms cubic-bezier(.18,.85,.2,1) both;
+    }
+    .phone.replay[data-state^="reveal-"] .impact-ring { animation: impact 520ms 540ms ease-out both; }
+    .phone.replay[data-state^="reveal-"] .outcome-burst { animation: outcome 1500ms 760ms cubic-bezier(.2,1.2,.4,1) both; }
+    .phone.replay[data-state^="reveal-"] .score-me { animation: score-pop 420ms 930ms ease both; }
+
+    .phone[data-state="reveal-loss"] .outcome-burst {
+      color: var(--on-error-container);
+      background: var(--error-container);
+    }
+    .phone[data-state="reveal-draw"] .outcome-burst {
+      color: var(--warning);
+      background: var(--warning-container);
+    }
+
+    .phone[data-state="match-win"] .result-scrim { opacity: 1; pointer-events: auto; }
+    .phone[data-state="match-win"] .result-sheet { transform: translateY(0); }
+
+    .phone.dark {
+      color-scheme: dark;
+      --primary: #82d5c7;
+      --on-primary: #003731;
+      --primary-container: #005048;
+      --on-primary-container: #9ef2e3;
+      --secondary-container: #334b47;
+      --on-secondary-container: #cce8e2;
+      --tertiary-container: #2d4960;
+      --on-tertiary-container: #cce5ff;
+      --surface: #0e1513;
+      --surface-low: #161d1b;
+      --surface-high: #252b2a;
+      --surface-highest: #303634;
+      --on-surface: #dde4e1;
+      --on-surface-variant: #bec9c5;
+      --outline: #899390;
+      --outline-variant: #3f4946;
+      --error-container: #93000a;
+      --on-error-container: #ffdad6;
+      --scrim: rgba(0, 0, 0, 0.55);
+      --shadow: rgba(0, 0, 0, 0.34);
+      --success-container: #155c43;
+      --warning: #ffb95c;
+      --warning-container: #513000;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes reveal-opponent {
+      0% { opacity: 0; transform: translateY(-84px) rotate(-8deg) scale(.72); }
+      62% { opacity: 1; transform: translateY(12px) rotate(2deg) scale(1.05); }
+      100% { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+    }
+    @keyframes reveal-me {
+      0% { opacity: 0; transform: translateY(84px) rotate(8deg) scale(.72); }
+      62% { opacity: 1; transform: translateY(-12px) rotate(-2deg) scale(1.05); }
+      100% { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+    }
+    @keyframes impact {
+      0% { opacity: .9; transform: translate(-50%, -50%) scale(.35); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(2.6); }
+    }
+    @keyframes outcome {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(.5); }
+      22%, 72% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, calc(-50% - 14px)) scale(.92); }
+    }
+    @keyframes score-pop {
+      0%, 100% { transform: scale(1); }
+      45% { color: var(--primary); transform: scale(1.42); }
+    }
+
+    @media (max-width: 820px) {
+      .prototype { grid-template-columns: 1fr; gap: 24px; padding: 24px 16px 40px; }
+      .control-panel { width: min(100%, 560px); margin: 0 auto; }
+      .device-stage { order: -1; }
+      .phone { max-height: none; }
+      .hint { display: none; }
+    }
+
+    @media (max-width: 420px) {
+      .prototype { padding-inline: 0; padding-top: 0; }
+      .phone { width: 100vw; border: 0; border-radius: 0; }
+      .phone::before { display: none; }
+      .control-panel { padding: 0 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="prototype">
+    <section class="control-panel" aria-label="原型状态控制">
+      <header>
+        <p class="eyebrow">Gamebox interaction study</p>
+        <h1>把“出拳”变成主角</h1>
+        <p class="intro">上下双方各占一块明确区域，中间只保留回合、比分和揭晓舞台。选择后手势进入自己的出拳位，双方锁定后同时冲入中央揭晓。</p>
+      </header>
+
+      <div class="state-list" id="stateList">
+        <button type="button" class="state-button" data-state="ready" aria-pressed="true">等待选择</button>
+        <button type="button" class="state-button" data-state="opponent-locked" aria-pressed="false">对手已出拳</button>
+        <button type="button" class="state-button" data-state="me-pending" aria-pressed="false">提交中</button>
+        <button type="button" class="state-button" data-state="me-locked" aria-pressed="false">我已出拳</button>
+        <button type="button" class="state-button" data-state="reveal-win" aria-pressed="false">本轮获胜</button>
+        <button type="button" class="state-button" data-state="reveal-draw" aria-pressed="false">本轮平局</button>
+        <button type="button" class="state-button" data-state="reveal-loss" aria-pressed="false">本轮落败</button>
+        <button type="button" class="state-button" data-state="reconnecting" aria-pressed="false">断线恢复</button>
+        <button type="button" class="state-button" data-state="match-win" aria-pressed="false">整局胜利</button>
+      </div>
+
+      <div class="tools">
+        <button type="button" class="tool-button" id="replayButton">↻ 重播动效</button>
+        <button type="button" class="tool-button" id="themeButton">◐ 切换明暗</button>
+      </div>
+      <p class="hint">也可以直接点击手机底部的石头、剪刀、布：它会依次演示“提交中 → 已锁定”。HTML 仅用于讨论布局与节奏，不代表已经完成 Godot 集成。</p>
+    </section>
+
+    <section class="device-stage" aria-label="手机端对局页预览">
+      <div class="phone" id="phone" data-state="ready" data-mode="choices">
+        <div class="game-page">
+          <header class="app-bar">
+            <button type="button" class="icon-button" aria-label="返回">‹</button>
+            <div class="title-block">
+              <strong>石头剪刀布</strong>
+              <span>三局两胜</span>
+            </div>
+            <button type="button" class="icon-button" aria-label="更多操作">⋯</button>
+          </header>
+
+          <section class="arena opponent-arena" aria-label="对手出拳区">
+            <div class="player-line">
+              <div class="player-id"><span class="avatar">TA</span><span>对手</span></div>
+              <span class="status-pill"><i class="status-dot"></i><span id="opponentStatus">等待出拳</span></span>
+            </div>
+            <div class="gesture-stage">
+              <div class="mystery-hand" aria-hidden="true">?</div>
+              <div class="locked-hand" aria-hidden="true"><span class="lock-symbol">✓</span></div>
+              <div class="revealed-hand"><img id="opponentGesture" src="../../game_runtime/games/rps/assets/scissors.png" alt="对手出了剪刀"></div>
+            </div>
+          </section>
+
+          <section class="round-stage" aria-label="本轮比分">
+            <div class="round-meta"><span class="round-chip" id="roundChip">第 2 轮</span></div>
+            <div class="scoreboard">
+              <div class="score-side"><span>你</span><strong class="score-me" id="scoreMe">1</strong></div>
+              <span class="versus">VS</span>
+              <div class="score-side opponent"><strong id="scoreOpponent">0</strong><span>对手</span></div>
+            </div>
+            <div class="round-message">
+              <strong id="headline">选择你的手势</strong>
+              <span id="subline">手势会在双方锁定后同时揭晓</span>
+            </div>
+            <div class="impact-ring"></div>
+            <div class="outcome-burst" id="outcomeBurst">本轮获胜</div>
+          </section>
+
+          <section class="arena me-arena" aria-label="我的出拳区">
+            <div class="player-line">
+              <div class="player-id"><span class="avatar">我</span><span>你的出拳</span></div>
+              <span class="status-pill"><i class="status-dot"></i><span id="meStatus">等待选择</span></span>
+            </div>
+            <div class="choice-tray">
+              <button type="button" class="choice" data-choice="rock"><img src="../../game_runtime/games/rps/assets/rock.png" alt=""><span>石头</span></button>
+              <button type="button" class="choice" data-choice="scissors"><img src="../../game_runtime/games/rps/assets/scissors.png" alt=""><span>剪刀</span></button>
+              <button type="button" class="choice" data-choice="paper"><img src="../../game_runtime/games/rps/assets/paper.png" alt=""><span>布</span></button>
+            </div>
+            <div class="my-locked-choice">
+              <img id="myGesture" src="../../game_runtime/games/rps/assets/paper.png" alt="你出了布">
+              <div class="selection-copy">
+                <strong id="myChoiceLabel">你出了布</strong>
+                <span id="selectionDetail">选择已锁定<br>等待对手出拳</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="connection-banner"><span class="mini-spinner"></span><span>网络波动，正在恢复对局…<br>已确认的出拳状态会保留</span></div>
+
+        <div class="result-scrim">
+          <div class="result-sheet">
+            <div class="trophy">🏆</div>
+            <h2>你赢得了对局</h2>
+            <p>2 : 0 · 三局两胜</p>
+            <button type="button" class="primary-action">返回游戏大厅</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const assetBase = "../../game_runtime/games/rps/assets/";
+    const phone = document.querySelector("#phone");
+    const stateButtons = [...document.querySelectorAll(".state-button")];
+    const choiceButtons = [...document.querySelectorAll(".choice")];
+    const elements = {
+      opponentStatus: document.querySelector("#opponentStatus"),
+      meStatus: document.querySelector("#meStatus"),
+      roundChip: document.querySelector("#roundChip"),
+      scoreMe: document.querySelector("#scoreMe"),
+      scoreOpponent: document.querySelector("#scoreOpponent"),
+      headline: document.querySelector("#headline"),
+      subline: document.querySelector("#subline"),
+      outcome: document.querySelector("#outcomeBurst"),
+      opponentGesture: document.querySelector("#opponentGesture"),
+      myGesture: document.querySelector("#myGesture"),
+      myChoiceLabel: document.querySelector("#myChoiceLabel"),
+      selectionDetail: document.querySelector("#selectionDetail")
+    };
+
+    const states = {
+      ready: {
+        mode: "choices", opponent: "等待出拳", me: "等待选择", round: "第 2 轮",
+        scores: [1, 0], headline: "选择你的手势", subline: "手势会在双方锁定后同时揭晓"
+      },
+      "opponent-locked": {
+        mode: "choices", opponent: "已出拳 · 保密", me: "轮到你了", round: "第 2 轮",
+        scores: [1, 0], headline: "对手已经准备好", subline: "选择石头、剪刀或布"
+      },
+      "me-pending": {
+        mode: "selected", opponent: "等待出拳", me: "正在锁定", round: "第 2 轮",
+        scores: [1, 0], headline: "正在锁定你的选择…", subline: "服务器确认前不会视为最终出拳", mine: "paper",
+        detail: '<span class="mini-spinner"></span>正在提交选择'
+      },
+      "me-locked": {
+        mode: "selected", opponent: "等待出拳", me: "已出拳", round: "第 2 轮",
+        scores: [1, 0], headline: "你的选择已锁定", subline: "等待对手后同时揭晓", mine: "paper",
+        detail: "选择已保密<br>等待对手出拳"
+      },
+      "reveal-win": {
+        mode: "selected", opponent: "已揭晓", me: "已揭晓", round: "第 2 轮",
+        scores: [2, 0], headline: "布包住石头", subline: "比分已更新", mine: "paper", opponentChoice: "rock", outcome: "本轮获胜"
+      },
+      "reveal-draw": {
+        mode: "selected", opponent: "已揭晓", me: "已揭晓", round: "第 2 轮",
+        scores: [1, 0], headline: "都是剪刀", subline: "平局不计分，再来一轮", mine: "scissors", opponentChoice: "scissors", outcome: "本轮平局"
+      },
+      "reveal-loss": {
+        mode: "selected", opponent: "已揭晓", me: "已揭晓", round: "第 2 轮",
+        scores: [1, 1], headline: "石头砸碎剪刀", subline: "比分已更新", mine: "scissors", opponentChoice: "rock", outcome: "本轮落败"
+      },
+      reconnecting: {
+        mode: "selected", opponent: "状态同步中", me: "已出拳", round: "第 2 轮",
+        scores: [1, 0], headline: "保留最后确认状态", subline: "恢复完成前暂停新的操作", mine: "paper",
+        detail: "选择已经确认<br>正在同步对局"
+      },
+      "match-win": {
+        mode: "selected", opponent: "对局结束", me: "胜利", round: "最终结果",
+        scores: [2, 0], headline: "你赢得了对局", subline: "三局两胜", mine: "paper", opponentChoice: "rock"
+      }
+    };
+
+    const choiceNames = { rock: "石头", scissors: "剪刀", paper: "布" };
+
+    function setGesture(image, choice, subject) {
+      image.src = `${assetBase}${choice}.png`;
+      image.alt = `${subject}出了${choiceNames[choice]}`;
+    }
+
+    function replayMotion() {
+      phone.classList.remove("replay");
+      requestAnimationFrame(() => requestAnimationFrame(() => phone.classList.add("replay")));
+    }
+
+    function showState(name, overrides = {}) {
+      const config = { ...states[name], ...overrides };
+      phone.dataset.state = name;
+      phone.dataset.mode = config.mode;
+      elements.opponentStatus.textContent = config.opponent;
+      elements.meStatus.textContent = config.me;
+      elements.roundChip.textContent = config.round;
+      elements.scoreMe.textContent = config.scores[0];
+      elements.scoreOpponent.textContent = config.scores[1];
+      elements.headline.textContent = config.headline;
+      elements.subline.textContent = config.subline;
+
+      const mine = config.mine || "paper";
+      setGesture(elements.myGesture, mine, "你");
+      elements.myChoiceLabel.textContent = `你出了${choiceNames[mine]}`;
+      elements.selectionDetail.innerHTML = config.detail || "双方已揭晓<br>查看本轮结果";
+
+      if (config.opponentChoice) setGesture(elements.opponentGesture, config.opponentChoice, "对手");
+      if (config.outcome) elements.outcome.textContent = config.outcome;
+
+      stateButtons.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.state === name)));
+      replayMotion();
+    }
+
+    stateButtons.forEach(button => button.addEventListener("click", () => showState(button.dataset.state)));
+
+    choiceButtons.forEach(button => button.addEventListener("click", () => {
+      const choice = button.dataset.choice;
+      showState("me-pending", { mine: choice });
+      window.setTimeout(() => {
+        if (phone.dataset.state === "me-pending") showState("me-locked", { mine: choice });
+      }, 900);
+    }));
+
+    document.querySelector("#replayButton").addEventListener("click", replayMotion);
+    document.querySelector("#themeButton").addEventListener("click", () => phone.classList.toggle("dark"));
+    showState("ready");
+  </script>
+</body>
+</html>
