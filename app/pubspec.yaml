@@ -36,7 +36,7 @@ dependencies:
   flutter_release_updater:
     git:
       url: https://github.com/shadowfish07/flutter_release_updater.git
-      ref: v0.1.2
+      ref: v0.2.0
   http: ^1.6.0
   package_info_plus: ^10.2.1
   # 11.0.0 requires Android compileSdk 37, beyond Flutter 3.47.1's
