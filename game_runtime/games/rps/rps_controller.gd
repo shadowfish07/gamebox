@@ -68,6 +68,17 @@ func _ready() -> void:
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
 	$SafeContent/Layout/MySection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
+	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.add_theme_stylebox_override(
+		"panel", _opponent_surface_style(colors["surface_container_high"], colors["outline_variant"])
+	)
+	$SafeContent/Layout/OpponentSection/OpponentVisual/LockedSurface.add_theme_stylebox_override(
+		"panel", _opponent_surface_style(colors["tertiary_container"], colors["on_tertiary_container"])
+	)
+	$RevealPanel/Content.add_theme_constant_override("separation", GameboxTokens.SPACING["section"] * GameboxTheme.LOGICAL_SCALE)
+	$RevealPanel/Content/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
+	$RevealPanel/Content/ResultLabel.add_theme_font_size_override(
+		"font_size", GameboxTokens.TYPOGRAPHY["headline_small"]["font_size"] * GameboxTheme.LOGICAL_SCALE
+	)
 	$SafeContent/Layout/TopNavigation/BackButton.pressed.connect(_on_back_pressed)
 	$SafeContent/Layout/TopNavigation/MoreButton.pressed.connect(_on_resign_pressed)
 	for entry in _choice_entries():
@@ -251,7 +262,7 @@ func _refresh_ui() -> void:
 	_refresh_choice_visuals()
 	$SafeContent/Layout/MySection/ChoicePanel.visible = not terminal and _selected_choice().is_empty() and not _is_revealing()
 	$SafeContent/Layout/MySection/SelectedPanel.visible = not terminal and not _selected_choice().is_empty() and not _is_revealing()
-	$ResignButton.visible = has_state and not terminal and _state.can_request_resign(local_user_id)
+	$ResignButton.visible = has_state and not terminal and not _is_revealing() and _state.can_request_resign(local_user_id)
 	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot or _resign_submitted
 	if terminal and not _is_revealing():
 		$ResignDialog.close()
@@ -308,6 +319,8 @@ func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 	var locked: bool = has_state and _state.opponent_locked and not _is_revealing()
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Unknown.visible = not locked
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Locked.visible = locked
+	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.visible = not locked
+	$SafeContent/Layout/OpponentSection/OpponentVisual/LockedSurface.visible = locked
 	var selected := _selected_choice()
 	if not selected.is_empty():
 		$SafeContent/Layout/MySection/SelectedPanel/Icon.texture = _choice_texture(selected)
@@ -349,7 +362,10 @@ func _refresh_reveal(has_state: bool) -> void:
 
 
 func _start_reveal(reveal: Dictionary) -> void:
-	var key := "%s|%s" % [str(reveal.get("round", "")), str(_state.revision)]
+	# A later lock event retains the previous round's reveal in its snapshot.
+	# Deduplicate by revealed round, not snapshot revision, so that old overlay
+	# cannot disable the opponent's choice controls in the next round.
+	var key := str(reveal.get("round", ""))
 	if key == _reveal_key:
 		return
 	_reveal_key = key
@@ -381,6 +397,22 @@ func _chip_style(colors: Dictionary) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = colors["secondary_container"]
 	var radius := roundi(GameboxTokens.SHAPE["full"] * GameboxTheme.LOGICAL_SCALE)
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
+
+
+func _opponent_surface_style(fill: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	var radius := 180
 	style.corner_radius_top_left = radius
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius

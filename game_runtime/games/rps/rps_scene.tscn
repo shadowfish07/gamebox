@@ -34,10 +34,10 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 48.0
-offset_top = 48.0
-offset_right = -48.0
-offset_bottom = -48.0
+offset_left = 32.0
+offset_top = 32.0
+offset_right = -32.0
+offset_bottom = -32.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -45,13 +45,14 @@ grow_vertical = 2
 layout_mode = 2
 
 [node name="TopNavigation" type="HBoxContainer" parent="SafeContent/Layout"]
-custom_minimum_size = Vector2(0, 128)
+custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
 alignment = 1
 
 [node name="BackButton" parent="SafeContent/Layout/TopNavigation" instance=ExtResource("2_back")]
-custom_minimum_size = Vector2(144, 96)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
+text = "←"
 
 [node name="TitleGroup" type="VBoxContainer" parent="SafeContent/Layout/TopNavigation"]
 layout_mode = 2
@@ -75,9 +76,10 @@ layout_mode = 2
 text = "⋮"
 
 [node name="OpponentSection" type="VBoxContainer" parent="SafeContent/Layout"]
-custom_minimum_size = Vector2(0, 440)
+custom_minimum_size = Vector2(0, 260)
 layout_mode = 2
 size_flags_vertical = 3
+size_flags_stretch_ratio = 1.1
 alignment = 1
 
 [node name="StatusLine" type="HBoxContainer" parent="SafeContent/Layout/OpponentSection"]
@@ -85,13 +87,13 @@ custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 
 [node name="Identity" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(144, 0)
 layout_mode = 2
 text = "对手"
 vertical_alignment = 1
 
 [node name="StatusChip" type="PanelContainer" parent="SafeContent/Layout/OpponentSection/StatusLine"]
-custom_minimum_size = Vector2(260, 48)
+custom_minimum_size = Vector2(200, 48)
 layout_mode = 2
 
 [node name="Label" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine/StatusChip"]
@@ -100,17 +102,53 @@ text = "等待出拳"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="OpponentVisual" type="PanelContainer" parent="SafeContent/Layout/OpponentSection"]
-custom_minimum_size = Vector2(0, 300)
+[node name="OpponentVisual" type="Control" parent="SafeContent/Layout/OpponentSection"]
+custom_minimum_size = Vector2(0, 260)
 layout_mode = 2
 size_flags_vertical = 3
 
+[node name="UnknownSurface" type="Panel" parent="SafeContent/Layout/OpponentSection/OpponentVisual"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -180.0
+offset_top = -180.0
+offset_right = 180.0
+offset_bottom = 180.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="LockedSurface" type="Panel" parent="SafeContent/Layout/OpponentSection/OpponentVisual"]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -180.0
+offset_top = -180.0
+offset_right = 180.0
+offset_bottom = 180.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
 [node name="Unknown" type="VBoxContainer" parent="SafeContent/Layout/OpponentSection/OpponentVisual"]
-layout_mode = 2
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 alignment = 1
 
 [node name="Question" type="Label" parent="SafeContent/Layout/OpponentSection/OpponentVisual/Unknown"]
-custom_minimum_size = Vector2(0, 128)
+custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
 text = "?"
 horizontal_alignment = 1
@@ -123,11 +161,16 @@ horizontal_alignment = 1
 
 [node name="Locked" type="VBoxContainer" parent="SafeContent/Layout/OpponentSection/OpponentVisual"]
 visible = false
-layout_mode = 2
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 alignment = 1
 
 [node name="Lock" type="Label" parent="SafeContent/Layout/OpponentSection/OpponentVisual/Locked"]
-custom_minimum_size = Vector2(0, 128)
+custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
 text = "🔒"
 horizontal_alignment = 1
@@ -139,7 +182,7 @@ text = "已出拳 · 等待同时揭晓"
 horizontal_alignment = 1
 
 [node name="RoundStage" type="PanelContainer" parent="SafeContent/Layout"]
-custom_minimum_size = Vector2(0, 300)
+custom_minimum_size = Vector2(0, 400)
 layout_mode = 2
 theme_type_variation = &"GameboxResultPanel"
 
@@ -169,22 +212,23 @@ horizontal_alignment = 1
 autowrap_mode = 2
 
 [node name="MySection" type="VBoxContainer" parent="SafeContent/Layout"]
-custom_minimum_size = Vector2(0, 500)
+custom_minimum_size = Vector2(0, 280)
 layout_mode = 2
 size_flags_vertical = 3
+size_flags_stretch_ratio = 1.35
 
 [node name="StatusLine" type="HBoxContainer" parent="SafeContent/Layout/MySection"]
 custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 
 [node name="Identity" type="Label" parent="SafeContent/Layout/MySection/StatusLine"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(144, 0)
 layout_mode = 2
 text = "你的出拳"
 vertical_alignment = 1
 
 [node name="StatusChip" type="PanelContainer" parent="SafeContent/Layout/MySection/StatusLine"]
-custom_minimum_size = Vector2(260, 48)
+custom_minimum_size = Vector2(200, 48)
 layout_mode = 2
 
 [node name="Label" type="Label" parent="SafeContent/Layout/MySection/StatusLine/StatusChip"]
@@ -194,7 +238,7 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="ChoicePanel" type="Control" parent="SafeContent/Layout/MySection"]
-custom_minimum_size = Vector2(0, 360)
+custom_minimum_size = Vector2(0, 280)
 layout_mode = 2
 size_flags_vertical = 3
 
@@ -225,9 +269,9 @@ mouse_filter = 2
 alignment = 1
 
 [node name="Icon" type="TextureRect" parent="SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton/Content"]
-custom_minimum_size = Vector2(160, 160)
+custom_minimum_size = Vector2(0, 192)
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_vertical = 4
 mouse_filter = 2
 texture = ExtResource("8_rock")
 expand_mode = 3
@@ -264,9 +308,9 @@ mouse_filter = 2
 alignment = 1
 
 [node name="Icon" type="TextureRect" parent="SafeContent/Layout/MySection/ChoicePanel/Choices/ScissorsButton/Content"]
-custom_minimum_size = Vector2(160, 160)
+custom_minimum_size = Vector2(0, 192)
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_vertical = 4
 mouse_filter = 2
 texture = ExtResource("9_scissors")
 expand_mode = 3
@@ -303,9 +347,9 @@ mouse_filter = 2
 alignment = 1
 
 [node name="Icon" type="TextureRect" parent="SafeContent/Layout/MySection/ChoicePanel/Choices/PaperButton/Content"]
-custom_minimum_size = Vector2(160, 160)
+custom_minimum_size = Vector2(0, 192)
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_vertical = 4
 mouse_filter = 2
 texture = ExtResource("10_paper")
 expand_mode = 3
@@ -326,13 +370,13 @@ mouse_filter = 2
 
 [node name="SelectedPanel" type="VBoxContainer" parent="SafeContent/Layout/MySection"]
 visible = false
-custom_minimum_size = Vector2(0, 360)
+custom_minimum_size = Vector2(0, 280)
 layout_mode = 2
 size_flags_vertical = 3
 alignment = 1
 
 [node name="Icon" type="TextureRect" parent="SafeContent/Layout/MySection/SelectedPanel"]
-custom_minimum_size = Vector2(240, 240)
+custom_minimum_size = Vector2(520, 520)
 layout_mode = 2
 size_flags_horizontal = 4
 texture = ExtResource("8_rock")
@@ -359,6 +403,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 theme_type_variation = &"GameboxResultPanel"
+z_index = 20
 
 [node name="Content" type="VBoxContainer" parent="RevealPanel"]
 layout_mode = 2
@@ -369,12 +414,12 @@ layout_mode = 2
 alignment = 1
 
 [node name="MyChoice" type="VBoxContainer" parent="RevealPanel/Content/Choices"]
-custom_minimum_size = Vector2(280, 260)
+custom_minimum_size = Vector2(260, 440)
 layout_mode = 2
 alignment = 1
 
 [node name="Icon" type="TextureRect" parent="RevealPanel/Content/Choices/MyChoice"]
-custom_minimum_size = Vector2(160, 160)
+custom_minimum_size = Vector2(260, 260)
 layout_mode = 2
 size_flags_horizontal = 4
 texture = ExtResource("8_rock")
@@ -387,19 +432,19 @@ text = "你 · 石头"
 horizontal_alignment = 1
 
 [node name="Versus" type="Label" parent="RevealPanel/Content/Choices"]
-custom_minimum_size = Vector2(80, 260)
+custom_minimum_size = Vector2(64, 440)
 layout_mode = 2
 text = "VS"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="OpponentChoice" type="VBoxContainer" parent="RevealPanel/Content/Choices"]
-custom_minimum_size = Vector2(280, 260)
+custom_minimum_size = Vector2(260, 440)
 layout_mode = 2
 alignment = 1
 
 [node name="Icon" type="TextureRect" parent="RevealPanel/Content/Choices/OpponentChoice"]
-custom_minimum_size = Vector2(160, 160)
+custom_minimum_size = Vector2(260, 260)
 layout_mode = 2
 size_flags_horizontal = 4
 texture = ExtResource("9_scissors")
