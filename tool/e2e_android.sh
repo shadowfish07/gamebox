@@ -3640,9 +3640,10 @@ tap_rps_choice() {
     paper) design_x=892 ;;
     *) return 2 ;;
   esac
-  # RPS now reserves the upper half for the opponent and stable round stage;
-  # the three full-column choice targets occupy the lower player zone.
-  point="$(design_point_for_serial "$serial" "$design_x" 1450)"
+  # The RPS choice row expands with the viewport height.  Anchor its probe
+  # from the bottom so it remains within the button body on both managed
+  # portrait sizes instead of landing above the row on the tall device.
+  point="$(design_point_from_bottom_for_serial "$serial" "$design_x" 500)"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
