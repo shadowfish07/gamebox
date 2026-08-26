@@ -1968,6 +1968,12 @@ self_test() {
   grep -F 'tap_identifier_after_scroll "$serial" register' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'embedded registration action is not atomically scroll-aware\n' >&2; return 1; }
+  local registration_source
+  registration_source="$(sed -n '/^register_user() {/,/^}/p' "${BASH_SOURCE[0]}")"
+  if grep -F 'KEYCODE_BACK' <<<"$registration_source" >/dev/null; then
+    printf 'private registration input incorrectly assumes a soft keyboard is open\n' >&2
+    return 1
+  fi
   if grep -E 'tap_identifier "\$[A-Za-z_][A-Za-z0-9_]*" continue-match' \
     <<<"$runtime_source" >/dev/null; then
     printf 'a continue-match action still uses the non-scroll-aware tap helper\n' >&2
@@ -2936,8 +2942,6 @@ register_user() {
   printf -v "$secret_flag" '%s' 1
   input_text_by_identifier "$serial" invite-code "$invite"
   assert_field_text "$serial" invite-code "$invite"
-  adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
-    || fail "could not dismiss the registration keyboard on $serial"
   local register_width register_height
   read -r register_width register_height <<<"$(device_effective_size "$serial")"
   [[ "$register_width" =~ ^[1-9][0-9]*$ && "$register_height" =~ ^[1-9][0-9]*$ ]] \
