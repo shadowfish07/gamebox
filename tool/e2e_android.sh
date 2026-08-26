@@ -516,6 +516,13 @@ xml_query() {
       exit 3 unless values.all?(&:empty?)
     when "identifier-count"
       puts nodes.count { |node| node.attributes["resource-id"] == expected }
+    when "identifier-diagnostics"
+      matches = nodes.select { |node| node.attributes["resource-id"] == expected }
+      puts "identifier=#{expected} count=#{matches.length}"
+      matches.each_with_index do |node, index|
+        puts "match=#{index} enabled=#{node.attributes["enabled"]} " \
+          "visible=#{node.attributes["visible-to-user"]} bounds=#{node.attributes["bounds"]}"
+      end
     when "visible-text", "visible-text-count"
       matches = nodes.select do |node|
         (node.attributes["text"].to_s == expected || node.attributes["content-desc"].to_s == expected) \
@@ -1327,6 +1334,16 @@ self_test() {
 
   [[ "$(xml_query bounds "$fixture" invite-code)" == "60 120" ]] \
     || { printf 'bounds fixture failed\n' >&2; return 1; }
+  local identifier_diagnostics
+  identifier_diagnostics="$(xml_query identifier-diagnostics "$fixture" invite-code)"
+  grep -F 'identifier=invite-code count=1' <<<"$identifier_diagnostics" >/dev/null \
+    && grep -F 'enabled=true visible=true bounds=[10,20][110,220]' \
+      <<<"$identifier_diagnostics" >/dev/null \
+    || { printf 'identifier-only diagnostics fixture failed\n' >&2; return 1; }
+  if grep -F 'fixture-secret' <<<"$identifier_diagnostics" >/dev/null; then
+    printf 'identifier-only diagnostics exposed field text\n' >&2
+    return 1
+  fi
   [[ "$(xml_query field-text "$fixture" invite-code)" == "fixture-secret" ]] \
     || { printf 'field text fixture failed\n' >&2; return 1; }
   [[ "$(xml_query field-text "$fixture" nickname)" == "fixture-nickname" ]] \
@@ -2663,11 +2680,12 @@ wait_for_identifier_after_scroll() {
   local timeout_seconds="${3:-$WAIT_SECONDS}"
   local deadline=$((SECONDS + timeout_seconds))
   local xml="$TEMP_DIR/ui-scroll-${serial//[^A-Za-z0-9_.-]/_}.xml"
-  local width height center
+  local width height center dump_successes=0
   read -r width height <<<"$(device_effective_size "$serial")"
   [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] || return 1
   while ((SECONDS < deadline)); do
     if dump_ui "$serial" "$xml"; then
+      dump_successes=$((dump_successes + 1))
       center="$(xml_query bounds "$xml" "$identifier" 2>/dev/null)" && {
         printf '%s\n' "$center"
         return 0
@@ -2678,6 +2696,11 @@ wait_for_identifier_after_scroll() {
       "$((width / 2))" "$((height * 2 / 5))" 250 >/dev/null || return 1
     sleep 0.5
   done
+  printf 'Scroll-aware identifier timeout: serial=%s identifier=%s dumps=%s\n' \
+    "$serial" "$identifier" "$dump_successes" >&2
+  if [[ -s "$xml" ]]; then
+    xml_query identifier-diagnostics "$xml" "$identifier" >&2 || true
+  fi
   return 1
 }
 
