@@ -2660,7 +2660,8 @@ wait_for_identifier() {
 wait_for_identifier_after_scroll() {
   local serial="$1"
   local identifier="$2"
-  local deadline=$((SECONDS + WAIT_SECONDS))
+  local timeout_seconds="${3:-$WAIT_SECONDS}"
+  local deadline=$((SECONDS + timeout_seconds))
   local xml="$TEMP_DIR/ui-scroll-${serial//[^A-Za-z0-9_.-]/_}.xml"
   local width height center
   read -r width height <<<"$(device_effective_size "$serial")"
@@ -2698,8 +2699,9 @@ wait_for_visible_text() {
 tap_identifier_after_scroll() {
   local serial="$1"
   local identifier="$2"
+  local timeout_seconds="${3:-$WAIT_SECONDS}"
   local center x y
-  center="$(wait_for_identifier_after_scroll "$serial" "$identifier")" || return 1
+  center="$(wait_for_identifier_after_scroll "$serial" "$identifier" "$timeout_seconds")" || return 1
   read -r x y <<<"$center"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
@@ -2913,7 +2915,16 @@ register_user() {
   assert_field_text "$serial" invite-code "$invite"
   adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null \
     || fail "could not dismiss the registration keyboard on $serial"
-  tap_identifier_after_scroll "$serial" register \
+  local register_width register_height
+  read -r register_width register_height <<<"$(device_effective_size "$serial")"
+  [[ "$register_width" =~ ^[1-9][0-9]*$ && "$register_height" =~ ^[1-9][0-9]*$ ]] \
+    || fail "could not determine the registration viewport on $serial"
+  adb_for "$serial" shell input swipe \
+    "$((register_width / 2))" "$((register_height * 3 / 4))" \
+    "$((register_width / 2))" "$((register_height * 2 / 5))" 250 >/dev/null \
+    || fail "could not reveal the embedded registration action on $serial"
+  sleep 0.5
+  tap_identifier_after_scroll "$serial" register "$((WAIT_SECONDS * 2))" \
     || fail "register could not be revealed and tapped by resource-id on $serial"
   wait_for_identifier "$serial" game-gomoku >/dev/null \
     || fail "registration did not reach the catalog on $serial"
