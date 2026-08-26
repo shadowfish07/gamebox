@@ -63,15 +63,24 @@ fi
 
 output_path="$output_directory/$output_name"
 temporary_output="$(mktemp "$output_directory/.${output_name}.XXXXXX.aar")"
+mobile_tool_root="$(mktemp -d "$BUILD_ROOT/gamebox-mobile-tools.XXXXXX")"
 cleanup() {
 	rm -f "$temporary_output"
+	chmod -R u+w "$mobile_tool_root" 2>/dev/null || true
+	find "$mobile_tool_root" -depth -delete
 }
 trap cleanup EXIT
 
 (
 	cd "$ROOT_DIR/server"
-	go tool gomobile init
-	go tool gomobile bind \
+	current_gopath="$(go env GOPATH)"
+	current_mod_cache="$(go env GOMODCACHE)"
+	mkdir -p "$mobile_tool_root/bin" "$mobile_tool_root/pkg/gomobile"
+	GOBIN="$mobile_tool_root/bin" go install golang.org/x/mobile/cmd/gobind
+	PATH="$mobile_tool_root/bin:$PATH" \
+		GOPATH="$mobile_tool_root:$current_gopath" \
+		GOMODCACHE="$current_mod_cache" \
+		go tool gomobile bind \
 		-target=android/arm,android/arm64,android/amd64 \
 		-androidapi=24 \
 		-trimpath \

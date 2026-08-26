@@ -303,18 +303,28 @@ verify_native_runtime_fixtures() {
 }
 
 verify_lan_aar_fixtures() {
-  local fixture_root fake_bin fake_go fixture_output
+  local fixture_root fake_bin fake_go fake_gopath fake_mod_cache fixture_output go_log
   fixture_root="$(mktemp -d "$ROOT_DIR/app/build/gamebox-lan-aar-fixture.XXXXXX")"
   fake_bin="$fixture_root/bin"
   fake_go="$fake_bin/go"
+  fake_gopath="$fixture_root/fake-gopath"
+  fake_mod_cache="$fixture_root/fake-mod-cache"
   fixture_output="$fixture_root/empty-gojni.aar"
-  mkdir -p "$fake_bin"
+  go_log="$fixture_root/go.log"
+  mkdir -p "$fake_bin" "$fake_gopath" "$fake_mod_cache"
   # shellcheck disable=SC2016 # The fixture script expands these at execution time.
   printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
+    'printf "%s\n" "$*" >>"${GAMEBOX_FAKE_GO_LOG:?}"' \
     'case "${1:-} ${2:-} ${3:-}" in' \
-    '  "tool gomobile init") exit 0 ;;' \
+    '  "env GOPATH ") printf "%s\n" "${GAMEBOX_FAKE_GOPATH:?}" ;;' \
+    '  "env GOMODCACHE ") printf "%s\n" "${GAMEBOX_FAKE_GOMODCACHE:?}" ;;' \
+    '  "install golang.org/x/mobile/cmd/gobind ")' \
+    '    mkdir -p "${GOBIN:?}"' \
+    '    printf "#!/usr/bin/env bash\nexit 0\n" >"$GOBIN/gobind"' \
+    '    chmod +x "$GOBIN/gobind"' \
+    '    ;;' \
     '  "tool gomobile bind")' \
     '    shift 3' \
     '    output=""' \
@@ -341,8 +351,22 @@ verify_lan_aar_fixtures() {
     'esac' >"$fake_go"
   chmod +x "$fake_go"
 
-  if PATH="$fake_bin:$PATH" bash "$ROOT_DIR/tool/build_lan_aar.sh" "$fixture_output" >"$fixture_root/build.log" 2>&1; then
+  if GAMEBOX_FAKE_GO_LOG="$go_log" GAMEBOX_FAKE_GOPATH="$fake_gopath" \
+    GAMEBOX_FAKE_GOMODCACHE="$fake_mod_cache" PATH="$fake_bin:$PATH" \
+    bash "$ROOT_DIR/tool/build_lan_aar.sh" "$fixture_output" >"$fixture_root/build.log" 2>&1; then
     printf 'AAR fixture accepted an empty Go JNI library.\n' >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  if grep -Eq '(^|[[:space:]])(.*@latest|tool gomobile init)([[:space:]]|$)' "$go_log"; then
+    printf 'AAR fixture used an unpinned or deprecated mobile tool command:\n' >&2
+    cat "$go_log" >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  if ! grep -Fxq 'install golang.org/x/mobile/cmd/gobind' "$go_log"; then
+    printf 'AAR fixture did not install gobind from the pinned module graph.\n' >&2
+    cat "$go_log" >&2
     find "$fixture_root" -depth -delete
     return 1
   fi
