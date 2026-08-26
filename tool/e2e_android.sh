@@ -2669,6 +2669,14 @@ wait_for_identifier() {
         printf '%s\n' "$center"
         return 0
       }
+      # Fresh emulators can briefly show the Android System UI ANR dialog
+      # while package installation and first Flutter startup overlap. Waiting
+      # is recoverable; leave any application-owned dialog untouched.
+      center="$(xml_query bounds "$xml" aerr_wait 2>/dev/null)" && {
+        local x y
+        read -r x y <<<"$center"
+        adb_for "$serial" shell input tap "$x" "$y" >/dev/null 2>&1 || true
+      }
     fi
     sleep 1
   done
