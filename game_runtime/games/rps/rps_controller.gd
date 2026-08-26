@@ -506,8 +506,9 @@ func _log_safe_state(has_state: bool) -> void:
 	var opponent_choice_visible: bool = reveal_visible and has_state \
 		and _state.last_reveal is Dictionary \
 		and _state.last_reveal["round"] == _state.round_number
-	var signature := "%d|%s|%s|%d|%s|%s" % [
+	var signature := "%d|%s|%s|%d|%s|%s|%s|%s" % [
 		state_revision, state_status, _connection_state, round_number, me_locked, opponent_locked,
+		opponent_choice_visible, reveal_visible,
 	]
 	if signature != _last_log_signature:
 		_last_log_signature = signature

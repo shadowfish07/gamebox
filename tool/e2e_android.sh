@@ -3726,6 +3726,10 @@ assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 2 2 false false \
   || fail "A did not render the repeated round after a draw"
 assert_rps_client_state "$SERIAL_B" "$RPS_MATCH_ID" 2 2 false false \
   || fail "B did not render the repeated round after a draw"
+assert_rps_presentation "$SERIAL_A" "$RPS_MATCH_ID" 2 false false \
+  || fail "A did not finish the draw reveal before round two"
+assert_rps_presentation "$SERIAL_B" "$RPS_MATCH_ID" 2 false false \
+  || fail "B did not finish the draw reveal before round two"
 
 tap_rps_choice "$SERIAL_A" paper || fail "A could not choose paper in round two"
 tap_rps_choice "$SERIAL_B" rock || fail "B could not choose rock in round two"
