@@ -3648,6 +3648,16 @@ assert_rps_client_state() {
     "GAMEBOX_RPS_STATE match=$match_id revision=$revision round=$round_number me_locked=$me_locked opponent_locked=$opponent_locked"
 }
 
+assert_rps_presentation() {
+  local serial="$1"
+  local match_id="$2"
+  local revision="$3"
+  local opponent_choice_visible="$4"
+  local reveal_visible="$5"
+  wait_for_log_marker "$serial" \
+    "GAMEBOX_RPS_PRESENTATION match=$match_id revision=$revision opponent_choice_visible=$opponent_choice_visible reveal_visible=$reveal_visible"
+}
+
 gamebox_test_progress 'Gamebox E2E: validating RPS draw, best-of-three, sealed reconnect, and completion...'
 refresh_game_log_boundaries rps-best-of-three \
   || fail "could not establish RPS log boundaries"
@@ -3704,6 +3714,8 @@ assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 5 3 true false \
   || fail "A did not render its local locked state"
 assert_rps_client_state "$SERIAL_B" "$RPS_MATCH_ID" 5 3 false true \
   || fail "B did not render only the opponent lock state"
+assert_rps_presentation "$SERIAL_B" "$RPS_MATCH_ID" 5 false true \
+  || fail "B did not preserve the prior reveal while sealing the current opponent choice"
 refresh_game_log_boundary "$SERIAL_A" rps-sealed-reconnect \
   || fail "could not establish the RPS reconnect log boundary"
 adb_for "$SERIAL_A" shell am force-stop "$PACKAGE" >/dev/null \

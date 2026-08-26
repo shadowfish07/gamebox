@@ -74,6 +74,10 @@ final class _RpsOpponentPageState extends State<RpsOpponentPage> {
       Navigator.of(context).pop<ApiError?>(error);
       return;
     }
+    if (error.code == 'opponent_busy') {
+      await _load();
+      if (!mounted) return;
+    }
     setState(() {
       _creatingId = null;
       _error = error.message;

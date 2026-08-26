@@ -229,6 +229,8 @@ func _refresh_ui() -> void:
 	$RoundLabel.text = "第 %d 轮" % _state.round_number if has_state else "准备对局"
 	$StateLabel.text = _status_text(local_user_id) if has_state else "正在连接"
 	$OpponentLockLabel.text = _opponent_text() if has_state else "对手状态未知"
+	$OpponentLockLabel.visible = has_state and not terminal
+	_refresh_reveal(has_state)
 	var can_choose: bool = has_state and not terminal and not _awaiting_snapshot \
 		and _connection_state == "connected" and _state.can_request_choice("rock", local_user_id)
 	for entry in _choice_entries():
@@ -279,6 +281,33 @@ func _refresh_choice_visuals() -> void:
 		button.scale = CHOICE_SELECTED_SCALE if selected else Vector2.ONE
 		button.modulate = choice_color
 		button.get_node("Content/Indicator").visible = selected
+
+
+func _refresh_reveal(has_state: bool) -> void:
+	var reveal: Variant = _state.last_reveal if has_state else null
+	$RevealPanel.visible = reveal is Dictionary
+	if not reveal is Dictionary:
+		return
+	var choices: Dictionary = reveal["choices"]
+	var my_choice: String = choices[_state.me_user_id]
+	var opponent_choice: String = choices[_state.opponent_user_id]
+	$RevealPanel/Content/Choices/MyChoice/Icon.texture = _choice_texture(my_choice)
+	$RevealPanel/Content/Choices/MyChoice/Label.text = "你 · %s" % _choice_label(my_choice)
+	$RevealPanel/Content/Choices/OpponentChoice/Icon.texture = _choice_texture(opponent_choice)
+	$RevealPanel/Content/Choices/OpponentChoice/Label.text = "对手 · %s" % _choice_label(opponent_choice)
+	$RevealPanel/Content/ResultLabel.text = "本轮平局" if reveal["draw"] else \
+		"本轮你获胜" if reveal["roundWinnerUserId"] == _state.me_user_id else "本轮对手获胜"
+
+
+func _choice_texture(choice: String) -> Texture2D:
+	for entry in _choice_entries():
+		if entry["choice"] == choice:
+			return entry["button"].get_node("Content/Icon").texture
+	return null
+
+
+static func _choice_label(choice: String) -> String:
+	return {"rock": "石头", "scissors": "剪刀", "paper": "布"}.get(choice, "未知")
 
 
 func _selected_choice() -> String:
@@ -384,6 +413,10 @@ func _log_safe_state(has_state: bool) -> void:
 	var round_number: int = _state.round_number if has_state else 0
 	var me_locked: bool = _state.me_locked if has_state else false
 	var opponent_locked: bool = _state.opponent_locked if has_state else false
+	var reveal_visible: bool = $RevealPanel.visible
+	var opponent_choice_visible: bool = reveal_visible and has_state \
+		and _state.last_reveal is Dictionary \
+		and _state.last_reveal["round"] == _state.round_number
 	var signature := "%d|%s|%s|%d|%s|%s" % [
 		state_revision, state_status, _connection_state, round_number, me_locked, opponent_locked,
 	]
@@ -394,6 +427,9 @@ func _log_safe_state(has_state: bool) -> void:
 		])
 		print("GAMEBOX_RPS_STATE match=%s revision=%d round=%d me_locked=%s opponent_locked=%s" % [
 			_match_id, state_revision, round_number, me_locked, opponent_locked,
+		])
+		print("GAMEBOX_RPS_PRESENTATION match=%s revision=%d opponent_choice_visible=%s reveal_visible=%s" % [
+			_match_id, state_revision, opponent_choice_visible, reveal_visible,
 		])
 	if has_state and state_status in ["finished", "cancelled", "abandoned"] and not _terminal_logged:
 		_terminal_logged = true

@@ -14,6 +14,7 @@ static func cases() -> Array:
 		{"name": "rps restores sealed reconnect state without opponent choice", "run": _sealed_snapshot},
 		{"name": "rps locks once and advances a draw round", "run": _lock_and_draw},
 		{"name": "rps applies authoritative best-of-three completion", "run": _terminal_reveal},
+		{"name": "rps rejects reveal winners outside the match", "run": _foreign_reveal_winner},
 		{"name": "rps protocol binds choice actions to rps", "run": _protocol_choice},
 		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
 	]
@@ -90,6 +91,19 @@ static func _protocol_choice() -> bool:
 		and _check(decoded["envelope"]["gameId"] == "rps", "expected RPS binding")
 
 
+static func _foreign_reveal_winner() -> bool:
+	var state = RpsState.new(MATCH_ID)
+	if not state.apply_snapshot(_snapshot(1, "best_of_three", 1, {
+		"userId": ME, "score": 0, "locked": true, "choice": "rock",
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": true,
+	})).get("ok", false):
+		return _check(false, "expected locked snapshot")
+	var foreign := "55555555-5555-4555-8555-555555555555"
+	var reveal := _reveal(1, "rock", "scissors", foreign, false, 1, 0, null)
+	return _check(not state.apply_event(_event(2, "rps.round.revealed", reveal)).get("ok", true), "foreign winner must be rejected")
+
+
 static func _scene_contract() -> bool:
 	var scene: Node = RpsScene.instantiate()
 	var choices: HBoxContainer = scene.get_node("ChoicePanel/Choices")
@@ -104,7 +118,9 @@ static func _scene_contract() -> bool:
 		and _check(paper.custom_minimum_size == scissors.custom_minimum_size, "choice targets must be equal") \
 		and _check(rock.custom_minimum_size.x >= 96 and rock.custom_minimum_size.y >= 96, "choice targets must be touch safe") \
 		and _check(rock.flat and paper.flat and scissors.flat, "choice backgrounds must stay transparent") \
-		and _check(not scene.has_node("RevealPanel"), "previous-round details must not be displayed") \
+		and _check(scene.has_node("RevealPanel"), "previous-round result panel must exist") \
+		and _check(scene.get_node("RevealPanel/Content/Choices/MyChoice/Icon").texture != null, "my reveal image must load") \
+		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load") \
 		and _check(scene.get_node("ResignButton").text == "认输并结束对局", "destructive action must name its consequence")
 	var image_nodes_present := rock.has_node("Content/Icon") \
 		and scissors.has_node("Content/Icon") and paper.has_node("Content/Icon")

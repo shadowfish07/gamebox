@@ -78,6 +78,29 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test(
+    'launch ticket rejects whitespace credentials and out-of-range time',
+    () {
+      final base = <String, Object?>{
+        'matchId': matchId,
+        'gameId': rpsGameId,
+        'launchTicket': 'ticket',
+        'expiresAt': now.millisecondsSinceEpoch,
+      };
+      expect(
+        () => RpsLaunchTicket.fromEnvelope({
+          ...base,
+          'launchTicket': 'bad ticket',
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => RpsLaunchTicket.fromEnvelope({...base, 'expiresAt': 1 << 63}),
+        throwsFormatException,
+      );
+    },
+  );
 }
 
 Future<HttpRpsApi> _api(

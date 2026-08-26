@@ -1068,12 +1068,18 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	if match.Status != StatusActive {
 		return Event{}, Snapshot{}, ErrInvalidRequest
 	}
-	if request.ExpectedRevision != match.Revision {
-		return Event{}, Snapshot{}, ErrStaleRevision
-	}
 	actor, opponent, member := actionPlayers(players, request.ActorUserID)
 	if !member {
 		return Event{}, Snapshot{}, ErrInvalidRequest
+	}
+	if request.ExpectedRevision != match.Revision {
+		acceptedPrevious, previousErr := acceptsPreviousRpsChoiceRevision(ctx, transaction.Tx, match, request)
+		if previousErr != nil {
+			return Event{}, Snapshot{}, previousErr
+		}
+		if !acceptedPrevious {
+			return Event{}, Snapshot{}, ErrStaleRevision
+		}
 	}
 	current, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players)
 	if snapshotErr != nil {
@@ -1126,6 +1132,9 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			}
 		}
 	case rps.ChoiceRequested:
+		if match.Revision >= maximumMatchEvents-2 {
+			return Event{}, Snapshot{}, ErrInvalidRequest
+		}
 		produced, producedSnapshot, applyErr := rules.Apply(current.Game, request.ActorUserID, games.Action{
 			Type: request.Type, Payload: append(json.RawMessage(nil), request.Payload...),
 		})
@@ -1268,6 +1277,22 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 		match.FinishedAt = &now
 	}
 	return committedEvent, cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: nextGame}), nil
+}
+
+func acceptsPreviousRpsChoiceRevision(ctx context.Context, transaction *sql.Tx, match Match, request ActionRequest) (bool, error) {
+	if match.GameID != rps.GameID || request.Type != rps.ChoiceRequested || match.Revision <= 0 ||
+		request.ExpectedRevision != match.Revision-1 {
+		return false, nil
+	}
+	var eventType, actorUserID string
+	err := transaction.QueryRowContext(ctx, `
+SELECT event_type,actor_user_id
+FROM match_events
+WHERE match_id=? AND revision=?`, match.ID, match.Revision).Scan(&eventType, &actorUserID)
+	if err != nil {
+		return false, matchDatabaseError(ctx, err)
+	}
+	return eventType == rps.ChoiceLocked && actorUserID != request.ActorUserID, nil
 }
 
 // SetPlayerOnline clears an active match's fully-offline timer. Inactive

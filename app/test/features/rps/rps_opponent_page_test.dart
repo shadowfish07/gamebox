@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
@@ -53,6 +56,74 @@ void main() {
     expect(api.createdOpponent, opponentId);
     expect(api.createdFormat, RpsFormat.bestOfThree);
   });
+
+  testWidgets('opponent_busy refreshes the opponent availability', (
+    tester,
+  ) async {
+    final api = _FakeRpsApi(now)
+      ..createError = const ApiError(
+        code: 'opponent_busy',
+        message: '对手已进入其他对局',
+      );
+    final controller = RpsController(
+      repository: RpsRepository(
+        api: api,
+        gameLauncher: _Launcher(),
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: RpsOpponentPage(controller: controller, currentUserId: userId),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('rps-opponent-$opponentId')));
+    await tester.pumpAndSettle();
+
+    expect(api.opponentCalls, 2);
+    expect(find.text('对手已进入其他对局'), findsOneWidget);
+    expect(find.text('在线 · 游戏中'), findsOneWidget);
+  });
+
+  test(
+    'creating state is visible in the first mutation notification',
+    () async {
+      final pending = Completer<CreatedRpsMatch>();
+      final api = _FakeRpsApi(now)..pendingCreate = pending;
+      final controller = RpsController(
+        repository: RpsRepository(
+          api: api,
+          gameLauncher: _Launcher(),
+          apiBaseUri: Uri.parse('https://gamebox.test'),
+          now: () => now,
+        ),
+      );
+      addTearDown(controller.dispose);
+      final creatingStates = <bool>[];
+      controller.addListener(() => creatingStates.add(controller.isCreating));
+
+      final result = controller.createAndOpen(
+        opponentId,
+        RpsFormat.singleRound,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(creatingStates, isNotEmpty);
+      expect(creatingStates.first, isTrue);
+      pending.complete(
+        const CreatedRpsMatch(
+          id: '33333333-3333-4333-8333-333333333333',
+          format: RpsFormat.singleRound,
+        ),
+      );
+      expect(await result, isNull);
+    },
+  );
 }
 
 final class _FakeRpsApi implements RpsApi {
@@ -61,16 +132,24 @@ final class _FakeRpsApi implements RpsApi {
   final DateTime now;
   String? createdOpponent;
   RpsFormat? createdFormat;
+  ApiError? createError;
+  Completer<CreatedRpsMatch>? pendingCreate;
+  var opponentCalls = 0;
 
   @override
-  Future<List<GomokuOpponent>> fetchOpponents() async => const [
-    GomokuOpponent(
-      id: '22222222-2222-4222-8222-222222222222',
-      nickname: '小猫',
-      availability: OpponentAvailability.idle,
-      presence: OpponentPresence.online,
-    ),
-  ];
+  Future<List<GomokuOpponent>> fetchOpponents() async {
+    opponentCalls++;
+    return [
+      GomokuOpponent(
+        id: '22222222-2222-4222-8222-222222222222',
+        nickname: '小猫',
+        availability: opponentCalls > 1 && createError != null
+            ? OpponentAvailability.busy
+            : OpponentAvailability.idle,
+        presence: OpponentPresence.online,
+      ),
+    ];
+  }
 
   @override
   Future<CreatedRpsMatch> createMatch(
@@ -79,6 +158,8 @@ final class _FakeRpsApi implements RpsApi {
   ) async {
     createdOpponent = opponentId;
     createdFormat = format;
+    if (createError case final error?) throw error;
+    if (pendingCreate case final pending?) return pending.future;
     return CreatedRpsMatch(
       id: '33333333-3333-4333-8333-333333333333',
       format: format,

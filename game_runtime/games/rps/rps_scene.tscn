@@ -227,6 +227,70 @@ layout_mode = 2
 size_flags_horizontal = 4
 mouse_filter = 2
 
+[node name="RevealPanel" type="PanelContainer" parent="."]
+visible = false
+offset_left = 144.0
+offset_top = 1192.0
+offset_right = 936.0
+offset_bottom = 1432.0
+theme_type_variation = &"GameboxResultPanel"
+
+[node name="Content" type="VBoxContainer" parent="RevealPanel"]
+layout_mode = 2
+alignment = 1
+
+[node name="Choices" type="HBoxContainer" parent="RevealPanel/Content"]
+layout_mode = 2
+alignment = 1
+
+[node name="MyChoice" type="VBoxContainer" parent="RevealPanel/Content/Choices"]
+custom_minimum_size = Vector2(280, 132)
+layout_mode = 2
+alignment = 1
+
+[node name="Icon" type="TextureRect" parent="RevealPanel/Content/Choices/MyChoice"]
+custom_minimum_size = Vector2(96, 96)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("8_rock")
+expand_mode = 3
+stretch_mode = 5
+
+[node name="Label" type="Label" parent="RevealPanel/Content/Choices/MyChoice"]
+layout_mode = 2
+text = "你 · 石头"
+horizontal_alignment = 1
+
+[node name="Versus" type="Label" parent="RevealPanel/Content/Choices"]
+custom_minimum_size = Vector2(80, 132)
+layout_mode = 2
+text = "VS"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="OpponentChoice" type="VBoxContainer" parent="RevealPanel/Content/Choices"]
+custom_minimum_size = Vector2(280, 132)
+layout_mode = 2
+alignment = 1
+
+[node name="Icon" type="TextureRect" parent="RevealPanel/Content/Choices/OpponentChoice"]
+custom_minimum_size = Vector2(96, 96)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("9_scissors")
+expand_mode = 3
+stretch_mode = 5
+
+[node name="Label" type="Label" parent="RevealPanel/Content/Choices/OpponentChoice"]
+layout_mode = 2
+text = "对手 · 剪刀"
+horizontal_alignment = 1
+
+[node name="ResultLabel" type="Label" parent="RevealPanel/Content"]
+layout_mode = 2
+text = "本轮你获胜"
+horizontal_alignment = 1
+
 [node name="ErrorSnackbar" parent="." instance=ExtResource("4_snackbar")]
 offset_left = 48.0
 offset_top = 1448.0

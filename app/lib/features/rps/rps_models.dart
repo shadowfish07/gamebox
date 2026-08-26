@@ -141,16 +141,21 @@ final class RpsLaunchTicket {
         !isCanonicalGameboxUuid(matchId) ||
         envelope['gameId'] != rpsGameId ||
         token is! String ||
-        token.isEmpty ||
-        token.length > 4096 ||
+        !isValidGameboxCredential(token) ||
         expiresAt is! int ||
         expiresAt <= 0) {
+      throw const FormatException('Invalid RPS launch ticket');
+    }
+    late final DateTime expiration;
+    try {
+      expiration = DateTime.fromMillisecondsSinceEpoch(expiresAt, isUtc: true);
+    } on RangeError {
       throw const FormatException('Invalid RPS launch ticket');
     }
     return RpsLaunchTicket(
       matchId: matchId,
       launchTicket: token,
-      expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt, isUtc: true),
+      expiresAt: expiration,
     );
   }
 

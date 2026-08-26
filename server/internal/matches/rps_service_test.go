@@ -95,6 +95,51 @@ func TestRpsRejectsDuplicateChoiceAndPostTerminalAction(t *testing.T) {
 	}
 }
 
+func TestRpsAcceptsSecondSimultaneousChoiceFromPreviousRevision(t *testing.T) {
+	_, service, match := createRps(t, rps.FormatBestOfThree)
+	if _, _, err := service.ApplyAction(context.Background(), rpsAction(match, initiatorID, 0, 1, rps.Rock)); err != nil {
+		t.Fatal(err)
+	}
+	event, snapshot, err := service.ApplyAction(context.Background(), rpsAction(match, opponentID, 0, 2, rps.Scissors))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Type != rps.RoundRevealed || snapshot.Match.Revision != 2 {
+		t.Fatalf("event=%s revision=%d", event.Type, snapshot.Match.Revision)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), rpsAction(match, initiatorID, 1, 3, rps.Paper)); !errors.Is(err, ErrStaleRevision) {
+		t.Fatalf("same actor stale duplicate error=%v", err)
+	}
+}
+
+func TestRpsStopsStartingRoundsBeforeEventHistoryLimit(t *testing.T) {
+	_, service, match := createRps(t, rps.FormatBestOfThree)
+	sequence := 1
+	for revision := int64(0); revision < maximumMatchEvents-2; revision += 2 {
+		if _, _, err := service.ApplyAction(context.Background(), rpsAction(match, initiatorID, revision, sequence, rps.Rock)); err != nil {
+			t.Fatalf("first choice revision=%d: %v", revision, err)
+		}
+		sequence++
+		if _, _, err := service.ApplyAction(context.Background(), rpsAction(match, opponentID, revision+1, sequence, rps.Rock)); err != nil {
+			t.Fatalf("second choice revision=%d: %v", revision+1, err)
+		}
+		sequence++
+	}
+	snapshot, err := service.Snapshot(context.Background(), match.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Match.Revision != maximumMatchEvents-2 {
+		t.Fatalf("revision=%d", snapshot.Match.Revision)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), rpsAction(match, initiatorID, maximumMatchEvents-2, sequence, rps.Paper)); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("limit error=%v", err)
+	}
+	if _, err := service.Snapshot(context.Background(), match.ID); err != nil {
+		t.Fatalf("history became unreadable: %v", err)
+	}
+}
+
 func TestRpsSnapshotHidesOpponentChoiceUntilReveal(t *testing.T) {
 	_, service, match := createRps(t, rps.FormatBestOfThree)
 	if _, _, err := service.ApplyAction(context.Background(), rpsAction(match, initiatorID, 0, 1, rps.Rock)); err != nil {

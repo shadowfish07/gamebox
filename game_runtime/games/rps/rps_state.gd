@@ -244,7 +244,8 @@ static func _valid_reveal(value: Variant, me_id: String, opponent_id: String) ->
 		if user_id not in [me_id, opponent_id] or typeof(value["scores"][user_id]) != TYPE_INT \
 			or value["scores"][user_id] < 0 or value["scores"][user_id] > 2:
 			return false
-	return _nullable_uuid(value["roundWinnerUserId"]) and _nullable_uuid(value["matchWinnerUserId"]) \
+	return value["roundWinnerUserId"] in [null, me_id, opponent_id] \
+		and value["matchWinnerUserId"] in [null, me_id, opponent_id] \
 		and _nullable_string(value["result"])
 
 

@@ -77,20 +77,20 @@ final class RpsController extends ChangeNotifier {
   Future<List<GomokuOpponent>> fetchOpponents() => repository.fetchOpponents();
 
   Future<ApiError?> createAndOpen(String opponentId, RpsFormat format) =>
-      _mutate(() async {
-        _creating = true;
-        await repository.createAndOpen(opponentId, format);
-      });
+      _mutate(
+        begin: () => _creating = true,
+        operation: () => repository.createAndOpen(opponentId, format),
+      );
 
   Future<ApiError?> openActiveMatch() {
     final current = _status;
     if (current is! RpsActiveStatus) {
       return Future.value(_invalidState);
     }
-    return _mutate(() async {
-      _launching = true;
-      await repository.openMatch(current.match.id);
-    });
+    return _mutate(
+      begin: () => _launching = true,
+      operation: () => repository.openMatch(current.match.id),
+    );
   }
 
   Future<ApiError?> cancelActiveMatch() {
@@ -98,13 +98,16 @@ final class RpsController extends ChangeNotifier {
     if (current is! RpsActiveStatus || current.match.revision != 0) {
       return Future.value(_invalidState);
     }
-    return _mutate(() async {
-      _cancelling = true;
-      await repository.cancelMatch(current.match.id);
-    });
+    return _mutate(
+      begin: () => _cancelling = true,
+      operation: () => repository.cancelMatch(current.match.id),
+    );
   }
 
-  Future<ApiError?> _mutate(Future<void> Function() operation) {
+  Future<ApiError?> _mutate({
+    required VoidCallback begin,
+    required Future<void> Function() operation,
+  }) {
     if (_disposed) return Future.value(_invalidState);
     if (_mutation != null) return Future.value(_operationInProgress);
     final completer = Completer<ApiError?>();
@@ -112,6 +115,7 @@ final class RpsController extends ChangeNotifier {
     unawaited(() async {
       _generation++;
       _lastError = null;
+      begin();
       _notify();
       ApiError? error;
       try {
