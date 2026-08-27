@@ -123,13 +123,18 @@ static func _scene_contract() -> bool:
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface"), "sealed opponent placeholder needs a dedicated surface") \
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/OpponentVisual/LockedSurface"), "locked opponent needs a dedicated surface") \
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/StatusLine/Spacer"), "opponent status must stay right-aligned") \
+		and _check(scene.has_node("SafeContent/Layout/OpponentSection/StatusLine/Identity/Avatar"), "opponent identity must include the prototype avatar") \
+		and _check(scene.has_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/DotSlot/Dot"), "opponent status must include the prototype dot") \
 		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/StateSupportLabel"), "round stage must keep primary and supporting copy together") \
 		and _check(scene.get_node("SafeContent/Layout/RoundStage").custom_minimum_size.y >= 400, "round stage must retain the portrait information band") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/SelectedPanel"), "selected gesture slot must exist") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/Spacer"), "local status must stay right-aligned") \
+		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/Identity/Avatar"), "local identity must include the prototype avatar") \
+		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/StatusChip/Content/DotSlot/Dot"), "local status must include the prototype dot") \
 		and _check(scene.has_node("BackButton") == false, "navigation controls live in the safe constrained layout") \
 		and _check(scene.has_node("SafeContent/Layout/TopNavigation/BackButton"), "visible back control must remain available") \
 		and _check(scene.has_node("SafeContent/Layout/TopNavigation/MoreButton"), "resign menu control must remain available") \
+		and _check(scene.get_node("SafeContent/Layout/TopNavigation/BackButton").get_theme_font_size("font_size") >= 52, "back icon must match the prototype visual size") \
 		and _check(scene.has_node("RevealPanel"), "previous-round result panel must exist") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/MyChoice/Icon").texture != null, "my reveal image must load") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load") \

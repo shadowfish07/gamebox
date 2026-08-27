@@ -45,15 +45,16 @@ grow_vertical = 2
 layout_mode = 2
 
 [node name="TopNavigation" type="HBoxContainer" parent="SafeContent/Layout"]
-custom_minimum_size = Vector2(0, 112)
+custom_minimum_size = Vector2(0, 160)
 layout_mode = 2
 alignment = 1
 
 [node name="BackButton" parent="SafeContent/Layout/TopNavigation" instance=ExtResource("2_back")]
 custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
-text = "←"
+text = "‹"
 flat = true
+theme_override_font_sizes/font_size = 52
 
 [node name="TitleGroup" type="VBoxContainer" parent="SafeContent/Layout/TopNavigation"]
 layout_mode = 2
@@ -74,8 +75,9 @@ horizontal_alignment = 1
 [node name="MoreButton" type="Button" parent="SafeContent/Layout/TopNavigation"]
 custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
-text = "⋮"
+text = "⋯"
 flat = true
+theme_override_font_sizes/font_size = 52
 
 [node name="OpponentSection" type="VBoxContainer" parent="SafeContent/Layout"]
 custom_minimum_size = Vector2(0, 260)
@@ -85,14 +87,29 @@ size_flags_stretch_ratio = 1.1
 alignment = 1
 
 [node name="StatusLine" type="HBoxContainer" parent="SafeContent/Layout/OpponentSection"]
-custom_minimum_size = Vector2(0, 56)
+custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
 
-[node name="Identity" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine"]
-custom_minimum_size = Vector2(0, 0)
+[node name="Identity" type="HBoxContainer" parent="SafeContent/Layout/OpponentSection/StatusLine"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Avatar" type="PanelContainer" parent="SafeContent/Layout/OpponentSection/StatusLine/Identity"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+
+[node name="Label" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine/Identity/Avatar"]
+layout_mode = 2
+text = "TA"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 24
+
+[node name="Label" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine/Identity"]
 layout_mode = 2
 text = "对手"
 vertical_alignment = 1
+theme_override_font_sizes/font_size = 26
 
 [node name="Spacer" type="Control" parent="SafeContent/Layout/OpponentSection/StatusLine"]
 custom_minimum_size = Vector2(16, 0)
@@ -101,14 +118,27 @@ size_flags_horizontal = 3
 mouse_filter = 2
 
 [node name="StatusChip" type="PanelContainer" parent="SafeContent/Layout/OpponentSection/StatusLine"]
-custom_minimum_size = Vector2(200, 48)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 
-[node name="Label" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine/StatusChip"]
+[node name="Content" type="HBoxContainer" parent="SafeContent/Layout/OpponentSection/StatusLine/StatusChip"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="DotSlot" type="CenterContainer" parent="SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+
+[node name="Dot" type="Panel" parent="SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/DotSlot"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+
+[node name="Label" type="Label" parent="SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content"]
 layout_mode = 2
 text = "等待出拳"
 horizontal_alignment = 1
 vertical_alignment = 1
+theme_override_font_sizes/font_size = 22
 
 [node name="OpponentVisual" type="Control" parent="SafeContent/Layout/OpponentSection"]
 custom_minimum_size = Vector2(0, 260)
@@ -226,14 +256,29 @@ size_flags_vertical = 3
 size_flags_stretch_ratio = 1.35
 
 [node name="StatusLine" type="HBoxContainer" parent="SafeContent/Layout/MySection"]
-custom_minimum_size = Vector2(0, 56)
+custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
 
-[node name="Identity" type="Label" parent="SafeContent/Layout/MySection/StatusLine"]
-custom_minimum_size = Vector2(0, 0)
+[node name="Identity" type="HBoxContainer" parent="SafeContent/Layout/MySection/StatusLine"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Avatar" type="PanelContainer" parent="SafeContent/Layout/MySection/StatusLine/Identity"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+
+[node name="Label" type="Label" parent="SafeContent/Layout/MySection/StatusLine/Identity/Avatar"]
+layout_mode = 2
+text = "我"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 24
+
+[node name="Label" type="Label" parent="SafeContent/Layout/MySection/StatusLine/Identity"]
 layout_mode = 2
 text = "你的出拳"
 vertical_alignment = 1
+theme_override_font_sizes/font_size = 26
 
 [node name="Spacer" type="Control" parent="SafeContent/Layout/MySection/StatusLine"]
 custom_minimum_size = Vector2(16, 0)
@@ -242,14 +287,27 @@ size_flags_horizontal = 3
 mouse_filter = 2
 
 [node name="StatusChip" type="PanelContainer" parent="SafeContent/Layout/MySection/StatusLine"]
-custom_minimum_size = Vector2(200, 48)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 
-[node name="Label" type="Label" parent="SafeContent/Layout/MySection/StatusLine/StatusChip"]
+[node name="Content" type="HBoxContainer" parent="SafeContent/Layout/MySection/StatusLine/StatusChip"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="DotSlot" type="CenterContainer" parent="SafeContent/Layout/MySection/StatusLine/StatusChip/Content"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+
+[node name="Dot" type="Panel" parent="SafeContent/Layout/MySection/StatusLine/StatusChip/Content/DotSlot"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+
+[node name="Label" type="Label" parent="SafeContent/Layout/MySection/StatusLine/StatusChip/Content"]
 layout_mode = 2
 text = "等待"
 horizontal_alignment = 1
 vertical_alignment = 1
+theme_override_font_sizes/font_size = 22
 
 [node name="ChoicePanel" type="Control" parent="SafeContent/Layout/MySection"]
 custom_minimum_size = Vector2(0, 280)

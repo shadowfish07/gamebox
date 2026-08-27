@@ -68,6 +68,12 @@ func _ready() -> void:
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
 	$SafeContent/Layout/MySection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
+	for status_line in [$SafeContent/Layout/OpponentSection/StatusLine, $SafeContent/Layout/MySection/StatusLine]:
+		status_line.get_node("Identity/Avatar").add_theme_stylebox_override("panel", _avatar_style(colors))
+		status_line.get_node("Identity/Avatar/Label").add_theme_color_override("font_color", colors["on_primary_container"])
+		status_line.get_node("Identity/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
+		status_line.get_node("StatusChip/Content/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
+		status_line.get_node("StatusChip/Content/DotSlot/Dot").add_theme_stylebox_override("panel", _status_dot_style(colors))
 	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.add_theme_stylebox_override(
 		"panel", _opponent_surface_style(colors["surface_container_high"], colors["outline_variant"])
 	)
@@ -318,8 +324,8 @@ func _status_support(local_user_id: String) -> String:
 func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 	var opponent_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else _opponent_text() if has_state else "等待"
 	var my_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "等待"
-	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Label.text = opponent_status
-	$SafeContent/Layout/MySection/StatusLine/StatusChip/Label.text = my_status
+	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label.text = opponent_status
+	$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label.text = my_status
 	var locked: bool = has_state and _state.opponent_locked and not _is_revealing()
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Unknown.visible = not locked
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Locked.visible = locked
@@ -399,8 +405,34 @@ static func _reveal_reason(my_choice: String, opponent_choice: String, draw: boo
 
 func _chip_style(colors: Dictionary) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = colors["secondary_container"]
+	style.bg_color = colors["surface_container_high"]
+	style.content_margin_left = 20
+	style.content_margin_right = 20
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
 	var radius := roundi(GameboxTokens.SHAPE["full"] * GameboxTheme.LOGICAL_SCALE)
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
+
+
+func _avatar_style(colors: Dictionary) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = colors["primary_container"]
+	var radius := 20
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
+
+
+func _status_dot_style(colors: Dictionary) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = colors["outline"]
+	var radius := 7
 	style.corner_radius_top_left = radius
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius
