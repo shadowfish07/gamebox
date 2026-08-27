@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="Script" path="res://games/rps/rps_controller.gd" id="1_controller"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_portrait_top_bar.tscn" id="2_top_bar"]
@@ -10,6 +10,14 @@
 [ext_resource type="Texture2D" path="res://games/rps/assets/rock.png" id="8_rock"]
 [ext_resource type="Texture2D" path="res://games/rps/assets/scissors.png" id="9_scissors"]
 [ext_resource type="Texture2D" path="res://games/rps/assets/paper.png" id="10_paper"]
+[ext_resource type="Shader" path="res://design_system/components/gamebox_result_scrim.gdshader" id="11_result_scrim"]
+[ext_resource type="Shader" path="res://games/rps/rps_terminal_backdrop.gdshader" id="12_terminal_backdrop"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_result_scrim"]
+shader = ExtResource("11_result_scrim")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_terminal_backdrop"]
+shader = ExtResource("12_terminal_backdrop")
 
 [node name="Rps" type="Control"]
 layout_mode = 3
@@ -577,6 +585,18 @@ offset_top = 184.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+z_index = -1
+theme_type_variation = &"GameboxTerminalBackdrop"
+
+[node name="Gradient" type="ColorRect" parent="TerminalArena/Backdrop"]
+material = SubResource("ShaderMaterial_terminal_backdrop")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
 
 [node name="OpponentChoice" type="VBoxContainer" parent="TerminalArena"]
 layout_mode = 0
@@ -700,6 +720,7 @@ z_index = 35
 
 [node name="ResultScrim" type="ColorRect" parent="."]
 visible = false
+material = SubResource("ShaderMaterial_result_scrim")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -716,7 +737,7 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 48.0
-offset_top = -696.0
+offset_top = -848.0
 offset_right = -48.0
 offset_bottom = -48.0
 grow_horizontal = 2

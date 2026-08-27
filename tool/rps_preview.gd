@@ -201,6 +201,7 @@ func _apply_preview_theme(scene: Control) -> void:
 	scene.theme = GAMEBOX_THEME.create(dark)
 	var colors: Dictionary = GAMEBOX_TOKENS.DARK if dark else GAMEBOX_TOKENS.LIGHT
 	(scene.get_node("ResultScrim") as ColorRect).color = Color(colors["scrim"], GAMEBOX_TOKENS.COMPONENT["dialog_scrim_opacity"])
+	(scene.get_node("TerminalArena/Backdrop/Gradient") as ColorRect).color = Color(colors["primary_container"], GAMEBOX_TOKENS.COMPONENT["terminal_glow_opacity"])
 
 
 func _parse_arguments(args: PackedStringArray) -> void:

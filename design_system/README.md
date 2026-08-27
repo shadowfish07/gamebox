@@ -27,6 +27,10 @@ bash tool/verify_design_system.sh
 - Adding a compatible role or changing a locked token value increments at least the minor version and regenerates both mappings.
 - Fixing generator implementation without changing generated output or its public interface increments the patch version.
 
+### 2.2.0 terminal-result palette
+
+The existing `game.board` and `game.grid` roles now match the approved terminal-result prototype's warmer board surface and softer grid. Additive light/dark `game.resultLoss*` roles give a confirmed loss its approved gold semantic treatment without reusing error or recoloring draw and cancellation states. The additive `component.resultShadowOpacity` and `component.terminalGlowOpacity` roles keep the prototype's result elevation and RPS arena glow generated instead of hard-coded. Existing board consumers keep the same role names; regenerate both platform mappings.
+
 ### 2.1.0 winning-line role
 
 The additive `game.winningLine` role gives authoritative Gomoku terminal lines one shared, generated highlight color in Flutter and Godot. Existing consumers require no migration.

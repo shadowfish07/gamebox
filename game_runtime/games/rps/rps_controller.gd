@@ -73,6 +73,7 @@ func _ready() -> void:
 	$SafeContent/Layout.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$SafeContent/Layout/MySection/ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
+	$TerminalArena/Backdrop/Gradient.color = Color(colors["primary_container"], GameboxTokens.COMPONENT["terminal_glow_opacity"])
 	$SafeContent/Layout/RoundStage.add_theme_stylebox_override("panel", _round_stage_style(colors))
 	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip.add_theme_stylebox_override("panel", _round_chip_style(colors))
 	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.add_theme_color_override("font_color", colors["on_primary_container"])

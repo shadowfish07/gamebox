@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="Script" path="res://games/gomoku/gomoku_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_board.gd" id="2_board"]
@@ -9,6 +9,10 @@
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_loading_overlay.tscn" id="7_loading"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="8_result"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_switch_visual.gd" id="9_switch"]
+[ext_resource type="Shader" path="res://design_system/components/gamebox_result_scrim.gdshader" id="10_result_scrim"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_result_scrim"]
+shader = ExtResource("10_result_scrim")
 
 [node name="Gomoku" type="Control"]
 layout_mode = 3
@@ -168,6 +172,7 @@ offset_bottom = 1320.0
 
 [node name="ResultScrim" type="ColorRect" parent="."]
 visible = false
+material = SubResource("ShaderMaterial_result_scrim")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -184,7 +189,7 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 48.0
-offset_top = -696.0
+offset_top = -848.0
 offset_right = -48.0
 offset_bottom = -48.0
 grow_horizontal = 2

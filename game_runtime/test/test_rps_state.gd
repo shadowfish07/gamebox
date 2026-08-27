@@ -153,7 +153,9 @@ static func _scene_contract() -> bool:
 		and _check(scene.get_node("SafeContent/Layout/TopNavigation/BackButton").theme_type_variation == &"GameboxPortraitBackButton", "back icon must use the shared portrait navigation style") \
 		and _check(scene.has_node("RevealPanel"), "previous-round result panel must exist") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/MyChoice/Icon").texture != null, "my reveal image must load") \
-		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load")
+		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load") \
+		and _check(scene.get_node("TerminalArena/Backdrop").theme_type_variation == &"GameboxTerminalBackdrop", "terminal arena lost its opaque prototype backdrop") \
+		and _check((scene.get_node("TerminalArena/Backdrop/Gradient") as ColorRect).material is ShaderMaterial, "terminal arena lost its radial prototype glow")
 	var image_nodes_present := rock.has_node("Content/Icon") \
 		and scissors.has_node("Content/Icon") and paper.has_node("Content/Icon")
 	passed = _check(image_nodes_present, "each choice must render an image") and passed

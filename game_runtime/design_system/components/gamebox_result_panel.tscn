@@ -55,7 +55,7 @@ layout_mode = 2
 theme_type_variation = &"GameboxResultSummary"
 
 [node name="Item1" type="PanelContainer" parent="Content/Summary"]
-custom_minimum_size = Vector2(260, 112)
+custom_minimum_size = Vector2(260, 160)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"GameboxResultSummaryItem"
@@ -79,7 +79,7 @@ autowrap_mode = 2
 theme_type_variation = &"GameboxResultSummaryLabel"
 
 [node name="Item2" type="PanelContainer" parent="Content/Summary"]
-custom_minimum_size = Vector2(260, 112)
+custom_minimum_size = Vector2(260, 160)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"GameboxResultSummaryItem"
@@ -103,7 +103,7 @@ autowrap_mode = 2
 theme_type_variation = &"GameboxResultSummaryLabel"
 
 [node name="Item3" type="PanelContainer" parent="Content/Summary"]
-custom_minimum_size = Vector2(260, 112)
+custom_minimum_size = Vector2(260, 160)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"GameboxResultSummaryItem"
@@ -132,16 +132,19 @@ layout_mode = 2
 theme_type_variation = &"GameboxResultActions"
 
 [node name="ReviewButton" type="Button" parent="Content/Actions"]
-custom_minimum_size = Vector2(0, 96)
+custom_minimum_size = Vector2(0, 144)
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_stretch_ratio = 1.0
 theme_type_variation = &"GameboxResultReviewButton"
 text = "回看终局"
 
 [node name="ReturnButton" type="Button" parent="Content/Actions"]
-custom_minimum_size = Vector2(0, 96)
+custom_minimum_size = Vector2(0, 144)
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_stretch_ratio = 1.35
+theme_type_variation = &"GameboxResultReturnButton"
 text = "返回大厅"
 
 [connection signal="pressed" from="Content/Actions/ReviewButton" to="." method="_on_review_button_pressed"]

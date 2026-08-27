@@ -34,9 +34,10 @@ func present_details(details: Dictionary) -> void:
 		return
 	var outcome := str(details.get("outcome", "lost"))
 	var positive := outcome == "won"
-	theme_type_variation = &"GameboxResultPanelPositive" if positive else &"GameboxResultPanelNeutral"
-	$Content/Meta/OutcomeChip.theme_type_variation = &"GameboxResultChipPositive" if positive else &"GameboxResultChipNeutral"
-	$Content/Meta/OutcomeChip/Outcome.theme_type_variation = &"GameboxResultChipLabelPositive" if positive else &"GameboxResultChipLabelNeutral"
+	var loss := outcome == "lost"
+	theme_type_variation = &"GameboxResultPanelPositive" if positive else &"GameboxResultPanelLoss" if loss else &"GameboxResultPanelNeutral"
+	$Content/Meta/OutcomeChip.theme_type_variation = &"GameboxResultChipPositive" if positive else &"GameboxResultChipLoss" if loss else &"GameboxResultChipNeutral"
+	$Content/Meta/OutcomeChip/Outcome.theme_type_variation = &"GameboxResultChipLabelPositive" if positive else &"GameboxResultChipLabelLoss" if loss else &"GameboxResultChipLabelNeutral"
 	$Content/Meta/OutcomeChip/Outcome.text = str(details.get("outcome_label", _outcome_label(outcome)))
 	$Content/Meta/Confirmed.text = str(details.get("confirmed_text", "✓ 结果已确认"))
 	$Content/Result.text = title

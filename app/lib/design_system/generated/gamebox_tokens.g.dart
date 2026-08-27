@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 
 abstract final class GameboxTokens {
-  static const version = '2.1.0';
+  static const version = '2.2.0';
   static const brandSeed = Color(0xFF006B60);
 
   static const lightColorScheme = ColorScheme(
@@ -212,17 +212,44 @@ abstract final class GameboxTokens {
     minimumTouchTarget: 48.0,
     pageMaxWidth: 560.0,
     pagePadding: 16.0,
+    resultActionFontSize: 20.0,
+    resultActionSpacing: 14.0,
+    resultChipFontSize: 18.0,
+    resultChipHorizontalPadding: 16.0,
+    resultChipVerticalPadding: 8.0,
+    resultConfirmedFontSize: 16.0,
+    resultContentSpacing: 22.0,
+    resultMetaSpacing: 16.0,
+    resultPanelAccentWidth: 8.0,
+    resultPanelBottomPadding: 24.0,
+    resultPanelHorizontalPadding: 28.0,
+    resultPanelRadius: 40.0,
+    resultPanelShadowOffset: 8.0,
+    resultPanelShadowSize: 16.0,
+    resultPanelTopPadding: 30.0,
+    resultShadowOpacity: 0.22,
+    resultSummaryLabelFontSize: 15.0,
+    resultSummarySpacing: 12.0,
+    resultSummaryValueFontSize: 22.0,
+    resultSupportFontSize: 19.0,
+    resultTintMix: 0.06,
+    resultTitleFontSize: 38.0,
     sectionSpacing: 24.0,
     smallProgressSize: 20.0,
+    terminalGlowOpacity: 0.65,
   );
   static const gameColors = GameboxGameColors(
     blackPiece: Color(0xFF151A24),
-    board: Color(0xFFD8A85F),
-    grid: Color(0xFF493217),
+    board: Color(0xFFD9B277),
+    grid: Color(0xFF8D6E46),
     lastMove: Color(0xFFF04438),
     pendingMove: Color(0xFF0072B2),
     pendingOverlayAlpha: 0.56,
     pressedMove: Color(0xFF7A5AF8),
+    resultLossContainerDark: Color(0xFF514500),
+    resultLossContainerLight: Color(0xFFF6E49C),
+    resultLossDark: Color(0xFFE4CA72),
+    resultLossLight: Color(0xFF745B00),
     whitePiece: Color(0xFFF8FAFC),
     whitePieceOutline: Color(0xFF667085),
     winningLine: Color(0xFFF4C542),
@@ -335,16 +362,62 @@ final class GameboxComponentTokens {
     required this.minimumTouchTarget,
     required this.pageMaxWidth,
     required this.pagePadding,
+    required this.resultActionFontSize,
+    required this.resultActionSpacing,
+    required this.resultChipFontSize,
+    required this.resultChipHorizontalPadding,
+    required this.resultChipVerticalPadding,
+    required this.resultConfirmedFontSize,
+    required this.resultContentSpacing,
+    required this.resultMetaSpacing,
+    required this.resultPanelAccentWidth,
+    required this.resultPanelBottomPadding,
+    required this.resultPanelHorizontalPadding,
+    required this.resultPanelRadius,
+    required this.resultPanelShadowOffset,
+    required this.resultPanelShadowSize,
+    required this.resultPanelTopPadding,
+    required this.resultShadowOpacity,
+    required this.resultSummaryLabelFontSize,
+    required this.resultSummarySpacing,
+    required this.resultSummaryValueFontSize,
+    required this.resultSupportFontSize,
+    required this.resultTintMix,
+    required this.resultTitleFontSize,
     required this.sectionSpacing,
     required this.smallProgressSize,
+    required this.terminalGlowOpacity,
   });
 
   final double dialogScrimOpacity;
   final double minimumTouchTarget;
   final double pageMaxWidth;
   final double pagePadding;
+  final double resultActionFontSize;
+  final double resultActionSpacing;
+  final double resultChipFontSize;
+  final double resultChipHorizontalPadding;
+  final double resultChipVerticalPadding;
+  final double resultConfirmedFontSize;
+  final double resultContentSpacing;
+  final double resultMetaSpacing;
+  final double resultPanelAccentWidth;
+  final double resultPanelBottomPadding;
+  final double resultPanelHorizontalPadding;
+  final double resultPanelRadius;
+  final double resultPanelShadowOffset;
+  final double resultPanelShadowSize;
+  final double resultPanelTopPadding;
+  final double resultShadowOpacity;
+  final double resultSummaryLabelFontSize;
+  final double resultSummarySpacing;
+  final double resultSummaryValueFontSize;
+  final double resultSupportFontSize;
+  final double resultTintMix;
+  final double resultTitleFontSize;
   final double sectionSpacing;
   final double smallProgressSize;
+  final double terminalGlowOpacity;
 }
 
 final class GameboxGameColors {
@@ -356,6 +429,10 @@ final class GameboxGameColors {
     required this.pendingMove,
     required this.pendingOverlayAlpha,
     required this.pressedMove,
+    required this.resultLossContainerDark,
+    required this.resultLossContainerLight,
+    required this.resultLossDark,
+    required this.resultLossLight,
     required this.whitePiece,
     required this.whitePieceOutline,
     required this.winningLine,
@@ -368,6 +445,10 @@ final class GameboxGameColors {
   final Color pendingMove;
   final double pendingOverlayAlpha;
   final Color pressedMove;
+  final Color resultLossContainerDark;
+  final Color resultLossContainerLight;
+  final Color resultLossDark;
+  final Color resultLossLight;
   final Color whitePiece;
   final Color whitePieceOutline;
   final Color winningLine;

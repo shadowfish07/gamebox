@@ -365,7 +365,7 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 	var result := _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "terminal outcome duplicates its result panel") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
 		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
-		and _check(scene.get_node("ResultPanel").size.y >= 520.0 and scene.get_node("ResultPanel").size.y <= 720.0, "terminal result panel does not match the approved bottom card: size=%s root=%s pos=%s offsets=%s/%s" % [scene.get_node("ResultPanel").size, scene.size, scene.get_node("ResultPanel").position, scene.get_node("ResultPanel").offset_top, scene.get_node("ResultPanel").offset_bottom]) \
+		and _check(scene.get_node("ResultPanel").size.y >= 760.0 and scene.get_node("ResultPanel").size.y <= 840.0, "terminal result panel does not match the approved bottom card: size=%s root=%s pos=%s offsets=%s/%s" % [scene.get_node("ResultPanel").size, scene.size, scene.get_node("ResultPanel").position, scene.get_node("ResultPanel").offset_top, scene.get_node("ResultPanel").offset_bottom]) \
 		and _check(scene.get_node("ResultScrim").visible, "terminal result scrim stayed hidden") \
 		and _check(scene.get_node("TerminalEvidence").visible, "terminal evidence card stayed hidden") \
 		and _check((scene.get_node("TerminalEvidence/Content/Labels/Move") as Label).text == ("获胜连线 · A1–E1" if has_winning_line else "没有产生终局落子"), "terminal evidence invented an unavailable last move") \

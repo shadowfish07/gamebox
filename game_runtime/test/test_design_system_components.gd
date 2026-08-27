@@ -344,6 +344,11 @@ static func _result_contract() -> bool:
 		if not _check(panel.visible and label.text == sample["expected"], "result mapping changed for %s" % sample["status"]):
 			panel.free()
 			return false
+	panel.present_details({"outcome": "lost", "title": "这局差一点"})
+	if not _check(panel.theme_type_variation == &"GameboxResultPanelLoss", "loss did not use its result semantic") \
+		or not _check(panel.get_node("Content/Meta/OutcomeChip").theme_type_variation == &"GameboxResultChipLoss", "loss chip did not use its result semantic"):
+		panel.free()
+		return false
 	panel.present_details({
 		"outcome": "won",
 		"title": "你拿下了这场对局",
@@ -371,8 +376,10 @@ static func _result_contract() -> bool:
 	var result := _check(return_calls.size() == 1, "result return signal did not fire exactly once") \
 		and _check(review_calls.size() == 1, "result review signal did not fire exactly once") \
 		and _check((panel.get_node("Content/Actions/ReturnButton") as Button).text == "返回大厅", "result action copy changed") \
-		and _check((panel.get_node("Content/Actions/ReviewButton") as Button).custom_minimum_size.y >= 96.0, "result review target below 48dp") \
-		and _check((panel.get_node("Content/Actions/ReturnButton") as Button).custom_minimum_size.y >= 96.0, "result return target below 48dp")
+		and _check((panel.get_node("Content/Actions/ReviewButton") as Button).custom_minimum_size.y >= 144.0, "result review target no longer matches the prototype") \
+		and _check((panel.get_node("Content/Actions/ReturnButton") as Button).custom_minimum_size.y >= 144.0, "result return target no longer matches the prototype") \
+		and _check(is_equal_approx((panel.get_node("Content/Actions/ReturnButton") as Button).size_flags_stretch_ratio, 1.35), "primary result action lost the prototype emphasis") \
+		and _check((panel.get_node("Content/Summary/Item1") as PanelContainer).custom_minimum_size.y >= 160.0, "result summary no longer matches the prototype")
 	panel.free()
 	return result
 
