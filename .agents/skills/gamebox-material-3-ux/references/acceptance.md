@@ -26,7 +26,7 @@ Check schema and required roles, matching containers and `on-*` values, legal ty
 
 Run relevant Flutter Widget and Godot scene tests for default, pressed, disabled, pending, loading, empty, error, success/result, light/dark, normal-size text, content growth, and safe areas.
 
-Exercise affected end-to-end flows: registration and identity recovery; catalog and opponent selection; launch failure/retry; pending move and server accept/reject; disconnect/reconnect and authoritative snapshot recovery; resignation/cancellation confirmation; result and return to lobby; Android Back and visible Back parity; background recovery and game Activity exit. For linked games, deterministic fake services prove state wiring but do not replace the real two-device boundary.
+Exercise only the end-to-end flows whose boundary is affected: registration and identity recovery; catalog and opponent selection; launch failure/retry; pending move and server accept/reject; disconnect/reconnect and authoritative snapshot recovery; resignation/cancellation confirmation; result and return to lobby; Android Back and visible Back parity; background recovery and game Activity exit. For a Godot-only UX change, cover game-owned state behavior in Godot tests and use Android only for launch/host smoke plus final visual inspection. For linked games, deterministic fake services prove state wiring but do not replace the real two-device boundary when networking, protocol, or cross-device behavior changed.
 
 ## Android Runtime Evidence Modes
 
@@ -35,6 +35,12 @@ Every user-facing UI change MUST run as the actual built Android App or packaged
 ### Fixed deterministic E2E
 
 The fixed two-device E2E uses state markers, UI Automator identifiers, lifecycle checks, authoritative snapshots, and protocol assertions. It MUST NOT capture screenshots, perform pixel crops/SSIM, or retain image artifacts. A passing run proves the exercised runtime logic and state transitions; it does not prove UX quality.
+
+Do not make fixed Android E2E the inner loop for Godot scene styling. A Godot-only UI change normally needs focused Godot tests plus a packaged-game launch smoke; reserve the full two-device matrix for changes that affect its cross-runtime or network assertions.
+
+### Godot preview evidence
+
+Directly launched Godot previews are the preferred inner loop for game UX. They instantiate production UI at representative phone viewports, expose deterministic states, and let the implementing agent capture and inspect screenshots quickly. They are stronger than source inspection for layout tuning but remain pre-Android evidence: they do not prove Android packaging, safe-area integration, Activity lifecycle, or host rendering.
 
 ### Agent UX inspection
 
@@ -54,6 +60,7 @@ Captured UI and retained artifacts MUST exclude invite codes, access tokens, cre
 - [ ] MUST, SHOULD deviations, and MAY choices are separated.
 - [ ] Token source and both generated mappings are consistent when affected.
 - [ ] Relevant component and flow tests pass.
+- [ ] Godot-owned state, controller, scene-contract, and launch tests cover changed game invariants without screenshot goldens.
 - [ ] Server-authoritative actions remain pending until acknowledged.
 - [ ] Android system and visible Back behavior match.
 - [ ] Every dangerous action has consequence-named confirmation.
