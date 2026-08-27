@@ -139,11 +139,11 @@ static func _scene_contract() -> bool:
 		and _check(scene.has_node("BackButton") == false, "navigation controls live in the safe constrained layout") \
 		and _check(scene.has_node("SafeContent/Layout/TopNavigation/BackButton"), "visible back control must remain available") \
 		and _check(scene.has_node("SafeContent/Layout/TopNavigation/MoreButton"), "resign menu control must remain available") \
+		and _check(not scene.has_node("ResignButton"), "resign must not duplicate the top menu as a bottom button") \
 		and _check(scene.get_node("SafeContent/Layout/TopNavigation/BackButton").get_theme_font_size("font_size") >= 52, "back icon must match the prototype visual size") \
 		and _check(scene.has_node("RevealPanel"), "previous-round result panel must exist") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/MyChoice/Icon").texture != null, "my reveal image must load") \
-		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load") \
-		and _check(scene.get_node("ResignButton").text == "认输并结束对局", "destructive action must name its consequence")
+		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load")
 	var image_nodes_present := rock.has_node("Content/Icon") \
 		and scissors.has_node("Content/Icon") and paper.has_node("Content/Icon")
 	passed = _check(image_nodes_present, "each choice must render an image") and passed

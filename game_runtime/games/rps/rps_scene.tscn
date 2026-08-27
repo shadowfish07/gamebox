@@ -631,23 +631,6 @@ grow_horizontal = 2
 grow_vertical = 0
 z_index = 40
 
-[node name="ResignButton" type="Button" parent="."]
-visible = false
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 354.0
-offset_top = -176.0
-offset_right = -354.0
-offset_bottom = -80.0
-grow_horizontal = 2
-grow_vertical = 0
-custom_minimum_size = Vector2(0, 96)
-theme_type_variation = &"GameboxSecondaryButton"
-text = "认输并结束对局"
-
 [node name="ResignDialog" parent="." instance=ExtResource("5_dialog")]
 
 [node name="LoadingOverlay" parent="." instance=ExtResource("6_loading")]

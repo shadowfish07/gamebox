@@ -104,7 +104,6 @@ func _ready() -> void:
 		button.button_down.connect(_on_choice_button_down.bind(button))
 		button.button_up.connect(_on_choice_button_up.bind(button))
 		button.get_node("Content/Indicator").color = colors["primary"]
-	$ResignButton.pressed.connect(_on_resign_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResignDialog/Dialog/Content/Title.text = "认输并结束本局？"
 	$ResignDialog/Dialog/Content/Message.text = "确认后对手立即获胜，本局无法继续。"
@@ -279,8 +278,6 @@ func _refresh_ui() -> void:
 	_refresh_choice_visuals()
 	$SafeContent/Layout/MySection/ChoicePanel.visible = not terminal and _selected_choice().is_empty() and not _is_revealing()
 	$SafeContent/Layout/MySection/SelectedPanel.visible = not terminal and not _selected_choice().is_empty() and not _is_revealing()
-	$ResignButton.visible = has_state and not terminal and not _is_revealing() and _state.can_request_resign(local_user_id)
-	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot or _resign_submitted
 	if terminal and not _is_revealing():
 		$ResignDialog.close()
 		$ResultPanel.present(_state.status, _state.winner_user_id == local_user_id)
