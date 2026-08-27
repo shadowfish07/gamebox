@@ -19,6 +19,7 @@ static func cases() -> Array:
 		{"name": "rps protocol binds choice actions to rps", "run": _protocol_choice},
 		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
 		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
+		{"name": "rps reconnect keeps the confirmed match behind a compact banner", "run": _reconnect_keeps_confirmed_match},
 	]
 
 
@@ -178,6 +179,82 @@ static func _status_chip_states() -> bool:
 	return passed
 
 
+static func _reconnect_keeps_confirmed_match() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var banner := scene.get_node("ConnectionBanner") as Control
+	if not _check(scene.get_node("LoadingOverlay").visible, "initial connection must keep the blocking loader") \
+		or not _check(banner.offset_left == GameboxTokens.SPACING["page"] * 2, "connection banner must align with the safe page inset") \
+		or not _check(banner.offset_right == -GameboxTokens.SPACING["page"] * 2, "connection banner right edge must align with the safe page inset"):
+		return _cleanup(scene)
+	client.set_connection("failed")
+	if not _check(not scene.get_node("LoadingOverlay").visible, "initial failure kept a dead blocking loader") \
+		or not _check(banner.theme_type_variation == &"GameboxSnackbarError", "initial failure did not use error semantics"):
+		return _cleanup(scene)
+	client.set_connection("connecting")
+	client.accept_snapshot(_snapshot(0, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	}))
+	var rock := scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton") as Button
+	if not _check(not scene.get_node("LoadingOverlay").visible, "confirmed match left the blocking loader visible") \
+		or not _check(not rock.disabled, "confirmed match did not enable choices"):
+		return _cleanup(scene)
+	client.set_connection("reconnecting")
+	if not _check(not scene.get_node("LoadingOverlay").visible, "reconnect covered the confirmed match with the blocking loader") \
+		or not _check(scene.get_node("ConnectionBanner").visible, "reconnect did not show the compact banner") \
+		or not _check(_connection_message(scene) == "正在恢复连接\n已确认的出拳状态会保留", "reconnect preservation copy changed") \
+		or not _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "选择你的手势", "reconnect replaced the last confirmed match state") \
+		or not _check(rock.disabled, "reconnect left a server-authoritative choice enabled"):
+		return _cleanup(scene)
+	client.set_connection("connected")
+	if not _check(not scene.get_node("LoadingOverlay").visible, "snapshot sync covered the confirmed match with the blocking loader") \
+		or not _check(_connection_message(scene) == "连接已恢复\n正在同步最新对局状态…", "snapshot sync copy changed") \
+		or not _check(rock.disabled, "snapshot sync enabled choices before authority returned"):
+		return _cleanup(scene)
+	client.accept_snapshot(_snapshot(0, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	}))
+	if not _check(_connection_message(scene) == "已恢复对局\n状态已同步，可以继续操作", "restored confirmation copy changed") \
+		or not _check(not rock.disabled, "authoritative recovery snapshot did not restore choices"):
+		return _cleanup(scene)
+	client.set_connection("failed")
+	var result := _check(_connection_message(scene) == "连接失败\n请返回大厅后重新进入对局", "failed recovery guidance changed") \
+		and _check((scene.get_node("SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label") as Label).text == "已断开", "failed local status still implied recovery") \
+		and _check((scene.get_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label") as Label).text == "已断开", "failed opponent status still implied recovery") \
+		and _check(rock.disabled, "failed connection left choices enabled")
+	return _cleanup(scene, result)
+
+
+static func _scene_harness() -> Dictionary:
+	var tree := Engine.get_main_loop() as SceneTree
+	var fake := FakeMatchClient.new()
+	var scene := RpsScene.instantiate()
+	scene.configure_launch({
+		"game_id": "rps", "match_id": MATCH_ID, "launch_ticket": "opaque-test-ticket",
+		"ws_url": "ws://127.0.0.1:8080/v1/ws",
+	})
+	scene.set_match_client_factory(func() -> Variant: return fake)
+	scene.set_quit_callback(func() -> void: pass)
+	tree.root.add_child(scene)
+	await tree.process_frame
+	return {"scene": scene, "client": fake}
+
+
+static func _connection_message(scene: Control) -> String:
+	return (scene.get_node("ConnectionBanner/Content/Message") as Label).text
+
+
+static func _cleanup(scene: Control, result: bool = false) -> bool:
+	if is_instance_valid(scene):
+		scene.free()
+	return result
+
+
 static func _snapshot(revision: int, format: String, round_number: int, me: Dictionary, opponent: Dictionary) -> Dictionary:
 	return {
 		"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
@@ -228,6 +305,52 @@ static func _nonzero_scores(my_score: int, opponent_score: int) -> Dictionary:
 	if opponent_score > 0:
 		scores[OPPONENT] = opponent_score
 	return scores
+
+
+class FakeMatchClient:
+	extends RefCounted
+
+	signal connection_state_changed(next_state: String)
+	signal snapshot_sync_started
+	signal snapshot_received(envelope: Dictionary)
+	signal event_received(envelope: Dictionary)
+	signal player_presence_changed(user_id: String, online: bool)
+	signal match_error(code: String)
+	signal return_to_lobby_requested(code: String)
+
+	var connection_state := "closed"
+	var local_user_id := ME
+	var state: Variant
+
+	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant, _game_id: String) -> bool:
+		state = game_state
+		connection_state = "connecting"
+		return true
+
+	func poll() -> void:
+		pass
+
+	func request_choice(_choice: String) -> String:
+		return ""
+
+	func request_resign() -> String:
+		return ""
+
+	func dispose() -> void:
+		pass
+
+	func set_connection(next_state: String) -> void:
+		connection_state = next_state
+		connection_state_changed.emit(next_state)
+
+	func accept_snapshot(envelope: Dictionary) -> void:
+		var applied: Dictionary = state.apply_snapshot(envelope)
+		if not applied.get("ok", false):
+			push_error("fake RPS snapshot invalid")
+			return
+		connection_state = "connected"
+		connection_state_changed.emit(connection_state)
+		snapshot_received.emit(envelope)
 
 
 static func _check(condition: bool, message: String) -> bool:

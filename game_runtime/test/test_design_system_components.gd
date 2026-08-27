@@ -14,6 +14,7 @@ static func cases() -> Array:
 	return [
 		{"name": "design system back button keeps target copy and states", "run": _back_button_contract},
 		{"name": "design system connection banner maps transient states", "run": _connection_states},
+		{"name": "design system restored connection banner auto hides", "run": _connection_restored_auto_hides},
 		{"name": "design system semantic surfaces resolve paired colors", "run": _semantic_surface_colors},
 		{"name": "design system snackbar presents and times out", "run": _snackbar_lifecycle},
 		{"name": "design system snackbar passes clicks through its subtree", "run": _snackbar_mouse_passthrough},
@@ -54,12 +55,46 @@ static func _connection_states() -> bool:
 	if not _check(banner.visible and message.text == "正在重新连接…", "reconnecting state changed"):
 		banner.free()
 		return false
+	banner.present_recovery("reconnecting", "已确认的出拳状态会保留")
+	if not _check(banner.visible and message.text == "正在恢复连接\n已确认的出拳状态会保留", "recovery reconnect state changed"):
+		banner.free()
+		return false
+	banner.present_recovery("syncing", "正在同步最新对局状态…")
+	if not _check(banner.visible and message.text == "连接已恢复\n正在同步最新对局状态…", "recovery syncing state changed"):
+		banner.free()
+		return false
+	banner.present_recovery("restored", "状态已同步，可以继续操作")
+	if not _check(banner.visible and message.text == "已恢复对局\n状态已同步，可以继续操作", "recovery restored state changed"):
+		banner.free()
+		return false
+	banner.present_recovery("failed", "请返回大厅后重新进入对局")
+	if not _check(banner.theme_type_variation == &"GameboxSnackbarError", "recovery failure container did not use error semantics") \
+		or not _check(message.theme_type_variation == &"GameboxOnErrorContainer", "recovery failure copy did not use error semantics"):
+		banner.free()
+		return false
 	banner.present("failed", "请检查网络后重试")
 	if not _check(banner.visible and message.text == "连接失败 · 请检查网络后重试", "failed state changed"):
 		banner.free()
 		return false
 	banner.present("connected", "")
-	var result := _check(not banner.visible and message.text.is_empty(), "connected state stayed prominent")
+	var result := _check(not banner.visible and message.text.is_empty(), "connected state stayed prominent") \
+		and _check(banner.theme_type_variation == &"GameboxConnectionBanner", "connected state retained failure tone")
+	banner.free()
+	return result
+
+
+static func _connection_restored_auto_hides() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	var banner := ConnectionBannerScene.instantiate()
+	tree.root.add_child(banner)
+	(banner.get_node("AutoHideTimer") as Timer).wait_time = 0.05
+	banner.present_recovery("restored", "状态已同步，可以继续操作")
+	if not _check(banner.visible, "restored banner did not become visible"):
+		banner.free()
+		return false
+	await tree.create_timer(0.08).timeout
+	await tree.process_frame
+	var result := _check(not banner.visible, "restored banner did not auto hide")
 	banner.free()
 	return result
 

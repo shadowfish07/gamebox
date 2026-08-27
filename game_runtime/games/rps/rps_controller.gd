@@ -25,6 +25,7 @@ var _client: Variant
 var _match_id := ""
 var _connection_state := "connecting"
 var _awaiting_snapshot := true
+var _has_confirmed_snapshot := false
 var _error_text := ""
 var _disposed := false
 var _returning := false
@@ -63,6 +64,9 @@ func _ready() -> void:
 	var dark_theme := GameboxTheme.system_prefers_dark()
 	theme = GameboxTheme.create(dark_theme)
 	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
+	var page_inset := GameboxTokens.SPACING["page"] * GameboxTheme.LOGICAL_SCALE
+	$ConnectionBanner.offset_left = page_inset
+	$ConnectionBanner.offset_right = -page_inset
 	$SafeContent/Layout.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$SafeContent/Layout/MySection/ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
@@ -222,10 +226,14 @@ func _on_snapshot_sync_started() -> void:
 
 
 func _on_snapshot_received(_envelope: Dictionary) -> void:
+	var recovered := _has_confirmed_snapshot and _awaiting_snapshot
 	_awaiting_snapshot = false
+	_has_confirmed_snapshot = true
 	_error_text = ""
 	_resign_submitted = false
 	_refresh_ui()
+	if recovered:
+		$ConnectionBanner.present_recovery("restored", "状态已同步，可以继续操作")
 
 
 func _on_event_received(_envelope: Dictionary) -> void:
@@ -257,9 +265,10 @@ func _refresh_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var terminal: bool = has_state and _state.status in ["finished", "cancelled", "abandoned"]
-	$ConnectionBanner.present(_connection_state, "网络波动，正在恢复对局…\n已确认的出拳状态会保留")
+	_refresh_connection_banner(has_state)
 	$ErrorSnackbar.present(_error_text, "error")
-	$LoadingOverlay.set_loading(not has_state or _awaiting_snapshot, "正在同步对局…")
+	var initial_loading := not has_state and _connection_state in ["connecting", "connected", "reconnecting"]
+	$LoadingOverlay.set_loading(initial_loading, "正在同步对局…")
 	$SafeContent/Layout/TopNavigation/TitleGroup/FormatLabel.text = _format_label(_state.format) if has_state else "赛制加载中"
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel.text = str(_state.me_score) if has_state else "0"
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel.text = str(_state.opponent_score) if has_state else "0"
@@ -284,6 +293,23 @@ func _refresh_ui() -> void:
 		$ResultPanel.present("", false)
 		$ResultScrim.visible = false
 	_log_safe_state(has_state)
+
+
+func _refresh_connection_banner(has_state: bool) -> void:
+	if not has_state:
+		if _connection_state in ["failed", "closed"]:
+			$ConnectionBanner.present_recovery(_connection_state, "请返回大厅后重新进入对局")
+		else:
+			$ConnectionBanner.present(_connection_state)
+		return
+	if _connection_state in ["failed", "closed"]:
+		$ConnectionBanner.present_recovery(_connection_state, "请返回大厅后重新进入对局")
+	elif _connection_state == "reconnecting":
+		$ConnectionBanner.present_recovery("reconnecting", "已确认的出拳状态会保留")
+	elif _awaiting_snapshot:
+		$ConnectionBanner.present_recovery("syncing", "正在同步最新对局状态…")
+	else:
+		$ConnectionBanner.present_recovery("connected")
 
 
 func _status_text(local_user_id: String) -> String:
@@ -323,8 +349,9 @@ func _status_support(local_user_id: String) -> String:
 
 
 func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
-	var opponent_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else _opponent_text() if has_state else "等待"
-	var my_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "等待"
+	var recovery_status := "已断开" if _connection_state in ["failed", "closed"] else "恢复中"
+	var opponent_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else _opponent_text() if has_state else "等待"
+	var my_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "等待"
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label.text = opponent_status
 	$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label.text = my_status
 	var choice_status_emphasized := has_state and _choice_status_emphasized(

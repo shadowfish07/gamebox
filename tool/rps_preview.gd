@@ -49,6 +49,20 @@ class PreviewClient:
 
 	func _emit_state() -> void:
 		snapshot_received.emit({})
+		if _state_name == "reconnecting":
+			connection_state = "reconnecting"
+			connection_state_changed.emit(connection_state)
+		elif _state_name == "syncing":
+			snapshot_sync_started.emit()
+		elif _state_name == "failed":
+			connection_state = "failed"
+			connection_state_changed.emit(connection_state)
+		elif _state_name == "restored":
+			connection_state = "reconnecting"
+			connection_state_changed.emit(connection_state)
+			connection_state = "connected"
+			connection_state_changed.emit(connection_state)
+			snapshot_received.emit({})
 		if _state_name in ["reveal", "finished"]:
 			# Leave the base state on screen long enough for the desktop window to
 			# become visible, then play the same timed reveal as production.
@@ -109,6 +123,10 @@ func _mount() -> void:
 	get_root().add_child(scene)
 	if _state_name == "resign":
 		scene.call_deferred("_on_resign_pressed")
+	elif _state_name == "restored":
+		await process_frame
+		await process_frame
+		(scene.get_node("ConnectionBanner/AutoHideTimer") as Timer).stop()
 
 
 func _parse_arguments(args: PackedStringArray) -> void:
@@ -121,7 +139,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["ready", "pending", "locked", "opponent_locked", "resign", "reveal", "finished"]:
+				if _state_name not in ["ready", "pending", "locked", "opponent_locked", "resign", "reveal", "finished", "reconnecting", "syncing", "failed", "restored"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
