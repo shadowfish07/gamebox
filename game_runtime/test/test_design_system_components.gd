@@ -189,6 +189,8 @@ static func _confirmation_contract() -> bool:
 		await tree.process_frame
 		var ok_button := dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button
 		var cancel_button := dialog.get_node("Dialog/Content/Actions/CancelButton") as Button
+		var ok_focus := ok_button.get_theme_stylebox("focus")
+		var cancel_focus := cancel_button.get_theme_stylebox("focus")
 		var panel := dialog.get_node("Dialog") as PanelContainer
 		var panel_style := panel.get_theme_stylebox("panel") as StyleBoxFlat
 		var scrim := dialog.get_node("Scrim") as PanelContainer
@@ -204,6 +206,8 @@ static func _confirmation_contract() -> bool:
 			and _check((dialog.get_node("Dialog/Content/Message") as Label).text == "认输后本局立即结束，确认认输吗？", "danger copy changed") \
 			and _check(ok_button.text == "确认认输", "danger confirmation action changed") \
 			and _check(cancel_button.text == "继续对局", "danger cancellation action changed") \
+			and _check(ok_focus is StyleBoxEmpty, "confirmation action uses the default square focus border") \
+			and _check(cancel_focus is StyleBoxEmpty, "confirmation cancel uses the default square focus border") \
 			and _check(panel_style != null and panel_style.bg_color == colors["surface_container_high"], "confirmation panel surface drifted") \
 			and _check(scrim_style != null and scrim_style.bg_color == Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"]), "confirmation scrim drifted") \
 			and _check(ok_button.size.x >= 96.0 and ok_button.size.y >= 96.0, "confirmation action rendered below minimum target") \

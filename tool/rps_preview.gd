@@ -57,13 +57,13 @@ class PreviewClient:
 			event_received.emit({})
 
 	func _snapshot() -> Dictionary:
-		var locked := _state_name in ["locked", "reveal", "finished"]
+		var locked := _state_name in ["locked", "resign", "reveal", "finished"]
 		var me := {"userId": ME, "score": 0, "locked": locked}
 		if locked:
 			me["choice"] = "paper"
 		return {
 			"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
-			"revision": 0, "type": "platform.snapshot",
+			"revision": 1 if _state_name == "resign" else 0, "type": "platform.snapshot",
 			"payload": {
 				"status": "active", "format": "best_of_three", "round": 1,
 				"me": me,
@@ -106,6 +106,8 @@ func _mount() -> void:
 		return
 	scene.set_match_client_factory(func() -> PreviewClient: return client)
 	get_root().add_child(scene)
+	if _state_name == "resign":
+		scene.call_deferred("_on_resign_pressed")
 
 
 func _parse_arguments(args: PackedStringArray) -> void:
@@ -118,7 +120,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["ready", "pending", "locked", "reveal", "finished"]:
+				if _state_name not in ["ready", "pending", "locked", "resign", "reveal", "finished"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
