@@ -128,6 +128,7 @@ static func _scene_contract() -> bool:
 		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/StateSupportLabel"), "round stage must keep primary and supporting copy together") \
 		and _check(scene.get_node("SafeContent/Layout/RoundStage").custom_minimum_size.y >= 400, "round stage must retain the portrait information band") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/SelectedPanel"), "selected gesture slot must exist") \
+		and _check(scene.get_node("SafeContent/Layout/MySection/TopSpacing").custom_minimum_size.y >= 24, "local status row must keep the prototype top inset") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/Spacer"), "local status must stay right-aligned") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/Identity/Avatar"), "local identity must include the prototype avatar") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/StatusChip/Content/DotSlot/Dot"), "local status must include the prototype dot") \

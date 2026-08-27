@@ -255,6 +255,11 @@ layout_mode = 2
 size_flags_vertical = 3
 size_flags_stretch_ratio = 1.35
 
+[node name="TopSpacing" type="Control" parent="SafeContent/Layout/MySection"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+mouse_filter = 2
+
 [node name="StatusLine" type="HBoxContainer" parent="SafeContent/Layout/MySection"]
 custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
