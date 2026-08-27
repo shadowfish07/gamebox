@@ -1,5 +1,24 @@
 # Acceptance and Evidence
 
+## Requirements-Grounded Implementation Review
+
+When a UI implementation has a written requirement, accepted prototype, issue acceptance criteria, or other approved design baseline, complete a distinct code-review pass after implementation and focused tests but before target-runtime acceptance. Re-read the complete approved baseline and inspect the current diff and production source; do not review from memory or from the implementation plan alone. If no written baseline exists, use the user's request and explicitly accepted decisions without inventing a broader specification.
+
+Build a compact traceability review with one row per in-scope requirement or affected state:
+
+| Requirement or state | Implementation evidence | Automated evidence | Review result |
+| --- | --- | --- | --- |
+
+The review MUST:
+
+- cover every affected default, pressed, pending, accepted, rejected, reconnecting, error, dangerous-confirmation, result, and navigation state that the baseline names;
+- compare required copy, visible-node exclusivity, semantic colors and component roles, interaction locks, transitions, and preserved automation contracts;
+- search for negative requirements and unintended retained legacy UI, including duplicate actions, obsolete controls, fallback styles, and paths that remain reachable after the redesign;
+- verify dynamic state-to-presentation bindings rather than only checking that nodes, widgets, or style helpers exist;
+- report findings by severity with concrete file evidence, resolve every blocking finding, rerun affected tests, and repeat the review on the corrected diff.
+
+This review does not replace target-runtime execution or screenshot inspection. It is the code-level gate that must pass before those acceptance activities begin. A separate reviewer is useful but not mandatory; when the implementing agent performs it, it must still be an explicit second pass against the complete baseline and current diff.
+
 ## Audit Output Contract
 
 Every audit or completion review returns these sections in order:
@@ -8,7 +27,7 @@ Every audit or completion review returns these sections in order:
 2. MUST findings
 3. SHOULD findings and recorded deviations
 4. MAY decisions
-5. Tests and target-runtime commands
+5. Requirements-grounded review, tests, and target-runtime commands
 6. Target-runtime UX inspection findings
 7. Verdict: complete, incomplete, or blocked
 
@@ -16,7 +35,7 @@ Use only `complete`, `incomplete`, or `blocked`. Missing required runtime verifi
 
 ## Skill Gate
 
-Validate the skill metadata, directory shape, reference paths, and progressive routing. Compare against the recorded no-skill baseline, then run the same realistic tasks and at least one new task with the skill. Verify that the result loads the correct platform guidance, classifies MUST/SHOULD/MAY, requires Android Back and dangerous-action confirmation, keeps screenshots out of deterministic E2E, requires the implementing agent to inspect affected UI screenshots, and never treats unpublished screenshots as missing deliverables. Re-run affected scenarios whenever the skill changes; reading the prose is not a behavioral pass.
+Validate the skill metadata, directory shape, reference paths, and progressive routing. Compare against the recorded no-skill baseline, then run the same realistic tasks and at least one new task with the skill. Verify that the result loads the correct platform guidance, classifies MUST/SHOULD/MAY, requires Android Back and dangerous-action confirmation, keeps screenshots out of deterministic E2E, requires the implementing agent to inspect affected UI screenshots, and never treats unpublished screenshots as missing deliverables. Include a realistic implementation-review scenario with an approved requirement and prototype plus a diff that omits a dynamic state style or retains an obsolete duplicate control; the skill must identify both from traceability review before allowing runtime acceptance. Re-run affected scenarios whenever the skill changes; reading the prose is not a behavioral pass.
 
 ## Token Gate
 
@@ -57,6 +76,7 @@ Captured UI and retained artifacts MUST exclude invite codes, access tokens, cre
 ## Completion Checklist
 
 - [ ] Scope and one profile/Core Contract choice are explicit.
+- [ ] The completed implementation was reviewed against the full approved requirements and prototype with per-requirement or per-state traceability; all blocking findings were resolved and the corrected diff was re-reviewed.
 - [ ] MUST, SHOULD deviations, and MAY choices are separated.
 - [ ] Token source and both generated mappings are consistent when affected.
 - [ ] Relevant component and flow tests pass.
