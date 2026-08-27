@@ -3,6 +3,7 @@ extends RefCounted
 const RpsState = preload("res://games/rps/rps_state.gd")
 const Protocol = preload("res://core/protocol.gd")
 const RpsScene = preload("res://games/rps/rps_scene.tscn")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const ME := "22222222-2222-4222-8222-222222222222"
 const OPPONENT := "33333333-3333-4333-8333-333333333333"
@@ -17,6 +18,7 @@ static func cases() -> Array:
 		{"name": "rps rejects reveal winners outside the match", "run": _foreign_reveal_winner},
 		{"name": "rps protocol binds choice actions to rps", "run": _protocol_choice},
 		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
+		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
 	]
 
 
@@ -152,6 +154,26 @@ static func _scene_contract() -> bool:
 			and _check(scissors.get_node("Content/Icon").texture != null, "scissors image must load") \
 			and _check(paper.get_node("Content/Icon").texture != null, "paper image must load") \
 			and passed
+	scene.free()
+	return passed
+
+
+static func _status_chip_states() -> bool:
+	var scene: Node = RpsScene.instantiate()
+	var colors: Dictionary = GameboxTokens.DARK
+	var waiting: StyleBoxFlat = scene.call("_chip_style", colors, false)
+	var active: StyleBoxFlat = scene.call("_chip_style", colors, true)
+	var waiting_dot: StyleBoxFlat = scene.call("_status_dot_style", colors, false)
+	var active_dot: StyleBoxFlat = scene.call("_status_dot_style", colors, true)
+	var passed := _check(waiting.bg_color == colors["surface_container_high"], "waiting chip must use the neutral surface") \
+		and _check(active.bg_color == colors["tertiary_container"], "pending and locked chips must use the prototype tertiary surface") \
+		and _check(waiting_dot.bg_color == colors["outline"], "waiting chip dot must stay neutral") \
+		and _check(active_dot.bg_color == colors["on_tertiary_container"], "pending and locked chip dot must use the prototype active color") \
+		and _check(scene.call("_choice_status_emphasized", true, false, false, false), "pending must emphasize choice status") \
+		and _check(scene.call("_choice_status_emphasized", false, true, false, false), "local lock must emphasize choice status") \
+		and _check(scene.call("_choice_status_emphasized", false, false, true, false), "opponent lock must emphasize choice status") \
+		and _check(not scene.call("_choice_status_emphasized", false, false, false, false), "waiting must remain neutral") \
+		and _check(not scene.call("_choice_status_emphasized", false, true, true, true), "terminal status must not look like an active choice")
 	scene.free()
 	return passed
 

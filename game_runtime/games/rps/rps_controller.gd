@@ -66,8 +66,6 @@ func _ready() -> void:
 	$SafeContent/Layout.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$SafeContent/Layout/MySection/ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
-	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
-	$SafeContent/Layout/MySection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
 	$SafeContent/Layout/RoundStage.add_theme_stylebox_override("panel", _round_stage_style(colors))
 	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip.add_theme_stylebox_override("panel", _round_chip_style(colors))
 	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.add_theme_color_override("font_color", colors["on_primary_container"])
@@ -78,8 +76,7 @@ func _ready() -> void:
 		status_line.get_node("Identity/Avatar").add_theme_stylebox_override("panel", _avatar_style(colors))
 		status_line.get_node("Identity/Avatar/Label").add_theme_color_override("font_color", colors["on_primary_container"])
 		status_line.get_node("Identity/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
-		status_line.get_node("StatusChip/Content/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
-		status_line.get_node("StatusChip/Content/DotSlot/Dot").add_theme_stylebox_override("panel", _status_dot_style(colors))
+	_apply_status_chip_emphasis(false, colors)
 	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.add_theme_stylebox_override(
 		"panel", _opponent_surface_style(colors["surface_container_high"], colors["outline_variant"])
 	)
@@ -330,6 +327,11 @@ func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 	var my_status := "恢复中" if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "等待"
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label.text = opponent_status
 	$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label.text = my_status
+	var choice_status_emphasized := has_state and _choice_status_emphasized(
+		not _state.pending_action.is_empty(), _state.me_locked, _state.opponent_locked, terminal
+	)
+	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
+	_apply_status_chip_emphasis(choice_status_emphasized, colors)
 	var locked: bool = has_state and _state.opponent_locked and not _is_revealing()
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Unknown.visible = not locked
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Locked.visible = locked
@@ -407,9 +409,9 @@ static func _reveal_reason(my_choice: String, opponent_choice: String, draw: boo
 	return "比分已更新"
 
 
-func _chip_style(colors: Dictionary) -> StyleBoxFlat:
+func _chip_style(colors: Dictionary, emphasized: bool = false) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = colors["surface_container_high"]
+	style.bg_color = colors["tertiary_container"] if emphasized else colors["surface_container_high"]
 	style.content_margin_left = 20
 	style.content_margin_right = 20
 	style.content_margin_top = 8
@@ -468,15 +470,29 @@ func _avatar_style(colors: Dictionary) -> StyleBoxFlat:
 	return style
 
 
-func _status_dot_style(colors: Dictionary) -> StyleBoxFlat:
+func _status_dot_style(colors: Dictionary, emphasized: bool = false) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = colors["outline"]
+	style.bg_color = colors["on_tertiary_container"] if emphasized else colors["outline"]
 	var radius := 7
 	style.corner_radius_top_left = radius
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius
 	style.corner_radius_bottom_right = radius
 	return style
+
+
+func _apply_status_chip_emphasis(emphasized: bool, colors: Dictionary) -> void:
+	var foreground: Color = colors["on_tertiary_container"] if emphasized else colors["on_surface_variant"]
+	for status_line in [$SafeContent/Layout/OpponentSection/StatusLine, $SafeContent/Layout/MySection/StatusLine]:
+		status_line.get_node("StatusChip").add_theme_stylebox_override("panel", _chip_style(colors, emphasized))
+		status_line.get_node("StatusChip/Content/Label").add_theme_color_override("font_color", foreground)
+		status_line.get_node("StatusChip/Content/DotSlot/Dot").add_theme_stylebox_override(
+			"panel", _status_dot_style(colors, emphasized)
+		)
+
+
+static func _choice_status_emphasized(pending: bool, me_locked: bool, opponent_locked: bool, terminal: bool) -> bool:
+	return not terminal and (pending or me_locked or opponent_locked)
 
 
 func _opponent_surface_style(fill: Color, border: Color) -> StyleBoxFlat:

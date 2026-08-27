@@ -57,9 +57,10 @@ class PreviewClient:
 			event_received.emit({})
 
 	func _snapshot() -> Dictionary:
-		var locked := _state_name in ["locked", "resign", "reveal", "finished"]
-		var me := {"userId": ME, "score": 0, "locked": locked}
-		if locked:
+		var me_locked := _state_name in ["locked", "resign", "reveal", "finished"]
+		var opponent_locked := _state_name in ["opponent_locked", "resign", "reveal", "finished"]
+		var me := {"userId": ME, "score": 0, "locked": me_locked}
+		if me_locked:
 			me["choice"] = "paper"
 		return {
 			"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
@@ -67,7 +68,7 @@ class PreviewClient:
 			"payload": {
 				"status": "active", "format": "best_of_three", "round": 1,
 				"me": me,
-				"opponent": {"userId": OPPONENT, "score": 0, "locked": locked},
+				"opponent": {"userId": OPPONENT, "score": 0, "locked": opponent_locked},
 				"lastReveal": null, "winnerUserId": null, "result": null,
 			},
 		}
@@ -120,7 +121,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["ready", "pending", "locked", "resign", "reveal", "finished"]:
+				if _state_name not in ["ready", "pending", "locked", "opponent_locked", "resign", "reveal", "finished"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
