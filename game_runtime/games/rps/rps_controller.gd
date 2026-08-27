@@ -68,6 +68,12 @@ func _ready() -> void:
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
 	$SafeContent/Layout/MySection/StatusLine/StatusChip.add_theme_stylebox_override("panel", _chip_style(colors))
+	$SafeContent/Layout/RoundStage.add_theme_stylebox_override("panel", _round_stage_style(colors))
+	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip.add_theme_stylebox_override("panel", _round_chip_style(colors))
+	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.add_theme_color_override("font_color", colors["on_primary_container"])
+	for label in [$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/PlayerLabel, $SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/PlayerLabel, $SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel, $SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel]:
+		label.add_theme_color_override("font_color", colors["on_surface_variant"])
+	$SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel.add_theme_color_override("font_color", colors["outline"])
 	for status_line in [$SafeContent/Layout/OpponentSection/StatusLine, $SafeContent/Layout/MySection/StatusLine]:
 		status_line.get_node("Identity/Avatar").add_theme_stylebox_override("panel", _avatar_style(colors))
 		status_line.get_node("Identity/Avatar/Label").add_theme_color_override("font_color", colors["on_primary_container"])
@@ -259,10 +265,11 @@ func _refresh_ui() -> void:
 	$ErrorSnackbar.present(_error_text, "error")
 	$LoadingOverlay.set_loading(not has_state or _awaiting_snapshot, "正在同步对局…")
 	$SafeContent/Layout/TopNavigation/TitleGroup/FormatLabel.text = _format_label(_state.format) if has_state else "赛制加载中"
-	$SafeContent/Layout/RoundStage/Content/ScoreLabel.text = "你 %d  VS  %d 对手" % [_state.me_score, _state.opponent_score] if has_state else "你 0  VS  0 对手"
-	$SafeContent/Layout/RoundStage/Content/RoundLabel.text = "最终结果" if terminal else "第 %d 轮" % _state.round_number if has_state else "准备对局"
-	$SafeContent/Layout/RoundStage/Content/StateLabel.text = _status_text(local_user_id) if has_state else "正在同步对局…"
-	$SafeContent/Layout/RoundStage/Content/StateSupportLabel.text = _status_support(local_user_id) if has_state else "收到权威快照前无法操作"
+	$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel.text = str(_state.me_score) if has_state else "0"
+	$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel.text = str(_state.opponent_score) if has_state else "0"
+	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.text = "最终结果" if terminal else "第 %d 轮" % _state.round_number if has_state else "准备对局"
+	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel.text = _status_text(local_user_id) if has_state else "正在同步对局…"
+	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel.text = _status_support(local_user_id) if has_state else "收到权威快照前无法操作"
 	_refresh_player_statuses(has_state, terminal)
 	_refresh_reveal(has_state)
 	var can_choose: bool = has_state and not terminal and not _awaiting_snapshot \
@@ -411,6 +418,41 @@ func _chip_style(colors: Dictionary) -> StyleBoxFlat:
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	var radius := roundi(GameboxTokens.SHAPE["full"] * GameboxTheme.LOGICAL_SCALE)
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
+
+
+func _round_stage_style(colors: Dictionary) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = colors["surface_container_low"]
+	style.border_color = colors["outline_variant"]
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.content_margin_left = 28
+	style.content_margin_right = 28
+	style.content_margin_top = 20
+	style.content_margin_bottom = 20
+	var radius := 48
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
+
+
+func _round_chip_style(colors: Dictionary) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = colors["primary_container"]
+	style.content_margin_left = 20
+	style.content_margin_right = 20
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	var radius := 28
 	style.corner_radius_top_left = radius
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius

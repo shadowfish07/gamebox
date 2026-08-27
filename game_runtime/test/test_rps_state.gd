@@ -125,8 +125,12 @@ static func _scene_contract() -> bool:
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/StatusLine/Spacer"), "opponent status must stay right-aligned") \
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/StatusLine/Identity/Avatar"), "opponent identity must include the prototype avatar") \
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/DotSlot/Dot"), "opponent status must include the prototype dot") \
-		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/StateSupportLabel"), "round stage must keep primary and supporting copy together") \
-		and _check(scene.get_node("SafeContent/Layout/RoundStage").custom_minimum_size.y >= 400, "round stage must retain the portrait information band") \
+		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel"), "round stage must present the round as a chip") \
+		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel"), "round stage must split the local score from its label") \
+		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel"), "round stage must split the opponent score from its label") \
+		and _check(scene.has_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel"), "round stage must keep primary and supporting copy together") \
+		and _check(scene.get_node("SafeContent/Layout/RoundStage").custom_minimum_size.y == 310, "round stage must match the 155dp prototype band") \
+		and _check(scene.get_node("SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel").get_theme_font_size("font_size") == 64, "score digits must use the prototype emphasis") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/SelectedPanel"), "selected gesture slot must exist") \
 		and _check(scene.get_node("SafeContent/Layout/MySection/TopSpacing").custom_minimum_size.y >= 24, "local status row must keep the prototype top inset") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/Spacer"), "local status must stay right-aligned") \

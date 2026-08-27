@@ -220,34 +220,97 @@ text = "已出拳 · 等待同时揭晓"
 horizontal_alignment = 1
 
 [node name="RoundStage" type="PanelContainer" parent="SafeContent/Layout"]
-custom_minimum_size = Vector2(0, 400)
+custom_minimum_size = Vector2(0, 310)
 layout_mode = 2
-theme_type_variation = &"GameboxResultPanel"
 
 [node name="Content" type="VBoxContainer" parent="SafeContent/Layout/RoundStage"]
 layout_mode = 2
 alignment = 1
+theme_override_constants/separation = 12
 
-[node name="RoundLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content"]
+[node name="RoundMeta" type="CenterContainer" parent="SafeContent/Layout/RoundStage/Content"]
+custom_minimum_size = Vector2(0, 68)
+layout_mode = 2
+
+[node name="RoundChip" type="PanelContainer" parent="SafeContent/Layout/RoundStage/Content/RoundMeta"]
+layout_mode = 2
+
+[node name="RoundLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip"]
 layout_mode = 2
 text = "第 1 轮"
 horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 22
 
-[node name="ScoreLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content"]
+[node name="Scoreboard" type="HBoxContainer" parent="SafeContent/Layout/RoundStage/Content"]
+custom_minimum_size = Vector2(0, 120)
 layout_mode = 2
-text = "你 0  VS  0 对手"
-horizontal_alignment = 1
+alignment = 1
 
-[node name="StateLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content"]
+[node name="MySide" type="HBoxContainer" parent="SafeContent/Layout/RoundStage/Content/Scoreboard"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 2
+theme_override_constants/separation = 12
+
+[node name="PlayerLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/Scoreboard/MySide"]
+layout_mode = 2
+text = "你"
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 24
+
+[node name="ScoreLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/Scoreboard/MySide"]
+custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 64
+
+[node name="VersusLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/Scoreboard"]
+custom_minimum_size = Vector2(88, 0)
+layout_mode = 2
+text = "VS"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 24
+
+[node name="OpponentSide" type="HBoxContainer" parent="SafeContent/Layout/RoundStage/Content/Scoreboard"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="ScoreLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide"]
+custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 64
+
+[node name="PlayerLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide"]
+layout_mode = 2
+text = "对手"
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 24
+
+[node name="RoundMessage" type="VBoxContainer" parent="SafeContent/Layout/RoundStage/Content"]
+custom_minimum_size = Vector2(0, 68)
+layout_mode = 2
+alignment = 1
+
+[node name="StateLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/RoundMessage"]
 layout_mode = 2
 text = "选择你的手势"
 horizontal_alignment = 1
+theme_override_font_sizes/font_size = 28
 
-[node name="StateSupportLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content"]
+[node name="StateSupportLabel" type="Label" parent="SafeContent/Layout/RoundStage/Content/RoundMessage"]
 layout_mode = 2
 text = "手势会在双方锁定后同时揭晓"
 horizontal_alignment = 1
 autowrap_mode = 2
+theme_override_font_sizes/font_size = 22
 
 [node name="MySection" type="VBoxContainer" parent="SafeContent/Layout"]
 custom_minimum_size = Vector2(0, 280)
