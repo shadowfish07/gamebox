@@ -60,6 +60,7 @@
         "whitePiece",
         "whitePieceOutline",
         "lastMove",
+        "winningLine",
         "pressedMove",
         "pendingMove",
         "pendingOverlayAlpha"
@@ -71,6 +72,7 @@
         "whitePiece": { "$ref": "#/$defs/color" },
         "whitePieceOutline": { "$ref": "#/$defs/color" },
         "lastMove": { "$ref": "#/$defs/color" },
+        "winningLine": { "$ref": "#/$defs/color" },
         "pressedMove": { "$ref": "#/$defs/color" },
         "pendingMove": { "$ref": "#/$defs/color" },
         "pendingOverlayAlpha": {

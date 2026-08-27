@@ -21,6 +21,7 @@ static func cases() -> Array:
 		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
 		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
 		{"name": "rps status chips emphasize only the player who acted", "run": _status_chip_player_binding},
+		{"name": "rps terminal result preserves reveal evidence and review path", "run": _terminal_result_presentation},
 		{"name": "rps overflow menu requires explicit resign selection", "run": _overflow_menu_requires_explicit_resign},
 		{"name": "rps reconnect keeps the confirmed match behind a compact banner", "run": _reconnect_keeps_confirmed_match},
 	]
@@ -237,6 +238,29 @@ static func _status_chip_player_binding() -> bool:
 	return _cleanup(scene, result)
 
 
+static func _terminal_result_presentation() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_terminal_snapshot(false))
+	if not _check(scene.get_node("TerminalArena").visible, "terminal arena stayed hidden") \
+		or not _check((scene.get_node("TerminalArena/Score") as Label).text == "1 : 2", "terminal score did not bind") \
+		or not _check((scene.get_node("TerminalArena/MyChoice/Label") as Label).text == "你 · 剪刀", "terminal local choice did not bind") \
+		or not _check((scene.get_node("TerminalArena/OpponentChoice/Label") as Label).text == "对手 · 石头", "terminal opponent choice did not bind") \
+		or not _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "对手先拿到两分", "terminal loss title did not bind") \
+		or not _check((scene.get_node("ResultPanel/Content/Summary/Item1/Content/Value") as Label).text == "1 : 2", "terminal score summary did not bind") \
+		or not _check(scene.get_node("ResultScrim").visible and scene.get_node("ResultPanel").visible, "terminal result surface stayed hidden") \
+		or not _check(not scene.get_node("ResultPill").visible, "terminal result pill duplicated the open card"):
+		return _cleanup(scene)
+	(scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).pressed.emit()
+	if not _check(scene.get_node("TerminalArena").visible, "review hid terminal evidence") \
+		or not _check(not scene.get_node("ResultPanel").visible and not scene.get_node("ResultScrim").visible, "review did not dismiss the result card") \
+		or not _check(scene.get_node("ResultPill").visible, "review did not expose result return path"):
+		return _cleanup(scene)
+	(scene.get_node("ResultPill") as Button).pressed.emit()
+	return _cleanup(scene, _check(scene.get_node("ResultPanel").visible and scene.get_node("ResultScrim").visible, "result pill did not restore the result surface"))
+
+
 static func _reconnect_keeps_confirmed_match() -> bool:
 	var harness: Dictionary = await _scene_harness()
 	var scene: Control = harness["scene"]
@@ -358,6 +382,25 @@ static func _snapshot(revision: int, format: String, round_number: int, me: Dict
 			"status": "active", "format": format, "round": round_number,
 			"me": me, "opponent": opponent, "lastReveal": null,
 			"winnerUserId": null, "result": null,
+		},
+	}
+
+
+static func _terminal_snapshot(local_won: bool) -> Dictionary:
+	var my_choice := "paper" if local_won else "scissors"
+	var opponent_choice := "rock"
+	var my_score := 2 if local_won else 1
+	var opponent_score := 1 if local_won else 2
+	var winner := ME if local_won else OPPONENT
+	return {
+		"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
+		"revision": 4, "type": "platform.snapshot",
+		"payload": {
+			"status": "finished", "format": "best_of_three", "round": 3,
+			"me": {"userId": ME, "score": my_score, "locked": false},
+			"opponent": {"userId": OPPONENT, "score": opponent_score, "locked": false},
+			"lastReveal": _reveal(3, my_choice, opponent_choice, winner, false, my_score, opponent_score, winner),
+			"winnerUserId": winner, "result": "rounds",
 		},
 	}
 

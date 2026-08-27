@@ -557,6 +557,107 @@ layout_mode = 2
 text = "平局不计分，再来一轮"
 horizontal_alignment = 1
 
+[node name="TerminalArena" type="Control" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+z_index = 25
+
+[node name="Backdrop" type="PanelContainer" parent="TerminalArena"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 184.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="OpponentChoice" type="VBoxContainer" parent="TerminalArena"]
+layout_mode = 0
+offset_left = 340.0
+offset_top = 248.0
+offset_right = 740.0
+offset_bottom = 704.0
+alignment = 1
+theme_type_variation = &"GameboxTerminalChoice"
+
+[node name="Surface" type="PanelContainer" parent="TerminalArena/OpponentChoice"]
+custom_minimum_size = Vector2(360, 360)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_type_variation = &"GameboxTerminalHandSurface"
+
+[node name="Icon" type="TextureRect" parent="TerminalArena/OpponentChoice/Surface"]
+layout_mode = 2
+texture = ExtResource("8_rock")
+expand_mode = 3
+stretch_mode = 5
+
+[node name="Label" type="Label" parent="TerminalArena/OpponentChoice"]
+layout_mode = 2
+text = "对手 · 石头"
+horizontal_alignment = 1
+theme_type_variation = &"GameboxTerminalChoiceLabel"
+
+[node name="Score" type="Label" parent="TerminalArena"]
+layout_mode = 0
+offset_left = 240.0
+offset_top = 820.0
+offset_right = 840.0
+offset_bottom = 940.0
+text = "2 : 1"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_type_variation = &"GameboxTerminalScore"
+
+[node name="FormatChip" type="PanelContainer" parent="TerminalArena"]
+layout_mode = 0
+offset_left = 360.0
+offset_top = 952.0
+offset_right = 720.0
+offset_bottom = 1016.0
+theme_type_variation = &"GameboxResultChipPositive"
+
+[node name="Label" type="Label" parent="TerminalArena/FormatChip"]
+layout_mode = 2
+text = "三局两胜 · 已确认"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_type_variation = &"GameboxResultChipLabelPositive"
+
+[node name="MyChoice" type="VBoxContainer" parent="TerminalArena"]
+layout_mode = 0
+offset_left = 340.0
+offset_top = 1052.0
+offset_right = 740.0
+offset_bottom = 1508.0
+alignment = 1
+theme_type_variation = &"GameboxTerminalChoice"
+
+[node name="Surface" type="PanelContainer" parent="TerminalArena/MyChoice"]
+custom_minimum_size = Vector2(360, 360)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_type_variation = &"GameboxTerminalHandSurface"
+
+[node name="Icon" type="TextureRect" parent="TerminalArena/MyChoice/Surface"]
+layout_mode = 2
+texture = ExtResource("10_paper")
+expand_mode = 3
+stretch_mode = 5
+
+[node name="Label" type="Label" parent="TerminalArena/MyChoice"]
+layout_mode = 2
+text = "你 · 布"
+horizontal_alignment = 1
+theme_type_variation = &"GameboxTerminalChoiceLabel"
+
 [node name="ConnectionBanner" parent="." instance=ExtResource("3_connection")]
 layout_mode = 1
 anchors_preset = 10
@@ -615,14 +716,26 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 48.0
-offset_top = -520.0
+offset_top = -696.0
 offset_right = -48.0
 offset_bottom = -48.0
 grow_horizontal = 2
 grow_vertical = 0
 z_index = 51
 
-[node name="Details" type="Label" parent="ResultPanel/Content"]
-layout_mode = 2
-text = "最终比分"
-horizontal_alignment = 1
+[node name="ResultPill" type="Button" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = -144.0
+offset_right = -48.0
+offset_bottom = -48.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "查看结果"
+z_index = 51

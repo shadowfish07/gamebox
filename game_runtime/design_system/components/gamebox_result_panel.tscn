@@ -4,20 +4,145 @@
 
 [node name="GameboxResultPanel" type="PanelContainer"]
 visible = false
-mouse_filter = 1
-theme_type_variation = &"GameboxResultPanel"
+mouse_filter = 0
+theme_type_variation = &"GameboxResultPanelPositive"
 script = ExtResource("1_result")
 
 [node name="Content" type="VBoxContainer" parent="."]
 layout_mode = 2
+theme_type_variation = &"GameboxResultContent"
+
+[node name="Meta" type="HBoxContainer" parent="Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxResultMeta"
+
+[node name="OutcomeChip" type="PanelContainer" parent="Content/Meta"]
+layout_mode = 2
+theme_type_variation = &"GameboxResultChipPositive"
+
+[node name="Outcome" type="Label" parent="Content/Meta/OutcomeChip"]
+layout_mode = 2
+text = "胜利"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_type_variation = &"GameboxResultChipLabelPositive"
+
+[node name="Spacer" type="Control" parent="Content/Meta"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="Confirmed" type="Label" parent="Content/Meta"]
+layout_mode = 2
+text = "✓ 结果已确认"
+vertical_alignment = 1
+theme_type_variation = &"GameboxResultConfirmed"
 
 [node name="Result" type="Label" parent="Content"]
 layout_mode = 2
-horizontal_alignment = 1
+text = "漂亮的一局"
+autowrap_mode = 2
+theme_type_variation = &"GameboxResultTitle"
 
-[node name="ReturnButton" type="Button" parent="Content"]
-custom_minimum_size = Vector2(96, 96)
+[node name="Support" type="Label" parent="Content"]
 layout_mode = 2
+text = "终局已经保留。"
+autowrap_mode = 2
+theme_type_variation = &"GameboxResultSupport"
+
+[node name="Summary" type="HBoxContainer" parent="Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxResultSummary"
+
+[node name="Item1" type="PanelContainer" parent="Content/Summary"]
+custom_minimum_size = Vector2(260, 112)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"GameboxResultSummaryItem"
+
+[node name="Content" type="VBoxContainer" parent="Content/Summary/Item1"]
+layout_mode = 2
+alignment = 1
+theme_type_variation = &"GameboxResultSummaryItemContent"
+
+[node name="Value" type="Label" parent="Content/Summary/Item1/Content"]
+layout_mode = 2
+text = "2 : 1"
+horizontal_alignment = 1
+theme_type_variation = &"GameboxResultSummaryValue"
+
+[node name="Label" type="Label" parent="Content/Summary/Item1/Content"]
+layout_mode = 2
+text = "最终比分"
+horizontal_alignment = 1
+autowrap_mode = 2
+theme_type_variation = &"GameboxResultSummaryLabel"
+
+[node name="Item2" type="PanelContainer" parent="Content/Summary"]
+custom_minimum_size = Vector2(260, 112)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"GameboxResultSummaryItem"
+
+[node name="Content" type="VBoxContainer" parent="Content/Summary/Item2"]
+layout_mode = 2
+alignment = 1
+theme_type_variation = &"GameboxResultSummaryItemContent"
+
+[node name="Value" type="Label" parent="Content/Summary/Item2/Content"]
+layout_mode = 2
+text = "3 轮"
+horizontal_alignment = 1
+theme_type_variation = &"GameboxResultSummaryValue"
+
+[node name="Label" type="Label" parent="Content/Summary/Item2/Content"]
+layout_mode = 2
+text = "完成轮次"
+horizontal_alignment = 1
+autowrap_mode = 2
+theme_type_variation = &"GameboxResultSummaryLabel"
+
+[node name="Item3" type="PanelContainer" parent="Content/Summary"]
+custom_minimum_size = Vector2(260, 112)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"GameboxResultSummaryItem"
+
+[node name="Content" type="VBoxContainer" parent="Content/Summary/Item3"]
+layout_mode = 2
+alignment = 1
+theme_type_variation = &"GameboxResultSummaryItemContent"
+
+[node name="Value" type="Label" parent="Content/Summary/Item3/Content"]
+layout_mode = 2
+text = "布 › 石头"
+horizontal_alignment = 1
+autowrap_mode = 2
+theme_type_variation = &"GameboxResultSummaryValue"
+
+[node name="Label" type="Label" parent="Content/Summary/Item3/Content"]
+layout_mode = 2
+text = "制胜选择"
+horizontal_alignment = 1
+autowrap_mode = 2
+theme_type_variation = &"GameboxResultSummaryLabel"
+
+[node name="Actions" type="HBoxContainer" parent="Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxResultActions"
+
+[node name="ReviewButton" type="Button" parent="Content/Actions"]
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"GameboxResultReviewButton"
+text = "回看终局"
+
+[node name="ReturnButton" type="Button" parent="Content/Actions"]
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+size_flags_horizontal = 3
 text = "返回大厅"
 
-[connection signal="pressed" from="Content/ReturnButton" to="." method="_on_return_button_pressed"]
+[connection signal="pressed" from="Content/Actions/ReviewButton" to="." method="_on_review_button_pressed"]
+[connection signal="pressed" from="Content/Actions/ReturnButton" to="." method="_on_return_button_pressed"]

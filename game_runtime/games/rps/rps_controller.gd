@@ -33,6 +33,8 @@ var _last_log_signature := ""
 var _terminal_logged := false
 var _reveal_until_ms := 0
 var _reveal_key := ""
+var _reviewing_result := false
+var _presented_result_signature := ""
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -111,6 +113,8 @@ func _ready() -> void:
 	$ResignDialog/Dialog/Content/Actions/CancelButton.text = "继续对局"
 	$ResignDialog/Dialog/Content/Actions/ConfirmButton.text = "认输并结束"
 	$ResultPanel.return_requested.connect(_on_back_pressed)
+	$ResultPanel.review_requested.connect(_on_result_review_requested)
+	$ResultPill.pressed.connect(_on_result_pill_pressed)
 	$ConnectionBanner.return_requested.connect(_on_back_pressed)
 	_refresh_ui()
 	var resolved := _resolve_launch_config()
@@ -329,6 +333,7 @@ func _refresh_ui() -> void:
 	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel.text = _status_support(local_user_id) if has_state else ""
 	_refresh_player_statuses(has_state, terminal)
 	_refresh_reveal(has_state)
+	_refresh_terminal_arena(has_state, terminal)
 	var can_choose: bool = has_state and not terminal and not _awaiting_snapshot \
 		and _connection_state == "connected" and not _is_revealing() and _state.can_request_choice("rock", local_user_id)
 	for entry in _choice_entries():
@@ -340,12 +345,18 @@ func _refresh_ui() -> void:
 	$SafeContent/Layout/MySection/SelectedPanel.visible = not terminal and not _selected_choice().is_empty() and not _is_revealing()
 	if terminal and not _is_revealing():
 		$ResignDialog.close()
-		$ResultPanel.present(_state.status, _state.winner_user_id == local_user_id)
-		$ResultPanel/Content/Details.text = "%s · 最终比分 你 %d VS %d 对手" % [_format_label(_state.format), _state.me_score, _state.opponent_score]
-		$ResultScrim.visible = true
+		var result_signature := "%d|%s|%s" % [_state.revision, _state.status, str(_state.result)]
+		if result_signature != _presented_result_signature:
+			_presented_result_signature = result_signature
+			_reviewing_result = false
+		_present_rps_result(local_user_id)
 	else:
-		$ResultPanel.present("", false)
+		if not terminal:
+			_presented_result_signature = ""
+			_reviewing_result = false
+		$ResultPanel.present_details({})
 		$ResultScrim.visible = false
+		$ResultPill.visible = false
 	_log_safe_state(has_state)
 
 
@@ -457,6 +468,75 @@ func _refresh_reveal(has_state: bool) -> void:
 	$RevealPanel/Content/ResultLabel.text = "本轮平局" if reveal["draw"] else \
 		"本轮获胜" if reveal["roundWinnerUserId"] == _state.me_user_id else "本轮落败"
 	$RevealPanel/Content/ReasonLabel.text = _reveal_reason(my_choice, opponent_choice, bool(reveal["draw"]))
+
+
+func _refresh_terminal_arena(has_state: bool, terminal: bool) -> void:
+	var reveal: Variant = _state.last_reveal if has_state else null
+	var show := terminal and not _is_revealing() and reveal is Dictionary
+	$TerminalArena.visible = show
+	if not show:
+		return
+	var choices: Dictionary = reveal["choices"]
+	var my_choice: String = choices[_state.me_user_id]
+	var opponent_choice: String = choices[_state.opponent_user_id]
+	$TerminalArena/MyChoice/Surface/Icon.texture = _choice_texture(my_choice)
+	$TerminalArena/MyChoice/Label.text = "你 · %s" % _choice_label(my_choice)
+	$TerminalArena/OpponentChoice/Surface/Icon.texture = _choice_texture(opponent_choice)
+	$TerminalArena/OpponentChoice/Label.text = "对手 · %s" % _choice_label(opponent_choice)
+	$TerminalArena/Score.text = "%d : %d" % [_state.me_score, _state.opponent_score]
+	$TerminalArena/FormatChip/Label.text = "%s · 已确认" % _format_label(_state.format)
+
+
+func _present_rps_result(local_user_id: String) -> void:
+	var details: Dictionary
+	if _state.status == "cancelled":
+		details = {"outcome": "cancelled", "title": "对局已取消", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
+	elif _state.status == "abandoned":
+		details = {"outcome": "abandoned", "title": "对局已作废", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
+	else:
+		var local_won: bool = _state.winner_user_id == local_user_id
+		var reveal: Dictionary = _state.last_reveal if _state.last_reveal is Dictionary else {}
+		var choices: Dictionary = reveal.get("choices", {})
+		var my_choice := str(choices.get(_state.me_user_id, ""))
+		var opponent_choice := str(choices.get(_state.opponent_user_id, ""))
+		var round_number := int(reveal.get("round", _state.round_number))
+		details = {
+			"outcome": "won" if local_won else "lost",
+			"title": "你拿下了这场对局" if local_won else "对手先拿到两分",
+			"support": "最后一轮，%s" % _reveal_reason(my_choice, opponent_choice, false),
+			"summary": [
+				{"value": "%d : %d" % [_state.me_score, _state.opponent_score], "label": "最终比分"},
+				{"value": "%d 轮" % round_number, "label": "完成轮次"},
+				{"value": _choice_comparison(my_choice, opponent_choice), "label": "制胜选择" if local_won else "最后一轮"},
+			],
+			"review_available": not reveal.is_empty(),
+		}
+	$ResultPanel.present_details(details)
+	$ResultPanel.visible = not _reviewing_result
+	$ResultScrim.visible = not _reviewing_result
+	$ResultPill.visible = _reviewing_result and bool(details.get("review_available", false))
+
+
+func _on_result_review_requested() -> void:
+	_reviewing_result = true
+	$ResultPanel.visible = false
+	$ResultScrim.visible = false
+	$ResultPill.visible = true
+
+
+func _on_result_pill_pressed() -> void:
+	_reviewing_result = false
+	_presented_result_signature = ""
+	_refresh_ui()
+
+
+static func _choice_comparison(my_choice: String, opponent_choice: String) -> String:
+	var relation := "=" if my_choice == opponent_choice else "›" if _choice_beats(my_choice, opponent_choice) else "‹"
+	return "%s %s %s" % [_choice_label(my_choice), relation, _choice_label(opponent_choice)]
+
+
+static func _choice_beats(left: String, right: String) -> bool:
+	return ["rock:scissors", "scissors:paper", "paper:rock"].has("%s:%s" % [left, right])
 
 
 func _start_reveal(reveal: Dictionary) -> void:

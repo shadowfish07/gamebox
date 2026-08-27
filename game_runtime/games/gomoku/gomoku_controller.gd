@@ -3,8 +3,10 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+const GomokuBoard = preload("res://games/gomoku/gomoku_board.gd")
 const GomokuPreferences = preload("res://games/gomoku/gomoku_preferences.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const INVALID_CELL := Vector2i(-1, -1)
 const TERMINAL_STATUSES := ["finished", "cancelled", "abandoned"]
@@ -62,6 +64,8 @@ var _confirm_move_enabled := false
 var _selected_move := INVALID_CELL
 var _last_go_back_time_ms := -100000
 var _go_back_debounce_ms := GO_BACK_DEBOUNCE_MS
+var _reviewing_result := false
+var _presented_result_signature := ""
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -101,7 +105,10 @@ func set_preferences_store(store: Variant) -> bool:
 
 
 func _ready() -> void:
-	theme = GameboxTheme.create(GameboxTheme.system_prefers_dark())
+	var dark_theme := GameboxTheme.system_prefers_dark()
+	theme = GameboxTheme.create(dark_theme)
+	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
+	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	if _preferences_store == null:
 		_preferences_store = GomokuPreferences.new()
 	_confirm_move_enabled = _preferences_store.load_confirm_move()
@@ -118,6 +125,8 @@ func _ready() -> void:
 	$MoveConfirmationBar/Content/Actions/ConfirmButton.pressed.connect(_on_move_confirm_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResultPanel.return_requested.connect(_on_back_pressed)
+	$ResultPanel.review_requested.connect(_on_result_review_requested)
+	$ResultPill.pressed.connect(_on_result_pill_pressed)
 	$ConnectionLabel.return_requested.connect(_on_back_pressed)
 	_refresh_ui()
 
@@ -396,6 +405,7 @@ func _refresh_ui() -> void:
 	var board: Control = $Board
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
+	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
 	var local_color: String = _local_color(local_user_id) if has_state else ""
 	var opponent_presence := _opponent_presence(local_user_id) if has_state else "unknown"
 	var can_move: bool = has_state and _connection_state == "connected" \
@@ -405,15 +415,17 @@ func _refresh_ui() -> void:
 	if _selected_move != INVALID_CELL and not can_move:
 		_selected_move = INVALID_CELL
 	var pending: Vector2i = INVALID_CELL
+	var winning_line: Array[Vector2i] = []
 	if has_state:
 		var pending_action: Dictionary = _state.pending_action
 		if pending_action.get("type") == "gomoku.move.requested":
 			pending = Vector2i(pending_action.get("x", -1), pending_action.get("y", -1))
-		board.present(_state.board, _last_move, pending, _selected_move)
+		if terminal and _state.status == "finished" and _state.result == "five":
+			winning_line = GomokuBoard.find_winning_line(_state.board)
+		board.present(_state.board, _last_move, pending, _selected_move, winning_line)
 	else:
 		board.present(_empty_board(), INVALID_CELL, INVALID_CELL)
 
-	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
 	var status_text: String = _status_text(local_user_id) if has_state else _connection_text()
 	var show_status := not _force_return and has_state and _connection_state == "connected" \
 		and not _awaiting_snapshot and not terminal
@@ -440,9 +452,18 @@ func _refresh_ui() -> void:
 		or _connection_state != "connected" or _awaiting_snapshot)
 	if terminal:
 		$ResignDialog.close()
-		$ResultPanel.present(_result_panel_status(), _state.winner_user_id == local_user_id)
+		var result_signature := "%d|%s|%s" % [_state.revision, _state.status, str(_state.result)]
+		if result_signature != _presented_result_signature:
+			_presented_result_signature = result_signature
+			_reviewing_result = false
+		_present_gomoku_result(local_user_id, winning_line)
 	else:
-		$ResultPanel.present("", false)
+		_presented_result_signature = ""
+		_reviewing_result = false
+		$TerminalEvidence.visible = false
+		$ResultPanel.present_details({})
+		$ResultScrim.visible = false
+		$ResultPill.visible = false
 	board.set_interactable(can_move and not $SettingsSheet.visible)
 	print("GAMEBOX_BOARD_CANMOVE can=%s conn=%s await=%s status=%s pend_empty=%s next=%s local=%s" \
 		% [can_move, _connection_state, _awaiting_snapshot, _state.status if has_state else "?", \
@@ -456,10 +477,88 @@ func _can_offer_resign() -> bool:
 		and _state.can_request_resign(_client.local_user_id)
 
 
-func _result_panel_status() -> String:
-	if _state.status != "finished":
-		return _state.status
-	return "draw" if _state.result == "draw" else "finished"
+func _present_gomoku_result(local_user_id: String, winning_line: Array[Vector2i]) -> void:
+	var local_color := _local_color(local_user_id)
+	var local_won: bool = _state.winner_user_id == local_user_id
+	var move_count := _stone_count(_state.board)
+	var terminal_cell := _last_move
+	var cell_label := _cell_label(terminal_cell)
+	var line_label := _line_label(winning_line)
+	var details: Dictionary
+	if _state.status == "cancelled":
+		details = {"outcome": "cancelled", "title": "对局已取消", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
+	elif _state.status == "abandoned":
+		details = {"outcome": "abandoned", "title": "对局已作废", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
+	elif _state.result == "draw":
+		details = {
+			"outcome": "draw", "title": "势均力敌", "support": "棋盘已满，双方未分胜负。",
+			"summary": [
+				{"value": "%d 手" % move_count, "label": "本局手数"},
+				{"value": "和棋", "label": "最终结果"},
+				{"value": _color_name(local_color), "label": "你的棋色"},
+			],
+			"review_available": true,
+		}
+	else:
+		details = {
+			"outcome": "won" if local_won else "lost",
+			"title": "漂亮的一局" if local_won else "这局差一点",
+			"support": "你执%s，在第 %d 手连成五子。" % [_color_name(local_color), move_count] if local_won else "对手在第 %d 手连成五子，终局已经保留。" % move_count,
+			"summary": [
+				{"value": "%d 手" % move_count, "label": "本局手数"},
+				{"value": cell_label if terminal_cell != INVALID_CELL else line_label, "label": "制胜落点" if terminal_cell != INVALID_CELL and local_won else "终局落点" if terminal_cell != INVALID_CELL else "获胜连线"},
+				{"value": _color_name(local_color), "label": "你的棋色"},
+			],
+			"review_available": true,
+		}
+	$TerminalEvidence/Content/Labels/Player.text = "你 · %s棋" % _color_name(local_color) if not local_color.is_empty() else "对局已结束"
+	$TerminalEvidence/Content/Labels/Move.text = "%s · %s" % ["最后落子" if local_won else "对手落子", cell_label] if terminal_cell != INVALID_CELL else "获胜连线 · %s" % line_label if not winning_line.is_empty() else "没有产生终局落子"
+	$TerminalEvidence/Content/Piece.text = "●" if not local_color.is_empty() else "—"
+	$TerminalEvidence/Content/Piece.add_theme_color_override(
+		"font_color", GameboxTokens.GAME["black_piece"] if local_color == "black" else GameboxTokens.GAME["white_piece"]
+	)
+	$TerminalEvidence.visible = true
+	$ResultPanel.present_details(details)
+	$ResultPanel.visible = not _reviewing_result
+	$ResultScrim.visible = not _reviewing_result
+	$ResultPill.visible = _reviewing_result and bool(details.get("review_available", false))
+
+
+func _on_result_review_requested() -> void:
+	_reviewing_result = true
+	$ResultPanel.visible = false
+	$ResultScrim.visible = false
+	$ResultPill.visible = true
+
+
+func _on_result_pill_pressed() -> void:
+	_reviewing_result = false
+	_presented_result_signature = ""
+	_refresh_ui()
+
+
+static func _stone_count(board: Array) -> int:
+	var count := 0
+	for cell in board:
+		if cell in [1, 2]:
+			count += 1
+	return count
+
+
+static func _cell_label(cell: Vector2i) -> String:
+	if cell == INVALID_CELL:
+		return "—"
+	return "%s%d" % [String.chr(65 + cell.x), cell.y + 1]
+
+
+static func _line_label(line: Array[Vector2i]) -> String:
+	if line.is_empty():
+		return "—"
+	return "%s–%s" % [_cell_label(line[0]), _cell_label(line[-1])]
+
+
+static func _color_name(color: String) -> String:
+	return "黑" if color == "black" else "白" if color == "white" else "—"
 
 
 func _status_text(local_user_id: String) -> String:

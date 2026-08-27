@@ -1,6 +1,6 @@
 {
   "$schema": "../schema/tokens.schema.json",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "brand": {
     "seed": "#006B60",
     "schemeSource": "flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0"
@@ -110,6 +110,7 @@
     "whitePiece": "#F8FAFC",
     "whitePieceOutline": "#667085",
     "lastMove": "#F04438",
+    "winningLine": "#F4C542",
     "pressedMove": "#7A5AF8",
     "pendingMove": "#0072B2",
     "pendingOverlayAlpha": 0.56

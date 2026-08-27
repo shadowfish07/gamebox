@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 
 abstract final class GameboxTokens {
-  static const version = '2.0.0';
+  static const version = '2.1.0';
   static const brandSeed = Color(0xFF006B60);
 
   static const lightColorScheme = ColorScheme(
@@ -225,6 +225,7 @@ abstract final class GameboxTokens {
     pressedMove: Color(0xFF7A5AF8),
     whitePiece: Color(0xFFF8FAFC),
     whitePieceOutline: Color(0xFF667085),
+    winningLine: Color(0xFFF4C542),
   );
 }
 
@@ -357,6 +358,7 @@ final class GameboxGameColors {
     required this.pressedMove,
     required this.whitePiece,
     required this.whitePieceOutline,
+    required this.winningLine,
   });
 
   final Color blackPiece;
@@ -368,4 +370,5 @@ final class GameboxGameColors {
   final Color pressedMove;
   final Color whitePiece;
   final Color whitePieceOutline;
+  final Color winningLine;
 }

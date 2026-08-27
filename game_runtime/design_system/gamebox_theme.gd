@@ -65,6 +65,32 @@ static func create(dark: bool) -> Theme:
 	theme.set_type_variation("GameboxSnackbarError", "PanelContainer")
 	theme.set_type_variation("GameboxLoadingOverlay", "PanelContainer")
 	theme.set_type_variation("GameboxResultPanel", "PanelContainer")
+	theme.set_type_variation("GameboxResultPanelPositive", "PanelContainer")
+	theme.set_type_variation("GameboxResultPanelNeutral", "PanelContainer")
+	theme.set_type_variation("GameboxResultContent", "VBoxContainer")
+	theme.set_type_variation("GameboxResultMeta", "HBoxContainer")
+	theme.set_type_variation("GameboxResultChipPositive", "PanelContainer")
+	theme.set_type_variation("GameboxResultChipNeutral", "PanelContainer")
+	theme.set_type_variation("GameboxResultChipLabelPositive", "Label")
+	theme.set_type_variation("GameboxResultChipLabelNeutral", "Label")
+	theme.set_type_variation("GameboxResultConfirmed", "Label")
+	theme.set_type_variation("GameboxResultTitle", "Label")
+	theme.set_type_variation("GameboxResultSupport", "Label")
+	theme.set_type_variation("GameboxResultSummary", "HBoxContainer")
+	theme.set_type_variation("GameboxResultSummaryItem", "PanelContainer")
+	theme.set_type_variation("GameboxResultSummaryItemContent", "VBoxContainer")
+	theme.set_type_variation("GameboxResultSummaryValue", "Label")
+	theme.set_type_variation("GameboxResultSummaryLabel", "Label")
+	theme.set_type_variation("GameboxResultActions", "HBoxContainer")
+	theme.set_type_variation("GameboxResultReviewButton", "Button")
+	theme.set_type_variation("GameboxResultEvidence", "PanelContainer")
+	theme.set_type_variation("GameboxResultEvidenceTitle", "Label")
+	theme.set_type_variation("GameboxResultEvidenceSupport", "Label")
+	theme.set_type_variation("GameboxResultEvidencePiece", "Label")
+	theme.set_type_variation("GameboxTerminalChoice", "VBoxContainer")
+	theme.set_type_variation("GameboxTerminalHandSurface", "PanelContainer")
+	theme.set_type_variation("GameboxTerminalChoiceLabel", "Label")
+	theme.set_type_variation("GameboxTerminalScore", "Label")
 	theme.set_type_variation("GameboxDialogScrim", "PanelContainer")
 	theme.set_type_variation("GameboxConfirmationDialog", "PanelContainer")
 	theme.set_type_variation("GameboxDialogTitle", "Label")
@@ -124,6 +150,49 @@ static func create(dark: bool) -> Theme:
 	theme.set_stylebox("panel", "GameboxSnackbarError", _style_box(colors["error_container"], card_radius))
 	theme.set_stylebox("panel", "GameboxLoadingOverlay", _style_box(colors["surface_container_high"], card_radius))
 	theme.set_stylebox("panel", "GameboxResultPanel", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
+	theme.set_stylebox("panel", "GameboxResultPanelPositive", _style_box(colors["surface_container_high"], dialog_radius, colors["primary"]))
+	theme.set_stylebox("panel", "GameboxResultPanelNeutral", _style_box(colors["surface_container_high"], dialog_radius, colors["tertiary"]))
+	theme.set_constant("separation", "GameboxResultContent", _scaled(GameboxTokens.SPACING["layout"]))
+	theme.set_constant("separation", "GameboxResultMeta", _scaled(GameboxTokens.SPACING["layout"]))
+	theme.set_stylebox("panel", "GameboxResultChipPositive", _result_chip_style(colors["primary_container"]))
+	theme.set_stylebox("panel", "GameboxResultChipNeutral", _result_chip_style(colors["tertiary_container"]))
+	theme.set_color("font_color", "GameboxResultChipLabelPositive", colors["on_primary_container"])
+	theme.set_color("font_color", "GameboxResultChipLabelNeutral", colors["on_tertiary_container"])
+	theme.set_font_size("font_size", "GameboxResultChipLabelPositive", _scaled(GameboxTokens.TYPOGRAPHY["label_medium"]["font_size"]))
+	theme.set_font_size("font_size", "GameboxResultChipLabelNeutral", _scaled(GameboxTokens.TYPOGRAPHY["label_medium"]["font_size"]))
+	theme.set_color("font_color", "GameboxResultConfirmed", colors["on_surface_variant"])
+	theme.set_font_size("font_size", "GameboxResultConfirmed", _scaled(GameboxTokens.TYPOGRAPHY["label_small"]["font_size"]))
+	theme.set_color("font_color", "GameboxResultTitle", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxResultTitle", _scaled(GameboxTokens.TYPOGRAPHY["headline_small"]["font_size"]))
+	theme.set_color("font_color", "GameboxResultSupport", colors["on_surface_variant"])
+	theme.set_font_size("font_size", "GameboxResultSupport", body_size)
+	theme.set_constant("separation", "GameboxResultSummary", _scaled(GameboxTokens.SPACING["layout"]))
+	theme.set_stylebox("panel", "GameboxResultSummaryItem", _result_summary_style(colors["surface_container_highest"], card_radius))
+	theme.set_constant("separation", "GameboxResultSummaryItemContent", 0)
+	theme.set_color("font_color", "GameboxResultSummaryValue", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxResultSummaryValue", _scaled(GameboxTokens.TYPOGRAPHY["title_small"]["font_size"]))
+	theme.set_color("font_color", "GameboxResultSummaryLabel", colors["on_surface_variant"])
+	theme.set_font_size("font_size", "GameboxResultSummaryLabel", _scaled(GameboxTokens.TYPOGRAPHY["label_small"]["font_size"]))
+	theme.set_constant("separation", "GameboxResultActions", _scaled(GameboxTokens.SPACING["layout"]))
+	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+		theme.set_color(state, "GameboxResultReviewButton", colors["on_surface"])
+	theme.set_stylebox("normal", "GameboxResultReviewButton", _outlined_button_style(colors["outline"], colors["surface_container_high"]))
+	theme.set_stylebox("hover", "GameboxResultReviewButton", _outlined_button_style(colors["primary"], colors["surface_container_highest"]))
+	theme.set_stylebox("pressed", "GameboxResultReviewButton", _outlined_button_style(colors["primary"], colors["secondary_container"]))
+	theme.set_stylebox("focus", "GameboxResultReviewButton", StyleBoxEmpty.new())
+	theme.set_stylebox("panel", "GameboxResultEvidence", _result_evidence_style(colors["surface_container_high"], card_radius))
+	theme.set_color("font_color", "GameboxResultEvidenceTitle", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxResultEvidenceTitle", _scaled(GameboxTokens.TYPOGRAPHY["title_small"]["font_size"]))
+	theme.set_color("font_color", "GameboxResultEvidenceSupport", colors["on_surface_variant"])
+	theme.set_font_size("font_size", "GameboxResultEvidenceSupport", _scaled(GameboxTokens.TYPOGRAPHY["body_small"]["font_size"]))
+	theme.set_color("font_color", "GameboxResultEvidencePiece", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxResultEvidencePiece", _scaled(GameboxTokens.TYPOGRAPHY["headline_medium"]["font_size"]))
+	theme.set_constant("separation", "GameboxTerminalChoice", _scaled(GameboxTokens.SPACING["layout"]))
+	theme.set_stylebox("panel", "GameboxTerminalHandSurface", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
+	theme.set_color("font_color", "GameboxTerminalChoiceLabel", colors["on_surface_variant"])
+	theme.set_font_size("font_size", "GameboxTerminalChoiceLabel", _scaled(GameboxTokens.TYPOGRAPHY["body_small"]["font_size"]))
+	theme.set_color("font_color", "GameboxTerminalScore", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxTerminalScore", _scaled(GameboxTokens.TYPOGRAPHY["display_small"]["font_size"]))
 	theme.set_stylebox("panel", "GameboxDialogScrim", _solid_style_box(Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])))
 	theme.set_stylebox("panel", "GameboxConfirmationDialog", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
 	theme.set_stylebox("panel", "GameboxSettingsSheet", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
@@ -212,6 +281,37 @@ static func _connection_banner_style(fill: Color, radius: float) -> StyleBoxFlat
 	box.content_margin_top = 0.0
 	box.content_margin_bottom = 0.0
 	return box
+
+
+static func _result_chip_style(fill: Color) -> StyleBoxFlat:
+	var box := _style_box(fill, GameboxTokens.SHAPE["full"])
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_top = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["base"])
+	return box
+
+
+static func _result_summary_style(fill: Color, radius: float) -> StyleBoxFlat:
+	var box := _style_box(fill, radius)
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_top = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["base"])
+	return box
+
+
+static func _result_evidence_style(fill: Color, radius: float) -> StyleBoxFlat:
+	var box := _style_box(fill, radius)
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_top = _scaled(GameboxTokens.SPACING["layout"])
+	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["layout"])
+	return box
+
+
+static func _outlined_button_style(border: Color, fill: Color) -> StyleBoxFlat:
+	return _style_box(fill, GameboxTokens.SHAPE["full"], border)
 
 
 static func _solid_style_box(fill: Color) -> StyleBoxFlat:

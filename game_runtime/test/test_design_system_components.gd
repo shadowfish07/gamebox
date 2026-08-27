@@ -325,14 +325,18 @@ static func _result_contract() -> bool:
 	var panel := ResultPanelScene.instantiate()
 	if not _check(panel.name == "GameboxResultPanel", "result root path changed") \
 		or not _check(panel.has_node("Content/Result"), "result label path changed") \
-		or not _check(panel.has_node("Content/ReturnButton"), "result action path changed"):
+		or not _check(panel.has_node("Content/Meta/OutcomeChip/Outcome"), "result outcome chip path changed") \
+		or not _check(panel.has_node("Content/Support"), "result support path changed") \
+		or not _check(panel.has_node("Content/Summary"), "result summary path changed") \
+		or not _check(panel.has_node("Content/Actions/ReviewButton"), "result review path changed") \
+		or not _check(panel.has_node("Content/Actions/ReturnButton"), "result action path changed"):
 		panel.free()
 		return false
 	var label := panel.get_node("Content/Result") as Label
 	for sample in [
-		{"status": "finished", "local_won": true, "expected": "你赢了"},
-		{"status": "finished", "local_won": false, "expected": "你输了"},
-		{"status": "draw", "local_won": false, "expected": "和棋"},
+		{"status": "finished", "local_won": true, "expected": "漂亮的一局"},
+		{"status": "finished", "local_won": false, "expected": "这局差一点"},
+		{"status": "draw", "local_won": false, "expected": "势均力敌"},
 		{"status": "cancelled", "local_won": false, "expected": "对局已取消"},
 		{"status": "abandoned", "local_won": false, "expected": "对局已作废"},
 	]:
@@ -340,11 +344,35 @@ static func _result_contract() -> bool:
 		if not _check(panel.visible and label.text == sample["expected"], "result mapping changed for %s" % sample["status"]):
 			panel.free()
 			return false
+	panel.present_details({
+		"outcome": "won",
+		"title": "你拿下了这场对局",
+		"support": "最后一轮，布包住石头。",
+		"summary": [
+			{"value": "2 : 1", "label": "最终比分"},
+			{"value": "3 轮", "label": "完成轮次"},
+			{"value": "布 › 石头", "label": "制胜选择"},
+		],
+		"review_available": true,
+	})
+	if not _check((panel.get_node("Content/Meta/OutcomeChip/Outcome") as Label).text == "胜利", "result outcome chip did not bind") \
+		or not _check((panel.get_node("Content/Support") as Label).text == "最后一轮，布包住石头。", "result support did not bind") \
+		or not _check((panel.get_node("Content/Summary/Item1/Content/Value") as Label).text == "2 : 1", "result first summary did not bind") \
+		or not _check((panel.get_node("Content/Summary/Item3/Content/Label") as Label).text == "制胜选择", "result third summary did not bind") \
+		or not _check((panel.get_node("Content/Actions/ReviewButton") as Button).visible, "result review action stayed hidden"):
+		panel.free()
+		return false
 	var return_calls: Array[int] = []
+	var review_calls: Array[int] = []
 	panel.return_requested.connect(func() -> void: return_calls.append(1))
-	(panel.get_node("Content/ReturnButton") as Button).pressed.emit()
+	panel.review_requested.connect(func() -> void: review_calls.append(1))
+	(panel.get_node("Content/Actions/ReviewButton") as Button).pressed.emit()
+	(panel.get_node("Content/Actions/ReturnButton") as Button).pressed.emit()
 	var result := _check(return_calls.size() == 1, "result return signal did not fire exactly once") \
-		and _check((panel.get_node("Content/ReturnButton") as Button).text == "返回大厅", "result action copy changed")
+		and _check(review_calls.size() == 1, "result review signal did not fire exactly once") \
+		and _check((panel.get_node("Content/Actions/ReturnButton") as Button).text == "返回大厅", "result action copy changed") \
+		and _check((panel.get_node("Content/Actions/ReviewButton") as Button).custom_minimum_size.y >= 96.0, "result review target below 48dp") \
+		and _check((panel.get_node("Content/Actions/ReturnButton") as Button).custom_minimum_size.y >= 96.0, "result return target below 48dp")
 	panel.free()
 	return result
 

@@ -181,6 +181,7 @@ const _gameColorRoles = {
   'whitePiece',
   'whitePieceOutline',
   'lastMove',
+  'winningLine',
   'pressedMove',
   'pendingMove',
 };

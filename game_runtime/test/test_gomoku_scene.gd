@@ -75,7 +75,7 @@ static func _uses_lightweight_shell() -> bool:
 		and _check((dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button).text == "确认认输" \
 			and (dialog.get_node("Dialog/Content/Actions/CancelButton") as Button).text == "继续对局", "danger actions changed") \
 		and _check(loading.has_method("set_loading") and loading.has_node("Content/Message"), "public loading component is not mounted") \
-		and _check(result_panel.has_method("present") and result_panel.has_node("Content/ReturnButton"), "public result component is not mounted") \
+		and _check(result_panel.has_method("present_details") and result_panel.has_node("Content/Actions/ReturnButton"), "public result component is not mounted") \
 		and _check(scene.get_node("Board").has_signal("cell_pressed"), "cell_pressed automation contract changed") \
 		and _check(InputMap.has_action("ui_cancel"), "ui_cancel input action changed")
 	return _cleanup(scene, result)
@@ -182,11 +182,11 @@ static func _renders_presence_updates() -> bool:
 
 static func _renders_terminal_states() -> bool:
 	var five := _five_board()
-	if not await _assert_terminal(BLACK_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "你赢了"):
+	if not await _assert_terminal(BLACK_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "漂亮的一局"):
 		return false
-	if not await _assert_terminal(WHITE_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "你输了"):
+	if not await _assert_terminal(WHITE_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "这局差一点"):
 		return false
-	if not await _assert_terminal(BLACK_ID, _snapshot(225, _draw_board(), "finished", "white", "draw", null), "和棋"):
+	if not await _assert_terminal(BLACK_ID, _snapshot(225, _draw_board(), "finished", "white", "draw", null), "势均力敌"):
 		return false
 	if not await _assert_terminal(BLACK_ID, _snapshot(1, _empty_board(), "cancelled", "black", null, null), "对局已取消"):
 		return false
@@ -357,14 +357,29 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	client.accept_snapshot(snapshot)
+	await (Engine.get_main_loop() as SceneTree).process_frame
 	if not _check(scene.has_node("ResultPanel/Content/Result"), "terminal result panel path is missing"):
 		return _cleanup(scene)
+	var finished: bool = snapshot["payload"]["status"] == "finished"
+	var has_winning_line: bool = snapshot["payload"].get("result") == "five"
 	var result := _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "terminal outcome duplicates its result panel") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
 		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
-		and _check(scene.get_node("ResultPanel").size.y <= 300.0, "terminal result panel keeps excessive empty height: %s" % str(scene.get_node("ResultPanel").size.y)) \
+		and _check(scene.get_node("ResultPanel").size.y >= 520.0 and scene.get_node("ResultPanel").size.y <= 720.0, "terminal result panel does not match the approved bottom card: size=%s root=%s pos=%s offsets=%s/%s" % [scene.get_node("ResultPanel").size, scene.size, scene.get_node("ResultPanel").position, scene.get_node("ResultPanel").offset_top, scene.get_node("ResultPanel").offset_bottom]) \
+		and _check(scene.get_node("ResultScrim").visible, "terminal result scrim stayed hidden") \
+		and _check(scene.get_node("TerminalEvidence").visible, "terminal evidence card stayed hidden") \
+		and _check((scene.get_node("TerminalEvidence/Content/Labels/Move") as Label).text == ("获胜连线 · A1–E1" if has_winning_line else "没有产生终局落子"), "terminal evidence invented an unavailable last move") \
+		and _check(not scene.get_node("ResultPill").visible, "terminal result pill duplicated the open card") \
+		and _check((scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).visible == finished, "terminal review availability did not match preserved evidence") \
 		and _check(not scene.get_node("TopNavigation/ActionButton").visible, "settings action remained visible after terminal state") \
 		and _check(not scene.has_node("ResignButton"), "terminal state retained the obsolete resign control")
+	if result and finished:
+		(scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).pressed.emit()
+		result = _check(not scene.get_node("ResultPanel").visible and not scene.get_node("ResultScrim").visible, "review action did not reveal the terminal board") \
+			and _check(scene.get_node("ResultPill").visible, "review action did not retain a result return path") \
+			and _check((scene.get_node("Board") as Control).winning_cells.size() == (5 if has_winning_line else 0), "terminal board winning-line evidence did not match the authoritative result")
+		(scene.get_node("ResultPill") as Button).pressed.emit()
+		result = result and _check(scene.get_node("ResultPanel").visible and scene.get_node("ResultScrim").visible, "result pill did not restore the result card")
 	return _cleanup(scene, result)
 
 
@@ -497,10 +512,10 @@ static func _terminal_return_is_non_destructive() -> bool:
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	var quit_calls: Array[int] = harness["quit_calls"]
-	if not _check(scene.has_node("ResultPanel/Content/ReturnButton"), "terminal return path is missing"):
+	if not _check(scene.has_node("ResultPanel/Content/Actions/ReturnButton"), "terminal return path is missing"):
 		return _cleanup(scene)
 	client.accept_snapshot(_snapshot(9, _five_board(), "finished", "white", "five", BLACK_ID))
-	(scene.get_node("ResultPanel/Content/ReturnButton") as Button).pressed.emit()
+	(scene.get_node("ResultPanel/Content/Actions/ReturnButton") as Button).pressed.emit()
 	var result := _check(quit_calls.size() == 1, "result return did not return exactly once") \
 		and _check(client.resign_requests == 0, "result return submitted resignation")
 	return _cleanup(scene, result)

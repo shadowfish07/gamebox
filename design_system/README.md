@@ -27,6 +27,10 @@ bash tool/verify_design_system.sh
 - Adding a compatible role or changing a locked token value increments at least the minor version and regenerates both mappings.
 - Fixing generator implementation without changing generated output or its public interface increments the patch version.
 
+### 2.1.0 winning-line role
+
+The additive `game.winningLine` role gives authoritative Gomoku terminal lines one shared, generated highlight color in Flutter and Godot. Existing consumers require no migration.
+
 ### 2.0.0 confirmation migration
 
 The dangerous-confirmation component now renders as an in-scene modal `Control` instead of a native `ConfirmationDialog` window so packaged Android games do not show duplicate window chrome. Consumers open it with `open()`, close it with `close()`, and continue to observe the `confirmed` signal. Button automation paths are now `Dialog/Content/Actions/ConfirmButton` and `Dialog/Content/Actions/CancelButton`. This root type and method change is why the design-system version advances to `2.0.0`.

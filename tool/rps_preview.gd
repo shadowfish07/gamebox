@@ -3,12 +3,16 @@ extends SceneTree
 # Development-only desktop renderer for visual RPS iteration.  This file lives
 # outside game_runtime so it is not packaged into the Android game.
 const RPS_SCENE := preload("res://games/rps/rps_scene.tscn")
+const GAMEBOX_THEME := preload("res://design_system/gamebox_theme.gd")
+const GAMEBOX_TOKENS := preload("res://design_system/generated/gamebox_tokens.gd")
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const ME := "22222222-2222-4222-8222-222222222222"
 const OPPONENT := "33333333-3333-4333-8333-333333333333"
 
 var _state_name := "ready"
 var _viewport := Vector2i(720, 1600)
+var _screenshot_path := ""
+var _theme_name := "system"
 
 
 class PreviewClient:
@@ -66,16 +70,20 @@ class PreviewClient:
 			connection_state = "connected"
 			connection_state_changed.emit(connection_state)
 			snapshot_received.emit({})
-		if _state_name in ["reveal", "finished"]:
+		if _state_name == "reveal":
 			# Leave the base state on screen long enough for the desktop window to
 			# become visible, then play the same timed reveal as production.
 			await (Engine.get_main_loop() as SceneTree).create_timer(1.5).timeout
-			_state.apply_event(_reveal_event(_state_name == "finished"))
+			_state.apply_event(_reveal_event(false))
 			event_received.emit({})
 
 	func _snapshot() -> Dictionary:
-		var me_locked := _state_name in ["locked", "resign", "reveal", "finished"]
-		var opponent_locked := _state_name in ["opponent_locked", "resign", "reveal", "finished"]
+		var terminal := _state_name in ["finished", "finished_win", "finished_loss", "review_win", "review_loss"]
+		var local_won := _state_name not in ["finished_loss", "review_loss"]
+		if terminal:
+			return _terminal_snapshot(local_won)
+		var me_locked := _state_name in ["locked", "resign", "reveal"]
+		var opponent_locked := _state_name in ["opponent_locked", "resign", "reveal"]
 		var me := {"userId": ME, "score": 0, "locked": me_locked}
 		if me_locked:
 			me["choice"] = "paper"
@@ -87,6 +95,30 @@ class PreviewClient:
 				"me": me,
 				"opponent": {"userId": OPPONENT, "score": 0, "locked": opponent_locked},
 				"lastReveal": null, "winnerUserId": null, "result": null,
+			},
+		}
+
+	func _terminal_snapshot(local_won: bool) -> Dictionary:
+		var my_choice := "paper" if local_won else "scissors"
+		var opponent_choice := "rock"
+		var my_score := 2 if local_won else 1
+		var opponent_score := 1 if local_won else 2
+		var winner := ME if local_won else OPPONENT
+		return {
+			"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
+			"revision": 4, "type": "platform.snapshot",
+			"payload": {
+				"status": "finished", "format": "best_of_three", "round": 3,
+				"me": {"userId": ME, "score": my_score, "locked": false},
+				"opponent": {"userId": OPPONENT, "score": opponent_score, "locked": false},
+				"lastReveal": {
+					"round": 3,
+					"choices": {ME: my_choice, OPPONENT: opponent_choice},
+					"roundWinnerUserId": winner, "draw": false,
+					"scores": {ME: my_score, OPPONENT: opponent_score},
+					"matchWinnerUserId": winner, "result": "rounds",
+				},
+				"winnerUserId": winner, "result": "rounds",
 			},
 		}
 
@@ -124,10 +156,15 @@ func _mount() -> void:
 		return
 	scene.set_match_client_factory(func() -> PreviewClient: return client)
 	get_root().add_child(scene)
+	_apply_preview_theme(scene)
 	if _state_name == "resign":
 		scene.call_deferred("_on_resign_pressed")
 	elif _state_name == "menu":
 		_show_menu.call_deferred(scene)
+	elif _state_name in ["review_win", "review_loss"]:
+		_show_review.call_deferred(scene)
+	if not _screenshot_path.is_empty():
+		_capture_screenshot.call_deferred()
 
 
 func _show_menu(scene: Control) -> void:
@@ -135,6 +172,35 @@ func _show_menu(scene: Control) -> void:
 	var action := scene.get_node("SafeContent/Layout/TopNavigation/ActionButton") as Button
 	action.pressed.emit()
 	await process_frame
+
+
+func _show_review(scene: Control) -> void:
+	await process_frame
+	await process_frame
+	(scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).pressed.emit()
+	await process_frame
+
+
+func _capture_screenshot() -> void:
+	for _frame in 5:
+		await process_frame
+	await RenderingServer.frame_post_draw
+	var error := get_root().get_texture().get_image().save_png(_screenshot_path)
+	if error != OK:
+		push_error("RPS preview screenshot failed: %s" % error_string(error))
+		quit(1)
+		return
+	print("RPS preview saved: %s" % _screenshot_path)
+	quit()
+
+
+func _apply_preview_theme(scene: Control) -> void:
+	if _theme_name == "system":
+		return
+	var dark := _theme_name == "dark"
+	scene.theme = GAMEBOX_THEME.create(dark)
+	var colors: Dictionary = GAMEBOX_TOKENS.DARK if dark else GAMEBOX_TOKENS.LIGHT
+	(scene.get_node("ResultScrim") as ColorRect).color = Color(colors["scrim"], GAMEBOX_TOKENS.COMPONENT["dialog_scrim_opacity"])
 
 
 func _parse_arguments(args: PackedStringArray) -> void:
@@ -147,7 +213,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["connecting", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "reconnecting", "syncing", "failed", "restored"]:
+				if _state_name not in ["connecting", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "finished_win", "finished_loss", "review_win", "review_loss", "reconnecting", "syncing", "failed", "restored"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
@@ -155,6 +221,18 @@ func _parse_arguments(args: PackedStringArray) -> void:
 				_viewport = _parse_viewport(args[index + 1])
 				if _viewport == Vector2i.ZERO:
 					push_error("Viewport must be WIDTHxHEIGHT")
+					quit(2)
+					return
+			"--screenshot":
+				_screenshot_path = args[index + 1]
+				if _screenshot_path.is_empty():
+					push_error("Screenshot path must not be empty")
+					quit(2)
+					return
+			"--theme":
+				_theme_name = args[index + 1]
+				if _theme_name not in ["system", "light", "dark"]:
+					push_error("Theme must be system, light, or dark")
 					quit(2)
 					return
 			_:
