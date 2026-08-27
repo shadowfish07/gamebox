@@ -79,6 +79,10 @@ func _ready() -> void:
 	$RevealPanel/Content/ResultLabel.add_theme_font_size_override(
 		"font_size", GameboxTokens.TYPOGRAPHY["headline_small"]["font_size"] * GameboxTheme.LOGICAL_SCALE
 	)
+	for button in [$SafeContent/Layout/TopNavigation/BackButton, $SafeContent/Layout/TopNavigation/MoreButton]:
+		button.add_theme_color_override("font_color", colors["on_surface"])
+		button.add_theme_color_override("font_hover_color", colors["on_surface"])
+		button.add_theme_color_override("font_pressed_color", colors["on_surface"])
 	$SafeContent/Layout/TopNavigation/BackButton.pressed.connect(_on_back_pressed)
 	$SafeContent/Layout/TopNavigation/MoreButton.pressed.connect(_on_resign_pressed)
 	for entry in _choice_entries():
