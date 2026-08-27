@@ -29,6 +29,9 @@ class PreviewClient:
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, state: Variant, _game_id: String) -> bool:
 		_state = state
+		if _state_name == "connecting":
+			connection_state = "connecting"
+			return true
 		_state.apply_snapshot(_snapshot())
 		if _state_name == "pending":
 			_state.mark_pending_choice("44444444-4444-4444-8444-444444444444", "paper", ME)
@@ -78,7 +81,7 @@ class PreviewClient:
 			me["choice"] = "paper"
 		return {
 			"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
-			"revision": 1 if _state_name == "resign" else 0, "type": "platform.snapshot",
+			"revision": 1 if _state_name in ["resign", "menu"] else 0, "type": "platform.snapshot",
 			"payload": {
 				"status": "active", "format": "best_of_three", "round": 1,
 				"me": me,
@@ -123,10 +126,15 @@ func _mount() -> void:
 	get_root().add_child(scene)
 	if _state_name == "resign":
 		scene.call_deferred("_on_resign_pressed")
-	elif _state_name == "restored":
-		await process_frame
-		await process_frame
-		(scene.get_node("ConnectionBanner/AutoHideTimer") as Timer).stop()
+	elif _state_name == "menu":
+		_show_menu.call_deferred(scene)
+
+
+func _show_menu(scene: Control) -> void:
+	await process_frame
+	var action := scene.get_node("SafeContent/Layout/TopNavigation/ActionButton") as Button
+	action.pressed.emit()
+	await process_frame
 
 
 func _parse_arguments(args: PackedStringArray) -> void:
@@ -139,7 +147,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["ready", "pending", "locked", "opponent_locked", "resign", "reveal", "finished", "reconnecting", "syncing", "failed", "restored"]:
+				if _state_name not in ["connecting", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "reconnecting", "syncing", "failed", "restored"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return

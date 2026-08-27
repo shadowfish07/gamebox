@@ -3,6 +3,7 @@ extends RefCounted
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 const BackButtonScene = preload("res://design_system/components/gamebox_back_button.tscn")
+const PortraitTopBarScene = preload("res://design_system/components/gamebox_portrait_top_bar.tscn")
 const ConnectionBannerScene = preload("res://design_system/components/gamebox_connection_banner.tscn")
 const SnackbarScene = preload("res://design_system/components/gamebox_snackbar.tscn")
 const ConfirmationDialogScene = preload("res://design_system/components/gamebox_confirmation_dialog.tscn")
@@ -13,8 +14,9 @@ const ResultPanelScene = preload("res://design_system/components/gamebox_result_
 static func cases() -> Array:
 	return [
 		{"name": "design system back button keeps target copy and states", "run": _back_button_contract},
-		{"name": "design system connection banner maps transient states", "run": _connection_states},
-		{"name": "design system restored connection banner auto hides", "run": _connection_restored_auto_hides},
+		{"name": "design system portrait top bar owns shared navigation layout", "run": _portrait_top_bar_contract},
+		{"name": "design system connection banner maps shared compact states", "run": _connection_states},
+		{"name": "design system connection failure offers return", "run": _connection_failure_returns},
 		{"name": "design system semantic surfaces resolve paired colors", "run": _semantic_surface_colors},
 		{"name": "design system snackbar presents and times out", "run": _snackbar_lifecycle},
 		{"name": "design system snackbar passes clicks through its subtree", "run": _snackbar_mouse_passthrough},
@@ -22,6 +24,49 @@ static func cases() -> Array:
 		{"name": "design system loading overlay locks input with visible copy", "run": _loading_contract},
 		{"name": "design system result panel maps outcomes and returns", "run": _result_contract},
 	]
+
+
+static func _portrait_top_bar_contract() -> bool:
+	var top_bar := PortraitTopBarScene.instantiate()
+	var back_calls: Array[int] = []
+	var menu_actions: Array[String] = []
+	top_bar.back_requested.connect(func() -> void: back_calls.append(1))
+	top_bar.menu_action_requested.connect(func(action_id: String) -> void: menu_actions.append(action_id))
+	top_bar.present("五子棋", "轮到你落子", "⋯", true)
+	top_bar.set_menu_items([
+		{"id": "settings", "label": "对局设置"},
+		{"id": "resign", "label": "认输", "danger": true},
+	])
+	var back := top_bar.get_node("BackButton") as Button
+	var title := top_bar.get_node("TitleGroup/TitleLabel") as Label
+	var subtitle := top_bar.get_node("TitleGroup/SubtitleLabel") as Label
+	var action := top_bar.get_node("ActionButton") as Button
+	var menu_root := top_bar.get_node("MenuLayer/MenuRoot") as Control
+	var menu_items := top_bar.get_node("MenuLayer/MenuRoot/MenuPanel/Items") as VBoxContainer
+	back.pressed.emit()
+	action.pressed.emit()
+	var settings_item := menu_items.get_child(0) as Button
+	var resign_item := menu_items.get_child(1) as Button
+	settings_item.pressed.emit()
+	action.pressed.emit()
+	resign_item.pressed.emit()
+	var result := _check(top_bar.custom_minimum_size.y >= 160.0, "portrait top bar height changed") \
+		and _check(back.custom_minimum_size.x >= 96.0 and back.custom_minimum_size.y >= 96.0, "portrait back target below 48dp") \
+		and _check(action.custom_minimum_size.x >= 96.0 and action.custom_minimum_size.y >= 96.0, "portrait action target below 48dp") \
+		and _check(back.flat and action.flat, "portrait navigation actions must stay visually lightweight") \
+		and _check(title.text == "五子棋" and subtitle.text == "轮到你落子", "portrait title content did not bind") \
+		and _check(action.visible and action.text == "⋯", "portrait action did not bind") \
+		and _check(menu_items.get_child_count() == 2 and settings_item.text == "对局设置" and resign_item.text == "认输", "portrait overflow menu items did not bind") \
+		and _check(settings_item.custom_minimum_size.y >= 96.0 and resign_item.custom_minimum_size.y >= 96.0, "overflow menu target below 48dp") \
+		and _check(resign_item.theme_type_variation == &"GameboxOverflowMenuDangerItem", "destructive menu item lacks semantic styling") \
+		and _check(not menu_root.visible, "menu remained open after choosing an action") \
+		and _check(back_calls.size() == 1 and menu_actions == ["settings", "resign"], "portrait top bar menu actions did not route exactly once")
+	top_bar.set_subtitle("等待对手")
+	top_bar.set_action_visible(false)
+	result = result and _check(subtitle.text == "等待对手", "portrait subtitle did not update") \
+		and _check(not action.visible, "portrait action visibility did not update")
+	top_bar.free()
+	return result
 
 
 static func _back_button_contract() -> bool:
@@ -47,54 +92,48 @@ static func _connection_states() -> bool:
 		banner.free()
 		return false
 	var message := banner.get_node("Content/Message") as Label
-	banner.present("connecting", "")
-	if not _check(banner.visible and message.text == "正在连接…", "connecting state changed"):
+	var return_button := banner.get_node("Content/ReturnButton") as Button
+	if not _check(return_button.custom_minimum_size.x >= 96.0 and return_button.custom_minimum_size.y >= 96.0, "connection return target below 48dp"):
 		banner.free()
 		return false
-	banner.present("reconnecting", "")
-	if not _check(banner.visible and message.text == "正在重新连接…", "reconnecting state changed"):
+	if not _check(return_button.flat, "connection return action must use a text-button presentation"):
 		banner.free()
 		return false
-	banner.present_recovery("reconnecting", "已确认的出拳状态会保留")
-	if not _check(banner.visible and message.text == "正在恢复连接\n已确认的出拳状态会保留", "recovery reconnect state changed"):
+	banner.present("connecting")
+	if not _check(banner.visible and message.text == "连接中…", "connecting state changed"):
 		banner.free()
 		return false
-	banner.present_recovery("syncing", "正在同步最新对局状态…")
-	if not _check(banner.visible and message.text == "连接已恢复\n正在同步最新对局状态…", "recovery syncing state changed"):
+	banner.present("reconnecting")
+	if not _check(banner.visible and message.text == "重连中…", "reconnecting state changed"):
 		banner.free()
 		return false
-	banner.present_recovery("restored", "状态已同步，可以继续操作")
-	if not _check(banner.visible and message.text == "已恢复对局\n状态已同步，可以继续操作", "recovery restored state changed"):
+	banner.present("syncing")
+	if not _check(banner.visible and message.text == "同步中…", "syncing state changed"):
 		banner.free()
 		return false
-	banner.present_recovery("failed", "请返回大厅后重新进入对局")
-	if not _check(banner.theme_type_variation == &"GameboxSnackbarError", "recovery failure container did not use error semantics") \
-		or not _check(message.theme_type_variation == &"GameboxOnErrorContainer", "recovery failure copy did not use error semantics"):
+	banner.present("failed")
+	if not _check(banner.theme_type_variation == &"GameboxConnectionBannerError", "recovery failure container did not use compact error semantics") \
+		or not _check(message.theme_type_variation == &"GameboxOnErrorContainer", "recovery failure copy did not use error semantics") \
+		or not _check(message.text == "连接失败", "failure exposed duplicated detail") \
+		or not _check(return_button.visible, "failure return action stayed hidden"):
 		banner.free()
 		return false
-	banner.present("failed", "请检查网络后重试")
-	if not _check(banner.visible and message.text == "连接失败 · 请检查网络后重试", "failed state changed"):
-		banner.free()
-		return false
-	banner.present("connected", "")
+	banner.present("connected")
 	var result := _check(not banner.visible and message.text.is_empty(), "connected state stayed prominent") \
-		and _check(banner.theme_type_variation == &"GameboxConnectionBanner", "connected state retained failure tone")
+		and _check(banner.theme_type_variation == &"GameboxConnectionBanner", "connected state retained failure tone") \
+		and _check(not return_button.visible, "connected state retained failure action")
 	banner.free()
 	return result
 
 
-static func _connection_restored_auto_hides() -> bool:
-	var tree := Engine.get_main_loop() as SceneTree
+static func _connection_failure_returns() -> bool:
 	var banner := ConnectionBannerScene.instantiate()
-	tree.root.add_child(banner)
-	(banner.get_node("AutoHideTimer") as Timer).wait_time = 0.05
-	banner.present_recovery("restored", "状态已同步，可以继续操作")
-	if not _check(banner.visible, "restored banner did not become visible"):
-		banner.free()
-		return false
-	await tree.create_timer(0.08).timeout
-	await tree.process_frame
-	var result := _check(not banner.visible, "restored banner did not auto hide")
+	var return_calls: Array[int] = []
+	banner.return_requested.connect(func() -> void: return_calls.append(1))
+	banner.present("failed")
+	(banner.get_node("Content/ReturnButton") as Button).pressed.emit()
+	var result := _check(return_calls.size() == 1, "failure return signal did not fire exactly once") \
+		and _check((banner.get_node("Content/ReturnButton") as Button).text == "返回大厅", "failure return copy changed")
 	banner.free()
 	return result
 

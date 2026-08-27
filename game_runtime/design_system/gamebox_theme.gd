@@ -47,6 +47,20 @@ static func create(dark: bool) -> Theme:
 	theme.set_color("font_color", "GameboxOnInverseSurface", colors["on_inverse_surface"])
 	theme.set_color("font_color", "GameboxOnErrorContainer", colors["on_error_container"])
 	theme.set_type_variation("GameboxConnectionBanner", "PanelContainer")
+	theme.set_type_variation("GameboxPortraitTopBar", "HBoxContainer")
+	theme.set_type_variation("GameboxPortraitTitleGroup", "VBoxContainer")
+	theme.set_type_variation("GameboxPortraitTitle", "Label")
+	theme.set_type_variation("GameboxPortraitSubtitle", "Label")
+	theme.set_type_variation("GameboxPortraitBackButton", "Button")
+	theme.set_type_variation("GameboxPortraitActionButton", "Button")
+	theme.set_type_variation("GameboxOverflowMenu", "PanelContainer")
+	theme.set_type_variation("GameboxOverflowMenuItems", "VBoxContainer")
+	theme.set_type_variation("GameboxOverflowMenuItem", "Button")
+	theme.set_type_variation("GameboxOverflowMenuDangerItem", "Button")
+	theme.set_type_variation("GameboxOverflowMenuDismissButton", "Button")
+	theme.set_type_variation("GameboxConnectionBannerError", "PanelContainer")
+	theme.set_type_variation("GameboxConnectionBannerContent", "HBoxContainer")
+	theme.set_type_variation("GameboxConnectionActionButton", "Button")
 	theme.set_type_variation("GameboxSnackbar", "PanelContainer")
 	theme.set_type_variation("GameboxSnackbarError", "PanelContainer")
 	theme.set_type_variation("GameboxLoadingOverlay", "PanelContainer")
@@ -70,7 +84,42 @@ static func create(dark: bool) -> Theme:
 	theme.set_type_variation("GameboxSettingsTitle", "Label")
 	theme.set_type_variation("GameboxSettingsDescription", "Label")
 	theme.set_type_variation("GameboxSwitchVisual", "Control")
-	theme.set_stylebox("panel", "GameboxConnectionBanner", _style_box(colors["secondary_container"], card_radius))
+	theme.set_stylebox("panel", "GameboxConnectionBanner", _connection_banner_style(colors["secondary_container"], card_radius))
+	theme.set_constant("separation", "GameboxPortraitTopBar", _scaled(GameboxTokens.SPACING["base"]))
+	theme.set_constant("separation", "GameboxPortraitTitleGroup", 0)
+	theme.set_color("font_color", "GameboxPortraitTitle", colors["on_surface"])
+	theme.set_font_size("font_size", "GameboxPortraitTitle", _scaled(GameboxTokens.TYPOGRAPHY["title_large"]["font_size"]))
+	theme.set_color("font_color", "GameboxPortraitSubtitle", colors["on_surface_variant"])
+	theme.set_font_size("font_size", "GameboxPortraitSubtitle", body_size)
+	for button_type in ["GameboxPortraitBackButton", "GameboxPortraitActionButton"]:
+		for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+			theme.set_color(state, button_type, colors["on_surface"])
+		theme.set_stylebox("normal", button_type, StyleBoxEmpty.new())
+		theme.set_stylebox("hover", button_type, _style_box(colors["surface_container_high"], GameboxTokens.SHAPE["full"]))
+		theme.set_stylebox("pressed", button_type, _style_box(colors["surface_container_highest"], GameboxTokens.SHAPE["full"]))
+		theme.set_stylebox("focus", button_type, StyleBoxEmpty.new())
+	theme.set_font_size("font_size", "GameboxPortraitBackButton", _scaled(GameboxTokens.TYPOGRAPHY["headline_medium"]["font_size"]))
+	theme.set_font_size("font_size", "GameboxPortraitActionButton", label_size)
+	theme.set_stylebox("panel", "GameboxOverflowMenu", _style_box(colors["surface_container_high"], card_radius, colors["outline_variant"]))
+	theme.set_constant("separation", "GameboxOverflowMenuItems", 0)
+	for menu_item_type in ["GameboxOverflowMenuItem", "GameboxOverflowMenuDangerItem"]:
+		theme.set_font_size("font_size", menu_item_type, label_size)
+		theme.set_color("font_color", menu_item_type, colors["on_surface"])
+		theme.set_color("font_hover_color", menu_item_type, colors["on_surface"])
+		theme.set_color("font_pressed_color", menu_item_type, colors["on_surface"])
+		theme.set_color("font_disabled_color", menu_item_type, colors["on_surface_variant"])
+		theme.set_stylebox("normal", menu_item_type, StyleBoxEmpty.new())
+		theme.set_stylebox("hover", menu_item_type, _style_box(colors["surface_container_highest"], card_radius))
+		theme.set_stylebox("pressed", menu_item_type, _style_box(colors["secondary_container"], card_radius))
+		theme.set_stylebox("disabled", menu_item_type, StyleBoxEmpty.new())
+		theme.set_stylebox("focus", menu_item_type, StyleBoxEmpty.new())
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		theme.set_stylebox(state, "GameboxOverflowMenuDismissButton", StyleBoxEmpty.new())
+	theme.set_color("font_color", "GameboxOverflowMenuDangerItem", colors["error"])
+	theme.set_color("font_hover_color", "GameboxOverflowMenuDangerItem", colors["error"])
+	theme.set_color("font_pressed_color", "GameboxOverflowMenuDangerItem", colors["error"])
+	theme.set_stylebox("panel", "GameboxConnectionBannerError", _connection_banner_style(colors["error_container"], card_radius))
+	theme.set_constant("separation", "GameboxConnectionBannerContent", _scaled(GameboxTokens.SPACING["section"]))
 	theme.set_stylebox("panel", "GameboxSnackbar", _style_box(colors["inverse_surface"], card_radius))
 	theme.set_stylebox("panel", "GameboxSnackbarError", _style_box(colors["error_container"], card_radius))
 	theme.set_stylebox("panel", "GameboxLoadingOverlay", _style_box(colors["surface_container_high"], card_radius))
@@ -79,6 +128,13 @@ static func create(dark: bool) -> Theme:
 	theme.set_stylebox("panel", "GameboxConfirmationDialog", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
 	theme.set_stylebox("panel", "GameboxSettingsSheet", _style_box(colors["surface_container_high"], dialog_radius, colors["outline_variant"]))
 	theme.set_stylebox("panel", "GameboxMoveConfirmationBar", _style_box(colors["surface_container_high"], card_radius, colors["outline_variant"]))
+	theme.set_color("font_color", "GameboxConnectionActionButton", colors["on_error_container"])
+	theme.set_color("font_hover_color", "GameboxConnectionActionButton", colors["on_error"])
+	theme.set_color("font_pressed_color", "GameboxConnectionActionButton", colors["on_error_container"])
+	theme.set_stylebox("normal", "GameboxConnectionActionButton", StyleBoxEmpty.new())
+	theme.set_stylebox("hover", "GameboxConnectionActionButton", _style_box(colors["error"], GameboxTokens.SHAPE["full"]))
+	theme.set_stylebox("pressed", "GameboxConnectionActionButton", StyleBoxEmpty.new())
+	theme.set_stylebox("focus", "GameboxConnectionActionButton", StyleBoxEmpty.new())
 	theme.set_color("font_color", "GameboxDialogTitle", colors["on_surface"])
 	theme.set_font_size("font_size", "GameboxDialogTitle", title_size)
 	theme.set_constant("separation", "GameboxDialogContent", _scaled(GameboxTokens.SPACING["section"]))
@@ -148,6 +204,13 @@ static func _style_box(fill: Color, radius: float, border: Variant = null) -> St
 		box.border_width_top = border_width
 		box.border_width_right = border_width
 		box.border_width_bottom = border_width
+	return box
+
+
+static func _connection_banner_style(fill: Color, radius: float) -> StyleBoxFlat:
+	var box := _style_box(fill, radius)
+	box.content_margin_top = 0.0
+	box.content_margin_bottom = 0.0
 	return box
 
 

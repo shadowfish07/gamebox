@@ -106,15 +106,19 @@ func _ready() -> void:
 		_preferences_store = GomokuPreferences.new()
 	_confirm_move_enabled = _preferences_store.load_confirm_move()
 	$Board.cell_pressed.connect(_on_cell_pressed)
-	$BackButton.pressed.connect(_on_back_pressed)
-	$SettingsButton.pressed.connect(_on_settings_pressed)
+	$TopNavigation.back_requested.connect(_on_back_pressed)
+	$TopNavigation.set_menu_items([
+		{"id": "settings", "label": "对局设置"},
+		{"id": "resign", "label": "认输", "danger": true},
+	])
+	$TopNavigation.menu_action_requested.connect(_on_menu_action_requested)
 	$SettingsSheet/Sheet/Content/MoveConfirmationToggle.toggled.connect(_on_move_confirmation_toggled)
 	$SettingsSheet/Sheet/Content/DoneButton.pressed.connect(_on_settings_done_pressed)
 	$MoveConfirmationBar/Content/Actions/CancelButton.pressed.connect(_on_move_cancel_pressed)
 	$MoveConfirmationBar/Content/Actions/ConfirmButton.pressed.connect(_on_move_confirm_pressed)
-	$ResignButton.pressed.connect(_on_resign_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResultPanel.return_requested.connect(_on_back_pressed)
+	$ConnectionLabel.return_requested.connect(_on_back_pressed)
 	_refresh_ui()
 
 	var resolved := _resolve_launch_config()
@@ -209,6 +213,14 @@ func _on_settings_pressed() -> void:
 	_refresh_ui()
 
 
+func _on_menu_action_requested(action_id: String) -> void:
+	match action_id:
+		"settings":
+			_on_settings_pressed()
+		"resign":
+			_on_resign_pressed()
+
+
 func _on_settings_done_pressed() -> void:
 	if not $SettingsSheet.visible:
 		return
@@ -252,6 +264,8 @@ func _on_resign_confirmed() -> void:
 
 
 func _on_back_pressed() -> void:
+	if $TopNavigation.close_menu():
+		return
 	if $SettingsSheet.visible:
 		_on_settings_done_pressed()
 		return
@@ -292,7 +306,9 @@ func _notification(what: int) -> void:
 
 
 func _on_back_requested() -> void:
-	if $SettingsSheet.visible:
+	if $TopNavigation.close_menu():
+		print("GAMEBOX_GODOT_BACK branch=hide_menu")
+	elif $SettingsSheet.visible:
 		print("GAMEBOX_GODOT_BACK branch=hide_settings")
 		_on_settings_done_pressed()
 	elif $ResignDialog.visible:
@@ -399,30 +415,29 @@ func _refresh_ui() -> void:
 
 	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
 	var status_text: String = _status_text(local_user_id) if has_state else _connection_text()
-	if _force_return:
-		status_text = _error_text if not _error_text.is_empty() else "请返回大厅"
-	$StatusLabel.text = status_text
-	$ConnectionLabel.present(_connection_state, _connection_detail())
-	$OpponentPresence.visible = has_state and not terminal
+	var show_status := not _force_return and has_state and _connection_state == "connected" \
+		and not _awaiting_snapshot and not terminal
+	$TopNavigation.set_subtitle(status_text)
+	$TopNavigation.set_subtitle_visible(show_status)
+	$ConnectionLabel.present(_connection_banner_state(), _error_text if _force_return else "")
+	$OpponentPresence.visible = has_state and not terminal and not $ConnectionLabel.visible
 	$OpponentPresence/Content/PresenceDot.text = _opponent_presence_mark(opponent_presence)
 	$OpponentPresence/Content/OpponentPresenceLabel.text = _opponent_presence_text(opponent_presence)
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
-	$ErrorLabel.present(_error_text, "error")
-	$LoadingOverlay.set_loading(not has_state and _awaiting_snapshot, "正在同步对局…")
-	$SettingsButton.visible = not terminal
+	$ErrorLabel.present("" if _force_return else _error_text, "error")
+	$LoadingOverlay.set_loading(false, "")
+	$TopNavigation.set_action_visible(not terminal and not _force_return)
 
 	if terminal:
 		_selected_move = INVALID_CELL
 		$SettingsSheet.visible = false
-	$StatusLabel.visible = _force_return or (has_state and _connection_state == "connected" \
-		and not _awaiting_snapshot and not terminal)
 	var can_resign: bool = has_state and _state.can_request_resign(local_user_id)
 	var has_selection := _selected_move != INVALID_CELL
 	$MoveConfirmationBar.visible = has_selection
 	if has_selection:
 		$MoveConfirmationBar/Content/SelectionLabel.text = "第 %d 列 · 第 %d 行" % [_selected_move.x + 1, _selected_move.y + 1]
-	$ResignButton.visible = can_resign and not terminal and not _resign_submitted and not has_selection
-	$ResignButton.disabled = _connection_state != "connected" or _awaiting_snapshot
+	$TopNavigation.set_menu_item_disabled("resign", not can_resign or _resign_submitted or has_selection \
+		or _connection_state != "connected" or _awaiting_snapshot)
 	if terminal:
 		$ResignDialog.close()
 		$ResultPanel.present(_result_panel_status(), _state.winner_user_id == local_user_id)
@@ -480,16 +495,16 @@ func _connection_text() -> String:
 			return "连接中"
 
 
-func _connection_detail() -> String:
-	match _connection_state:
-		"connected":
-			return "正在同步对局…" if _awaiting_snapshot else "已连接"
-		"reconnecting":
-			return "正在恢复连接…"
-		"failed", "closed":
-			return "连接已断开"
-		_:
-			return "正在连接服务器…"
+func _connection_banner_state() -> String:
+	if _force_return:
+		return "failed"
+	if _connection_state in ["failed", "closed"]:
+		return _connection_state
+	if _connection_state == "reconnecting":
+		return "reconnecting"
+	if _awaiting_snapshot:
+		return "syncing" if _connection_state == "connected" else "connecting"
+	return "connected"
 
 
 func _opponent_presence(local_user_id: String) -> String:

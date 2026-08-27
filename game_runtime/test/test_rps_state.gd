@@ -21,6 +21,7 @@ static func cases() -> Array:
 		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
 		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
 		{"name": "rps status chips emphasize only the player who acted", "run": _status_chip_player_binding},
+		{"name": "rps overflow menu requires explicit resign selection", "run": _overflow_menu_requires_explicit_resign},
 		{"name": "rps reconnect keeps the confirmed match behind a compact banner", "run": _reconnect_keeps_confirmed_match},
 	]
 
@@ -111,6 +112,8 @@ static func _foreign_reveal_winner() -> bool:
 
 static func _scene_contract() -> bool:
 	var scene: Node = RpsScene.instantiate()
+	scene.call("_apply_scene_typography")
+	scene.call("_apply_scene_spacing")
 	var choices: HBoxContainer = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices")
 	var rock: Button = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton")
 	var paper: Button = scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/PaperButton")
@@ -142,10 +145,11 @@ static func _scene_contract() -> bool:
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/Identity/Avatar"), "local identity must include the prototype avatar") \
 		and _check(scene.has_node("SafeContent/Layout/MySection/StatusLine/StatusChip/Content/DotSlot/Dot"), "local status must include the prototype dot") \
 		and _check(scene.has_node("BackButton") == false, "navigation controls live in the safe constrained layout") \
+		and _check(scene.get_node("SafeContent/Layout/TopNavigation").has_method("present"), "shared portrait top bar must own navigation") \
 		and _check(scene.has_node("SafeContent/Layout/TopNavigation/BackButton"), "visible back control must remain available") \
-		and _check(scene.has_node("SafeContent/Layout/TopNavigation/MoreButton"), "resign menu control must remain available") \
+		and _check(scene.has_node("SafeContent/Layout/TopNavigation/ActionButton"), "resign menu control must remain available") \
 		and _check(not scene.has_node("ResignButton"), "resign must not duplicate the top menu as a bottom button") \
-		and _check(scene.get_node("SafeContent/Layout/TopNavigation/BackButton").get_theme_font_size("font_size") >= 52, "back icon must match the prototype visual size") \
+		and _check(scene.get_node("SafeContent/Layout/TopNavigation/BackButton").theme_type_variation == &"GameboxPortraitBackButton", "back icon must use the shared portrait navigation style") \
 		and _check(scene.has_node("RevealPanel"), "previous-round result panel must exist") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/MyChoice/Icon").texture != null, "my reveal image must load") \
 		and _check(scene.get_node("RevealPanel/Content/Choices/OpponentChoice/Icon").texture != null, "opponent reveal image must load")
@@ -185,7 +189,7 @@ static func _status_chip_player_binding() -> bool:
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	client.set_connection("connecting")
-	client.accept_snapshot(_snapshot(0, "single_round", 1, {
+	client.accept_snapshot(_snapshot(1, "single_round", 1, {
 		"userId": ME, "score": 0, "locked": false,
 	}, {
 		"userId": OPPONENT, "score": 0, "locked": false,
@@ -237,14 +241,19 @@ static func _reconnect_keeps_confirmed_match() -> bool:
 	var harness: Dictionary = await _scene_harness()
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
+	var quit_calls: Array[int] = harness["quit_calls"]
 	var banner := scene.get_node("ConnectionBanner") as Control
-	if not _check(scene.get_node("LoadingOverlay").visible, "initial connection must keep the blocking loader") \
+	if not _check(not scene.get_node("LoadingOverlay").visible, "initial connection still showed the blocking loader") \
+		or not _check(banner.visible and _connection_message(scene) == "连接中…", "initial connection did not use shared compact copy") \
+		or not _check(not scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "initial banner overlapped the opponent status row") \
+		or not _check((scene.get_node("SafeContent/Layout/TopNavigation/TitleGroup/SubtitleLabel") as Label).text == "准备对局", "initial format retained loading copy") \
+		or not _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "准备开始", "initial game state duplicated network status") \
 		or not _check(banner.offset_left == GameboxTokens.SPACING["page"] * 2, "connection banner must align with the safe page inset") \
 		or not _check(banner.offset_right == -GameboxTokens.SPACING["page"] * 2, "connection banner right edge must align with the safe page inset"):
 		return _cleanup(scene)
 	client.set_connection("failed")
 	if not _check(not scene.get_node("LoadingOverlay").visible, "initial failure kept a dead blocking loader") \
-		or not _check(banner.theme_type_variation == &"GameboxSnackbarError", "initial failure did not use error semantics"):
+		or not _check(banner.theme_type_variation == &"GameboxConnectionBannerError", "initial failure did not use compact error semantics"):
 		return _cleanup(scene)
 	client.set_connection("connecting")
 	client.accept_snapshot(_snapshot(0, "single_round", 1, {
@@ -254,13 +263,15 @@ static func _reconnect_keeps_confirmed_match() -> bool:
 	}))
 	var rock := scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton") as Button
 	if not _check(not scene.get_node("LoadingOverlay").visible, "confirmed match left the blocking loader visible") \
+		or not _check(scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "ready state did not restore the opponent status row") \
 		or not _check(not rock.disabled, "confirmed match did not enable choices"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
 	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
 	if not _check(not scene.get_node("LoadingOverlay").visible, "reconnect covered the confirmed match with the blocking loader") \
 		or not _check(scene.get_node("ConnectionBanner").visible, "reconnect did not show the compact banner") \
-		or not _check(_connection_message(scene) == "正在恢复连接\n已确认的出拳状态会保留", "reconnect preservation copy changed") \
+		or not _check(not scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "reconnect banner overlapped the opponent status row") \
+		or not _check(_connection_message(scene) == "重连中…", "reconnect shared copy changed") \
 		or not _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "选择你的手势", "reconnect replaced the last confirmed match state") \
 		or not _check(((scene.get_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip") as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "reconnect left the opponent choice emphasis active") \
 		or not _check(((scene.get_node("SafeContent/Layout/MySection/StatusLine/StatusChip") as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "reconnect left the local choice emphasis active") \
@@ -268,7 +279,7 @@ static func _reconnect_keeps_confirmed_match() -> bool:
 		return _cleanup(scene)
 	client.set_connection("connected")
 	if not _check(not scene.get_node("LoadingOverlay").visible, "snapshot sync covered the confirmed match with the blocking loader") \
-		or not _check(_connection_message(scene) == "连接已恢复\n正在同步最新对局状态…", "snapshot sync copy changed") \
+		or not _check(_connection_message(scene) == "同步中…", "snapshot sync shared copy changed") \
 		or not _check(rock.disabled, "snapshot sync enabled choices before authority returned"):
 		return _cleanup(scene)
 	client.accept_snapshot(_snapshot(0, "single_round", 1, {
@@ -276,14 +287,40 @@ static func _reconnect_keeps_confirmed_match() -> bool:
 	}, {
 		"userId": OPPONENT, "score": 0, "locked": false,
 	}))
-	if not _check(_connection_message(scene) == "已恢复对局\n状态已同步，可以继续操作", "restored confirmation copy changed") \
+	if not _check(not scene.get_node("ConnectionBanner").visible, "successful recovery did not hide immediately") \
 		or not _check(not rock.disabled, "authoritative recovery snapshot did not restore choices"):
 		return _cleanup(scene)
 	client.set_connection("failed")
-	var result := _check(_connection_message(scene) == "连接失败\n请返回大厅后重新进入对局", "failed recovery guidance changed") \
-		and _check((scene.get_node("SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label") as Label).text == "已断开", "failed local status still implied recovery") \
-		and _check((scene.get_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label") as Label).text == "已断开", "failed opponent status still implied recovery") \
+	var result := _check(_connection_message(scene) == "连接失败", "failed shared copy changed") \
+		and _check((scene.get_node("ConnectionBanner/Content/ReturnButton") as Button).visible, "failed connection did not offer return") \
+		and _check((scene.get_node("SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label") as Label).text == "等待", "failed connection duplicated status in the local chip") \
+		and _check((scene.get_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label") as Label).text == "等待出拳", "failed connection duplicated status in the opponent chip") \
 		and _check(rock.disabled, "failed connection left choices enabled")
+	(scene.get_node("ConnectionBanner/Content/ReturnButton") as Button).pressed.emit()
+	result = result and _check(quit_calls.size() == 1, "RPS connection return did not return exactly once")
+	return _cleanup(scene, result)
+
+
+static func _overflow_menu_requires_explicit_resign() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.set_connection("connected")
+	client.accept_snapshot(_snapshot(1, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	}))
+	var items := scene.get_node("SafeContent/Layout/TopNavigation/MenuLayer/MenuRoot/MenuPanel/Items") as VBoxContainer
+	if not _check(items.get_child_count() == 1 and (items.get_child(0) as Button).text == "认输", "RPS overflow menu did not expose resign"):
+		return _cleanup(scene)
+	(scene.get_node("SafeContent/Layout/TopNavigation/ActionButton") as Button).pressed.emit()
+	if not _check(scene.get_node("SafeContent/Layout/TopNavigation/MenuLayer/MenuRoot").visible, "RPS overflow action did not open the menu") \
+		or not _check(not scene.get_node("ResignDialog").visible, "RPS overflow action opened resign confirmation directly"):
+		return _cleanup(scene)
+	(items.get_child(0) as Button).pressed.emit()
+	var result := _check(scene.get_node("ResignDialog").visible, "RPS resign menu item did not open confirmation") \
+		and _check(client.resign_requests == 0, "RPS overflow menu submitted resignation before confirmation")
 	return _cleanup(scene, result)
 
 
@@ -296,10 +333,11 @@ static func _scene_harness() -> Dictionary:
 		"ws_url": "ws://127.0.0.1:8080/v1/ws",
 	})
 	scene.set_match_client_factory(func() -> Variant: return fake)
-	scene.set_quit_callback(func() -> void: pass)
+	var quit_calls: Array[int] = []
+	scene.set_quit_callback(func() -> void: quit_calls.append(1))
 	tree.root.add_child(scene)
 	await tree.process_frame
-	return {"scene": scene, "client": fake}
+	return {"scene": scene, "client": fake, "quit_calls": quit_calls}
 
 
 static func _connection_message(scene: Control) -> String:
@@ -378,6 +416,7 @@ class FakeMatchClient:
 	var connection_state := "closed"
 	var local_user_id := ME
 	var state: Variant
+	var resign_requests := 0
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant, _game_id: String) -> bool:
 		state = game_state
@@ -391,7 +430,8 @@ class FakeMatchClient:
 		return ""
 
 	func request_resign() -> String:
-		return ""
+		resign_requests += 1
+		return ACTION_ID
 
 	func dispose() -> void:
 		pass

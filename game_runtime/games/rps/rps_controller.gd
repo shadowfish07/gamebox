@@ -25,7 +25,6 @@ var _client: Variant
 var _match_id := ""
 var _connection_state := "connecting"
 var _awaiting_snapshot := true
-var _has_confirmed_snapshot := false
 var _error_text := ""
 var _disposed := false
 var _returning := false
@@ -67,6 +66,8 @@ func _ready() -> void:
 	var page_inset := GameboxTokens.SPACING["page"] * GameboxTheme.LOGICAL_SCALE
 	$ConnectionBanner.offset_left = page_inset
 	$ConnectionBanner.offset_right = -page_inset
+	_apply_scene_typography()
+	_apply_scene_spacing()
 	$SafeContent/Layout.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$SafeContent/Layout/MySection/ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
@@ -92,12 +93,11 @@ func _ready() -> void:
 	$RevealPanel/Content/ResultLabel.add_theme_font_size_override(
 		"font_size", GameboxTokens.TYPOGRAPHY["headline_small"]["font_size"] * GameboxTheme.LOGICAL_SCALE
 	)
-	for button in [$SafeContent/Layout/TopNavigation/BackButton, $SafeContent/Layout/TopNavigation/MoreButton]:
-		button.add_theme_color_override("font_color", colors["on_surface"])
-		button.add_theme_color_override("font_hover_color", colors["on_surface"])
-		button.add_theme_color_override("font_pressed_color", colors["on_surface"])
-	$SafeContent/Layout/TopNavigation/BackButton.pressed.connect(_on_back_pressed)
-	$SafeContent/Layout/TopNavigation/MoreButton.pressed.connect(_on_resign_pressed)
+	$SafeContent/Layout/TopNavigation.back_requested.connect(_on_back_pressed)
+	$SafeContent/Layout/TopNavigation.set_menu_items([
+		{"id": "resign", "label": "认输", "danger": true},
+	])
+	$SafeContent/Layout/TopNavigation.menu_action_requested.connect(_on_menu_action_requested)
 	for entry in _choice_entries():
 		var button: Button = entry["button"]
 		button.get_node("Content").add_theme_constant_override("separation", GameboxTokens.SPACING["base"])
@@ -111,6 +111,7 @@ func _ready() -> void:
 	$ResignDialog/Dialog/Content/Actions/CancelButton.text = "继续对局"
 	$ResignDialog/Dialog/Content/Actions/ConfirmButton.text = "认输并结束"
 	$ResultPanel.return_requested.connect(_on_back_pressed)
+	$ConnectionBanner.return_requested.connect(_on_back_pressed)
 	_refresh_ui()
 	var resolved := _resolve_launch_config()
 	if not resolved.get("ok", false) or resolved["config"]["game_id"] != "rps":
@@ -138,6 +139,55 @@ func _ready() -> void:
 	set_process(true)
 	_refresh_ui()
 	call_deferred("_emit_ready_marker")
+
+
+func _apply_scene_typography() -> void:
+	var roles := {
+		"headline_large": [
+			$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel,
+			$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel,
+		],
+		"label_large": [
+			$SafeContent/Layout/OpponentSection/StatusLine/Identity/Label,
+			$SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel,
+			$SafeContent/Layout/MySection/StatusLine/Identity/Label,
+		],
+		"label_small": [
+			$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label,
+			$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel,
+			$SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel,
+			$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label,
+		],
+		"body_small": [
+			$SafeContent/Layout/OpponentSection/StatusLine/Identity/Avatar/Label,
+			$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/PlayerLabel,
+			$SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel,
+			$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/PlayerLabel,
+			$SafeContent/Layout/MySection/StatusLine/Identity/Avatar/Label,
+		],
+	}
+	for role in roles:
+		var size := roundi(GameboxTokens.TYPOGRAPHY[role]["font_size"] * GameboxTheme.LOGICAL_SCALE)
+		for control in roles[role]:
+			control.add_theme_font_size_override("font_size", size)
+
+
+func _apply_scene_spacing() -> void:
+	var layout_gap := roundi(GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
+	var base_gap := roundi(GameboxTokens.SPACING["base"] * GameboxTheme.LOGICAL_SCALE)
+	for container in [
+		$SafeContent/Layout/OpponentSection/StatusLine/Identity,
+		$SafeContent/Layout/RoundStage/Content,
+		$SafeContent/Layout/MySection/StatusLine/Identity,
+	]:
+		container.add_theme_constant_override("separation", layout_gap)
+	for container in [
+		$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content,
+		$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide,
+		$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide,
+		$SafeContent/Layout/MySection/StatusLine/StatusChip/Content,
+	]:
+		container.add_theme_constant_override("separation", base_gap)
 
 
 func _process(_delta: float) -> void:
@@ -178,6 +228,11 @@ func _on_resign_pressed() -> void:
 		$ResignDialog.open()
 
 
+func _on_menu_action_requested(action_id: String) -> void:
+	if action_id == "resign":
+		_on_resign_pressed()
+
+
 func _on_resign_confirmed() -> void:
 	if not _can_resign() or _resign_submitted:
 		return
@@ -189,6 +244,8 @@ func _on_resign_confirmed() -> void:
 
 
 func _on_back_pressed() -> void:
+	if $SafeContent/Layout/TopNavigation.close_menu():
+		return
 	if $ResignDialog.visible:
 		$ResignDialog.close()
 		return
@@ -226,14 +283,10 @@ func _on_snapshot_sync_started() -> void:
 
 
 func _on_snapshot_received(_envelope: Dictionary) -> void:
-	var recovered := _has_confirmed_snapshot and _awaiting_snapshot
 	_awaiting_snapshot = false
-	_has_confirmed_snapshot = true
 	_error_text = ""
 	_resign_submitted = false
 	_refresh_ui()
-	if recovered:
-		$ConnectionBanner.present_recovery("restored", "状态已同步，可以继续操作")
 
 
 func _on_event_received(_envelope: Dictionary) -> void:
@@ -265,22 +318,23 @@ func _refresh_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var terminal: bool = has_state and _state.status in ["finished", "cancelled", "abandoned"]
-	_refresh_connection_banner(has_state)
+	_refresh_connection_banner()
 	$ErrorSnackbar.present(_error_text, "error")
-	var initial_loading := not has_state and _connection_state in ["connecting", "connected", "reconnecting"]
-	$LoadingOverlay.set_loading(initial_loading, "正在同步对局…")
-	$SafeContent/Layout/TopNavigation/TitleGroup/FormatLabel.text = _format_label(_state.format) if has_state else "赛制加载中"
+	$LoadingOverlay.set_loading(false, "")
+	$SafeContent/Layout/TopNavigation.set_subtitle(_format_label(_state.format) if has_state else "准备对局")
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel.text = str(_state.me_score) if has_state else "0"
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel.text = str(_state.opponent_score) if has_state else "0"
 	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.text = "最终结果" if terminal else "第 %d 轮" % _state.round_number if has_state else "准备对局"
-	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel.text = _status_text(local_user_id) if has_state else "正在同步对局…"
-	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel.text = _status_support(local_user_id) if has_state else "收到权威快照前无法操作"
+	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel.text = _status_text(local_user_id) if has_state else "准备开始"
+	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel.text = _status_support(local_user_id) if has_state else ""
 	_refresh_player_statuses(has_state, terminal)
 	_refresh_reveal(has_state)
 	var can_choose: bool = has_state and not terminal and not _awaiting_snapshot \
 		and _connection_state == "connected" and not _is_revealing() and _state.can_request_choice("rock", local_user_id)
 	for entry in _choice_entries():
 		entry["button"].disabled = not can_choose
+	$SafeContent/Layout/TopNavigation.set_action_visible(not terminal)
+	$SafeContent/Layout/TopNavigation.set_menu_item_disabled("resign", not _can_resign())
 	_refresh_choice_visuals()
 	$SafeContent/Layout/MySection/ChoicePanel.visible = not terminal and _selected_choice().is_empty() and not _is_revealing()
 	$SafeContent/Layout/MySection/SelectedPanel.visible = not terminal and not _selected_choice().is_empty() and not _is_revealing()
@@ -295,21 +349,15 @@ func _refresh_ui() -> void:
 	_log_safe_state(has_state)
 
 
-func _refresh_connection_banner(has_state: bool) -> void:
-	if not has_state:
-		if _connection_state in ["failed", "closed"]:
-			$ConnectionBanner.present_recovery(_connection_state, "请返回大厅后重新进入对局")
-		else:
-			$ConnectionBanner.present(_connection_state)
-		return
+func _refresh_connection_banner() -> void:
 	if _connection_state in ["failed", "closed"]:
-		$ConnectionBanner.present_recovery(_connection_state, "请返回大厅后重新进入对局")
+		$ConnectionBanner.present(_connection_state)
 	elif _connection_state == "reconnecting":
-		$ConnectionBanner.present_recovery("reconnecting", "已确认的出拳状态会保留")
+		$ConnectionBanner.present("reconnecting")
 	elif _awaiting_snapshot:
-		$ConnectionBanner.present_recovery("syncing", "正在同步最新对局状态…")
+		$ConnectionBanner.present("syncing" if _connection_state == "connected" else "connecting")
 	else:
-		$ConnectionBanner.present_recovery("connected")
+		$ConnectionBanner.present("connected")
 
 
 func _status_text(local_user_id: String) -> String:
@@ -349,11 +397,11 @@ func _status_support(local_user_id: String) -> String:
 
 
 func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
-	var recovery_status := "已断开" if _connection_state in ["failed", "closed"] else "恢复中"
-	var opponent_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else _opponent_text() if has_state else "等待"
-	var my_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "轮到你了" if has_state and _state.opponent_locked else "等待"
+	var opponent_status := _opponent_text() if has_state else "等待"
+	var my_status := "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "轮到你了" if has_state and _state.opponent_locked else "等待"
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label.text = opponent_status
 	$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label.text = my_status
+	$SafeContent/Layout/OpponentSection/StatusLine.visible = not $ConnectionBanner.visible
 	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
 	var show_choice_emphasis := has_state and not _awaiting_snapshot and _connection_state == "connected"
 	_apply_status_chip_emphasis(
