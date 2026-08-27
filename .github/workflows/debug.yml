@@ -259,6 +259,17 @@ jobs:
           # names and notes identify the actual source branch and commit.
           gh release edit "${DEBUG_RELEASE_TAG}" --notes "${notes}"
 
+          # Keep the rolling release bounded to the latest successful build.
+          # Cleanup happens last so an older APK remains available until the
+          # new assets, tag, and release notes have all been published.
+          gh release view "${DEBUG_RELEASE_TAG}" --json assets --jq '.assets[].name' \
+            | while IFS= read -r asset; do
+                case "${asset}" in
+                  "${asset_name}"|"${checksum_name}") ;;
+                  *) gh release delete-asset "${DEBUG_RELEASE_TAG}" "${asset}" --yes ;;
+                esac
+              done
+
       - name: Remove signing material
         if: always()
         run: rm -f app/android/app/release-key.jks app/android/key.properties
