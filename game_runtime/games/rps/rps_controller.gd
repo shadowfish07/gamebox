@@ -320,7 +320,7 @@ func _status_support(local_user_id: String) -> String:
 	if _state.status in ["cancelled", "abandoned"]:
 		return "返回游戏大厅"
 	if not _state.pending_action.is_empty():
-		return "服务器确认前不会视为最终出拳"
+		return ""
 	if _state.me_locked:
 		return "等待对手后同时揭晓"
 	if _state.opponent_locked:
