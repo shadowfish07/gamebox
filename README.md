@@ -223,9 +223,12 @@ branch. It publishes immutable build-identity-named APK and checksum assets to
 the rolling pre-release tagged `debug-latest`; each name includes the commit SHA,
 run ID, and attempt, while the release notes identify the current pair. All
 branch publishes are serialized because they update the same rolling release.
-Previous assets remain available if a later upload fails. The workflow uses the
-same repository signing secrets as the stable release workflow, so an installed
-debug build can accept the next rolling build without an uninstall.
+The `debug-latest` tag is kept as the stable release identity; it is not moved
+to each branch commit. This allows the repository `GITHUB_TOKEN` to publish
+builds whose source commit changes workflow files. Previous assets remain
+available if a later upload fails. The workflow uses the same repository signing
+secrets as the stable release workflow, so an installed debug build can accept
+the next rolling build without an uninstall.
 
 The published debug build uses the independent application id
 `me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment

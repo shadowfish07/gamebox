@@ -134,27 +134,22 @@ jobs:
           - api: \`${API_BASE_URL}\`
           - apk: \`${asset_name}\`
           - checksums: \`${checksum_name}\`"
-          release_ref="refs/tags/${DEBUG_RELEASE_TAG}"
-
-          update_debug_tag() {
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
-              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" \
-                -f sha="${GITHUB_SHA}" \
-                -F force=true >/dev/null
-            else
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-                -f ref="${release_ref}" \
-                -f sha="${GITHUB_SHA}" >/dev/null
-            fi
-          }
 
           if ! gh release view "${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
-            update_debug_tag
-            gh release create "${DEBUG_RELEASE_TAG}" \
-              --verify-tag \
-              --prerelease \
-              --title "Gamebox debug build" \
-              --notes "${notes}"
+            default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
+              gh release create "${DEBUG_RELEASE_TAG}" \
+                --verify-tag \
+                --prerelease \
+                --title "Gamebox debug build" \
+                --notes "${notes}"
+            else
+              gh release create "${DEBUG_RELEASE_TAG}" \
+                --target "${default_branch}" \
+                --prerelease \
+                --title "Gamebox debug build" \
+                --notes "${notes}"
+            fi
           fi
           existing_assets="$(gh release view "${DEBUG_RELEASE_TAG}" --json assets --jq '.assets[].name' 2>/dev/null || true)"
           assets_to_upload=()
@@ -166,8 +161,8 @@ jobs:
           if (( ${#assets_to_upload[@]} > 0 )); then
             gh release upload "${DEBUG_RELEASE_TAG}" "${assets_to_upload[@]}"
           fi
-          # Move the public tag only after the immutable assets are available.
-          update_debug_tag
+          # Keep the tag as the stable release identity. The immutable asset
+          # names and notes identify the actual source branch and commit.
           gh release edit "${DEBUG_RELEASE_TAG}" --notes "${notes}"
 
       - name: Remove signing material

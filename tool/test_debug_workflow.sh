@@ -11,12 +11,17 @@ grep -F "      - 'app/**'" "$workflow" >/dev/null
 grep -F '  workflow_dispatch:' "$workflow" >/dev/null
 grep -F '  group: debug-apk-publish' "$workflow" >/dev/null
 grep -F '  cancel-in-progress: false' "$workflow" >/dev/null
+grep -F 'Keep the tag as the stable release identity' "$workflow" >/dev/null
 if grep -F '      - main' "$workflow" >/dev/null; then
   printf 'Debug workflow still restricts push triggers to main\n' >&2
   exit 1
 fi
 if grep -F "if: github.ref == 'refs/heads/main'" "$workflow" >/dev/null; then
   printf 'Debug workflow still restricts the publish job to main\n' >&2
+  exit 1
+fi
+if grep -F 'update_debug_tag' "$workflow" >/dev/null; then
+  printf 'Debug workflow still requires moving the rolling tag per branch\n' >&2
   exit 1
 fi
 

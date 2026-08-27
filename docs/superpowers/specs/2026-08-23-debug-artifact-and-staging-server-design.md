@@ -17,7 +17,7 @@ Status: Validated
 
 | 问题 | 决策 |
 |---|---|
-| Debug 包发布方式 | 每次 push 到任意分支自动构建 → 滚动 pre-release（固定 tag `debug-latest`，APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名；上传成功后再移动 tag 和更新说明；所有分支串行发布） |
+| Debug 包发布方式 | 每次 push 到任意分支自动构建 → 滚动 pre-release（固定 tag `debug-latest` 作为稳定 release identity，不随分支提交移动；APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名，说明记录实际来源；所有分支串行发布） |
 | 包名后缀范围 | 仅 CI 发布的包加 `.debug`（通过 `GAMEBOX_DEBUG_ARTIFACT` 环境变量控制），本地 `flutter run`、`verify.sh`、smoke/E2E 脚本零影响 |
 | Staging 部署机制 | `deploy/macos/install-staging.sh` 手动脚本，在 Mac 上运行；需要更新服务端代码时 `git pull` 后重跑 |
 | Staging 域名 | `staging-gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
@@ -32,8 +32,10 @@ Status: Validated
 - 触发：push 到任意分支（`paths` 过滤到 `app/**`、`game_runtime/**`、`tool/**`、
   `deploy/**`）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
   `https://staging-gamebox.zqydev.me`）。
-- 所有分支共用一个发布 concurrency group，`cancel-in-progress: false`，避免并发移动
-  `debug-latest` tag 或上传同一 rolling release 的资产。
+- 所有分支共用一个发布 concurrency group，`cancel-in-progress: false`，避免并发上传
+  同一 rolling release 的资产或互相覆盖 release 说明。`debug-latest` tag 仅在首次
+  创建 release 时建立，之后保持稳定，避免分支提交修改 workflow 文件时被
+  `GITHUB_TOKEN` 的 workflow 权限限制阻断发布。
 - 工具链对齐现有 CI/release：Java 17、Flutter 3.47.1、Godot 4.7.0、接受 Android
   licenses。
 - 构建前执行 `godot --headless --path game_runtime --import` 导入 Godot 资产
@@ -42,9 +44,9 @@ Status: Validated
   - `--build-name="<pubspec版本>-dev.<sha7>"`、`--build-number=${GITHUB_RUN_NUMBER}`
   - `--dart-define="GAMEBOX_API_BASE_URL=<staging 或输入值>"`
 - 校验：`aapt dump badging` 断言 `package name` 为 `me.zqydev.gamebox.debug`。
-- 发布：`gh release create debug-latest`（首次）→ 先上传包含完整 SHA、run ID 和 attempt
-  的不可变 APK/校验文件，再移动 tag 并 `gh release edit` 更新说明（标注构建身份、版本和
-  当前资产名）；旧资产保留，不使用 destructive `--clobber`。
+- 发布：首次用默认分支创建 `debug-latest` release/tag → 上传包含完整 SHA、run ID 和
+  attempt 的不可变 APK/校验文件，再用 `gh release edit` 更新说明（标注构建身份、版本和
+  当前资产名）；tag 保持稳定，旧资产保留，不使用 destructive `--clobber`。
   pre-release，不参与 `releases/latest`。
 
 ### Part 2: 包名独立（最小风险方案）
