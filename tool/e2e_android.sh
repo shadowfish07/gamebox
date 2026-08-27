@@ -3130,6 +3130,10 @@ tap_godot_settings() {
   point="$(design_point_for_serial "$serial" 936 120)"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+  sleep 0.5
+  point="$(design_point_for_serial "$serial" 936 256)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
 
 tap_godot_move_confirmation_toggle() {
@@ -3319,7 +3323,11 @@ exercise_optional_move_confirmation() {
 tap_godot_resign() {
   local serial="$1"
   local point x y
-  point="$(design_point_for_serial "$serial" 540 1640)"
+  point="$(design_point_for_serial "$serial" 936 120)"
+  read -r x y <<<"$point"
+  adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+  sleep 0.5
+  point="$(design_point_for_serial "$serial" 936 352)"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
