@@ -7,7 +7,7 @@ Status: Validated
 
 为 Gamebox 建立一条 debug 包的分发链路：
 
-1. 每次 push 到 `main` 自动构建一个**独立包名**的 debug APK，发布到固定的滚动
+1. 每次 push 到任意分支自动构建一个**独立包名**的 debug APK，发布到固定的滚动
    pre-release，测试者通过恒定链接拿到最新版。
 2. 单独部署一个 **staging 服务端**，与正式服同机并存、数据与密钥完全隔离，
    debug 包指向它，避免 debug 流量污染正式服数据。
@@ -17,7 +17,7 @@ Status: Validated
 
 | 问题 | 决策 |
 |---|---|
-| Debug 包发布方式 | 每次 push 到 `main` 自动构建 → 滚动 pre-release（固定 tag `debug-latest`，APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名；上传成功后再移动 tag 和更新说明） |
+| Debug 包发布方式 | 每次 push 到任意分支自动构建 → 滚动 pre-release（固定 tag `debug-latest`，APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名；上传成功后再移动 tag 和更新说明；所有分支串行发布） |
 | 包名后缀范围 | 仅 CI 发布的包加 `.debug`（通过 `GAMEBOX_DEBUG_ARTIFACT` 环境变量控制），本地 `flutter run`、`verify.sh`、smoke/E2E 脚本零影响 |
 | Staging 部署机制 | `deploy/macos/install-staging.sh` 手动脚本，在 Mac 上运行；需要更新服务端代码时 `git pull` 后重跑 |
 | Staging 域名 | `staging-gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
@@ -29,10 +29,11 @@ Status: Validated
 
 新增 `.github/workflows/debug.yml`：
 
-- 触发：push 到 `main`（`paths` 过滤到 `app/**`、`game_runtime/**`、`tool/**`、
+- 触发：push 到任意分支（`paths` 过滤到 `app/**`、`game_runtime/**`、`tool/**`、
   `deploy/**`）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
   `https://staging-gamebox.zqydev.me`）。
-- `concurrency: cancel-in-progress: true`，只保留最新一次构建。
+- 所有分支共用一个发布 concurrency group，`cancel-in-progress: false`，避免并发移动
+  `debug-latest` tag 或上传同一 rolling release 的资产。
 - 工具链对齐现有 CI/release：Java 17、Flutter 3.47.1、Godot 4.7.0、接受 Android
   licenses。
 - 构建前执行 `godot --headless --path game_runtime --import` 导入 Godot 资产

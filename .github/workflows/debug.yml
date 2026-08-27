@@ -2,8 +2,6 @@ name: Debug APK
 
 on:
   push:
-    branches:
-      - main
     paths:
       - 'app/**'
       - 'game_runtime/**'
@@ -21,8 +19,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: debug-apk-${{ github.ref }}
-  cancel-in-progress: true
+  # All branches publish to the same rolling release, so serialize the whole
+  # workflow instead of allowing cross-branch tag and asset races.
+  group: debug-apk-publish
+  cancel-in-progress: false
 
 env:
   FLUTTER_VERSION: "3.47.1"
@@ -33,7 +33,6 @@ env:
 
 jobs:
   build-and-publish:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

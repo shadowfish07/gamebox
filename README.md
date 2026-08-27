@@ -217,14 +217,15 @@ stable published release is offered automatically to normal installations.
 
 ## Debug artifact distribution
 
-`.github/workflows/debug.yml` builds a debug APK on every push to `main` that
-touches app or runtime sources, and on manual `workflow_dispatch`. It publishes
-immutable build-identity-named APK and checksum assets to the rolling
-pre-release tagged `debug-latest`; each name includes the commit SHA, run ID, and
-attempt, while the release notes identify the current pair. Previous assets
-remain available if a later upload fails. The workflow uses the same repository
-signing secrets as the stable release workflow, so an installed debug build can
-accept the next rolling build without an uninstall.
+`.github/workflows/debug.yml` builds a debug APK on every push to any branch that
+touches app or runtime sources, and on manual `workflow_dispatch` from any
+branch. It publishes immutable build-identity-named APK and checksum assets to
+the rolling pre-release tagged `debug-latest`; each name includes the commit SHA,
+run ID, and attempt, while the release notes identify the current pair. All
+branch publishes are serialized because they update the same rolling release.
+Previous assets remain available if a later upload fails. The workflow uses the
+same repository signing secrets as the stable release workflow, so an installed
+debug build can accept the next rolling build without an uninstall.
 
 The published debug build uses the independent application id
 `me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment
