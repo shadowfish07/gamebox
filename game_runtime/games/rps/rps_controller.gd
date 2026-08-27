@@ -80,7 +80,7 @@ func _ready() -> void:
 		status_line.get_node("Identity/Avatar").add_theme_stylebox_override("panel", _avatar_style(colors))
 		status_line.get_node("Identity/Avatar/Label").add_theme_color_override("font_color", colors["on_primary_container"])
 		status_line.get_node("Identity/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
-	_apply_status_chip_emphasis(false, colors)
+		_apply_status_chip_emphasis(status_line, false, colors)
 	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.add_theme_stylebox_override(
 		"panel", _opponent_surface_style(colors["surface_container_high"], colors["outline_variant"])
 	)
@@ -351,14 +351,21 @@ func _status_support(local_user_id: String) -> String:
 func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 	var recovery_status := "已断开" if _connection_state in ["failed", "closed"] else "恢复中"
 	var opponent_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else _opponent_text() if has_state else "等待"
-	var my_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "等待"
+	var my_status := recovery_status if _awaiting_snapshot or _connection_state != "connected" else "终局" if terminal else "提交中" if has_state and not _state.pending_action.is_empty() else "已出拳" if has_state and _state.me_locked else "轮到你了" if has_state and _state.opponent_locked else "等待"
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label.text = opponent_status
 	$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label.text = my_status
-	var choice_status_emphasized := has_state and _choice_status_emphasized(
-		not _state.pending_action.is_empty(), _state.me_locked, _state.opponent_locked, terminal
-	)
 	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
-	_apply_status_chip_emphasis(choice_status_emphasized, colors)
+	var show_choice_emphasis := has_state and not _awaiting_snapshot and _connection_state == "connected"
+	_apply_status_chip_emphasis(
+		$SafeContent/Layout/OpponentSection/StatusLine,
+		show_choice_emphasis and _choice_status_emphasized(false, _state.opponent_locked, terminal),
+		colors
+	)
+	_apply_status_chip_emphasis(
+		$SafeContent/Layout/MySection/StatusLine,
+		show_choice_emphasis and _choice_status_emphasized(not _state.pending_action.is_empty(), _state.me_locked, terminal),
+		colors
+	)
 	var locked: bool = has_state and _state.opponent_locked and not _is_revealing()
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Unknown.visible = not locked
 	$SafeContent/Layout/OpponentSection/OpponentVisual/Locked.visible = locked
@@ -508,18 +515,17 @@ func _status_dot_style(colors: Dictionary, emphasized: bool = false) -> StyleBox
 	return style
 
 
-func _apply_status_chip_emphasis(emphasized: bool, colors: Dictionary) -> void:
+func _apply_status_chip_emphasis(status_line: Control, emphasized: bool, colors: Dictionary) -> void:
 	var foreground: Color = colors["on_tertiary_container"] if emphasized else colors["on_surface_variant"]
-	for status_line in [$SafeContent/Layout/OpponentSection/StatusLine, $SafeContent/Layout/MySection/StatusLine]:
-		status_line.get_node("StatusChip").add_theme_stylebox_override("panel", _chip_style(colors, emphasized))
-		status_line.get_node("StatusChip/Content/Label").add_theme_color_override("font_color", foreground)
-		status_line.get_node("StatusChip/Content/DotSlot/Dot").add_theme_stylebox_override(
-			"panel", _status_dot_style(colors, emphasized)
-		)
+	status_line.get_node("StatusChip").add_theme_stylebox_override("panel", _chip_style(colors, emphasized))
+	status_line.get_node("StatusChip/Content/Label").add_theme_color_override("font_color", foreground)
+	status_line.get_node("StatusChip/Content/DotSlot/Dot").add_theme_stylebox_override(
+		"panel", _status_dot_style(colors, emphasized)
+	)
 
 
-static func _choice_status_emphasized(pending: bool, me_locked: bool, opponent_locked: bool, terminal: bool) -> bool:
-	return not terminal and (pending or me_locked or opponent_locked)
+static func _choice_status_emphasized(pending: bool, locked: bool, terminal: bool) -> bool:
+	return not terminal and (pending or locked)
 
 
 func _opponent_surface_style(fill: Color, border: Color) -> StyleBoxFlat:

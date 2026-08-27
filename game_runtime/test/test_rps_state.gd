@@ -4,6 +4,7 @@ const RpsState = preload("res://games/rps/rps_state.gd")
 const Protocol = preload("res://core/protocol.gd")
 const RpsScene = preload("res://games/rps/rps_scene.tscn")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
+const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const ME := "22222222-2222-4222-8222-222222222222"
 const OPPONENT := "33333333-3333-4333-8333-333333333333"
@@ -19,6 +20,7 @@ static func cases() -> Array:
 		{"name": "rps protocol binds choice actions to rps", "run": _protocol_choice},
 		{"name": "rps scene uses transparent image choices in rock scissors paper order", "run": _scene_contract},
 		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
+		{"name": "rps status chips emphasize only the player who acted", "run": _status_chip_player_binding},
 		{"name": "rps reconnect keeps the confirmed match behind a compact banner", "run": _reconnect_keeps_confirmed_match},
 	]
 
@@ -170,13 +172,65 @@ static func _status_chip_states() -> bool:
 		and _check(active.bg_color == colors["tertiary_container"], "pending and locked chips must use the prototype tertiary surface") \
 		and _check(waiting_dot.bg_color == colors["outline"], "waiting chip dot must stay neutral") \
 		and _check(active_dot.bg_color == colors["on_tertiary_container"], "pending and locked chip dot must use the prototype active color") \
-		and _check(scene.call("_choice_status_emphasized", true, false, false, false), "pending must emphasize choice status") \
-		and _check(scene.call("_choice_status_emphasized", false, true, false, false), "local lock must emphasize choice status") \
-		and _check(scene.call("_choice_status_emphasized", false, false, true, false), "opponent lock must emphasize choice status") \
-		and _check(not scene.call("_choice_status_emphasized", false, false, false, false), "waiting must remain neutral") \
-		and _check(not scene.call("_choice_status_emphasized", false, true, true, true), "terminal status must not look like an active choice")
+		and _check(scene.call("_choice_status_emphasized", true, false, false), "pending must emphasize choice status") \
+		and _check(scene.call("_choice_status_emphasized", false, true, false), "a player lock must emphasize that player's status") \
+		and _check(not scene.call("_choice_status_emphasized", false, false, false), "waiting must remain neutral") \
+		and _check(not scene.call("_choice_status_emphasized", false, true, true), "terminal status must not look like an active choice")
 	scene.free()
 	return passed
+
+
+static func _status_chip_player_binding() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.set_connection("connecting")
+	client.accept_snapshot(_snapshot(0, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	}))
+	client.state.mark_pending_choice(ACTION_ID, "paper", ME)
+	scene.call("_refresh_ui")
+	var opponent_chip := scene.get_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip") as PanelContainer
+	var my_chip := scene.get_node("SafeContent/Layout/MySection/StatusLine/StatusChip") as PanelContainer
+	var opponent_label := opponent_chip.get_node("Content/Label") as Label
+	var my_label := my_chip.get_node("Content/Label") as Label
+	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
+	if not _check((my_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["tertiary_container"], "pending did not emphasize the local chip") \
+		or not _check((opponent_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "pending incorrectly emphasized the waiting opponent") \
+		or not _check(my_label.text == "提交中", "pending local status copy changed") \
+		or not _check(opponent_label.text == "等待出拳", "pending opponent status copy changed"):
+		return _cleanup(scene)
+	client.accept_snapshot(_snapshot(1, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": true, "choice": "paper",
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	}))
+	if not _check((my_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["tertiary_container"], "local lock did not emphasize the local chip") \
+		or not _check((opponent_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "local lock incorrectly emphasized the waiting opponent") \
+		or not _check(my_label.text == "已出拳", "local lock status copy changed") \
+		or not _check(opponent_label.text == "等待出拳", "waiting opponent status copy changed"):
+		return _cleanup(scene)
+	client.accept_snapshot(_snapshot(2, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": true,
+	}))
+	var result := _check((opponent_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["tertiary_container"], "opponent lock did not emphasize the opponent chip") \
+		and _check((my_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "opponent lock incorrectly emphasized the local waiting chip") \
+		and _check(opponent_label.text == "已出拳 · 保密", "opponent lock status copy changed") \
+		and _check(my_label.text == "轮到你了", "opponent lock did not identify the local turn")
+	if not result:
+		return _cleanup(scene)
+	client.accept_snapshot(_snapshot(3, "single_round", 1, {
+		"userId": ME, "score": 0, "locked": true, "choice": "paper",
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": true,
+	}))
+	result = _check((opponent_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["tertiary_container"], "both locks did not keep the opponent chip emphasized") \
+		and _check((my_chip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["tertiary_container"], "both locks did not keep the local chip emphasized")
+	return _cleanup(scene, result)
 
 
 static func _reconnect_keeps_confirmed_match() -> bool:
@@ -203,10 +257,13 @@ static func _reconnect_keeps_confirmed_match() -> bool:
 		or not _check(not rock.disabled, "confirmed match did not enable choices"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
+	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
 	if not _check(not scene.get_node("LoadingOverlay").visible, "reconnect covered the confirmed match with the blocking loader") \
 		or not _check(scene.get_node("ConnectionBanner").visible, "reconnect did not show the compact banner") \
 		or not _check(_connection_message(scene) == "正在恢复连接\n已确认的出拳状态会保留", "reconnect preservation copy changed") \
 		or not _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "选择你的手势", "reconnect replaced the last confirmed match state") \
+		or not _check(((scene.get_node("SafeContent/Layout/OpponentSection/StatusLine/StatusChip") as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "reconnect left the opponent choice emphasis active") \
+		or not _check(((scene.get_node("SafeContent/Layout/MySection/StatusLine/StatusChip") as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat).bg_color == colors["surface_container_high"], "reconnect left the local choice emphasis active") \
 		or not _check(rock.disabled, "reconnect left a server-authoritative choice enabled"):
 		return _cleanup(scene)
 	client.set_connection("connected")

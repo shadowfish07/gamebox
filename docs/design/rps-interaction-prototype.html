@@ -566,16 +566,16 @@
     .phone[data-state="me-pending"] .locked-hand,
     .phone[data-state="reconnecting"] .locked-hand { opacity: 1; transform: scale(1); }
 
-    .phone[data-state="opponent-locked"] .status-pill,
-    .phone[data-state="me-locked"] .status-pill,
-    .phone[data-state="me-pending"] .status-pill {
+    .phone[data-state="opponent-locked"] .opponent-status,
+    .phone:is([data-state="me-locked"], [data-state="me-pending"]) .me-status {
       color: var(--on-tertiary-container);
       background: var(--tertiary-container);
     }
 
-    .phone[data-state="opponent-locked"] .status-dot,
-    .phone[data-state="me-locked"] .status-dot,
-    .phone[data-state="me-pending"] .status-dot { background: var(--on-tertiary-container); }
+    .phone[data-state="opponent-locked"] .opponent-status .status-dot,
+    .phone:is([data-state="me-locked"], [data-state="me-pending"]) .me-status .status-dot {
+      background: var(--on-tertiary-container);
+    }
 
     .phone[data-mode="selected"] .choice-tray { opacity: 0; pointer-events: none; transform: translateY(40px) scale(.92); }
     .phone[data-mode="selected"] .my-locked-choice { opacity: 1; transform: translateY(0) scale(1); }
@@ -731,7 +731,7 @@
           <section class="arena opponent-arena" aria-label="对手出拳区">
             <div class="player-line">
               <div class="player-id"><span class="avatar">TA</span><span>对手</span></div>
-              <span class="status-pill"><i class="status-dot"></i><span id="opponentStatus">等待出拳</span></span>
+              <span class="status-pill opponent-status"><i class="status-dot"></i><span id="opponentStatus">等待出拳</span></span>
             </div>
             <div class="gesture-stage">
               <div class="mystery-hand" aria-hidden="true">?</div>
@@ -758,7 +758,7 @@
           <section class="arena me-arena" aria-label="我的出拳区">
             <div class="player-line">
               <div class="player-id"><span class="avatar">我</span><span>你的出拳</span></div>
-              <span class="status-pill"><i class="status-dot"></i><span id="meStatus">等待选择</span></span>
+              <span class="status-pill me-status"><i class="status-dot"></i><span id="meStatus">等待选择</span></span>
             </div>
             <div class="choice-tray">
               <button type="button" class="choice" data-choice="rock"><img src="../../game_runtime/games/rps/assets/rock.png" alt=""><span>石头</span></button>
