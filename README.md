@@ -2,8 +2,11 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> A server-authoritative Android game collection built with Flutter, Godot, and Go.
+> **English** · [简体中文](README.zh-CN.md)
 
+A server-authoritative Android game collection built with Flutter, Godot, and Go.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/shadowfish07/gamebox/actions/workflows/ci.yml/badge.svg)](https://github.com/shadowfish07/gamebox/actions/workflows/ci.yml)
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://github.com/shadowfish07/gamebox/releases)
 [![Flutter 3.47.1](https://img.shields.io/badge/Flutter-3.47.1-02569B?logo=flutter&logoColor=white)](https://docs.flutter.dev/)
@@ -227,4 +230,4 @@ Gamebox is under active development and currently targets Android. AI opponents,
 
 ## License
 
-No open-source license has been published yet. The source is publicly available, but copyright law applies until the repository includes an explicit license.
+Gamebox is available under the [MIT License](LICENSE).
