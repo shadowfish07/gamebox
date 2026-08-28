@@ -2988,12 +2988,9 @@ design_point_from_bottom_for_serial() {
   ' "$width" "$height" "$DESIGN_WIDTH" "$DESIGN_HEIGHT" "$design_x" "$bottom_offset"
 }
 
-tap_design_back() {
+return_to_lobby_via_android_back() {
   local serial="$1"
-  local point x y
-  point="$(design_point_for_serial "$serial" 144 120)"
-  read -r x y <<<"$point"
-  adb_for "$serial" shell input tap "$x" "$y" >/dev/null || return 1
+  adb_for "$serial" shell input keyevent KEYCODE_BACK >/dev/null || return 1
 }
 
 JWT_SECRET="$(openssl rand -hex 32)"
@@ -3580,15 +3577,8 @@ done
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the light terminal Gomoku UI state"
 
-tap_design_back() {
-  local serial="$1"
-  local point x y
-  point="$(design_point_for_serial "$serial" 144 120)"
-  read -r x y <<<"$point"
-  adb_for "$serial" shell input tap "$x" "$y" >/dev/null || return 1
-}
-tap_design_back "$SERIAL_A" || fail "could not return A to the lobby"
-tap_design_back "$SERIAL_B" || fail "could not return B to the lobby"
+return_to_lobby_via_android_back "$SERIAL_A" || fail "could not return A to the lobby"
+return_to_lobby_via_android_back "$SERIAL_B" || fail "could not return B to the lobby"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A lobby did not return to idle"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B lobby did not return to idle"
 
@@ -3623,7 +3613,7 @@ if [[ -z "${second_snapshot:-}" ]] \
 fi
 wait_for_log_marker "$SERIAL_A" "$GAMEBOX_RESULT_MARKER match=$SECOND_MATCH_ID result=cancelled" \
   || fail "A did not observe the second cancellation"
-tap_design_back "$SERIAL_A" || fail "could not leave the cancelled second match"
+return_to_lobby_via_android_back "$SERIAL_A" || fail "could not leave the cancelled second match"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after second cancellation"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after second cancellation"
 
@@ -3686,8 +3676,8 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
 done
 assert_ui_state_safe "$SERIAL_A" "$SECRETS_ON_UI_A" \
   || fail "could not verify the authoritative resignation result UI state"
-tap_design_back "$SERIAL_A" || fail "A could not leave the resignation result"
-tap_design_back "$SERIAL_B" || fail "B could not leave the resignation result"
+return_to_lobby_via_android_back "$SERIAL_A" || fail "A could not leave the resignation result"
+return_to_lobby_via_android_back "$SERIAL_B" || fail "B could not leave the resignation result"
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after resignation"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after resignation"
 
@@ -3884,8 +3874,8 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
   wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$RPS_MATCH_ID result=rounds" \
     || fail "$serial did not render the shared RPS result"
 done
-tap_design_back "$SERIAL_A" || fail "A could not leave the RPS result"
-tap_design_back "$SERIAL_B" || fail "B could not leave the RPS result"
+return_to_lobby_via_android_back "$SERIAL_A" || fail "A could not leave the RPS result"
+return_to_lobby_via_android_back "$SERIAL_B" || fail "B could not leave the RPS result"
 wait_for_identifier "$SERIAL_A" rps-choose-opponent >/dev/null \
   || fail "A RPS slot was not released after completion"
 wait_for_identifier "$SERIAL_B" rps-choose-opponent >/dev/null \
