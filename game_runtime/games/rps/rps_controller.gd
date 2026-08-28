@@ -35,6 +35,7 @@ var _reveal_until_ms := 0
 var _reveal_key := ""
 var _reviewing_result := false
 var _presented_result_signature := ""
+var _automation_target_signature := ""
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -359,6 +360,35 @@ func _refresh_ui() -> void:
 		$ResultScrim.visible = false
 		$ResultPill.visible = false
 	_log_safe_state(has_state)
+	call_deferred("_emit_choice_automation_targets")
+
+
+func _emit_choice_automation_targets() -> void:
+	if not is_inside_tree() or _state == null or _state.revision < 0:
+		return
+	await get_tree().process_frame
+	if not is_inside_tree() or _state == null or _state.revision < 0:
+		return
+	var entries := _choice_entries()
+	var signature_parts: Array[String] = [str(_state.revision)]
+	for entry in entries:
+		var button: Button = entry["button"]
+		var rect := button.get_global_rect()
+		signature_parts.append("%s|%s|%.2f|%.2f|%.2f|%.2f" % [
+			entry["choice"], str(not button.disabled), rect.position.x, rect.position.y,
+			rect.size.x, rect.size.y,
+		])
+	var signature := ";".join(signature_parts)
+	if signature == _automation_target_signature:
+		return
+	_automation_target_signature = signature
+	for entry in entries:
+		var button: Button = entry["button"]
+		var rect := button.get_global_rect()
+		var center := rect.get_center()
+		print("GAMEBOX_AUTOMATION_TARGET match=%s name=rps-%s revision=%d center_x=%.2f center_y=%.2f enabled=%s" % [
+			_match_id, entry["choice"], _state.revision, center.x, center.y, str(not button.disabled),
+		])
 
 
 func _refresh_connection_banner() -> void:

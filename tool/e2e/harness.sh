@@ -2643,17 +2643,11 @@ game_logs_after_boundary() {
     | grep -E '[[:space:]]I[[:space:]]+godot[[:space:]]+:' || true
 }
 
-# A fresh match UUID makes an exact marker safe to use as a fallback when an
-# emulator loses the injected boundary record from its readable log buffers.
 game_logs_for_marker() {
   local serial="$1"
   local boundary="$2"
   local marker="$3"
-  if game_logs_after_boundary "$serial" "$boundary" | grep -F "$marker" >/dev/null; then
-    return 0
-  fi
-  adb_for "$serial" logcat -b all -d -v threadtime 2>/dev/null \
-    | grep -F "$marker" >/dev/null
+  game_logs_after_boundary "$serial" "$boundary" | grep -F "$marker" >/dev/null
 }
 
 dump_ui() {
@@ -3726,17 +3720,24 @@ gamebox_e2e_enter_phase scenario:rps-network
 tap_rps_choice() {
   local serial="$1"
   local choice="$2"
-  local design_x point x y
+  local expected_revision="$3"
+  local deadline=$((SECONDS + WAIT_SECONDS)) target_point="" point x y
   case "$choice" in
-    rock) design_x=188 ;;
-    scissors) design_x=540 ;;
-    paper) design_x=892 ;;
+    rock|scissors|paper) ;;
     *) return 2 ;;
   esac
-  # The RPS choice row expands with the viewport height.  Anchor its probe
-  # from the bottom so it remains within the button body on both managed
-  # portrait sizes instead of landing above the row on the tall device.
-  point="$(design_point_from_bottom_for_serial "$serial" "$design_x" 500)"
+  while ((SECONDS < deadline)); do
+    target_point="$(
+      game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+        | sed -E -n "s/.*GAMEBOX_AUTOMATION_TARGET match=$RPS_MATCH_ID name=rps-$choice revision=$expected_revision center_x=([0-9.]+) center_y=([0-9.]+) enabled=true.*/\\1 \\2/p" \
+        | tail -n 1
+    )"
+    [[ "$target_point" =~ ^[0-9.]+\ [0-9.]+$ ]] && break
+    sleep 0.2
+  done
+  [[ "$target_point" =~ ^[0-9.]+\ [0-9.]+$ ]] || return 1
+  read -r x y <<<"$target_point"
+  point="$(design_point_for_serial "$serial" "$x" "$y")"
   read -r x y <<<"$point"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
@@ -3796,6 +3797,7 @@ RPS_MATCH_ID="$(wait_for_new_rps_ready_match_id "$SERIAL_A")" \
   || fail "A did not launch the RPS best-of-three match"
 [[ "$RPS_MATCH_ID" =~ $uuid_pattern ]] \
   || fail "RPS ready marker did not contain a canonical match ID"
+MATCH_ID="$RPS_MATCH_ID"
 wait_for_identifier "$SERIAL_B" rps-continue-match >/dev/null \
   || fail "B did not expose the invited RPS match"
 wait_for_identifier "$SERIAL_B" rps-active-format-best_of_three >/dev/null \
@@ -3816,8 +3818,8 @@ fi
   && "$(jq -r '.round' <<<"$rps_snapshot")" == "1" ]] \
   || fail "RPS match did not persist the selected best-of-three format"
 
-tap_rps_choice "$SERIAL_A" rock || fail "A could not choose rock in the draw round"
-tap_rps_choice "$SERIAL_B" rock || fail "B could not choose rock in the draw round"
+tap_rps_choice "$SERIAL_A" rock 0 || fail "A could not choose rock in the draw round"
+tap_rps_choice "$SERIAL_B" rock 1 || fail "B could not choose rock in the draw round"
 rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 2 active)" \
   || fail "RPS draw did not commit exactly one lock and reveal per player"
 [[ "$(jq -r '.round' <<<"$rps_snapshot")" == "2" \
@@ -3833,23 +3835,23 @@ assert_rps_presentation "$SERIAL_A" "$RPS_MATCH_ID" 2 false false \
 assert_rps_presentation "$SERIAL_B" "$RPS_MATCH_ID" 2 false false \
   || fail "B did not finish the draw reveal before round two"
 
-tap_rps_choice "$SERIAL_A" paper || fail "A could not choose paper in round two"
-tap_rps_choice "$SERIAL_B" rock || fail "B could not choose rock in round two"
+tap_rps_choice "$SERIAL_A" paper 2 || fail "A could not choose paper in round two"
+tap_rps_choice "$SERIAL_B" rock 3 || fail "B could not choose rock in round two"
 rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 4 active)" \
   || fail "RPS second round did not reveal authoritatively"
 [[ "$(jq -r '.round' <<<"$rps_snapshot")" == "3" \
   && "$(jq -r --arg a "$USER_ID_A" '.scores[$a] // 0' <<<"$rps_snapshot")" == "1" ]] \
   || fail "RPS second round did not award A exactly one point"
 
-tap_rps_choice "$SERIAL_A" rock || fail "A could not lock rock before reconnect"
+tap_rps_choice "$SERIAL_A" rock 4 || fail "A could not lock rock before reconnect"
 rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 5 active)" \
   || fail "RPS sealed choice was not persisted before reconnect"
 assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 5 3 true false \
   || fail "A did not render its local locked state"
 assert_rps_client_state "$SERIAL_B" "$RPS_MATCH_ID" 5 3 false true \
   || fail "B did not render only the opponent lock state"
-assert_rps_presentation "$SERIAL_B" "$RPS_MATCH_ID" 5 false true \
-  || fail "B did not preserve the prior reveal while sealing the current opponent choice"
+assert_rps_presentation "$SERIAL_B" "$RPS_MATCH_ID" 5 false false \
+  || fail "B exposed the sealed opponent choice or reopened the completed reveal"
 refresh_game_log_boundary "$SERIAL_A" rps-sealed-reconnect \
   || fail "could not establish the RPS reconnect log boundary"
 adb_for "$SERIAL_A" shell am force-stop "$PACKAGE" >/dev/null \
@@ -3863,7 +3865,7 @@ wait_for_log_marker "$SERIAL_A" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH
 assert_rps_client_state "$SERIAL_A" "$RPS_MATCH_ID" 5 3 true false \
   || fail "A reconnect did not restore its own sealed choice without revealing B"
 
-tap_rps_choice "$SERIAL_B" scissors || fail "B could not complete the deciding RPS round"
+tap_rps_choice "$SERIAL_B" scissors 5 || fail "B could not complete the deciding RPS round"
 rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 6 finished)" \
   || fail "RPS best-of-three match did not complete at two wins"
 [[ "$(jq -r '.result' <<<"$rps_snapshot")" == "rounds" \
