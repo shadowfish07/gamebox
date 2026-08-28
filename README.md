@@ -172,10 +172,12 @@ The local two-device acceptance gate is reserved for network, protocol, multipla
 
 ```bash
 bash tool/e2e_android.sh --self-test
-bash tool/e2e_android.sh
+bash tool/e2e_android.sh --list-scenarios
+bash tool/worktree.sh e2e --scenario gomoku-network
+bash tool/worktree.sh e2e               # release-level full suite
 ```
 
-The harness owns only its leased devices, restores display and theme settings, validates APK provenance, and writes sanitized diagnostics under `artifacts/e2e/`. It verifies logic and lifecycle rather than visual design. See the [testing strategy](docs/testing-strategy.md) for the evidence expected at each layer.
+`tool/e2e_android.sh` remains the stable compatibility entrypoint, while the scenario CLI and harness live under `tool/e2e/`. The harness owns only its leased devices, restores display and theme settings, validates APK provenance, and writes sanitized diagnostics under `artifacts/e2e/`. It verifies logic and lifecycle rather than visual design. See the [testing strategy](docs/testing-strategy.md) for the evidence expected at each layer.
 
 ## Releases
 

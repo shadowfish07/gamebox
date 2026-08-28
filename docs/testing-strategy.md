@@ -26,8 +26,9 @@ Gamebox 使用 Flutter 宿主、Godot 游戏、Go 服务和 Android 打包。验
 
 ## Two-device E2E
 
-`bash tool/worktree.sh e2e` 在共享 Android 租约下运行完整双 AVD 验收。只在下列边界本身
-受影响，或正在做发布候选验收时使用：
+`bash tool/worktree.sh e2e --scenario <name>` 在共享 Android 租约下运行聚焦双 AVD 场景；
+不传 `--scenario` 才运行发布级完整验收。只在下列边界本身受影响，或正在做发布候选
+验收时使用：
 
 - Flutter–Godot bridge、launch ticket 或 Activity 生命周期；
 - 真实网络、协议、多玩家同步或跨设备权威状态；
@@ -37,15 +38,19 @@ Gamebox 使用 Flutter 宿主、Godot 游戏、Go 服务和 Android 打包。验
 仅 Godot 排版、文案、主题或场景状态绑定变更不运行整套双设备 E2E；用聚焦 Godot 测试、
 直接 Godot 运行时 UI 检查，并在宿主边界受影响时加薄 Android smoke。
 
-## E2E runner evolution
+## E2E runner
 
-当修改 `tool/e2e_android.sh` 时，先运行 `bash tool/e2e_android.sh --self-test`。当前 runner 仍是单体
-完整旅程；后续拆分应保留一个顶层结果，并增加：
+`tool/e2e_android.sh` 是稳定的兼容入口；参数解析和顶层调度在 `tool/e2e/run.sh`，设备、
+服务和构建生命周期由 harness 统一持有，场景名称由 registry 管理。可用场景：
 
-- `--scenario` 或等价的聚焦过滤；
-- 预检、构建、设备准备、安装和业务 scenario 的独立阶段诊断；
-- 同一运行内的安全构建/安装复用和每个 scenario 的确定性重置；
-- 稳定 selector/node ID、条件等待，以及 Godot 无语义树时由运行时提供的实际目标矩形。
+- `flutter-host`：打包后的 Flutter 注册和宿主更新交互；
+- `gomoku-network`：Flutter–Godot bridge、权威 revision、生命周期和恢复；
+- `rps-network`：封存选择、重连、权威完成和 slot 释放；
+- `full`：顺序运行全部场景，仅作为发布级或全局协议/lifecycle gate。
+
+修改 runner 时先运行 `bash tool/e2e_android.sh --self-test`。使用 `--plan` 只检查选择结果，
+使用 `--verbose` 流式显示成功子阶段输出。默认成功只输出一个顶层 verdict；失败保留原始
+退出码并显示失败阶段的输出。场景复用同一轮安全构建、安装和设备准备，固定 runner 不截图。
 
 只有共享 driver 协议、全局生命周期或整段关键旅程不变式变更时，才需要用完整双设备旅程
 验证 runner 修改。其余情况在支持聚焦 scenario 后，应以 self-test 加最小受影响 scenario 为默认。
