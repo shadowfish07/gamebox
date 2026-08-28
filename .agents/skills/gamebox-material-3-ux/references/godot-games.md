@@ -51,7 +51,7 @@ Launch the real Godot project directly for visual tuning instead of rebuilding a
 
 - Run representative phone viewports, especially the narrow supported viewport, and inspect screenshots of every affected state.
 - Keep preview states deterministic and selectable, such as ready, pending, locked, reveal, reconnecting, and finished.
-- Treat these screenshots as rapid design feedback, not as final Android evidence or checked-in golden tests.
+- Treat these screenshots as target-runtime evidence for Godot-owned presentation and rapid design feedback, not as Android package/host evidence or checked-in golden tests.
 - Preserve production node paths, theme application, layout containers, and controller bindings so preview findings transfer to the packaged game.
 
 ### Godot-owned automated tests
@@ -67,8 +67,8 @@ Add or update these tests whenever a Godot UX change introduces an invariant tha
 
 ### Android boundary
 
-For an ordinary Godot-only UX change, Android automation is a thin host smoke: install and launch the actual package, confirm the Godot ready marker appears, confirm the declared orientation and host surface are usable, exercise visible/system Back and Activity exit when affected, and ensure there is no startup crash. Do not replay the complete Godot state matrix through UI Automator.
+When a Godot change affects export/package, Android hosting, orientation integration, visible/system Back, Activity lifecycle, or the Flutter–Godot bridge, Android automation is a thin host smoke: install and launch the actual package, confirm the Godot ready marker appears, confirm the affected host surface is usable, exercise Back and Activity exit when affected, and ensure there is no startup crash. Ordinary Godot-owned styling, layout, copy, and state presentation use focused Godot tests plus direct production-scene runtime inspection; do not replay the complete Godot state matrix through UI Automator.
 
 Run linked two-device or deeper Android flows only when the change touches the Flutter-Godot bridge, launch tickets, lifecycle recovery, networking/protocol behavior, or another cross-runtime boundary. Those flows prove the boundary; they still do not replace focused Godot tests.
 
-In the packaged Android game, verify its declared orientation and affected phone viewports. Explicitly exercise Android system Back and visible Back and confirm they navigate identically without resigning or discarding progress. Exercise resignation through an explicit consequence-named confirmation before any server request. For linked play, retain real two-device verification; deterministic fake services prove wiring only, not the live boundary. The fixed E2E records these interaction and authority assertions without screenshots. The implementing agent also captures and inspects non-sensitive screenshots of affected UI states as transient inputs; do not require the images in commits, pull requests, or final responses unless the user explicitly asks.
+When the packaged Android boundary is in scope, verify its declared orientation and affected phone viewports. Explicitly exercise Android system Back and visible Back and confirm they navigate identically without resigning or discarding progress. Exercise resignation through an explicit consequence-named confirmation before any server request. For linked play changes, retain real two-device verification; deterministic fake services prove wiring only, not the live boundary. Fixed automation records these interaction and authority assertions without screenshots. The implementing agent captures and inspects non-sensitive screenshots in the relevant target runtime as transient inputs; do not require the images in commits, pull requests, or final responses unless the user explicitly asks.

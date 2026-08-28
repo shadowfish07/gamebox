@@ -63,7 +63,7 @@ Show explicit first-connect loading. During reconnect, preserve the last confirm
 
 Android system Back and the visible back control MUST lead to the same navigation result. Back MUST never resign, cancel a match, or discard progress implicitly. An active online match remains resumable after returning to the lobby.
 
-Resign, cancel, and exit-with-discard are separately named dangerous actions. Their confirmation MUST state the object and result, such as “Resign and end this match”; a generic “Confirm” is insufficient. Consequences, not button color, determine whether confirmation is required. Audit and verify Android Back behavior and dangerous confirmation even when a requested change is described as visual-only.
+Resign, cancel, and exit-with-discard are separately named dangerous actions. Their confirmation MUST state the object and result, such as “Resign and end this match”; a generic “Confirm” is insufficient. Consequences, not button color, determine whether confirmation is required. Preserve these contracts during every review. Re-run Android Back acceptance when navigation, Back handling, the host, or Activity lifecycle is affected; verify dangerous confirmation whenever the changed surface contains or can reach that action.
 
 ## Scope Exclusion and Automation Contracts
 
@@ -115,4 +115,4 @@ Version the design system independently, starting at `1.0.0`, and record its ver
 
 ## Common Mistakes
 
-- Treating a visual-only scope as permission to skip Android Back verification or explicit confirmation before resignation. These interaction semantics remain in scope even when existing callbacks are preserved.
+- Breaking Android Back parity or explicit confirmation while changing nearby visuals. Preserve these contracts, but do not run unrelated Android E2E when the affected boundary is fully covered by lower layers.
