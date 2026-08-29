@@ -20,6 +20,7 @@ static func cases() -> Array:
 		{"name": "gomoku scene keeps required return guidance in one banner", "run": _keeps_required_return_guidance},
 		{"name": "gomoku scene hides the internal board revision", "run": _hides_internal_revision},
 		{"name": "gomoku scene renders every terminal outcome", "run": _renders_terminal_states},
+		{"name": "gomoku resignation does not misattribute the last move", "run": _resignation_does_not_misattribute_last_move},
 		{"name": "gomoku scene blocks actions while stale snapshot is pending", "run": _blocks_stale_actions},
 		{"name": "gomoku scene ignores non-authoritative snapshot callbacks while locked", "run": _ignores_non_authoritative_snapshots},
 		{"name": "gomoku scene keeps reconnect locked until authoritative snapshot", "run": _keeps_reconnect_locked},
@@ -75,6 +76,8 @@ static func _uses_lightweight_shell() -> bool:
 		and _check((dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button).text == "确认认输" \
 			and (dialog.get_node("Dialog/Content/Actions/CancelButton") as Button).text == "继续对局", "danger actions changed") \
 		and _check(loading.has_method("set_loading") and loading.has_node("Content/Message"), "public loading component is not mounted") \
+		and _check(loading.visible and (loading.get_node("Content/Message") as Label).text == "正在同步对局…", "initial Gomoku synchronization did not use the blocking loader") \
+		and _check(not connection.visible, "initial Gomoku synchronization duplicated the loader with a compact banner") \
 		and _check(result_panel.has_method("present_details") and result_panel.has_node("Content/Actions/ReturnButton"), "public result component is not mounted") \
 		and _check(scene.get_node("Board").has_signal("cell_pressed"), "cell_pressed automation contract changed") \
 		and _check(InputMap.has_action("ui_cancel"), "ui_cancel input action changed")
@@ -95,17 +98,17 @@ static func _renders_live_states() -> bool:
 	if not _check(_has_lightweight_nodes(scene), "live-state components are missing"):
 		return _cleanup(scene)
 	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "initial connection duplicates its prominent status") \
-		or not _check(_connection_visible(scene) and _connection_message(scene) == "连接中…", "initial connection banner changed") \
-		or not _check(not _loading_visible(scene), "initial connection still showed blocking loading"):
+		or not _check(not _connection_visible(scene), "initial connection duplicated its blocking loader") \
+		or not _check(_loading_visible(scene), "initial connection did not show blocking loading"):
 		return _cleanup(scene)
 	client.set_connection("connected")
 	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "initial snapshot wait duplicates its loading status") \
-		or not _check(_connection_visible(scene) and _connection_message(scene) == "同步中…", "initial snapshot wait did not use shared sync state") \
-		or not _check(not _loading_visible(scene), "initial snapshot wait still showed blocking loading"):
+		or not _check(not _connection_visible(scene), "initial snapshot wait duplicated its blocking loader") \
+		or not _check(_loading_visible(scene), "initial snapshot wait lost blocking loading"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
-	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "reconnecting state duplicates its banner") \
-		or not _check(_connection_visible(scene) and _connection_message(scene) == "重连中…", "reconnecting banner changed"):
+	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "pre-snapshot reconnect duplicates its loader") \
+		or not _check(not _connection_visible(scene) and _loading_visible(scene), "pre-snapshot reconnect replaced the blocking loader"):
 		return _cleanup(scene)
 	client.accept_snapshot(_snapshot(0))
 	if not _check(_status(scene) == "轮到我", "local turn copy changed") \
@@ -367,12 +370,15 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 	var finished: bool = snapshot["payload"]["status"] == "finished"
 	var has_winning_line: bool = snapshot["payload"].get("result") == "five"
 	var resignation: bool = snapshot["payload"].get("result") == "resignation"
+	var evidence_piece := scene.get_node("TerminalEvidence/Content/Piece") as Label
 	var result := _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "terminal outcome duplicates its result panel") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
 		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
 		and _check(scene.get_node("ResultPanel").size.y >= 760.0 and scene.get_node("ResultPanel").size.y <= 840.0, "terminal result panel does not match the approved bottom card: size=%s root=%s pos=%s offsets=%s/%s" % [scene.get_node("ResultPanel").size, scene.size, scene.get_node("ResultPanel").position, scene.get_node("ResultPanel").offset_top, scene.get_node("ResultPanel").offset_bottom]) \
 		and _check(scene.get_node("ResultScrim").visible, "terminal result scrim stayed hidden") \
 		and _check(scene.get_node("TerminalEvidence").visible, "terminal evidence card stayed hidden") \
+		and _check(evidence_piece.get_theme_constant("outline_size") >= 2, "terminal stone marker lost its contrast outline") \
+		and _check(evidence_piece.get_theme_color("font_outline_color") != evidence_piece.get_theme_color("font_color"), "terminal stone marker outline does not contrast with the piece") \
 		and _check((scene.get_node("TerminalEvidence/Content/Labels/Move") as Label).text == ("获胜连线 · A1–E1" if has_winning_line else "没有产生终局落子"), "terminal evidence invented an unavailable last move") \
 		and _check(not resignation or (scene.get_node("ResultPanel/Content/Support") as Label).text.contains("认输"), "resignation result did not explain the actual terminal cause") \
 		and _check(not resignation or (scene.get_node("ResultPanel/Content/Summary/Item2/Content/Label") as Label).text == "你的棋色", "resignation result exposed fabricated move evidence") \
@@ -388,6 +394,20 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 			and _check((scene.get_node("Board") as Control).winning_cells.size() == (5 if has_winning_line else 0), "terminal board winning-line evidence did not match the authoritative result")
 		(scene.get_node("ResultPill") as Button).pressed.emit()
 		result = result and _check(scene.get_node("ResultPanel").visible and scene.get_node("ResultScrim").visible, "result pill did not restore the result card")
+	return _cleanup(scene, result)
+
+
+static func _resignation_does_not_misattribute_last_move() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_snapshot(0))
+	client.accept_event(_move(1, BLACK_ID, "black", 7, 7))
+	client.accept_event(_resignation(2, BLACK_ID, WHITE_ID))
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var move_copy := (scene.get_node("TerminalEvidence/Content/Labels/Move") as Label).text
+	var result := _check(move_copy == "认输前落子 · H8", "resignation misattributed its last move: %s" % move_copy) \
+		and _check(not move_copy.contains("对手落子"), "resignation claimed the winner made the resigner's last move")
 	return _cleanup(scene, result)
 
 
@@ -918,6 +938,14 @@ static func _move(revision: int, user_id: String, color: String, x: int, y: int)
 		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
 		"revision": revision, "type": "gomoku.move.accepted", "actionId": ACTION_ID,
 		"payload": {"userId": user_id, "color": color, "x": x, "y": y},
+	}
+
+
+static func _resignation(revision: int, user_id: String, winner_user_id: String) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+		"revision": revision, "type": "gomoku.resigned", "actionId": ACTION_ID,
+		"payload": {"userId": user_id, "winnerUserId": winner_user_id},
 	}
 
 

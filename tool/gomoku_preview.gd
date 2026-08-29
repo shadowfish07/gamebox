@@ -8,6 +8,7 @@ const GAMEBOX_TOKENS := preload("res://design_system/generated/gamebox_tokens.gd
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
 const WHITE_ID := "33333333-3333-4333-8333-333333333333"
+const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 
 var _state_name := "finished_win"
 var _viewport := Vector2i(720, 1600)
@@ -28,9 +29,15 @@ class PreviewClient:
 
 	var connection_state := "connected"
 	var local_user_id := BLACK_ID
+	var _state_name := "finished_win"
 	var _snapshot_envelope := {}
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, _state: Variant) -> bool:
+		if connection_state == "connecting":
+			return true
+		if _state_name == "resignation_move_loss":
+			call_deferred("_emit_resignation_sequence")
+			return true
 		call_deferred("_emit_snapshot")
 		return true
 
@@ -55,6 +62,30 @@ class PreviewClient:
 	func _emit_snapshot() -> void:
 		snapshot_received.emit(_snapshot_envelope)
 
+	func _emit_resignation_sequence() -> void:
+		var board: Array = []
+		board.resize(225)
+		board.fill(0)
+		snapshot_received.emit({
+			"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+			"revision": 0, "type": "platform.snapshot",
+			"payload": {
+				"status": "active", "board": board, "boardSize": 15,
+				"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
+				"winnerUserId": null, "result": null,
+			},
+		})
+		event_received.emit({
+			"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+			"revision": 1, "type": "gomoku.move.accepted", "actionId": ACTION_ID,
+			"payload": {"userId": BLACK_ID, "color": "black", "x": 7, "y": 7},
+		})
+		event_received.emit({
+			"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
+			"revision": 2, "type": "gomoku.resigned", "actionId": ACTION_ID,
+			"payload": {"userId": BLACK_ID, "winnerUserId": WHITE_ID},
+		})
+
 
 func _init() -> void:
 	_parse_arguments(OS.get_cmdline_user_args())
@@ -63,11 +94,16 @@ func _init() -> void:
 
 
 func _mount() -> void:
-	var local_won := _state_name not in ["finished_loss", "review_loss", "resignation_loss"]
+	var local_won := _state_name not in ["finished_loss", "review_loss", "resignation_loss", "resignation_move_loss"]
 	var scene: Control = GOMOKU_SCENE.instantiate()
 	var client := PreviewClient.new()
+	client.connection_state = "connecting" if _state_name == "connecting" else "connected"
 	client.local_user_id = BLACK_ID if local_won else WHITE_ID
-	client._snapshot_envelope = _terminal_snapshot(_state_name.begins_with("resignation_"))
+	client._state_name = _state_name
+	if _state_name == "resignation_move_loss":
+		client.local_user_id = BLACK_ID
+	if _state_name != "connecting":
+		client._snapshot_envelope = _terminal_snapshot(_state_name.begins_with("resignation_"))
 	if not scene.configure_launch({
 		"game_id": "gomoku", "match_id": MATCH_ID,
 		"launch_ticket": "preview-ticket", "ws_url": "ws://preview.local",
@@ -145,7 +181,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss"]:
+				if _state_name not in ["connecting", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss", "resignation_move_loss"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return

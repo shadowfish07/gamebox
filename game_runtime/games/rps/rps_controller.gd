@@ -292,6 +292,10 @@ func _on_snapshot_received(_envelope: Dictionary) -> void:
 	_awaiting_snapshot = false
 	_error_text = ""
 	_resign_submitted = false
+	# A fresh authoritative snapshot owns presentation immediately. Do not keep
+	# an animation timer from the pre-reconnect state hiding current choices.
+	_reveal_until_ms = 0
+	_reveal_key = ""
 	_refresh_ui()
 
 

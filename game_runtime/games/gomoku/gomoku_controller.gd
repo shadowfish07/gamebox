@@ -431,13 +431,15 @@ func _refresh_ui() -> void:
 		and not _awaiting_snapshot and not terminal
 	$TopNavigation.set_subtitle(status_text)
 	$TopNavigation.set_subtitle_visible(show_status)
-	$ConnectionLabel.present(_connection_banner_state(), _error_text if _force_return else "")
+	var initial_loading := not has_state and _awaiting_snapshot \
+		and _connection_state not in ["failed", "closed"] and not _force_return
+	$ConnectionLabel.present("connected" if initial_loading else _connection_banner_state(), _error_text if _force_return else "")
 	$OpponentPresence.visible = has_state and not terminal and not $ConnectionLabel.visible
 	$OpponentPresence/Content/PresenceDot.text = _opponent_presence_mark(opponent_presence)
 	$OpponentPresence/Content/OpponentPresenceLabel.text = _opponent_presence_text(opponent_presence)
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
-	$LoadingOverlay.set_loading(false, "")
+	$LoadingOverlay.set_loading(initial_loading, "正在同步对局…" if initial_loading else "")
 	$TopNavigation.set_action_visible(not terminal and not _force_return)
 
 	if terminal:
@@ -525,11 +527,14 @@ func _present_gomoku_result(local_user_id: String, winning_line: Array[Vector2i]
 			"review_available": true,
 		}
 	$TerminalEvidence/Content/Labels/Player.text = "你 · %s棋" % _color_name(local_color) if not local_color.is_empty() else "对局已结束"
-	$TerminalEvidence/Content/Labels/Move.text = "%s · %s" % ["最后落子" if local_won else "对手落子", cell_label] if terminal_cell != INVALID_CELL else "获胜连线 · %s" % line_label if not winning_line.is_empty() else "没有产生终局落子"
+	$TerminalEvidence/Content/Labels/Move.text = "认输前落子 · %s" % cell_label if _state.result == "resignation" and terminal_cell != INVALID_CELL else "%s · %s" % ["最后落子" if local_won else "对手落子", cell_label] if terminal_cell != INVALID_CELL else "获胜连线 · %s" % line_label if not winning_line.is_empty() else "没有产生终局落子"
 	$TerminalEvidence/Content/Piece.text = "●" if not local_color.is_empty() else "—"
 	$TerminalEvidence/Content/Piece.add_theme_color_override(
 		"font_color", GameboxTokens.GAME["black_piece"] if local_color == "black" else GameboxTokens.GAME["white_piece"]
 	)
+	var outline_color: Color = GameboxTokens.GAME["white_piece"] if local_color == "black" else GameboxTokens.GAME["black_piece"] if local_color == "white" else (GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT)["on_surface"]
+	$TerminalEvidence/Content/Piece.add_theme_color_override("font_outline_color", outline_color)
+	$TerminalEvidence/Content/Piece.add_theme_constant_override("outline_size", 6)
 	$TerminalEvidence.visible = true
 	$ResultPanel.present_details(details)
 	$ResultPanel.visible = not _reviewing_result

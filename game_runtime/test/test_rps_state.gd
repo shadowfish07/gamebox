@@ -26,6 +26,7 @@ static func cases() -> Array:
 		{"name": "rps terminal result omits unavailable reveal evidence", "run": _terminal_result_without_reveal},
 		{"name": "rps resignation result does not invent round evidence", "run": _resignation_result_presentation},
 		{"name": "rps lock events do not replay a stale reveal", "run": _lock_event_does_not_replay_stale_reveal},
+		{"name": "rps snapshots cancel stale reveal playback", "run": _snapshot_cancels_reveal_playback},
 		{"name": "rps overflow menu requires explicit resign selection", "run": _overflow_menu_requires_explicit_resign},
 		{"name": "rps reconnect keeps the confirmed match behind a compact banner", "run": _reconnect_keeps_confirmed_match},
 	]
@@ -324,6 +325,29 @@ static func _lock_event_does_not_replay_stale_reveal() -> bool:
 	}))
 	var result := _check(not scene.get_node("RevealPanel").visible, "choice lock replayed the previous round reveal") \
 		and _check(not scene._is_revealing(), "choice lock started a stale reveal timer")
+	return _cleanup(scene, result)
+
+
+static func _snapshot_cancels_reveal_playback() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_snapshot(1, "best_of_three", 1, {
+		"userId": ME, "score": 0, "locked": true, "choice": "paper",
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": true,
+	}))
+	client.accept_event(_event(2, "rps.round.revealed", _reveal(1, "paper", "rock", ME, false, 1, 0, null)))
+	if not _check(scene.get_node("RevealPanel").visible and scene._is_revealing(), "reveal fixture did not start playback"):
+		return _cleanup(scene)
+	client.accept_snapshot(_snapshot(3, "best_of_three", 2, {
+		"userId": ME, "score": 1, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	}))
+	var result := _check(not scene.get_node("RevealPanel").visible, "authoritative snapshot retained a stale reveal panel") \
+		and _check(not scene._is_revealing(), "authoritative snapshot retained a stale reveal timer") \
+		and _check(not (scene.get_node("SafeContent/Layout/MySection/ChoicePanel/Choices/RockButton") as Button).disabled, "stale reveal kept current-round choices disabled")
 	return _cleanup(scene, result)
 
 
