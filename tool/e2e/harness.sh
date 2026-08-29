@@ -848,6 +848,13 @@ device_ui_mode() {
     | tail -n 1
 }
 
+supported_ui_mode() {
+  case "$1" in
+    auto|no|yes|custom|custom_schedule|custom_bedtime) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 device_display_override() {
   local serial="$1"
   adb_for "$serial" shell wm size 2>/dev/null \
@@ -947,10 +954,8 @@ configure_device_visuals() {
   local original_ui_mode original_display_override original_density_override actual
   original_ui_mode="$(device_ui_mode "$serial")" \
     || fail "$serial did not report its original ui mode"
-  case "$original_ui_mode" in
-    auto|no|yes|custom) ;;
-    *) fail "$serial reported an unsupported original ui mode" ;;
-  esac
+  supported_ui_mode "$original_ui_mode" \
+    || fail "$serial reported an unsupported original ui mode"
   original_display_override="$(device_display_override "$serial")" \
     || fail "$serial did not report its original display override"
   original_density_override="$(device_density_override "$serial")" \
@@ -1329,6 +1334,15 @@ self_test() {
   [[ "$MANAGED_AVD_A:$MANAGED_PORT_A,$MANAGED_AVD_B:$MANAGED_PORT_B" == "Gamebox_A1_API_36:5564,Gamebox_B1_API_36:5566" ]] \
     || { printf 'managed slot 1 mapping fixture failed\n' >&2; return 1; }
   select_managed_slot 0
+  local ui_mode
+  for ui_mode in auto no yes custom custom_schedule custom_bedtime; do
+    supported_ui_mode "$ui_mode" \
+      || { printf 'supported ui mode fixture failed for %s\n' "$ui_mode" >&2; return 1; }
+  done
+  if supported_ui_mode unsupported; then
+    printf 'unsupported ui mode fixture was accepted\n' >&2
+    return 1
+  fi
   local fixture_dir
   fixture_dir="$(mktemp -d)"
   BOUND_CHILD_REGISTRY="$fixture_dir/bounded-children"
