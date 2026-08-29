@@ -23,6 +23,7 @@ class PreviewClient:
 	signal snapshot_sync_started()
 	signal snapshot_received(envelope: Dictionary)
 	signal event_received(envelope: Dictionary)
+	signal authoritative_result_received(envelope: Dictionary)
 	signal player_presence_changed(user_id: String, online: bool)
 	signal match_error(code: String)
 	signal return_to_lobby_requested(code: String)
@@ -32,7 +33,13 @@ class PreviewClient:
 	var _state_name := "finished_win"
 	var _snapshot_envelope := {}
 
-	func start(_ws_url: String, _match_id: String, _ticket: String, _state: Variant) -> bool:
+	func start(
+		_ws_url: String,
+		_match_id: String,
+		_ticket: String,
+		_state: Variant,
+		_resume_token: String,
+	) -> bool:
 		if _state_name in ["connecting", "syncing"]:
 			return true
 		if _state_name == "resignation_move_loss":
