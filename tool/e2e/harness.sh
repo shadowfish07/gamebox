@@ -69,6 +69,24 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
+process_is_live() {
+  local pid="$1"
+  local process_state
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  process_state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')" \
+    || return 1
+  [[ -n "$process_state" && "$process_state" != Z* ]]
+}
+
+file_mode() {
+  local file="$1"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stat -f '%Lp' "$file" 2>/dev/null
+  else
+    stat -c '%a' "$file" 2>/dev/null
+  fi
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   SELF_TEST_ONLY=1
   shift
@@ -486,7 +504,7 @@ xml_query() {
   local mode="$1"
   local xml_path="$2"
   local expected="${3:-}"
-  ruby -r rexml/document -e '
+  ruby -EUTF-8:UTF-8 -r rexml/document -e '
     mode, path, expected = ARGV
     document = REXML::Document.new(File.binread(path))
     nodes = []
@@ -613,87 +631,69 @@ protect_artifact_directory() {
   shift 2
   local unsafe=0
   local scanner_failed=0
-  local value status file
-  : >"$scratch"
-
-  for value in "$@"; do
-    [[ -n "$value" ]] || continue
-    if printf '%s\n' "$value" \
-      | rg --text --files-with-matches --fixed-strings --file - -- "$directory" >"$scratch" 2>/dev/null; then
-      while IFS= read -r file; do
-        case "$file" in
-          "$directory"/*)
-            [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
-            ;;
-          *) scanner_failed=1 ;;
-        esac
-      done <"$scratch"
-      unsafe=1
-    else
-      status=$?
-      ((status == 1)) || scanner_failed=1
-    fi
-  done
-
+  local contaminated status file value
   local credential_pattern='eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|Authorization[[:space:]]*:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]{8,}|"(accessToken|refreshToken|launchTicket|inviteCode)"[[:space:]]*:[[:space:]]*"[A-Za-z0-9._-]{8,}'
-  if rg --text --files-with-matches "$credential_pattern" "$directory" >"$scratch" 2>/dev/null; then
-    while IFS= read -r file; do
-      case "$file" in
-        "$directory"/*)
-          [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
-          ;;
-        *) scanner_failed=1 ;;
-      esac
-    done <"$scratch"
-    unsafe=1
-  else
-    status=$?
-    ((status == 1)) || scanner_failed=1
-  fi
 
-  if ((scanner_failed)); then
-    for file in "$directory"/*; do
-      [[ -e "$file" || -L "$file" ]] || continue
-      [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
+  # Scan explicit files rather than parsing ripgrep's directory-mode path
+  # output, whose absolute/relative form differs across supported platforms.
+  # Symlinks are never valid retained diagnostics: remove them without
+  # following their targets.
+  if ! find "$directory" \( -type f -o -type l \) -print0 >"$scratch"; then
+    scanner_failed=1
+  fi
+  while IFS= read -r -d '' file; do
+    case "$file" in
+      "$directory"/*) ;;
+      *) scanner_failed=1; continue ;;
+    esac
+    if [[ -L "$file" ]]; then
+      rm -f -- "$file"
+      unsafe=1
+      continue
+    fi
+
+    contaminated=0
+    for value in "$@"; do
+      [[ -n "$value" ]] || continue
+      if printf '%s\n' "$value" \
+        | rg --text --quiet --fixed-strings --file - -- "$file" 2>/dev/null; then
+        contaminated=1
+        break
+      else
+        status=$?
+        if ((status != 1)); then
+          scanner_failed=1
+          break
+        fi
+      fi
     done
-    return 1
-  fi
-
-  for value in "$@"; do
-    [[ -n "$value" ]] || continue
-    if printf '%s\n' "$value" \
-      | rg --text --fixed-strings --file - -- "$directory" >/dev/null 2>&1; then
-      for file in "$directory"/*; do
-        [[ -e "$file" || -L "$file" ]] || continue
-        [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
-      done
-      return 1
-    else
-      status=$?
-      if ((status != 1)); then
-        for file in "$directory"/*; do
-          [[ -e "$file" || -L "$file" ]] || continue
-          [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
-        done
-        return 1
+    if ((scanner_failed)); then
+      break
+    fi
+    if ((contaminated == 0)); then
+      if rg --text --quiet "$credential_pattern" -- "$file" 2>/dev/null; then
+        contaminated=1
+      else
+        status=$?
+        ((status == 1)) || scanner_failed=1
       fi
     fi
-  done
-  if rg --text "$credential_pattern" "$directory" >/dev/null 2>&1; then
-    for file in "$directory"/*; do
-      [[ -e "$file" || -L "$file" ]] || continue
-      [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
-    done
-    return 1
-  else
-    status=$?
-    if ((status != 1)); then
-      for file in "$directory"/*; do
-        [[ -e "$file" || -L "$file" ]] || continue
-        [[ -f "$file" || -L "$file" ]] && rm -f -- "$file"
-      done
-      return 1
+    if ((contaminated)); then
+      rm -f -- "$file"
+      unsafe=1
     fi
+    ((scanner_failed == 0)) || break
+  done <"$scratch"
+
+  if ((scanner_failed)); then
+    if find "$directory" \( -type f -o -type l \) -print0 >"$scratch"; then
+      while IFS= read -r -d '' file; do
+        case "$file" in
+          "$directory"/*) rm -f -- "$file" ;;
+        esac
+      done <"$scratch"
+    fi
+    return 1
   fi
   ((unsafe == 0))
 }
@@ -1671,8 +1671,8 @@ self_test() {
   ((SECONDS - timeout_started <= 5)) \
     || { printf 'descendant watchdog held command-substitution stdout open\n' >&2; return 1; }
   read -r session_fixture_direct_pid session_fixture_grandchild_pid <"$tree_pid_file"
-  if kill -0 "$session_fixture_direct_pid" 2>/dev/null \
-    || kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+  if process_is_live "$session_fixture_direct_pid" \
+    || process_is_live "$session_fixture_grandchild_pid"; then
     printf 'descendant survived process watchdog\n' >&2
     return 1
   fi
@@ -1703,15 +1703,15 @@ self_test() {
     [[ "$timeout_status" == "124" && -s "$tree_pid_file" ]] \
       || { printf 'high-count descendant watchdog was not deterministic\n' >&2; return 1; }
     read -r session_fixture_direct_pid session_fixture_grandchild_pid <"$tree_pid_file"
-    if kill -0 "$session_fixture_direct_pid" 2>/dev/null \
-      || kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+    if process_is_live "$session_fixture_direct_pid" \
+      || process_is_live "$session_fixture_grandchild_pid"; then
       printf 'high-count descendant survived process watchdog\n' >&2
       return 1
     fi
     session_fixture_direct_pid=""
     session_fixture_grandchild_pid=""
   done
-  kill -0 "$session_fixture_unrelated_pid" 2>/dev/null \
+  process_is_live "$session_fixture_unrelated_pid" \
     || { printf 'watchdog killed an unrelated process\n' >&2; return 1; }
 
   tree_pid_file="$fixture_dir/session-tree-exit-cleanup.pid"
@@ -1736,16 +1736,16 @@ self_test() {
   session_fixture_wrapper_pid=""
   terminate_registered_bounded_children
   for ((fixture_wait_index = 1; fixture_wait_index <= 50; fixture_wait_index++)); do
-    if ! kill -0 "$session_fixture_direct_pid" 2>/dev/null \
-      && ! kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+    if ! process_is_live "$session_fixture_direct_pid" \
+      && ! process_is_live "$session_fixture_grandchild_pid"; then
       break
     fi
     sleep 0.1
   done
   ((SECONDS - timeout_started <= 5)) \
     || { printf 'EXIT cleanup exceeded its bounded grace\n' >&2; return 1; }
-  if kill -0 "$session_fixture_direct_pid" 2>/dev/null \
-    || kill -0 "$session_fixture_grandchild_pid" 2>/dev/null; then
+  if process_is_live "$session_fixture_direct_pid" \
+    || process_is_live "$session_fixture_grandchild_pid"; then
     printf 'EXIT cleanup left a session descendant alive\n' >&2
     return 1
   fi
@@ -1819,7 +1819,7 @@ self_test() {
   local private_name='gamebox-e2e-input-fixture-normal-0001'
   printf '%s' "$private_secret" | stage_private_input fixture-serial "$private_name" \
     || { printf 'private input staging fixture failed\n' >&2; return 1; }
-  [[ "$(stat -f '%Lp' "$fake_device_root/$private_name")" == "600" \
+  [[ "$(file_mode "$fake_device_root/$private_name")" == "600" \
     && "$(<"$fake_device_root/$private_name")" == "$private_secret" ]] \
     || { printf 'private input permissions fixture failed\n' >&2; return 1; }
   set_text_from_private_input fixture-serial invite-code "$private_name" \
