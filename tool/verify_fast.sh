@@ -39,8 +39,7 @@ gamebox_run_step "Flutter locked dependencies" run_flutter_pub_get
 gamebox_run_step "Dart analysis" run_dart_analyze
 gamebox_run_step "Flutter tests" run_flutter_tests
 gamebox_run_step "shell syntax" bash -n \
-  tool/worktree.sh tool/lib/ai_rules_link.sh tool/lib/android_lease.sh tool/lib/check_output.sh \
-  tool/test_ai_rules_link.sh \
+  tool/worktree.sh tool/lib/android_lease.sh tool/lib/check_output.sh \
   tool/test_android_lease.sh tool/test_check_output.sh tool/test_verify_godot_tests.sh \
   tool/e2e_android.sh tool/e2e/run.sh tool/e2e/harness.sh \
   tool/e2e/test_cli.sh tool/e2e/lib/options.sh tool/e2e/scenarios/registry.sh \
@@ -55,7 +54,6 @@ verify_macos_deploy_syntax() {
 }
 
 gamebox_run_step "check output fixtures" bash tool/test_check_output.sh
-gamebox_run_step "AI rules link fixtures" bash tool/test_ai_rules_link.sh
 gamebox_run_step "release command fixtures" bash tool/test_release.sh
 gamebox_run_step "debug workflow fixtures" bash tool/test_debug_workflow.sh
 gamebox_run_step "Godot verifier status fixtures" bash tool/test_verify_godot_tests.sh

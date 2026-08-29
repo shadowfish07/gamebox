@@ -3,3 +3,7 @@ scripts:
     bash tool/worktree.sh setup
   archive: |
     bash tool/worktree.sh down
+
+worktree:
+  sharedDirectories:
+    - .ai
