@@ -26,6 +26,7 @@ import (
 
 	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/clock"
+	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -470,6 +471,18 @@ func TestGomokuStatusFailureWritesAIsolatedDiagnosticLog(t *testing.T) {
 	}
 	if strings.Contains(logged, "diagnostic-a") || strings.Contains(logged, alice.Session.AccessToken) {
 		t.Fatalf("diagnostic log leaked user data or credential: %s", logged)
+	}
+}
+
+func TestServiceErrorLogIncludesWrappedDiagnosticCause(t *testing.T) {
+	logs := &lockedBuffer{}
+	router := &router{logger: log.New(logs, "", 0)}
+	request := httptest.NewRequest(http.MethodGet, "/v1/games/rps/opponents", nil)
+	router.logServiceError(request, "authenticate", diagnostics.Wrap(auth.ErrInternal, errors.New("sqlite: database is locked")))
+
+	encoded := "c3FsaXRlOiBkYXRhYmFzZSBpcyBsb2NrZWQ"
+	if logged := logs.String(); !strings.Contains(logged, "error_b64="+encoded) || strings.Contains(logged, "sqlite: database is locked") {
+		t.Fatalf("service log = %q, want encoded diagnostic cause only", logged)
 	}
 }
 

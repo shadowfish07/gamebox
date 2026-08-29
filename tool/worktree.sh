@@ -415,7 +415,7 @@ android_runtime_value() {
 remove_android_runtime_metadata() {
   local name
   [[ -d "$ANDROID_RUNTIME_DIR" ]] || return 0
-  for name in token started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
+  for name in token slot lease-kind started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
     [[ -e "$ANDROID_RUNTIME_DIR/$name" ]] && rm -f "$ANDROID_RUNTIME_DIR/$name"
   done
   rmdir "$ANDROID_RUNTIME_DIR" 2>/dev/null || true
@@ -430,7 +430,7 @@ stop_orphaned_owned_emulator() {
   serial="$(android_runtime_value "serial-$label")"
   emulator_pid="$(android_runtime_value "pid-$label")"
   case "$avd" in
-    Gamebox_A_API_36|Gamebox_B_API_36) ;;
+    Gamebox_A0_API_36|Gamebox_B0_API_36|Gamebox_A1_API_36|Gamebox_B1_API_36) ;;
     *) die "orphaned Android metadata names an unapproved AVD; nothing was stopped" ;;
   esac
   if [[ "$serial" =~ ^emulator-[0-9]+$ ]] && command -v adb >/dev/null 2>&1 \
@@ -452,16 +452,15 @@ stop_orphaned_owned_emulator() {
 }
 
 cleanup_stale_android_for_this_worktree() {
-  local lease_dir owner_file owner_root owner_pid owner_token runtime_token
-  lease_dir="$GIT_COMMON_DIR/gamebox-android.lease"
+  local lease_dir owner_file owner_root owner_pid owner_token runtime_token slot
+  slot="$(android_runtime_value slot)"
+  case "$slot" in 0|1) lease_dir="$GIT_COMMON_DIR/gamebox-android-leases/slots/$slot" ;; *) lease_dir="$GIT_COMMON_DIR/gamebox-android-leases/exclusive" ;; esac
   owner_file="$lease_dir/owner"
   [[ -d "$lease_dir" ]] || return 0
   owner_root="$(_gamebox_android_lease_value "$owner_file" root 2>/dev/null || true)"
   [[ "$owner_root" == "$ROOT_DIR" ]] || return 0
   owner_pid="$(_gamebox_android_lease_value "$owner_file" pid 2>/dev/null || true)"
-  if pid_is_alive "$owner_pid"; then
-    die "Android work is active for this worktree (PID $owner_pid); interrupt its foreground terminal first"
-  fi
+  if pid_is_alive "$owner_pid"; then die "Android work is active for this worktree (PID $owner_pid); interrupt its foreground terminal first"; fi
   owner_token="$(_gamebox_android_lease_value "$owner_file" token 2>/dev/null || true)"
   runtime_token="$(android_runtime_value token)"
   if [[ -d "$ANDROID_RUNTIME_DIR" ]]; then

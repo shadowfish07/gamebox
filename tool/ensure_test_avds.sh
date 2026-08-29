@@ -4,7 +4,14 @@ set -euo pipefail
 readonly IMAGE_PACKAGE="system-images;android-36;google_apis_playstore_ps16k;arm64-v8a"
 readonly IMAGE_PATH_FRAGMENT="system-images/android-36/google_apis_playstore_ps16k/arm64-v8a"
 readonly DEVICE_PROFILE="pixel_7_pro"
-readonly -a MANAGED_AVDS=("Gamebox_A_API_36" "Gamebox_B_API_36")
+slot="${GAMEBOX_E2E_MANAGED_SLOT:-all}"
+case "$slot" in
+  0) MANAGED_AVDS=("Gamebox_A0_API_36" "Gamebox_B0_API_36") ;;
+  1) MANAGED_AVDS=("Gamebox_A1_API_36" "Gamebox_B1_API_36") ;;
+  all) MANAGED_AVDS=("Gamebox_A0_API_36" "Gamebox_B0_API_36" "Gamebox_A1_API_36" "Gamebox_B1_API_36") ;;
+  *) printf 'Gamebox AVD setup failed: invalid managed slot %s\n' "$slot" >&2; exit 2 ;;
+esac
+readonly -a MANAGED_AVDS
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly ROOT_DIR
 # shellcheck source=tool/lib/android_lease.sh
@@ -14,14 +21,26 @@ cleanup() {
   local exit_status=$?
   trap - EXIT
   set +e
+  [[ -n "${AVD_SETUP_LOCK:-}" ]] && _gamebox_android_lease_unlock "$AVD_SETUP_LOCK"
   gamebox_android_lease_release
   exit "$exit_status"
 }
 trap cleanup EXIT
 
-gamebox_android_lease_acquire \
-  "$ROOT_DIR" "Gamebox_A_API_36,Gamebox_B_API_36 configuration" \
-  "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}"
+if [[ "${GAMEBOX_ANDROID_LEASE_KIND:-}" != slot ]]; then
+  gamebox_android_lease_acquire \
+    "$ROOT_DIR" "managed AVD configuration" \
+    "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}"
+fi
+
+# AVD metadata lives in the host SDK, not in a worktree. Keep this lock short:
+# it covers definition/creation only, never emulator runtime or the E2E flow.
+avd_common_dir="$(_gamebox_android_lease_common_dir "$ROOT_DIR")"
+AVD_SETUP_LOCK="$avd_common_dir/gamebox-android-leases/avd-setup.lock"
+mkdir -p "${AVD_SETUP_LOCK%/*}"
+_gamebox_android_lease_lock "$AVD_SETUP_LOCK" \
+  "$((SECONDS + ${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}))" \
+  || { printf 'Gamebox AVD setup failed: could not acquire the shared AVD setup lock\n' >&2; exit 1; }
 
 if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   export JAVA_HOME

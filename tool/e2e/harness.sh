@@ -7,10 +7,13 @@ readonly TEST_PACKAGE="$PACKAGE.test"
 readonly TEST_RUNNER="$TEST_PACKAGE/me.zqydev.gamebox.HostSmokeTestRunner"
 readonly SET_TEXT_TEST="me.zqydev.gamebox.E2eSetTextTest#setApprovedFieldFromPrivateInputWithoutEchoingValue"
 readonly CLEAR_CLIPBOARD_TEST="me.zqydev.gamebox.E2eSetTextTest#clearClipboardWithoutReadingIt"
-readonly MANAGED_AVD_A="Gamebox_A_API_36"
-readonly MANAGED_AVD_B="Gamebox_B_API_36"
-readonly MANAGED_PORT_A=5560
-readonly MANAGED_PORT_B=5562
+# These are selected after acquiring a managed pool slot. Defaults keep the
+# fixture-only self-test deterministic without touching Android.
+MANAGED_SLOT=""
+MANAGED_AVD_A="Gamebox_A0_API_36"
+MANAGED_AVD_B="Gamebox_B0_API_36"
+MANAGED_PORT_A=5560
+MANAGED_PORT_B=5562
 readonly WAIT_SECONDS=30
 readonly DESIGN_WIDTH=1080
 readonly DESIGN_HEIGHT=1920
@@ -45,6 +48,15 @@ source "$ROOT_DIR/tool/lib/android_lease.sh"
 source "$ROOT_DIR/tool/lib/check_output.sh"
 # shellcheck source=tool/e2e/scenarios/registry.sh
 source "$ROOT_DIR/tool/e2e/scenarios/registry.sh"
+
+select_managed_slot() {
+  case "$1" in
+    0) MANAGED_AVD_A=Gamebox_A0_API_36; MANAGED_PORT_A=5560; MANAGED_AVD_B=Gamebox_B0_API_36; MANAGED_PORT_B=5562 ;;
+    1) MANAGED_AVD_A=Gamebox_A1_API_36; MANAGED_PORT_A=5564; MANAGED_AVD_B=Gamebox_B1_API_36; MANAGED_PORT_B=5566 ;;
+    *) printf 'Gamebox E2E failed: invalid managed Android slot %s\n' "$1" >&2; return 2 ;;
+  esac
+  MANAGED_SLOT="$1"
+}
 HARNESS_PGID="$(ps -p "$HARNESS_PID" -o pgid= | tr -d ' ')"
 readonly HARNESS_PGID
 [[ "$HARNESS_PGID" =~ ^[1-9][0-9]*$ ]] || {
@@ -1310,6 +1322,13 @@ presence_state_fragment() {
 }
 
 self_test() {
+  select_managed_slot 0
+  [[ "$MANAGED_AVD_A:$MANAGED_PORT_A,$MANAGED_AVD_B:$MANAGED_PORT_B" == "Gamebox_A0_API_36:5560,Gamebox_B0_API_36:5562" ]] \
+    || { printf 'managed slot 0 mapping fixture failed\n' >&2; return 1; }
+  select_managed_slot 1
+  [[ "$MANAGED_AVD_A:$MANAGED_PORT_A,$MANAGED_AVD_B:$MANAGED_PORT_B" == "Gamebox_A1_API_36:5564,Gamebox_B1_API_36:5566" ]] \
+    || { printf 'managed slot 1 mapping fixture failed\n' >&2; return 1; }
+  select_managed_slot 0
   local fixture_dir
   fixture_dir="$(mktemp -d)"
   BOUND_CHILD_REGISTRY="$fixture_dir/bounded-children"
@@ -2158,6 +2177,8 @@ write_android_runtime_value() {
 record_android_runtime() {
   [[ -n "$WORKTREE_ANDROID_RUNTIME_DIR" ]] || return 0
   write_android_runtime_value token "$GAMEBOX_ANDROID_LEASE_TOKEN"
+  write_android_runtime_value slot "$MANAGED_SLOT"
+  write_android_runtime_value lease-kind "$GAMEBOX_ANDROID_LEASE_KIND"
   write_android_runtime_value started-a "$STARTED_A"
   write_android_runtime_value started-b "$STARTED_B"
   write_android_runtime_value pid-a "$EMULATOR_PID_A"
@@ -2171,7 +2192,7 @@ record_android_runtime() {
 clear_android_runtime() {
   local name
   [[ -n "$WORKTREE_ANDROID_RUNTIME_DIR" && -d "$WORKTREE_ANDROID_RUNTIME_DIR" ]] || return 0
-  for name in token started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
+  for name in token slot lease-kind started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
     [[ -e "$WORKTREE_ANDROID_RUNTIME_DIR/$name" ]] && rm -f "$WORKTREE_ANDROID_RUNTIME_DIR/$name"
   done
   find "$WORKTREE_ANDROID_RUNTIME_DIR" -mindepth 1 -maxdepth 1 -type f -name '.runtime.*' -delete
@@ -2373,11 +2394,6 @@ unexpected_error() {
 }
 trap 'unexpected_error "$?" "$LINENO"' ERR
 
-gamebox_android_lease_acquire \
-  "$ROOT_DIR" "$MANAGED_AVD_A,$MANAGED_AVD_B" "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}" \
-  || fail "could not acquire the shared Android lease"
-record_android_runtime
-
 validate_serial_text() {
   [[ "$1" =~ ^[A-Za-z0-9._:-]+$ ]]
 }
@@ -2456,8 +2472,16 @@ if [[ -n "$provided_a" || -n "$provided_b" ]]; then
   [[ "$provided_a" != "$provided_b" ]] || fail "the two provided serials must be different"
   SERIAL_A="$provided_a"
   SERIAL_B="$provided_b"
+  gamebox_android_lease_acquire \
+    "$ROOT_DIR" "$SERIAL_A,$SERIAL_B supplied E2E devices" "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}" \
+    || fail "could not acquire the exclusive Android lease for supplied devices"
 else
   USING_PROVIDED_DEVICES=0
+  gamebox_android_lease_acquire_available_slot \
+    "$ROOT_DIR" "managed E2E slot" "${GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS:-900}" \
+    || fail "could not acquire an available managed Android slot"
+  select_managed_slot "$GAMEBOX_ANDROID_LEASE_SLOT" || fail "could not select managed Android slot"
+  export GAMEBOX_E2E_MANAGED_SLOT="$MANAGED_SLOT"
   run_with_timeout "$AVD_SETUP_TIMEOUT_SECONDS" bash "$ROOT_DIR/tool/ensure_test_avds.sh" \
     || fail "managed AVD validation exceeded its ${AVD_SETUP_TIMEOUT_SECONDS}s bound or failed"
   STARTED_A=1

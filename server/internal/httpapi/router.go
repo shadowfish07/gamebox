@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/auth"
+	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/users"
@@ -380,7 +381,8 @@ func (router *router) logServiceError(request *http.Request, phase string, err e
 	if router == nil || router.logger == nil || phase == "" || err == nil {
 		return
 	}
-	router.logger.Printf("event=service_error request_id=%s phase=%s category=%s", requestIDFrom(request), phase, safeServiceErrorCategory(err))
+	detail := diagnostics.Cause(err).Error()
+	router.logger.Printf("event=service_error request_id=%s phase=%s category=%s error_b64=%s", requestIDFrom(request), phase, safeServiceErrorCategory(err), base64.RawURLEncoding.EncodeToString([]byte(detail)))
 }
 
 func safeServiceErrorCategory(err error) string {
