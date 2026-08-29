@@ -582,6 +582,15 @@ EOF
 }
 
 run_e2e() {
+  local -a e2e_args=("$@")
+  local argument
+  for argument in "${e2e_args[@]}"; do
+    case "$argument" in
+      --plan|--list-scenarios|--self-test|-h|--help)
+        exec bash "$ROOT_DIR/tool/e2e_android.sh" "${e2e_args[@]}"
+        ;;
+    esac
+  done
   local state
   ensure_setup
   state="$(server_state)"
@@ -591,12 +600,12 @@ run_e2e() {
   exec env \
     GAMEBOX_E2E_API_PORT="$SERVER_PORT" \
     GAMEBOX_WORKTREE_ANDROID_RUNTIME_DIR="$ANDROID_RUNTIME_DIR" \
-    bash "$ROOT_DIR/tool/e2e_android.sh"
+    bash "$ROOT_DIR/tool/e2e_android.sh" "${e2e_args[@]}"
 }
 
 usage() {
   cat <<'EOF'
-Usage: bash tool/worktree.sh <command>
+Usage: bash tool/worktree.sh <command> [options]
 
 Commands:
   setup       Idempotently install locked dependencies and initialize private state.
@@ -605,7 +614,7 @@ Commands:
   down        Stop only this worktree's owned server and stale Android runtime.
   data:pull   Replace linked-worktree dev data from primary, with a target backup.
   data:push   Refuse unsafe reverse synchronization (no audited narrow allowlist).
-  e2e         Run the repository two-AVD acceptance gate under the shared lease.
+  e2e [args]  Run selected two-AVD scenarios under the shared lease.
 EOF
 }
 
@@ -616,7 +625,7 @@ case "${1:-}" in
   down) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_down ;;
   data:pull) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_data_pull ;;
   data:push) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_data_push ;;
-  e2e) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_e2e ;;
+  e2e) shift; run_e2e "$@" ;;
   help|-h|--help|"") usage ;;
   *) printf 'Unknown worktree command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
 esac

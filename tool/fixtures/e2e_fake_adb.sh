@@ -58,6 +58,10 @@ case " $* " in
         printf 'I godot : GAMEBOX_GODOT_STATE match=%s revision=-1 status=loading connection=connecting opponent_presence=unknown\n' \
           "$FAKE_ADB_LOADING_MATCH_ID"
       fi
+      # dash may retain builtin output while this fixture intentionally hangs.
+      # Closing stdout commits the finite fake log stream without ending the
+      # process whose cleanup behavior the harness also verifies.
+      exec 1>&-
       printf '%s\n' "$$" >"${FAKE_ADB_PID_FILE:?}"
       trap '' TERM
       while :; do sleep 1; done

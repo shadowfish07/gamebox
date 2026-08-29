@@ -4,7 +4,7 @@
 class_name GameboxTokens
 extends RefCounted
 
-const VERSION := "2.0.0"
+const VERSION := "2.2.0"
 const BRAND_SEED := "#006B60"
 
 const LIGHT := {
@@ -107,14 +107,19 @@ const DARK := {
 
 const GAME := {
     "black_piece": Color("#151A24"),
-    "board": Color("#D8A85F"),
-    "grid": Color("#493217"),
+    "board": Color("#D9B277"),
+    "grid": Color("#8D6E46"),
     "last_move": Color("#F04438"),
     "pending_move": Color("#0072B2"),
     "pending_overlay_alpha": 0.56,
     "pressed_move": Color("#7A5AF8"),
+    "result_loss_container_dark": Color("#514500"),
+    "result_loss_container_light": Color("#F6E49C"),
+    "result_loss_dark": Color("#E4CA72"),
+    "result_loss_light": Color("#745B00"),
     "white_piece": Color("#F8FAFC"),
     "white_piece_outline": Color("#667085"),
+    "winning_line": Color("#F4C542"),
 }
 
 const TYPOGRAPHY := {
@@ -226,6 +231,29 @@ const COMPONENT := {
     "minimum_touch_target": 48,
     "page_max_width": 560,
     "page_padding": 16,
+    "result_action_font_size": 20,
+    "result_action_spacing": 14,
+    "result_chip_font_size": 18,
+    "result_chip_horizontal_padding": 16,
+    "result_chip_vertical_padding": 8,
+    "result_confirmed_font_size": 16,
+    "result_content_spacing": 22,
+    "result_meta_spacing": 16,
+    "result_panel_accent_width": 8,
+    "result_panel_bottom_padding": 24,
+    "result_panel_horizontal_padding": 28,
+    "result_panel_radius": 40,
+    "result_panel_shadow_offset": 8,
+    "result_panel_shadow_size": 16,
+    "result_panel_top_padding": 30,
+    "result_shadow_opacity": 0.22,
+    "result_summary_label_font_size": 15,
+    "result_summary_spacing": 12,
+    "result_summary_value_font_size": 22,
+    "result_support_font_size": 19,
+    "result_tint_mix": 0.06,
+    "result_title_font_size": 38,
     "section_spacing": 24,
     "small_progress_size": 20,
+    "terminal_glow_opacity": 0.65,
 }

@@ -20,6 +20,7 @@ const BLACK_STONE_COLOR := GameboxTokens.GAME["black_piece"]
 const WHITE_STONE_COLOR := GameboxTokens.GAME["white_piece"]
 const WHITE_STONE_OUTLINE := GameboxTokens.GAME["white_piece_outline"]
 const LAST_MOVE_COLOR := GameboxTokens.GAME["last_move"]
+const WINNING_LINE_COLOR := GameboxTokens.GAME["winning_line"]
 const PRESSED_COLOR := GameboxTokens.GAME["pressed_move"]
 const PENDING_COLOR := GameboxTokens.GAME["pending_move"]
 const PENDING_OVERLAY_ALPHA := GameboxTokens.GAME["pending_overlay_alpha"]
@@ -48,11 +49,18 @@ var selected_cell: Vector2i:
 	set(_value):
 		pass
 
+var winning_cells: Array[Vector2i]:
+	get:
+		return _winning_cells.duplicate()
+	set(_value):
+		pass
+
 var _cells: Array = []
 var _pending_cell := INVALID_CELL
 var _last_move_cell := INVALID_CELL
 var _pressed_cell := INVALID_CELL
 var _selected_cell := INVALID_CELL
+var _winning_cells: Array[Vector2i] = []
 var _interactable := true
 var _active_touch := -1
 var _touch_start_cell := INVALID_CELL
@@ -73,9 +81,11 @@ func present(
 	last_move: Vector2i = INVALID_CELL,
 	pending: Vector2i = INVALID_CELL,
 	selected: Vector2i = INVALID_CELL,
+	winning: Array[Vector2i] = [],
 ) -> bool:
 	if not _valid_cells(cells) or not _valid_marker(last_move) \
-		or not _valid_marker(pending) or not _valid_marker(selected):
+		or not _valid_marker(pending) or not _valid_marker(selected) \
+		or not _valid_winning_cells(cells, winning):
 		return false
 	if last_move != INVALID_CELL and cells[last_move.y * BOARD_SIZE + last_move.x] == EMPTY:
 		return false
@@ -91,8 +101,31 @@ func present(
 	_last_move_cell = last_move
 	_pending_cell = pending
 	_selected_cell = selected
+	_winning_cells = winning.duplicate()
 	queue_redraw()
 	return true
+
+
+static func find_winning_line(cells: Array) -> Array[Vector2i]:
+	if not _valid_cells(cells):
+		return []
+	for y in BOARD_SIZE:
+		for x in BOARD_SIZE:
+			var stone: int = cells[y * BOARD_SIZE + x]
+			if stone == EMPTY:
+				continue
+			for direction in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]:
+				var previous: Vector2i = Vector2i(x, y) - direction
+				if _cell_value(cells, previous) == stone:
+					continue
+				var line: Array[Vector2i] = []
+				var cursor := Vector2i(x, y)
+				while _cell_value(cells, cursor) == stone:
+					line.append(cursor)
+					cursor += direction
+				if line.size() >= 5:
+					return line.slice(0, 5)
+	return []
 
 
 func set_interactable(next_interactable: bool) -> void:
@@ -232,9 +265,12 @@ func _draw() -> void:
 			else:
 				draw_circle(center, stone_radius, WHITE_STONE_OUTLINE, true, -1.0, true)
 				draw_circle(center, stone_radius - 2.5, WHITE_STONE_COLOR, true, -1.0, true)
-	if _last_move_cell != INVALID_CELL:
+	if _last_move_cell != INVALID_CELL and _winning_cells.is_empty():
 		var last_center := cell_to_pixel(_last_move_cell, rect)
 		draw_arc(last_center, stone_radius * 0.47, 0.0, TAU, 32, LAST_MOVE_COLOR, 4.0, true)
+	for winning_cell in _winning_cells:
+		var winning_center := cell_to_pixel(winning_cell, rect)
+		draw_arc(winning_center, stone_radius * 0.7, 0.0, TAU, 32, WINNING_LINE_COLOR, 6.0, true)
 	if _pressed_cell != INVALID_CELL and stone_at(_pressed_cell.x, _pressed_cell.y) == EMPTY:
 		var pressed_center := cell_to_pixel(_pressed_cell, rect)
 		draw_circle(pressed_center, stone_radius * 0.42, Color(PRESSED_COLOR, PENDING_OVERLAY_ALPHA), true, -1.0, true)
@@ -274,7 +310,7 @@ func _clear_pressed_cell() -> void:
 	queue_redraw()
 
 
-func _valid_cells(cells: Array) -> bool:
+static func _valid_cells(cells: Array) -> bool:
 	if cells.size() != BOARD_CELLS:
 		return false
 	for value in cells:
@@ -285,6 +321,30 @@ func _valid_cells(cells: Array) -> bool:
 
 static func _valid_marker(cell: Vector2i) -> bool:
 	return cell == INVALID_CELL or cell.x >= 0 and cell.x < BOARD_SIZE and cell.y >= 0 and cell.y < BOARD_SIZE
+
+
+static func _valid_winning_cells(cells: Array, winning: Array[Vector2i]) -> bool:
+	if winning.is_empty():
+		return true
+	if winning.size() != 5:
+		return false
+	var stone := _cell_value(cells, winning[0])
+	if stone == EMPTY:
+		return false
+	var direction := winning[1] - winning[0]
+	if direction not in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]:
+		return false
+	for index in winning.size():
+		if winning[index] != winning[0] + direction * index \
+			or _cell_value(cells, winning[index]) != stone:
+			return false
+	return true
+
+
+static func _cell_value(cells: Array, cell: Vector2i) -> int:
+	if cell.x < 0 or cell.x >= BOARD_SIZE or cell.y < 0 or cell.y >= BOARD_SIZE:
+		return EMPTY
+	return cells[cell.y * BOARD_SIZE + cell.x]
 
 
 static func _valid_rect(rect: Rect2) -> bool:

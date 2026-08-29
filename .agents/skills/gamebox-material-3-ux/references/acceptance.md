@@ -1,5 +1,24 @@
 # Acceptance and Evidence
 
+## Requirements-Grounded Implementation Review
+
+When a UI implementation has a written requirement, accepted prototype, issue acceptance criteria, or other approved design baseline, complete a distinct code-review pass after implementation and focused tests but before target-runtime acceptance. Re-read the complete approved baseline and inspect the current diff and production source; do not review from memory or from the implementation plan alone. If no written baseline exists, use the user's request and explicitly accepted decisions without inventing a broader specification.
+
+Build a compact traceability review with one row per in-scope requirement or affected state:
+
+| Requirement or state | Implementation evidence | Automated evidence | Review result |
+| --- | --- | --- | --- |
+
+The review MUST:
+
+- cover every affected default, pressed, pending, accepted, rejected, reconnecting, error, dangerous-confirmation, result, and navigation state that the baseline names;
+- compare required copy, visible-node exclusivity, semantic colors and component roles, interaction locks, transitions, and preserved automation contracts;
+- search for negative requirements and unintended retained legacy UI, including duplicate actions, obsolete controls, fallback styles, and paths that remain reachable after the redesign;
+- verify dynamic state-to-presentation bindings rather than only checking that nodes, widgets, or style helpers exist;
+- report findings by severity with concrete file evidence, resolve every blocking finding, rerun affected tests, and repeat the review on the corrected diff.
+
+This review does not replace target-runtime execution or screenshot inspection. It is the code-level gate that must pass before those acceptance activities begin. A separate reviewer is useful but not mandatory; when the implementing agent performs it, it must still be an explicit second pass against the complete baseline and current diff.
+
 ## Audit Output Contract
 
 Every audit or completion review returns these sections in order:
@@ -8,7 +27,7 @@ Every audit or completion review returns these sections in order:
 2. MUST findings
 3. SHOULD findings and recorded deviations
 4. MAY decisions
-5. Tests and target-runtime commands
+5. Requirements-grounded review, tests, and target-runtime commands
 6. Target-runtime UX inspection findings
 7. Verdict: complete, incomplete, or blocked
 
@@ -16,7 +35,7 @@ Use only `complete`, `incomplete`, or `blocked`. Missing required runtime verifi
 
 ## Skill Gate
 
-Validate the skill metadata, directory shape, reference paths, and progressive routing. Compare against the recorded no-skill baseline, then run the same realistic tasks and at least one new task with the skill. Verify that the result loads the correct platform guidance, classifies MUST/SHOULD/MAY, requires Android Back and dangerous-action confirmation, keeps screenshots out of deterministic E2E, requires the implementing agent to inspect affected UI screenshots, and never treats unpublished screenshots as missing deliverables. Re-run affected scenarios whenever the skill changes; reading the prose is not a behavioral pass.
+Validate the skill metadata, directory shape, reference paths, and progressive routing. Compare against the recorded no-skill baseline, then run the same realistic tasks and at least one new task with the skill. Verify that the result loads the correct platform guidance, classifies MUST/SHOULD/MAY, preserves Android Back and dangerous-action contracts, selects Android runtime verification when their boundary is affected, keeps screenshots out of deterministic E2E, requires the implementing agent to inspect affected UI screenshots, and never treats unpublished screenshots as missing deliverables. Include a realistic implementation-review scenario with an approved requirement and prototype plus a diff that omits a dynamic state style or retains an obsolete duplicate control; the skill must identify both from traceability review before allowing runtime acceptance. Re-run affected scenarios whenever the skill changes; reading the prose is not a behavioral pass.
 
 ## Token Gate
 
@@ -26,15 +45,21 @@ Check schema and required roles, matching containers and `on-*` values, legal ty
 
 Run relevant Flutter Widget and Godot scene tests for default, pressed, disabled, pending, loading, empty, error, success/result, light/dark, normal-size text, content growth, and safe areas.
 
-Exercise affected end-to-end flows: registration and identity recovery; catalog and opponent selection; launch failure/retry; pending move and server accept/reject; disconnect/reconnect and authoritative snapshot recovery; resignation/cancellation confirmation; result and return to lobby; Android Back and visible Back parity; background recovery and game Activity exit. For linked games, deterministic fake services prove state wiring but do not replace the real two-device boundary.
+Exercise only the end-to-end flows whose boundary is affected: registration and identity recovery; catalog and opponent selection; launch failure/retry; pending move and server accept/reject; disconnect/reconnect and authoritative snapshot recovery; resignation/cancellation confirmation; result and return to lobby; Android Back and visible Back parity; background recovery and game Activity exit. For a Godot-only UX change, cover game-owned state behavior in Godot tests and inspect the production scene directly; add Android launch/host smoke only when its package or host boundary is affected. For linked games, deterministic fake services prove state wiring but do not replace the real two-device boundary when networking, protocol, or cross-device behavior changed.
 
-## Android Runtime Evidence Modes
+## Runtime Evidence Modes
 
-Every user-facing UI change MUST run as the actual built Android App or packaged Godot game in the relevant declared orientation and phone viewports. A mock, fixture, Visual Companion, source inspection, static render, golden, or unit test is not target-runtime evidence.
+Every user-facing UI change MUST run in the relevant actual target runtime at the declared orientation and phone viewports. Flutter-owned UI uses the actual Flutter target app; Godot-owned UI uses the production Godot scene or deterministic preview that instantiates it. The packaged Android target is additionally required when the change touches Android hosting, export/package behavior, system UI, lifecycle, platform integration, or release-candidate acceptance. A mock UI, fixture UI, Visual Companion, source inspection, static render, golden, or unit test is not target-runtime evidence.
 
 ### Fixed deterministic E2E
 
 The fixed two-device E2E uses state markers, UI Automator identifiers, lifecycle checks, authoritative snapshots, and protocol assertions. It MUST NOT capture screenshots, perform pixel crops/SSIM, or retain image artifacts. A passing run proves the exercised runtime logic and state transitions; it does not prove UX quality.
+
+Do not make fixed Android E2E the inner loop for Godot scene styling. A Godot-only UI change normally needs focused Godot tests plus direct production-scene runtime inspection. Add a packaged-game host smoke when the Android package/host boundary is affected; reserve the full two-device matrix for changes that affect its cross-runtime or network assertions.
+
+### Godot preview evidence
+
+Directly launched Godot previews are the preferred inner loop for game UX. They instantiate production UI at representative phone viewports, expose deterministic states, and let the implementing agent capture and inspect screenshots quickly. They are valid target-runtime evidence for Godot-owned presentation and interaction, but do not prove Android packaging, Android safe-area integration, Activity lifecycle, or host rendering.
 
 ### Agent UX inspection
 
@@ -51,13 +76,15 @@ Captured UI and retained artifacts MUST exclude invite codes, access tokens, cre
 ## Completion Checklist
 
 - [ ] Scope and one profile/Core Contract choice are explicit.
+- [ ] The completed implementation was reviewed against the full approved requirements and prototype with per-requirement or per-state traceability; all blocking findings were resolved and the corrected diff was re-reviewed.
 - [ ] MUST, SHOULD deviations, and MAY choices are separated.
 - [ ] Token source and both generated mappings are consistent when affected.
 - [ ] Relevant component and flow tests pass.
+- [ ] Godot-owned state, controller, scene-contract, and launch tests cover changed game invariants without screenshot goldens.
 - [ ] Server-authoritative actions remain pending until acknowledged.
-- [ ] Android system and visible Back behavior match.
+- [ ] Android system and visible Back behavior match when navigation, Back handling, host, or Activity lifecycle is affected.
 - [ ] Every dangerous action has consequence-named confirmation.
-- [ ] Actual target runtime was exercised in the declared orientation/viewports.
+- [ ] The relevant actual target runtime was exercised in the declared orientation/viewports; packaged Android evidence was added when an Android host/package/system/lifecycle boundary was affected.
 - [ ] Fixed E2E logic assertions pass when that gate is in scope.
 - [ ] The implementing agent inspected screenshots of every affected UI state and reported the UX findings; publishing the images is not required.
 - [ ] The repository verification gate passes.

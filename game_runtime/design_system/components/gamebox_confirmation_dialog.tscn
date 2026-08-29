@@ -71,6 +71,7 @@ text = "继续对局"
 [node name="ConfirmButton" type="Button" parent="Dialog/Content/Actions"]
 custom_minimum_size = Vector2(240, 96)
 layout_mode = 2
+theme_type_variation = &"GameboxDialogConfirmButton"
 text = "确认认输"
 
 [connection signal="pressed" from="Dialog/Content/Actions/CancelButton" to="." method="_on_cancel_pressed"]

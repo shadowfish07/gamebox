@@ -9,6 +9,15 @@ on:
       - 'game_runtime/**'
       - 'tool/**'
       - '.github/workflows/debug.yml'
+  pull_request:
+    types:
+      - opened
+      - reopened
+    paths:
+      - 'app/**'
+      - 'game_runtime/**'
+      - 'tool/**'
+      - '.github/workflows/debug.yml'
   workflow_dispatch:
     inputs:
       api_base_url:
@@ -18,11 +27,13 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: debug-apk-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep trusted rolling release writes serialized. Untrusted refs build in
+  # isolated groups and may cancel only their own stale runs.
+  group: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'debug-apk-publish' || format('debug-apk-build-{0}', github.ref) }}
+  cancel-in-progress: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
 
 env:
   FLUTTER_VERSION: "3.47.1"
@@ -32,13 +43,94 @@ env:
   DEBUG_API_BASE_URL: "https://staging-gamebox.zqydev.me"
 
 jobs:
-  build-and-publish:
-    if: github.ref == 'refs/heads/main'
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+
+      - name: Accept Android SDK licenses
+        run: yes | flutter doctor --android-licenses
+
+      - name: Import Godot runtime assets
+        run: godot --headless --path game_runtime --import
+
+      - name: Build untrusted debug APK with independent package name
+        working-directory: app
+        env:
+          GAMEBOX_DEBUG_ARTIFACT: "true"
+          API_BASE_URL: ${{ inputs.api_base_url || env.DEBUG_API_BASE_URL }}
+        run: |
+          pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)"
+          short_sha="${GITHUB_SHA::7}"
+          flutter build apk --debug \
+            --build-name="${pubspec_version}-dev.${short_sha}" \
+            --build-number="${GITHUB_RUN_NUMBER}" \
+            --dart-define="GAMEBOX_API_BASE_URL=${API_BASE_URL}"
+
+      - name: Verify debug package name is independent
+        run: |
+          build_tools_dir="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
+          aapt="${build_tools_dir}/aapt"
+          package_line="$("${aapt}" dump badging app/build/app/outputs/flutter-apk/app-debug.apk | grep '^package:')"
+          printf '%s\n' "${package_line}"
+          if ! grep -q "name='me.zqydev.gamebox.debug'" <<<"${package_line}"; then
+            printf 'Debug APK package name is not me.zqydev.gamebox.debug\n' >&2
+            exit 1
+          fi
+
+      - name: Stage temporary debug artifact
+        run: |
+          mkdir -p debug-assets
+          artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          asset_name="gamebox-debug-${artifact_identity}.apk"
+          checksum_name="checksums-${artifact_identity}.txt"
+          cp app/build/app/outputs/flutter-apk/app-debug.apk "debug-assets/${asset_name}"
+          (cd debug-assets && sha256sum "${asset_name}" > "${checksum_name}")
+
+      - name: Upload temporary debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: gamebox-debug-${{ github.sha }}
+          path: |
+            debug-assets/*.apk
+            debug-assets/checksums-*.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    # Secrets and write access exist only for the trusted default ref. Manual
+    # dispatches from another ref remain build-only.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-java@v5
         with:
@@ -84,7 +176,7 @@ jobs:
             echo "keyPassword=${KEY_PASSWORD}"
           } > app/android/key.properties
 
-      - name: Build debug APK with independent package name
+      - name: Build stable-signed debug APK
         working-directory: app
         env:
           GAMEBOX_DEBUG_ARTIFACT: "true"
@@ -100,7 +192,8 @@ jobs:
 
       - name: Verify debug package name is independent
         run: |
-          aapt="${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -1)/aapt"
+          build_tools_dir="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
+          aapt="${build_tools_dir}/aapt"
           package_line="$("${aapt}" dump badging app/build/app/outputs/flutter-apk/app-debug.apk | grep '^package:')"
           printf '%s\n' "${package_line}"
           if ! grep -q "name='me.zqydev.gamebox.debug'" <<<"${package_line}"; then
@@ -108,7 +201,7 @@ jobs:
             exit 1
           fi
 
-      - name: Stage APK for release
+      - name: Stage signed release assets
         run: |
           mkdir -p debug-assets
           artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -135,27 +228,22 @@ jobs:
           - api: \`${API_BASE_URL}\`
           - apk: \`${asset_name}\`
           - checksums: \`${checksum_name}\`"
-          release_ref="refs/tags/${DEBUG_RELEASE_TAG}"
-
-          update_debug_tag() {
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
-              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" \
-                -f sha="${GITHUB_SHA}" \
-                -F force=true >/dev/null
-            else
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-                -f ref="${release_ref}" \
-                -f sha="${GITHUB_SHA}" >/dev/null
-            fi
-          }
 
           if ! gh release view "${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
-            update_debug_tag
-            gh release create "${DEBUG_RELEASE_TAG}" \
-              --verify-tag \
-              --prerelease \
-              --title "Gamebox debug build" \
-              --notes "${notes}"
+            default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${DEBUG_RELEASE_TAG}" >/dev/null 2>&1; then
+              gh release create "${DEBUG_RELEASE_TAG}" \
+                --verify-tag \
+                --prerelease \
+                --title "Gamebox debug build" \
+                --notes "${notes}"
+            else
+              gh release create "${DEBUG_RELEASE_TAG}" \
+                --target "${default_branch}" \
+                --prerelease \
+                --title "Gamebox debug build" \
+                --notes "${notes}"
+            fi
           fi
           existing_assets="$(gh release view "${DEBUG_RELEASE_TAG}" --json assets --jq '.assets[].name' 2>/dev/null || true)"
           assets_to_upload=()
@@ -167,8 +255,8 @@ jobs:
           if (( ${#assets_to_upload[@]} > 0 )); then
             gh release upload "${DEBUG_RELEASE_TAG}" "${assets_to_upload[@]}"
           fi
-          # Move the public tag only after the immutable assets are available.
-          update_debug_tag
+          # Keep the tag as the stable release identity. The immutable asset
+          # names and notes identify the actual source branch and commit.
           gh release edit "${DEBUG_RELEASE_TAG}" --notes "${notes}"
 
       - name: Remove signing material

@@ -1,0 +1,78 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://design_system/components/gamebox_portrait_top_bar.gd" id="1_top_bar"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_back_button.tscn" id="2_back"]
+
+[node name="GameboxPortraitTopBar" type="HBoxContainer"]
+custom_minimum_size = Vector2(0, 160)
+alignment = 1
+theme_type_variation = &"GameboxPortraitTopBar"
+script = ExtResource("1_top_bar")
+
+[node name="BackButton" parent="." instance=ExtResource("2_back")]
+custom_minimum_size = Vector2(96, 96)
+layout_mode = 2
+theme_type_variation = &"GameboxPortraitBackButton"
+text = "‹"
+flat = true
+
+[node name="TitleGroup" type="VBoxContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+theme_type_variation = &"GameboxPortraitTitleGroup"
+
+[node name="TitleLabel" type="Label" parent="TitleGroup"]
+layout_mode = 2
+theme_type_variation = &"GameboxPortraitTitle"
+text = "游戏"
+horizontal_alignment = 1
+
+[node name="SubtitleLabel" type="Label" parent="TitleGroup"]
+layout_mode = 2
+theme_type_variation = &"GameboxPortraitSubtitle"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="ActionButton" type="Button" parent="."]
+visible = false
+custom_minimum_size = Vector2(96, 96)
+layout_mode = 2
+theme_type_variation = &"GameboxPortraitActionButton"
+flat = true
+
+[node name="MenuLayer" type="CanvasLayer" parent="."]
+layer = 40
+
+[node name="MenuRoot" type="Control" parent="MenuLayer"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="DismissArea" type="Button" parent="MenuLayer/MenuRoot"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"GameboxOverflowMenuDismissButton"
+flat = true
+
+[node name="MenuPanel" type="PanelContainer" parent="MenuLayer/MenuRoot"]
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 0
+theme_type_variation = &"GameboxOverflowMenu"
+
+[node name="Items" type="VBoxContainer" parent="MenuLayer/MenuRoot/MenuPanel"]
+layout_mode = 2
+theme_type_variation = &"GameboxOverflowMenuItems"
+
+[connection signal="pressed" from="BackButton" to="." method="_on_back_button_pressed"]
+[connection signal="pressed" from="ActionButton" to="." method="_on_action_button_pressed"]
+[connection signal="pressed" from="MenuLayer/MenuRoot/DismissArea" to="." method="close_menu"]

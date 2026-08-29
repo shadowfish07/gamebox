@@ -16,6 +16,7 @@ static func cases() -> Array:
 		{"name": "gomoku board advances pressed pending and authoritative states", "run": _advances_interaction_states},
 		{"name": "gomoku board keeps selected move separate from server pending", "run": _keeps_selected_separate},
 		{"name": "gomoku board keeps authoritative stones separate from pending", "run": _keeps_pending_separate},
+		{"name": "gomoku board marks one authoritative winning line", "run": _marks_winning_line},
 		{"name": "gomoku board maps every rendered state to game tokens", "run": _maps_game_tokens},
 	]
 
@@ -133,6 +134,27 @@ static func _keeps_selected_separate() -> bool:
 		return false
 	board.present(cells)
 	var result := _check(board.selected_cell == Vector2i(-1, -1), "authoritative refresh did not clear local selection")
+	board.free()
+	return result
+
+
+static func _marks_winning_line() -> bool:
+	var board := GomokuBoard.new()
+	var cells: Array = []
+	cells.resize(225)
+	cells.fill(0)
+	for x in range(3, 8):
+		cells[7 * 15 + x] = 1
+	var expected := [Vector2i(3, 7), Vector2i(4, 7), Vector2i(5, 7), Vector2i(6, 7), Vector2i(7, 7)]
+	var detected: Array[Vector2i] = GomokuBoard.find_winning_line(cells)
+	if not _check(detected == expected, "authoritative horizontal five was not detected") \
+		or not _check(board.present(cells, Vector2i(7, 7), Vector2i(-1, -1), Vector2i(-1, -1), detected), "winning line presentation was rejected"):
+		board.free()
+		return false
+	var result := _check(board.winning_cells == expected, "winning cells were not retained for rendering") \
+		and _check(board.get_script().get_script_constant_map().get("WINNING_LINE_COLOR") == GameboxTokens.GAME["winning_line"], "winning line stopped using the game token")
+	board.present(cells)
+	result = result and _check(board.winning_cells.is_empty(), "ordinary authoritative refresh did not clear the winning line")
 	board.free()
 	return result
 

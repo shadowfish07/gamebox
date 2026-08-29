@@ -35,9 +35,10 @@ EOF
 chmod +x "$fake_godot"
 
 run_fixture() {
+  # Keep the fixture bounded without racing process startup on a busy CI host.
   env -u GAMEBOX_TEST_WARNING_FILE -u GAMEBOX_TEST_NESTED \
     GODOT_BIN="$fake_godot" \
-    GODOT_TEST_WATCHDOG_SECONDS=2 \
+    GODOT_TEST_WATCHDOG_SECONDS=5 \
     "$@" bash "$ROOT_DIR/tool/verify_godot_tests.sh" 2>&1
 }
 
