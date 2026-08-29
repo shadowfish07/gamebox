@@ -889,10 +889,12 @@
 
     stateButtons.forEach(button => button.addEventListener("click", () => showState(button.dataset.state)));
 
+    let pendingChoiceTimer = 0;
     choiceButtons.forEach(button => button.addEventListener("click", () => {
       const choice = button.dataset.choice;
       showState("me-pending", { mine: choice });
-      window.setTimeout(() => {
+      window.clearTimeout(pendingChoiceTimer);
+      pendingChoiceTimer = window.setTimeout(() => {
         if (phone.dataset.state === "me-pending") showState("me-locked", { mine: choice });
       }, 900);
     }));

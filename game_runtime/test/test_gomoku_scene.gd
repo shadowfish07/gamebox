@@ -186,6 +186,10 @@ static func _renders_terminal_states() -> bool:
 		return false
 	if not await _assert_terminal(WHITE_ID, _snapshot(9, five, "finished", "white", "five", BLACK_ID), "这局差一点"):
 		return false
+	if not await _assert_terminal(BLACK_ID, _snapshot(5, _four_stone_board(), "finished", "black", "resignation", BLACK_ID), "对手已认输"):
+		return false
+	if not await _assert_terminal(WHITE_ID, _snapshot(5, _four_stone_board(), "finished", "black", "resignation", BLACK_ID), "你已认输"):
+		return false
 	if not await _assert_terminal(BLACK_ID, _snapshot(225, _draw_board(), "finished", "white", "draw", null), "势均力敌"):
 		return false
 	if not await _assert_terminal(BLACK_ID, _snapshot(1, _empty_board(), "cancelled", "black", null, null), "对局已取消"):
@@ -362,6 +366,7 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 		return _cleanup(scene)
 	var finished: bool = snapshot["payload"]["status"] == "finished"
 	var has_winning_line: bool = snapshot["payload"].get("result") == "five"
+	var resignation: bool = snapshot["payload"].get("result") == "resignation"
 	var result := _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "terminal outcome duplicates its result panel") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == expected_status, "result panel copy changed: %s" % expected_status) \
 		and _check(scene.get_node("ResultPanel").visible, "terminal result panel stayed hidden") \
@@ -369,6 +374,9 @@ static func _assert_terminal(local_user_id: String, snapshot: Dictionary, expect
 		and _check(scene.get_node("ResultScrim").visible, "terminal result scrim stayed hidden") \
 		and _check(scene.get_node("TerminalEvidence").visible, "terminal evidence card stayed hidden") \
 		and _check((scene.get_node("TerminalEvidence/Content/Labels/Move") as Label).text == ("获胜连线 · A1–E1" if has_winning_line else "没有产生终局落子"), "terminal evidence invented an unavailable last move") \
+		and _check(not resignation or (scene.get_node("ResultPanel/Content/Support") as Label).text.contains("认输"), "resignation result did not explain the actual terminal cause") \
+		and _check(not resignation or (scene.get_node("ResultPanel/Content/Summary/Item2/Content/Label") as Label).text == "你的棋色", "resignation result exposed fabricated move evidence") \
+		and _check(not resignation or not scene.get_node("ResultPanel/Content/Summary/Item3").visible, "resignation result exposed a fabricated third summary item") \
 		and _check(not scene.get_node("ResultPill").visible, "terminal result pill duplicated the open card") \
 		and _check((scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).visible == finished, "terminal review availability did not match preserved evidence") \
 		and _check(not scene.get_node("TopNavigation/ActionButton").visible, "settings action remained visible after terminal state") \

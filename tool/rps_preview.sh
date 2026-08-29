@@ -9,7 +9,7 @@ if [[ ! -x "$GODOT_BIN" ]]; then
   exit 1
 fi
 
-exec open -n -a "$GODOT_BIN" --args \
+exec "$GODOT_BIN" \
   --path "$ROOT/game_runtime" \
   --script "$ROOT/tool/rps_preview.gd" \
   --rendering-driver opengl3 \

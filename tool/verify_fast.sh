@@ -60,7 +60,7 @@ gamebox_run_step "Godot verifier status fixtures" bash tool/test_verify_godot_te
 gamebox_run_step "macOS deploy script syntax" verify_macos_deploy_syntax
 gamebox_run_step "macOS deploy fixtures" bash tool/test_macos_deploy.sh
 gamebox_run_step "Android lease fixtures" bash tool/test_android_lease.sh
-gamebox_run_step "E2E CLI fixtures" bash tool/e2e/test_cli.sh
+gamebox_run_step "E2E entrypoint fixtures" env GAMEBOX_TEST_NESTED=1 bash tool/e2e/run.sh --self-test
 gamebox_run_step "Godot tests" env GAMEBOX_TEST_NESTED=1 bash tool/verify_godot_tests.sh
 gamebox_run_step "Android smoke log fixtures" bash tool/test_android_smoke_log.sh
 gamebox_test_output_finish verify-fast

@@ -22,6 +22,9 @@ static func cases() -> Array:
 		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
 		{"name": "rps status chips emphasize only the player who acted", "run": _status_chip_player_binding},
 		{"name": "rps terminal result preserves reveal evidence and review path", "run": _terminal_result_presentation},
+		{"name": "rps terminal result omits unavailable reveal evidence", "run": _terminal_result_without_reveal},
+		{"name": "rps resignation result does not invent round evidence", "run": _resignation_result_presentation},
+		{"name": "rps lock events do not replay a stale reveal", "run": _lock_event_does_not_replay_stale_reveal},
 		{"name": "rps overflow menu requires explicit resign selection", "run": _overflow_menu_requires_explicit_resign},
 		{"name": "rps reconnect keeps the confirmed match behind a compact banner", "run": _reconnect_keeps_confirmed_match},
 	]
@@ -125,7 +128,7 @@ static func _scene_contract() -> bool:
 		and _check(choices.get_child(2) == paper, "paper must be the third choice") \
 		and _check(rock.custom_minimum_size == paper.custom_minimum_size, "choice targets must be equal") \
 		and _check(paper.custom_minimum_size == scissors.custom_minimum_size, "choice targets must be equal") \
-		and _check(rock.custom_minimum_size.x >= 96 and rock.custom_minimum_size.y >= 256, "choice targets must be touch safe") \
+		and _check(rock.custom_minimum_size.x >= 192 and rock.custom_minimum_size.y >= 256, "choice targets must be at least 96dp by 128dp") \
 		and _check(rock.flat and paper.flat and scissors.flat, "choice backgrounds must stay transparent") \
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/OpponentVisual/Unknown"), "sealed opponent placeholder must exist") \
 		and _check(scene.has_node("SafeContent/Layout/OpponentSection/OpponentVisual/Locked"), "sealed opponent lock state must exist") \
@@ -263,15 +266,60 @@ static func _terminal_result_presentation() -> bool:
 	return _cleanup(scene, _check(scene.get_node("ResultPanel").visible and scene.get_node("ResultScrim").visible, "result pill did not restore the result surface"))
 
 
+static func _resignation_result_presentation() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_resignation_snapshot(false))
+	var support := (scene.get_node("ResultPanel/Content/Support") as Label).text
+	var result := _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "你已认输", "resignation loss title did not bind") \
+		and _check((scene.get_node("ResultPanel/Content/Meta/OutcomeChip/Outcome") as Label).text == "认输", "resignation loss kept a generic loss chip") \
+		and _check(support == "对局因你认输而结束。", "resignation loss invented a round result: %s" % support) \
+		and _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "你已认输", "resignation arena retained a round-win message") \
+		and _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel") as Label).text == "对局因你认输而结束", "resignation arena retained final-score copy") \
+		and _check(not scene.get_node("ResultPanel/Content/Summary").visible, "resignation loss exposed a fabricated round summary") \
+		and _check(not scene.get_node("TerminalArena").visible, "resignation loss exposed stale reveal evidence") \
+		and _check(not (scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).visible, "resignation loss offered unavailable reveal review")
+	return _cleanup(scene, result)
+
+
+static func _terminal_result_without_reveal() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var snapshot := _terminal_snapshot(false)
+	snapshot["payload"]["lastReveal"] = null
+	client.accept_snapshot(snapshot)
+	var result := _check((scene.get_node("ResultPanel/Content/Support") as Label).text == "最终比分已确认。", "missing reveal kept a fabricated comparison") \
+		and _check(not scene.get_node("ResultPanel/Content/Summary/Item3").visible, "missing reveal exposed an unknown final choice") \
+		and _check(not (scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).visible, "missing reveal offered unavailable review")
+	return _cleanup(scene, result)
+
+
+static func _lock_event_does_not_replay_stale_reveal() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var stale_reveal := _reveal(1, "rock", "scissors", ME, false, 1, 0, null)
+	client.accept_snapshot(_snapshot_with_reveal(1, 2, stale_reveal))
+	client.accept_event(_event(2, "rps.choice.locked", {
+		"round": 2, "userId": OPPONENT, "locked": true,
+	}))
+	var result := _check(not scene.get_node("RevealPanel").visible, "choice lock replayed the previous round reveal") \
+		and _check(not scene._is_revealing(), "choice lock started a stale reveal timer")
+	return _cleanup(scene, result)
+
+
 static func _reconnect_keeps_confirmed_match() -> bool:
 	var harness: Dictionary = await _scene_harness()
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
 	var quit_calls: Array[int] = harness["quit_calls"]
 	var banner := scene.get_node("ConnectionBanner") as Control
-	if not _check(not scene.get_node("LoadingOverlay").visible, "initial connection still showed the blocking loader") \
-		or not _check(banner.visible and _connection_message(scene) == "连接中…", "initial connection did not use shared compact copy") \
-		or not _check(not scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "initial banner overlapped the opponent status row") \
+	if not _check(scene.get_node("LoadingOverlay").visible, "initial connection did not show the blocking loader") \
+		or not _check((scene.get_node("LoadingOverlay/Content/Message") as Label).text == "正在同步对局…", "initial loader copy changed") \
+		or not _check(not banner.visible, "initial connection duplicated the blocking loader with a compact banner") \
+		or not _check(scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "initial loader unexpectedly removed the opponent status row") \
 		or not _check((scene.get_node("SafeContent/Layout/TopNavigation/TitleGroup/SubtitleLabel") as Label).text == "准备对局", "initial format retained loading copy") \
 		or not _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "准备开始", "initial game state duplicated network status") \
 		or not _check(banner.offset_left == GameboxTokens.SPACING["page"] * 2, "connection banner must align with the safe page inset") \
@@ -407,6 +455,30 @@ static func _terminal_snapshot(local_won: bool) -> Dictionary:
 	}
 
 
+static func _resignation_snapshot(local_won: bool) -> Dictionary:
+	var winner := ME if local_won else OPPONENT
+	return {
+		"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
+		"revision": 3, "type": "platform.snapshot",
+		"payload": {
+			"status": "finished", "format": "best_of_three", "round": 2,
+			"me": {"userId": ME, "score": 1, "locked": false},
+			"opponent": {"userId": OPPONENT, "score": 0, "locked": false},
+			"lastReveal": null, "winnerUserId": winner, "result": "resignation",
+		},
+	}
+
+
+static func _snapshot_with_reveal(revision: int, round_number: int, reveal: Dictionary) -> Dictionary:
+	var snapshot := _snapshot(revision, "best_of_three", round_number, {
+		"userId": ME, "score": 1, "locked": false,
+	}, {
+		"userId": OPPONENT, "score": 0, "locked": false,
+	})
+	snapshot["payload"]["lastReveal"] = reveal
+	return snapshot
+
+
 static func _event(revision: int, type: String, payload: Dictionary, action_id: String = "") -> Dictionary:
 	var envelope := {
 		"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
@@ -493,6 +565,13 @@ class FakeMatchClient:
 		connection_state = "connected"
 		connection_state_changed.emit(connection_state)
 		snapshot_received.emit(envelope)
+
+	func accept_event(envelope: Dictionary) -> void:
+		var applied: Dictionary = state.apply_event(envelope)
+		if not applied.get("ok", false):
+			push_error("fake RPS event invalid")
+			return
+		event_received.emit(envelope)
 
 
 static func _check(condition: bool, message: String) -> bool:

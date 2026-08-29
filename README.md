@@ -75,7 +75,7 @@ bash tool/bootstrap.sh
 
 ### 1. Start the server
 
-The server requires independent JWT and token-pepper secrets of at least 32 bytes. Use an isolated SQLite directory for local development:
+The server requires independent JWT and token-pepper secrets of at least 32 bytes. Use an isolated SQLite directory for local development. Run these commands in one shell so later `gameboxctl` commands reuse the same exported database path and token pepper:
 
 ```bash
 gamebox_data_dir="$(mktemp -d)"
@@ -83,10 +83,12 @@ export GAMEBOX_DB_PATH="$gamebox_data_dir/gamebox.db"
 export GAMEBOX_JWT_SECRET="$(openssl rand -base64 32)"
 export GAMEBOX_TOKEN_PEPPER="$(openssl rand -base64 32)"
 export GAMEBOX_ADDR="127.0.0.1:8080"
-(cd server && go run ./cmd/gameboxd)
+(cd server && go run ./cmd/gameboxd) &
+gamebox_server_pid=$!
+until curl --silent --fail http://127.0.0.1:8080/healthz >/dev/null; do sleep 0.2; done
 ```
 
-Verify the service from another terminal:
+Verify the service from the same shell:
 
 ```bash
 curl --fail http://127.0.0.1:8080/healthz
@@ -96,7 +98,7 @@ The response is exactly `{"status":"ok"}`. The default address is `127.0.0.1:808
 
 ### 2. Create registration invites
 
-Use the same `GAMEBOX_TOKEN_PEPPER` value as the running service:
+The exports from step 1 remain active in this shell, so the invite command uses the same database and token pepper as the running service:
 
 ```bash
 (cd server && go run ./cmd/gameboxctl invite create \
@@ -104,6 +106,7 @@ Use the same `GAMEBOX_TOKEN_PEPPER` value as the running service:
 ```
 
 Each plaintext invite is shown only once. A batch is atomic, and `--count` must be between 1 and 1000.
+Stop the local service when finished with `kill "$gamebox_server_pid"`.
 
 ### 3. Build or run the Android app
 
@@ -228,7 +231,15 @@ Release builds require these GitHub Actions secrets:
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-The [debug workflow](.github/workflows/debug.yml) publishes branch builds to the rolling `debug-latest` prerelease. Stable and debug packages have different application IDs, so both can be installed on one device.
+The [debug workflow](.github/workflows/debug.yml) uploads untrusted branch and pull-request builds as short-lived workflow artifacts without signing secrets or release permissions. Trusted builds from the default branch publish the stable-signed package to the rolling `debug-latest` prerelease. Stable and debug packages have different application IDs, so both can be installed on one device.
+
+Because release assets keep immutable provenance names, resolve the newest APK from release metadata instead of guessing a filename:
+
+```bash
+debug_apk_url="$(gh api repos/shadowfish07/gamebox/releases/tags/debug-latest \
+  --jq '[.assets[] | select(.name | endswith(".apk"))] | max_by(.created_at).browser_download_url')"
+curl --fail --location --output gamebox-debug-latest.apk "$debug_apk_url"
+```
 
 ## Deployment
 

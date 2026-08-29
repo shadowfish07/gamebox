@@ -489,6 +489,19 @@ func _present_gomoku_result(local_user_id: String, winning_line: Array[Vector2i]
 		details = {"outcome": "cancelled", "title": "对局已取消", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
 	elif _state.status == "abandoned":
 		details = {"outcome": "abandoned", "title": "对局已作废", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
+	elif _state.result == "resignation":
+		details = {
+			"outcome": "won" if local_won else "lost",
+			"outcome_label": "胜利" if local_won else "认输",
+			"title": "对手已认输" if local_won else "你已认输",
+			"support": "对局因对手认输而结束。" if local_won else "对局因你认输而结束。",
+			"confirmed_text": "认输结果已确认",
+			"summary": [
+				{"value": "%d 手" % move_count, "label": "结束时手数"},
+				{"value": _color_name(local_color), "label": "你的棋色"},
+			],
+			"review_available": true,
+		}
 	elif _state.result == "draw":
 		details = {
 			"outcome": "draw", "title": "势均力敌", "support": "棋盘已满，双方未分胜负。",

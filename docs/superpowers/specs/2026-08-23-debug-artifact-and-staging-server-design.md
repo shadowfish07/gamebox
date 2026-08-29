@@ -7,8 +7,9 @@ Status: Validated
 
 为 Gamebox 建立一条 debug 包的分发链路：
 
-1. 每次 push 到任意分支自动构建一个**独立包名**的 debug APK，发布到固定的滚动
-   pre-release，测试者通过恒定链接拿到最新版。
+1. 每次 push 到任意分支或更新 PR 时自动构建一个**独立包名**的 debug APK。
+   不受信 ref 只产出短期 workflow artifact；默认分支的受信构建才使用稳定签名并更新
+   固定的滚动 pre-release。测试者通过 release 元数据解析最新 APK。
 2. 单独部署一个 **staging 服务端**，与正式服同机并存、数据与密钥完全隔离，
    debug 包指向它，避免 debug 流量污染正式服数据。
 3. debug 包名与正式版互不冲突，可在同一台设备上并存安装。
@@ -17,7 +18,7 @@ Status: Validated
 
 | 问题 | 决策 |
 |---|---|
-| Debug 包发布方式 | 每次 push 到任意分支自动构建 → 滚动 pre-release（固定 tag `debug-latest` 作为稳定 release identity，不随分支提交移动；APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名，说明记录实际来源；所有分支串行发布） |
+| Debug 包发布方式 | 任意分支/PR 产出 14 天 workflow artifact，不读取签名密钥且仅有只读仓库权限；默认分支的受信构建更新滚动 pre-release（固定 tag `debug-latest`；APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名）。README 中的下载命令从 release API 选取 `created_at` 最新的 APK，形成稳定入口。 |
 | 包名后缀范围 | 仅 CI 发布的包加 `.debug`（通过 `GAMEBOX_DEBUG_ARTIFACT` 环境变量控制），本地 `flutter run`、`verify.sh`、smoke/E2E 脚本零影响 |
 | Staging 部署机制 | `deploy/macos/install-staging.sh` 手动脚本，在 Mac 上运行；需要更新服务端代码时 `git pull` 后重跑 |
 | Staging 域名 | `staging-gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
@@ -29,13 +30,14 @@ Status: Validated
 
 新增 `.github/workflows/debug.yml`：
 
-- 触发：push 到任意分支（`paths` 过滤到 `app/**`、`game_runtime/**`、`tool/**`、
-  `deploy/**`）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
+- 触发：push 到任意分支、pull request（`paths` 过滤到 `app/**`、
+  `game_runtime/**`、`tool/**`和 workflow 本身）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
   `https://staging-gamebox.zqydev.me`）。
-- 所有分支共用一个发布 concurrency group，`cancel-in-progress: false`，避免并发上传
-  同一 rolling release 的资产或互相覆盖 release 说明。`debug-latest` tag 仅在首次
-  创建 release 时建立，之后保持稳定，避免分支提交修改 workflow 文件时被
-  `GITHUB_TOKEN` 的 workflow 权限限制阻断发布。
+- `build` job 只有 `contents: read`，checkout 不保留 Git 凭据，使用 Android 临时
+  debug key 构建并上传 14 天 artifact；它不读取稳定签名 secrets，也不能写 release。
+- `publish` job 仅在 push 或手动运行的 ref 等于仓库默认分支时进入，在该 job
+  内单独获得 `contents: write` 和稳定签名 secrets。发布使用固定 concurrency group
+  且不取消进行中的 run；其他 ref 只取消自己的过期构建。
 - 工具链对齐现有 CI/release：Java 17、Flutter 3.47.1、Godot 4.7.0、接受 Android
   licenses。
 - 构建前执行 `godot --headless --path game_runtime --import` 导入 Godot 资产
@@ -58,13 +60,15 @@ Status: Validated
 - `buildTypes.debug` 在 `GAMEBOX_DEBUG_ARTIFACT=true` 时：
   - `applicationIdSuffix = ".debug"` → 应用 ID 变为 `me.zqydev.gamebox.debug`
   - `manifestPlaceholders["appLabel"] = "gamebox debug"`（桌面图标名可区分）
-  - 使用 `key.properties` 中的稳定 signing config；CI 复用 release workflow 的
-    `ANDROID_*` signing secrets，避免 rolling build 因临时 debug 证书无法覆盖安装。
+  - 普通分支/PR artifact 使用 Android 临时 debug key；仅受信的 `publish` job 在
+    `GAMEBOX_REQUIRE_RELEASE_SIGNING=true` 时读取 `key.properties` 和 `ANDROID_*`
+    secrets，确保 rolling build 可覆盖安装。
 - `AndroidManifest.xml` 的 `android:label="gamebox"` 改为
   `android:label="${appLabel}"`。
 
 不设环境变量时所有行为与现在完全一致：本地、CI 验证、E2E/smoke 脚本里的硬编码
-`me.zqydev.gamebox` 包名全部不受影响。若本地显式设置该环境变量，则需提供同样的
+`me.zqydev.gamebox` 包名全部不受影响。本地仅设置 `GAMEBOX_DEBUG_ARTIFACT=true`
+时使用 Android debug key；同时设置 `GAMEBOX_REQUIRE_RELEASE_SIGNING=true` 时必须提供
 `app/android/key.properties`，否则 Gradle 会 fail closed。
 
 ### Part 3: Staging 服务端（macOS 手动部署）

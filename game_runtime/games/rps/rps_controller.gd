@@ -295,9 +295,10 @@ func _on_snapshot_received(_envelope: Dictionary) -> void:
 	_refresh_ui()
 
 
-func _on_event_received(_envelope: Dictionary) -> void:
+func _on_event_received(envelope: Dictionary) -> void:
 	_resign_submitted = false
-	if _state != null and _state.last_reveal is Dictionary:
+	if envelope.get("type") == "rps.round.revealed" \
+		and _state != null and _state.last_reveal is Dictionary:
 		_start_reveal(_state.last_reveal)
 	_refresh_ui()
 
@@ -324,13 +325,15 @@ func _refresh_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var terminal: bool = has_state and _state.status in ["finished", "cancelled", "abandoned"]
-	_refresh_connection_banner()
+	_refresh_connection_banner(has_state)
 	$ErrorSnackbar.present(_error_text, "error")
-	$LoadingOverlay.set_loading(false, "")
+	var initial_loading := not has_state and _awaiting_snapshot \
+		and _connection_state not in ["failed", "closed"]
+	$LoadingOverlay.set_loading(initial_loading, "正在同步对局…" if initial_loading else "")
 	$SafeContent/Layout/TopNavigation.set_subtitle(_format_label(_state.format) if has_state else "准备对局")
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel.text = str(_state.me_score) if has_state else "0"
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel.text = str(_state.opponent_score) if has_state else "0"
-	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.text = "最终结果" if terminal else "第 %d 轮" % _state.round_number if has_state else "准备对局"
+	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.text = "认输结束" if terminal and _state.result == "resignation" else "最终结果" if terminal else "第 %d 轮" % _state.round_number if has_state else "准备对局"
 	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel.text = _status_text(local_user_id) if has_state else "准备开始"
 	$SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel.text = _status_support(local_user_id) if has_state else ""
 	_refresh_player_statuses(has_state, terminal)
@@ -391,9 +394,13 @@ func _emit_choice_automation_targets() -> void:
 		])
 
 
-func _refresh_connection_banner() -> void:
+func _refresh_connection_banner(has_state: bool) -> void:
 	if _connection_state in ["failed", "closed"]:
 		$ConnectionBanner.present(_connection_state)
+	elif not has_state:
+		# The first-connect loading overlay owns this state. Do not leave a
+		# duplicate compact banner partially visible behind it.
+		$ConnectionBanner.present("connected")
 	elif _connection_state == "reconnecting":
 		$ConnectionBanner.present("reconnecting")
 	elif _awaiting_snapshot:
@@ -404,6 +411,8 @@ func _refresh_connection_banner() -> void:
 
 func _status_text(local_user_id: String) -> String:
 	if _state.status == "finished":
+		if _state.result == "resignation":
+			return "对手已认输" if _state.winner_user_id == local_user_id else "你已认输"
 		return "你赢得了对局" if _state.winner_user_id == local_user_id else "对手赢得了对局"
 	if _state.status == "cancelled":
 		return "对局已取消"
@@ -426,6 +435,8 @@ func _opponent_text() -> String:
 
 func _status_support(local_user_id: String) -> String:
 	if _state.status == "finished":
+		if _state.result == "resignation":
+			return "对局因对手认输而结束" if _state.winner_user_id == local_user_id else "对局因你认输而结束"
 		return "最终比分已确认"
 	if _state.status in ["cancelled", "abandoned"]:
 		return "返回游戏大厅"
@@ -503,7 +514,8 @@ func _refresh_reveal(has_state: bool) -> void:
 
 func _refresh_terminal_arena(has_state: bool, terminal: bool) -> void:
 	var reveal: Variant = _state.last_reveal if has_state else null
-	var show := terminal and not _is_revealing() and reveal is Dictionary
+	var show: bool = terminal and _state.result != "resignation" \
+		and not _is_revealing() and reveal is Dictionary
 	$TerminalArena.visible = show
 	if not show:
 		return
@@ -524,6 +536,16 @@ func _present_rps_result(local_user_id: String) -> void:
 		details = {"outcome": "cancelled", "title": "对局已取消", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
 	elif _state.status == "abandoned":
 		details = {"outcome": "abandoned", "title": "对局已作废", "support": "本局不会计入结果。", "confirmed_text": "对局已结束", "review_available": false}
+	elif _state.result == "resignation":
+		var local_won: bool = _state.winner_user_id == local_user_id
+		details = {
+			"outcome": "won" if local_won else "lost",
+			"outcome_label": "胜利" if local_won else "认输",
+			"title": "对手已认输" if local_won else "你已认输",
+			"support": "对局因对手认输而结束。" if local_won else "对局因你认输而结束。",
+			"confirmed_text": "认输结果已确认",
+			"review_available": false,
+		}
 	else:
 		var local_won: bool = _state.winner_user_id == local_user_id
 		var reveal: Dictionary = _state.last_reveal if _state.last_reveal is Dictionary else {}
@@ -531,15 +553,20 @@ func _present_rps_result(local_user_id: String) -> void:
 		var my_choice := str(choices.get(_state.me_user_id, ""))
 		var opponent_choice := str(choices.get(_state.opponent_user_id, ""))
 		var round_number := int(reveal.get("round", _state.round_number))
+		var summary: Array[Dictionary] = [
+			{"value": "%d : %d" % [_state.me_score, _state.opponent_score], "label": "最终比分"},
+			{"value": "%d 轮" % round_number, "label": "完成轮次"},
+		]
+		if not reveal.is_empty():
+			summary.append({
+				"value": _choice_comparison(my_choice, opponent_choice),
+				"label": "制胜选择" if local_won else "最后一轮",
+			})
 		details = {
 			"outcome": "won" if local_won else "lost",
 			"title": "你拿下了这场对局" if local_won else "对手先拿到两分",
-			"support": "最后一轮，%s" % _reveal_reason(my_choice, opponent_choice, false),
-			"summary": [
-				{"value": "%d : %d" % [_state.me_score, _state.opponent_score], "label": "最终比分"},
-				{"value": "%d 轮" % round_number, "label": "完成轮次"},
-				{"value": _choice_comparison(my_choice, opponent_choice), "label": "制胜选择" if local_won else "最后一轮"},
-			],
+			"support": "最后一轮，%s" % _reveal_reason(my_choice, opponent_choice, false) if not reveal.is_empty() else "最终比分已确认。",
+			"summary": summary,
 			"review_available": not reveal.is_empty(),
 		}
 	$ResultPanel.present_details(details)

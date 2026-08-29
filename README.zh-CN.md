@@ -75,7 +75,7 @@ bash tool/bootstrap.sh
 
 ### 1. 启动服务
 
-服务端需要两个彼此独立、至少 32 字节的 JWT 和 token pepper 密钥。本地开发时请使用独立的 SQLite 目录：
+服务端需要两个彼此独立、至少 32 字节的 JWT 和 token pepper 密钥。本地开发时请使用独立的 SQLite 目录。请在同一个 shell 中执行以下命令，使后续 `gameboxctl` 复用相同的数据库路径和 token pepper：
 
 ```bash
 gamebox_data_dir="$(mktemp -d)"
@@ -83,10 +83,12 @@ export GAMEBOX_DB_PATH="$gamebox_data_dir/gamebox.db"
 export GAMEBOX_JWT_SECRET="$(openssl rand -base64 32)"
 export GAMEBOX_TOKEN_PEPPER="$(openssl rand -base64 32)"
 export GAMEBOX_ADDR="127.0.0.1:8080"
-(cd server && go run ./cmd/gameboxd)
+(cd server && go run ./cmd/gameboxd) &
+gamebox_server_pid=$!
+until curl --silent --fail http://127.0.0.1:8080/healthz >/dev/null; do sleep 0.2; done
 ```
 
-在另一个终端验证服务：
+在同一个 shell 中验证服务：
 
 ```bash
 curl --fail http://127.0.0.1:8080/healthz
@@ -96,7 +98,7 @@ curl --fail http://127.0.0.1:8080/healthz
 
 ### 2. 创建注册邀请码
 
-使用与运行中服务相同的 `GAMEBOX_TOKEN_PEPPER` 值：
+步骤 1 的导出变量仍在当前 shell 中生效，因此以下命令会使用与运行中服务相同的数据库和 token pepper：
 
 ```bash
 (cd server && go run ./cmd/gameboxctl invite create \
@@ -104,6 +106,7 @@ curl --fail http://127.0.0.1:8080/healthz
 ```
 
 每个明文邀请码只显示一次。批量创建是原子操作，`--count` 必须介于 1 和 1000 之间。
+使用完成后可执行 `kill "$gamebox_server_pid"` 停止本地服务。
 
 ### 3. 构建或运行 Android 应用
 
@@ -172,10 +175,12 @@ GAMEBOX_TEST_OUTPUT=verbose bash tool/verify.sh
 
 ```bash
 bash tool/e2e_android.sh --self-test
-bash tool/e2e_android.sh
+bash tool/e2e_android.sh --list-scenarios
+bash tool/worktree.sh e2e --scenario gomoku-network
+bash tool/worktree.sh e2e               # 发布级全量场景
 ```
 
-该脚本只操作已获取租约的设备，会恢复显示和主题设置、校验 APK 来源，并将脱敏诊断信息写入 `artifacts/e2e/`。它验证逻辑和生命周期，不替代视觉设计验收。各层所需证据见 [测试策略](docs/testing-strategy.md)。
+`tool/e2e_android.sh` 是稳定的兼容入口，场景 CLI 和 harness 位于 `tool/e2e/`。该脚本只操作已获取租约的设备，会恢复显示和主题设置、校验 APK 来源，并将脱敏诊断信息写入 `artifacts/e2e/`。它验证逻辑和生命周期，不替代视觉设计验收。各层所需证据见 [测试策略](docs/testing-strategy.md)。
 
 ## 发布
 
@@ -196,7 +201,15 @@ bash tool/release.sh patch  # 也可使用 minor / major
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-[调试工作流](.github/workflows/debug.yml) 会将分支构建发布到滚动的 `debug-latest` 预发布。稳定版和调试版使用不同的应用 ID，可同时安装。
+[调试工作流](.github/workflows/debug.yml) 会将不受信的分支和 PR 构建保存为短期 workflow artifact，不接触签名密钥或 release 写权限。只有来自默认分支的受信构建会将稳定签名包发布到滚动的 `debug-latest` 预发布。稳定版和调试版使用不同的应用 ID，可同时安装。
+
+由于 release 资产保留不可变的溯源文件名，应通过 release 元数据解析最新 APK，不要猜测文件名：
+
+```bash
+debug_apk_url="$(gh api repos/shadowfish07/gamebox/releases/tags/debug-latest \
+  --jq '[.assets[] | select(.name | endswith(".apk"))] | max_by(.created_at).browser_download_url')"
+curl --fail --location --output gamebox-debug-latest.apk "$debug_apk_url"
+```
 
 ## 部署
 

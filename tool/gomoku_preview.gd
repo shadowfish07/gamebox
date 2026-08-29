@@ -63,11 +63,11 @@ func _init() -> void:
 
 
 func _mount() -> void:
-	var local_won := _state_name not in ["finished_loss", "review_loss"]
+	var local_won := _state_name not in ["finished_loss", "review_loss", "resignation_loss"]
 	var scene: Control = GOMOKU_SCENE.instantiate()
 	var client := PreviewClient.new()
 	client.local_user_id = BLACK_ID if local_won else WHITE_ID
-	client._snapshot_envelope = _terminal_snapshot()
+	client._snapshot_envelope = _terminal_snapshot(_state_name.begins_with("resignation_"))
 	if not scene.configure_launch({
 		"game_id": "gomoku", "match_id": MATCH_ID,
 		"launch_ticket": "preview-ticket", "ws_url": "ws://preview.local",
@@ -114,21 +114,23 @@ func _apply_preview_theme(scene: Control) -> void:
 	(scene.get_node("ResultScrim") as ColorRect).color = Color(colors["scrim"], GAMEBOX_TOKENS.COMPONENT["dialog_scrim_opacity"])
 
 
-func _terminal_snapshot() -> Dictionary:
+func _terminal_snapshot(resignation: bool = false) -> Dictionary:
 	var board: Array = []
 	board.resize(225)
 	board.fill(0)
-	for x in 5:
+	var black_stones := 2 if resignation else 5
+	var white_stones := 2 if resignation else 4
+	for x in black_stones:
 		board[7 * 15 + 5 + x] = 1
-	for x in 4:
+	for x in white_stones:
 		board[8 * 15 + 5 + x] = 2
 	return {
 		"protocolVersion": 1, "gameId": "gomoku", "matchId": MATCH_ID,
-		"revision": 9, "type": "platform.snapshot",
+		"revision": 5 if resignation else 9, "type": "platform.snapshot",
 		"payload": {
 			"status": "finished", "board": board, "boardSize": 15,
-			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "white",
-			"winnerUserId": BLACK_ID, "result": "five",
+			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black" if resignation else "white",
+			"winnerUserId": BLACK_ID, "result": "resignation" if resignation else "five",
 		},
 	}
 
@@ -143,7 +145,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["finished_win", "finished_loss", "review_win", "review_loss"]:
+				if _state_name not in ["finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return

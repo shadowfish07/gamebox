@@ -78,10 +78,10 @@ class PreviewClient:
 			event_received.emit({})
 
 	func _snapshot() -> Dictionary:
-		var terminal := _state_name in ["finished", "finished_win", "finished_loss", "review_win", "review_loss"]
-		var local_won := _state_name not in ["finished_loss", "review_loss"]
+		var terminal := _state_name in ["finished", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss"]
+		var local_won := _state_name not in ["finished_loss", "review_loss", "resignation_loss"]
 		if terminal:
-			return _terminal_snapshot(local_won)
+			return _terminal_snapshot(local_won, _state_name.begins_with("resignation_"))
 		var me_locked := _state_name in ["locked", "resign", "reveal"]
 		var opponent_locked := _state_name in ["opponent_locked", "resign", "reveal"]
 		var me := {"userId": ME, "score": 0, "locked": me_locked}
@@ -98,27 +98,27 @@ class PreviewClient:
 			},
 		}
 
-	func _terminal_snapshot(local_won: bool) -> Dictionary:
+	func _terminal_snapshot(local_won: bool, resignation: bool = false) -> Dictionary:
 		var my_choice := "paper" if local_won else "scissors"
 		var opponent_choice := "rock"
-		var my_score := 2 if local_won else 1
-		var opponent_score := 1 if local_won else 2
+		var my_score := 1 if resignation else 2 if local_won else 1
+		var opponent_score := 0 if resignation else 1 if local_won else 2
 		var winner := ME if local_won else OPPONENT
 		return {
 			"protocolVersion": 1, "gameId": "rps", "matchId": MATCH_ID,
-			"revision": 4, "type": "platform.snapshot",
+			"revision": 3 if resignation else 4, "type": "platform.snapshot",
 			"payload": {
-				"status": "finished", "format": "best_of_three", "round": 3,
+				"status": "finished", "format": "best_of_three", "round": 2 if resignation else 3,
 				"me": {"userId": ME, "score": my_score, "locked": false},
 				"opponent": {"userId": OPPONENT, "score": opponent_score, "locked": false},
-				"lastReveal": {
+				"lastReveal": null if resignation else {
 					"round": 3,
 					"choices": {ME: my_choice, OPPONENT: opponent_choice},
 					"roundWinnerUserId": winner, "draw": false,
 					"scores": {ME: my_score, OPPONENT: opponent_score},
 					"matchWinnerUserId": winner, "result": "rounds",
 				},
-				"winnerUserId": winner, "result": "rounds",
+				"winnerUserId": winner, "result": "resignation" if resignation else "rounds",
 			},
 		}
 
@@ -214,7 +214,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["connecting", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "finished_win", "finished_loss", "review_win", "review_loss", "reconnecting", "syncing", "failed", "restored"]:
+				if _state_name not in ["connecting", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss", "reconnecting", "syncing", "failed", "restored"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
