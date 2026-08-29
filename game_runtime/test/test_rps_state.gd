@@ -22,6 +22,7 @@ static func cases() -> Array:
 		{"name": "rps status chips distinguish waiting from choice progress", "run": _status_chip_states},
 		{"name": "rps status chips emphasize only the player who acted", "run": _status_chip_player_binding},
 		{"name": "rps terminal result preserves reveal evidence and review path", "run": _terminal_result_presentation},
+		{"name": "rps single-round loss describes one decisive round", "run": _single_round_loss_presentation},
 		{"name": "rps terminal result omits unavailable reveal evidence", "run": _terminal_result_without_reveal},
 		{"name": "rps resignation result does not invent round evidence", "run": _resignation_result_presentation},
 		{"name": "rps lock events do not replay a stale reveal", "run": _lock_event_does_not_replay_stale_reveal},
@@ -280,6 +281,22 @@ static func _resignation_result_presentation() -> bool:
 		and _check(not scene.get_node("ResultPanel/Content/Summary").visible, "resignation loss exposed a fabricated round summary") \
 		and _check(not scene.get_node("TerminalArena").visible, "resignation loss exposed stale reveal evidence") \
 		and _check(not (scene.get_node("ResultPanel/Content/Actions/ReviewButton") as Button).visible, "resignation loss offered unavailable reveal review")
+	return _cleanup(scene, result)
+
+
+static func _single_round_loss_presentation() -> bool:
+	var harness: Dictionary = await _scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var snapshot := _terminal_snapshot(false)
+	snapshot["payload"]["format"] = "single_round"
+	snapshot["payload"]["round"] = 1
+	snapshot["payload"]["me"]["score"] = 0
+	snapshot["payload"]["opponent"]["score"] = 1
+	snapshot["payload"]["lastReveal"] = _reveal(1, "scissors", "rock", OPPONENT, false, 0, 1, OPPONENT)
+	client.accept_snapshot(snapshot)
+	var result := _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "对手赢得了这一局", "single-round loss claimed a two-point finish") \
+		and _check((scene.get_node("ResultPanel/Content/Summary/Item1/Content/Value") as Label).text == "0 : 1", "single-round score summary did not bind")
 	return _cleanup(scene, result)
 
 

@@ -30,6 +30,7 @@ class PreviewClient:
 	var connection_state := "connected"
 	var _state: Variant
 	var _state_name := "ready"
+	var _delay_reveal := true
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, state: Variant, _game_id: String) -> bool:
 		_state = state
@@ -72,10 +73,13 @@ class PreviewClient:
 			snapshot_received.emit({})
 		if _state_name == "reveal":
 			# Leave the base state on screen long enough for the desktop window to
-			# become visible, then play the same timed reveal as production.
-			await (Engine.get_main_loop() as SceneTree).create_timer(1.5).timeout
-			_state.apply_event(_reveal_event(false))
-			event_received.emit({})
+			# become visible. Screenshot mode starts immediately so its bounded
+			# frame capture records the requested reveal rather than the lock state.
+			if _delay_reveal:
+				await (Engine.get_main_loop() as SceneTree).create_timer(1.5).timeout
+			var reveal_event := _reveal_event(false)
+			_state.apply_event(reveal_event)
+			event_received.emit(reveal_event)
 
 	func _snapshot() -> Dictionary:
 		var terminal := _state_name in ["finished", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss"]
@@ -147,6 +151,7 @@ func _mount() -> void:
 	var scene: Control = RPS_SCENE.instantiate()
 	var client := PreviewClient.new()
 	client._state_name = _state_name
+	client._delay_reveal = _screenshot_path.is_empty()
 	if not scene.configure_launch({
 		"game_id": "rps", "match_id": MATCH_ID,
 		"launch_ticket": "preview-ticket", "ws_url": "ws://preview.local",

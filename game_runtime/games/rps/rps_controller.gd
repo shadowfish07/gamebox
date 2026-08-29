@@ -564,7 +564,7 @@ func _present_rps_result(local_user_id: String) -> void:
 			})
 		details = {
 			"outcome": "won" if local_won else "lost",
-			"title": "你拿下了这场对局" if local_won else "对手先拿到两分",
+			"title": "你拿下了这场对局" if local_won else "对手赢得了这一局" if _state.format == "single_round" else "对手先拿到两分",
 			"support": "最后一轮，%s" % _reveal_reason(my_choice, opponent_choice, false) if not reveal.is_empty() else "最终比分已确认。",
 			"summary": summary,
 			"review_available": not reveal.is_empty(),
