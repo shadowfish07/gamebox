@@ -99,7 +99,7 @@ func _ready() -> void:
 	)
 	$SafeContent/Layout/TopNavigation.back_requested.connect(_on_back_pressed)
 	$SafeContent/Layout/TopNavigation.set_menu_items([
-		{"id": "resign", "label": "认输", "danger": true},
+		{"id": "resign", "label": "认输并结束对局", "danger": true},
 	])
 	$SafeContent/Layout/TopNavigation.menu_action_requested.connect(_on_menu_action_requested)
 	for entry in _choice_entries():

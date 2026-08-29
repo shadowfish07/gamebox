@@ -427,7 +427,7 @@ static func _overflow_menu_requires_explicit_resign() -> bool:
 		"userId": OPPONENT, "score": 0, "locked": false,
 	}))
 	var items := scene.get_node("SafeContent/Layout/TopNavigation/MenuLayer/MenuRoot/MenuPanel/Items") as VBoxContainer
-	if not _check(items.get_child_count() == 1 and (items.get_child(0) as Button).text == "认输", "RPS overflow menu did not expose resign"):
+	if not _check(items.get_child_count() == 1 and (items.get_child(0) as Button).text == "认输并结束对局", "RPS overflow menu did not state the resign consequence"):
 		return _cleanup(scene)
 	(scene.get_node("SafeContent/Layout/TopNavigation/ActionButton") as Button).pressed.emit()
 	if not _check(scene.get_node("SafeContent/Layout/TopNavigation/MenuLayer/MenuRoot").visible, "RPS overflow action did not open the menu") \
