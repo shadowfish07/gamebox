@@ -83,9 +83,23 @@ export GAMEBOX_DB_PATH="$gamebox_data_dir/gamebox.db"
 export GAMEBOX_JWT_SECRET="$(openssl rand -base64 32)"
 export GAMEBOX_TOKEN_PEPPER="$(openssl rand -base64 32)"
 export GAMEBOX_ADDR="127.0.0.1:8080"
-(cd server && go run ./cmd/gameboxd) &
+(cd server && go build -trimpath -o "$gamebox_data_dir/gameboxd" ./cmd/gameboxd)
+"$gamebox_data_dir/gameboxd" &
 gamebox_server_pid=$!
-until curl --silent --fail http://127.0.0.1:8080/healthz >/dev/null; do sleep 0.2; done
+trap 'kill "$gamebox_server_pid" 2>/dev/null || true; wait "$gamebox_server_pid" 2>/dev/null || true' EXIT INT TERM
+gamebox_server_ready=0
+for health_attempt in {1..30}; do
+  if curl --silent --fail --max-time 1 http://127.0.0.1:8080/healthz >/dev/null; then
+    gamebox_server_ready=1
+    break
+  fi
+  kill -0 "$gamebox_server_pid" 2>/dev/null || break
+  sleep 0.2
+done
+if [[ "$gamebox_server_ready" != "1" ]]; then
+  printf 'Gamebox 服务未能就绪\n' >&2
+  exit 1
+fi
 ```
 
 在同一个 shell 中验证服务：
@@ -106,7 +120,7 @@ curl --fail http://127.0.0.1:8080/healthz
 ```
 
 每个明文邀请码只显示一次。批量创建是原子操作，`--count` 必须介于 1 和 1000 之间。
-使用完成后可执行 `kill "$gamebox_server_pid"` 停止本地服务。
+使用完成后可执行 `kill "$gamebox_server_pid"; wait "$gamebox_server_pid"; trap - EXIT INT TERM` 停止本地服务并清理退出 trap。
 
 ### 3. 构建或运行 Android 应用
 
