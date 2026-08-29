@@ -308,10 +308,10 @@ static func _loading_contract() -> bool:
 		or not _check(overlay.has_node("Content/Message"), "loading message path changed"):
 		overlay.free()
 		return false
-	overlay.set_loading(true, "正在同步对局…")
+	overlay.set_loading(true, "正在加载…")
 	if not _check(overlay.visible and overlay.is_loading, "loading state did not show") \
 		or not _check(overlay.mouse_filter == Control.MOUSE_FILTER_STOP, "loading state did not lock input") \
-		or not _check((overlay.get_node("Content/Message") as Label).text == "正在同步对局…", "loading copy changed"):
+		or not _check((overlay.get_node("Content/Message") as Label).text == "正在加载…", "loading copy changed"):
 		overlay.free()
 		return false
 	overlay.set_loading(false, "")

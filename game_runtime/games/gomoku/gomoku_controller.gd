@@ -431,15 +431,13 @@ func _refresh_ui() -> void:
 		and not _awaiting_snapshot and not terminal
 	$TopNavigation.set_subtitle(status_text)
 	$TopNavigation.set_subtitle_visible(show_status)
-	var initial_loading := not has_state and _awaiting_snapshot \
-		and _connection_state not in ["failed", "closed"] and not _force_return
-	$ConnectionLabel.present("connected" if initial_loading else _connection_banner_state(), _error_text if _force_return else "")
+	$ConnectionLabel.present(_connection_banner_state(), _error_text if _force_return else "")
 	$OpponentPresence.visible = has_state and not terminal and not $ConnectionLabel.visible
 	$OpponentPresence/Content/PresenceDot.text = _opponent_presence_mark(opponent_presence)
 	$OpponentPresence/Content/OpponentPresenceLabel.text = _opponent_presence_text(opponent_presence)
 	$ColorLabel.text = "你执黑" if local_color == "black" else "你执白" if local_color == "white" else ""
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
-	$LoadingOverlay.set_loading(initial_loading, "正在同步对局…" if initial_loading else "")
+	$LoadingOverlay.set_loading(false, "")
 	$TopNavigation.set_action_visible(not terminal and not _force_return)
 
 	if terminal:
@@ -592,7 +590,7 @@ func _status_text(local_user_id: String) -> String:
 	if _connection_state != "connected":
 		return _connection_text()
 	if _awaiting_snapshot:
-		return "正在同步对局…"
+		return "同步中…"
 	if _selected_move != INVALID_CELL:
 		return "确认落子位置"
 	if not _state.pending_action.is_empty():
@@ -603,7 +601,7 @@ func _status_text(local_user_id: String) -> String:
 func _connection_text() -> String:
 	match _connection_state:
 		"connected":
-			return "正在同步对局…" if _awaiting_snapshot else "连接中"
+			return "同步中…" if _awaiting_snapshot else "连接中"
 		"reconnecting":
 			return "重连中"
 		"failed", "closed":
