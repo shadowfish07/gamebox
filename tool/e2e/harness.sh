@@ -617,7 +617,7 @@ fixed_value_absent() {
   local value="$2"
   local status
   if printf '%s\n' "$value" \
-    | rg --text --fixed-strings --file - -- "$file" >/dev/null 2>&1; then
+    | grep -aFq -f - -- "$file" >/dev/null 2>&1; then
     return 1
   else
     status=$?
@@ -634,8 +634,8 @@ protect_artifact_directory() {
   local contaminated status file value
   local credential_pattern='eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|Authorization[[:space:]]*:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]{8,}|"(accessToken|refreshToken|launchTicket|inviteCode)"[[:space:]]*:[[:space:]]*"[A-Za-z0-9._-]{8,}'
 
-  # Scan explicit files rather than parsing ripgrep's directory-mode path
-  # output, whose absolute/relative form differs across supported platforms.
+  # Scan explicit files rather than parsing a recursive scanner's path output,
+  # whose absolute/relative form differs across supported platforms.
   # Symlinks are never valid retained diagnostics: remove them without
   # following their targets.
   if ! find "$directory" \( -type f -o -type l \) -print0 >"$scratch"; then
@@ -656,7 +656,7 @@ protect_artifact_directory() {
     for value in "$@"; do
       [[ -n "$value" ]] || continue
       if printf '%s\n' "$value" \
-        | rg --text --quiet --fixed-strings --file - -- "$file" 2>/dev/null; then
+        | grep -aFq -f - -- "$file" 2>/dev/null; then
         contaminated=1
         break
       else
@@ -671,7 +671,7 @@ protect_artifact_directory() {
       break
     fi
     if ((contaminated == 0)); then
-      if rg --text --quiet "$credential_pattern" -- "$file" 2>/dev/null; then
+      if grep -aEq "$credential_pattern" -- "$file" 2>/dev/null; then
         contaminated=1
       else
         status=$?
@@ -1938,7 +1938,7 @@ self_test() {
     || { printf 'visual restoration fixture did not clear mutation flags\n' >&2; return 1; }
 
   local helper_source="$ROOT_DIR/app/android/app/src/androidTest/kotlin/me/zqydev/gamebox/E2eSetTextTest.kt"
-  if rg -n 'Base64|gameboxTextValueBase64' "$helper_source" >/dev/null; then
+  if grep -En 'Base64|gameboxTextValueBase64' "$helper_source" >/dev/null; then
     printf 'Android helper still accepts reversible secret argv\n' >&2
     return 1
   fi
@@ -2072,7 +2072,7 @@ if ((SELF_TEST_ONLY)); then
   exit 0
 fi
 
-for required_command in curl git go jq lsof openssl rg ruby sed shasum unzip; do
+for required_command in curl git go jq lsof openssl ruby sed shasum unzip; do
   command -v "$required_command" >/dev/null 2>&1 \
     || { printf 'Gamebox E2E failed: missing required command %s\n' "$required_command" >&2; exit 2; }
 done
