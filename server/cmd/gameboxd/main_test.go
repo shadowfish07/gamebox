@@ -71,6 +71,18 @@ func TestRunServesHealthAndShutsDownCleanly(t *testing.T) {
 	}
 }
 
+func TestComponentLogWriterDecodesDiagnosticError(t *testing.T) {
+	var output bytes.Buffer
+	writer := &componentLogWriter{logger: newJSONLogger(&output)}
+	if _, err := writer.Write([]byte("event=service_error request_id=00000000-0000-4000-8000-000000000001 phase=authenticate category=internal error_b64=c3FsaXRlOiBkYXRhYmFzZSBpcyBsb2NrZWQ\n")); err != nil {
+		t.Fatalf("write component log: %v", err)
+	}
+	records := decodeLogRecords(t, output.String())
+	if len(records) != 1 || records[0]["error"] != "sqlite: database is locked" {
+		t.Fatalf("diagnostic record = %#v", records)
+	}
+}
+
 func TestComponentLogWriterAllowListsIdentifiersAndDropsFreeFormSecrets(t *testing.T) {
 	var output bytes.Buffer
 	logger := newJSONLogger(&output)

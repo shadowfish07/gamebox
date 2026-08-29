@@ -13,11 +13,15 @@ if ARGV.first == "--validate-session"
   expected_session = Integer(ARGV[1], 10)
   verified = 0
   begin
-    IO.popen(["/bin/ps", "-axo", "pid=,pgid="], "r") do |process_table|
+    IO.popen(["/bin/ps", "-axo", "pid=,pgid=,stat="], "r") do |process_table|
       process_table.each_line do |line|
         fields = line.split
-        next unless fields.length == 2 && fields[1].match?(/\A[0-9]+\z/)
+        next unless fields.length == 3 && fields[1].match?(/\A[0-9]+\z/)
         next unless Integer(fields[1], 10) == process_group
+        # A killed child can remain as a zombie until its pipeline parent is
+        # reaped. It no longer owns resources and must not make bounded cleanup
+        # look live forever on Linux runners or minimal container init systems.
+        next if fields[2].start_with?("Z")
 
         exit 2 unless fields[0].match?(/\A[1-9][0-9]*\z/)
         pid = Integer(fields[0], 10)

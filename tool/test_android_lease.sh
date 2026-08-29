@@ -93,11 +93,62 @@ acquired_at=2000-01-01T00:00:00Z
 EOF
 chmod 600 "$stale_dir/owner"
 
-stale_output="$(gamebox_android_lease_acquire "$fixture_repo" replacement-device 2)"
+stale_log="$fixture_root/stale-acquire.log"
+gamebox_android_lease_acquire "$fixture_repo" replacement-device 2 >"$stale_log"
+stale_output="$(<"$stale_log")"
 grep -F 'Reclaimed stale Gamebox Android lease' <<<"$stale_output" >/dev/null || {
   printf 'Android lease did not report stale-owner reclamation.\n' >&2
   exit 1
 }
+gamebox_android_lease_release
+
+slot0_ready="$fixture_root/slot0-ready"
+slot1_ready="$fixture_root/slot1-ready"
+bash -c '
+  set -euo pipefail
+  source "$1"
+  gamebox_android_lease_acquire_slot "$2" 0 Gamebox_A0_API_36 emulator-5560 Gamebox_B0_API_36 emulator-5562 5
+  : >"$3"
+  sleep 10
+  gamebox_android_lease_release
+' _ "$LEASE_LIBRARY" "$fixture_repo" "$slot0_ready" &
+slot0_pid=$!
+for _ in 1 2 3 4 5; do [[ -f "$slot0_ready" ]] && break; sleep 1; done
+[[ -f "$slot0_ready" ]] || { printf 'Slot 0 fixture did not become ready.\n' >&2; exit 1; }
+bash -c '
+  set -euo pipefail
+  source "$1"
+  gamebox_android_lease_acquire_slot "$2" 1 Gamebox_A1_API_36 emulator-5564 Gamebox_B1_API_36 emulator-5566 5
+  : >"$3"
+  sleep 9
+  gamebox_android_lease_release
+' _ "$LEASE_LIBRARY" "$fixture_repo" "$slot1_ready" &
+slot1_pid=$!
+for _ in 1 2 3 4 5; do [[ -f "$slot1_ready" ]] && break; sleep 1; done
+[[ -f "$slot1_ready" ]] || { printf 'Slot 1 fixture did not become ready.\n' >&2; exit 1; }
+
+pool_status="$(gamebox_android_lease_describe "$fixture_repo")"
+grep -F 'slot active slot=0' <<<"$pool_status" >/dev/null
+grep -F 'slot active slot=1' <<<"$pool_status" >/dev/null
+third_status=0
+third_output="$(gamebox_android_lease_acquire_available_slot "$fixture_repo" managed-e2e 1 2>&1)" || third_status=$?
+[[ "$third_status" -eq 75 ]] || { printf 'Third managed slot request exited %s:\n%s\n' "$third_status" "$third_output" >&2; exit 1; }
+exclusive_status=0
+exclusive_output="$(gamebox_android_lease_acquire "$fixture_repo" exclusive-fixture 1 2>&1)" || exclusive_status=$?
+[[ "$exclusive_status" -eq 75 ]] || { printf 'Exclusive request did not wait for active slots:\n%s\n' "$exclusive_output" >&2; exit 1; }
+wait "$slot0_pid"
+wait "$slot1_pid"
+
+gamebox_android_lease_acquire_slot "$fixture_repo" 0 Gamebox_A0_API_36 emulator-5560 Gamebox_B0_API_36 emulator-5562 2
+slot_inherited="$(bash -c '
+  set -euo pipefail
+  source "$1"
+  gamebox_android_lease_acquire_slot "$2" 0 Gamebox_A0_API_36 emulator-5560 Gamebox_B0_API_36 emulator-5562 1
+  [[ "$GAMEBOX_ANDROID_LEASE_INHERITED" -eq 1 ]]
+  gamebox_android_lease_release
+  printf slot-inherited
+' _ "$LEASE_LIBRARY" "$fixture_repo")"
+[[ "$slot_inherited" == slot-inherited ]] || { printf 'Slot child inheritance failed.\n' >&2; exit 1; }
 gamebox_android_lease_release
 
 printf 'Gamebox Android lease fixtures passed.\n'

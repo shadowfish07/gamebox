@@ -17,6 +17,7 @@ const (
 	ResultFive        = "five"
 	ResultResignation = "resignation"
 	ResultDraw        = "draw"
+	ResultRounds      = "rounds"
 
 	ColorBlack Color = "black"
 	ColorWhite Color = "white"
@@ -34,6 +35,7 @@ type Match struct {
 	Revision     int64
 	Result       *string
 	WinnerUserID *string
+	GameConfig   json.RawMessage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	FinishedAt   *time.Time

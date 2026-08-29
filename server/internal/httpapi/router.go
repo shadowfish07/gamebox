@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/auth"
+	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/users"
@@ -75,6 +76,9 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
 	mux.Handle("GET /v1/games/gomoku/history", router.authenticated(http.HandlerFunc(router.gomokuHistory)))
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
+	mux.Handle("GET /v1/games/rps/status", router.authenticated(http.HandlerFunc(router.rpsStatus)))
+	mux.Handle("GET /v1/games/rps/opponents", router.authenticated(http.HandlerFunc(router.rpsOpponents)))
+	mux.Handle("POST /v1/games/rps/matches", router.authenticated(http.HandlerFunc(router.createRpsMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
 	mux.Handle("GET /v1/matches/{matchId}/result", router.authenticated(http.HandlerFunc(router.matchResult)))
@@ -89,6 +93,9 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
+	registerMethodFallback(mux, "/v1/games/rps/status", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/rps/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/rps/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/result", http.MethodGet)
@@ -296,7 +303,7 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/gomoku/matches":
+	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
 	}
 	const launchPrefix = "/v1/matches/"
@@ -380,7 +387,8 @@ func (router *router) logServiceError(request *http.Request, phase string, err e
 	if router == nil || router.logger == nil || phase == "" || err == nil {
 		return
 	}
-	router.logger.Printf("event=service_error request_id=%s phase=%s category=%s", requestIDFrom(request), phase, safeServiceErrorCategory(err))
+	detail := diagnostics.Cause(err).Error()
+	router.logger.Printf("event=service_error request_id=%s phase=%s category=%s error_b64=%s", requestIDFrom(request), phase, safeServiceErrorCategory(err), base64.RawURLEncoding.EncodeToString([]byte(detail)))
 }
 
 func safeServiceErrorCategory(err error) string {

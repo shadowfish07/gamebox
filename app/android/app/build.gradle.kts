@@ -46,6 +46,7 @@ abstract class StageGameRuntimeAssets : DefaultTask() {
                     ".godot/global_script_class_cache.cfg",
                     ".godot/filesystem_cache*",
                     ".godot/*metadata*",
+                    ".godot/imported/**/*.md5",
                     "test/**",
                 )
                 includeEmptyDirs = false
@@ -178,8 +179,15 @@ android {
                 // unaffected.
                 applicationIdSuffix = ".debug"
                 manifestPlaceholders["appLabel"] = "gamebox debug"
-                signingConfig = signingConfigs.findByName("release")
-                    ?: error("GAMEBOX_DEBUG_ARTIFACT requires android/key.properties")
+                signingConfig = if (requireReleaseSigning) {
+                    signingConfigs.findByName("release")
+                        ?: error("GAMEBOX_REQUIRE_RELEASE_SIGNING requires android/key.properties")
+                } else {
+                    // Untrusted branch and pull-request artifacts use the
+                    // ephemeral Android debug key and never receive stable
+                    // signing material.
+                    signingConfigs.getByName("debug")
+                }
             }
         }
         release {

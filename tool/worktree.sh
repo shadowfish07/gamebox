@@ -415,7 +415,7 @@ android_runtime_value() {
 remove_android_runtime_metadata() {
   local name
   [[ -d "$ANDROID_RUNTIME_DIR" ]] || return 0
-  for name in token started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
+  for name in token slot lease-kind started-a started-b pid-a pid-b avd-a avd-b serial-a serial-b; do
     [[ -e "$ANDROID_RUNTIME_DIR/$name" ]] && rm -f "$ANDROID_RUNTIME_DIR/$name"
   done
   rmdir "$ANDROID_RUNTIME_DIR" 2>/dev/null || true
@@ -430,7 +430,7 @@ stop_orphaned_owned_emulator() {
   serial="$(android_runtime_value "serial-$label")"
   emulator_pid="$(android_runtime_value "pid-$label")"
   case "$avd" in
-    Gamebox_A_API_36|Gamebox_B_API_36) ;;
+    Gamebox_A0_API_36|Gamebox_B0_API_36|Gamebox_A1_API_36|Gamebox_B1_API_36) ;;
     *) die "orphaned Android metadata names an unapproved AVD; nothing was stopped" ;;
   esac
   if [[ "$serial" =~ ^emulator-[0-9]+$ ]] && command -v adb >/dev/null 2>&1 \
@@ -452,16 +452,15 @@ stop_orphaned_owned_emulator() {
 }
 
 cleanup_stale_android_for_this_worktree() {
-  local lease_dir owner_file owner_root owner_pid owner_token runtime_token
-  lease_dir="$GIT_COMMON_DIR/gamebox-android.lease"
+  local lease_dir owner_file owner_root owner_pid owner_token runtime_token slot
+  slot="$(android_runtime_value slot)"
+  case "$slot" in 0|1) lease_dir="$GIT_COMMON_DIR/gamebox-android-leases/slots/$slot" ;; *) lease_dir="$GIT_COMMON_DIR/gamebox-android-leases/exclusive" ;; esac
   owner_file="$lease_dir/owner"
   [[ -d "$lease_dir" ]] || return 0
   owner_root="$(_gamebox_android_lease_value "$owner_file" root 2>/dev/null || true)"
   [[ "$owner_root" == "$ROOT_DIR" ]] || return 0
   owner_pid="$(_gamebox_android_lease_value "$owner_file" pid 2>/dev/null || true)"
-  if pid_is_alive "$owner_pid"; then
-    die "Android work is active for this worktree (PID $owner_pid); interrupt its foreground terminal first"
-  fi
+  if pid_is_alive "$owner_pid"; then die "Android work is active for this worktree (PID $owner_pid); interrupt its foreground terminal first"; fi
   owner_token="$(_gamebox_android_lease_value "$owner_file" token 2>/dev/null || true)"
   runtime_token="$(android_runtime_value token)"
   if [[ -d "$ANDROID_RUNTIME_DIR" ]]; then
@@ -583,6 +582,15 @@ EOF
 }
 
 run_e2e() {
+  local -a e2e_args=("$@")
+  local argument
+  for argument in "${e2e_args[@]}"; do
+    case "$argument" in
+      --plan|--list-scenarios|--self-test|-h|--help)
+        exec bash "$ROOT_DIR/tool/e2e_android.sh" "${e2e_args[@]}"
+        ;;
+    esac
+  done
   local state
   ensure_setup
   state="$(server_state)"
@@ -592,12 +600,12 @@ run_e2e() {
   exec env \
     GAMEBOX_E2E_API_PORT="$SERVER_PORT" \
     GAMEBOX_WORKTREE_ANDROID_RUNTIME_DIR="$ANDROID_RUNTIME_DIR" \
-    bash "$ROOT_DIR/tool/e2e_android.sh"
+    bash "$ROOT_DIR/tool/e2e_android.sh" "${e2e_args[@]}"
 }
 
 usage() {
   cat <<'EOF'
-Usage: bash tool/worktree.sh <command>
+Usage: bash tool/worktree.sh <command> [options]
 
 Commands:
   setup       Idempotently install locked dependencies and initialize private state.
@@ -606,7 +614,7 @@ Commands:
   down        Stop only this worktree's owned server and stale Android runtime.
   data:pull   Replace linked-worktree dev data from primary, with a target backup.
   data:push   Refuse unsafe reverse synchronization (no audited narrow allowlist).
-  e2e         Run the repository two-AVD acceptance gate under the shared lease.
+  e2e [args]  Run selected two-AVD scenarios under the shared lease.
 EOF
 }
 
@@ -617,7 +625,7 @@ case "${1:-}" in
   down) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_down ;;
   data:pull) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_data_pull ;;
   data:push) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_data_push ;;
-  e2e) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; run_e2e ;;
+  e2e) shift; run_e2e "$@" ;;
   help|-h|--help|"") usage ;;
   *) printf 'Unknown worktree command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
 esac

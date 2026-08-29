@@ -1,69 +1,87 @@
 # Gamebox
 
-Gamebox is an Android game collection. Its first complete playable loop is a
-two-player, server-authoritative Gomoku match.
+<!-- markdownlint-disable MD013 -->
 
-## Architecture and scope
+> **English** · [简体中文](README.zh-CN.md)
 
-- `app/` is the Flutter entry point and Android host. It owns the local profile,
-  optional public registration/login, the catalog, offline LAN room UI, local
-  history, and launching a game.
-- `game_runtime/` is the embedded Godot runtime. It owns game rendering,
-  input, reconnect behavior, and applying authoritative snapshots/events.
-- `server/` is the Go HTTP/WebSocket service and SQLite authority. It owns
-  identity, one-time invites, game slots, rules, revisions, and outcomes.
-- `protocol/` contains the versioned wire contract; `tool/` owns repeatable
-  verification and the isolated two-emulator release gate.
+A server-authoritative Android game collection built with Flutter, Godot, and Go.
 
-Flutter and Godot do not decide whether a move or result is valid. Kotlin only
-bridges the Flutter host to the full-screen `GodotActivity`, and passes a
-`gameId`, one-time launch ticket, and required non-secret configuration. The Go
-service persists accepted events before broadcasting them.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/shadowfish07/gamebox/actions/workflows/ci.yml/badge.svg)](https://github.com/shadowfish07/gamebox/actions/workflows/ci.yml)
+[![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://github.com/shadowfish07/gamebox/releases)
+[![Flutter 3.47.1](https://img.shields.io/badge/Flutter-3.47.1-02569B?logo=flutter&logoColor=white)](https://docs.flutter.dev/)
+[![Godot 4.7](https://img.shields.io/badge/Godot-4.7-478CBF?logo=godot-engine&logoColor=white)](https://godotengine.org/)
+[![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 
-This phase is Android-only and includes both the public two-player loop and a
-fully offline phone-hosted LAN loop. LAN play uses one phone's foreground
-service as the authority, strict QR/manual join payloads, real Godot clients,
-force-stop recovery, canonical durable results, and source-neutral local
-history. It does not include AI, same-device multiplayer, friends, matchmaking,
-chat, spectating, push notifications, host migration, or LAN-to-public upload.
+Gamebox combines a Flutter app shell, embedded Godot games, and a Go service backed by SQLite. The server owns match rules and outcomes; clients render authoritative state and remain recoverable across disconnects and process restarts.
 
-## Required development tools
+The Android app supports public two-player play and a fully offline,
+phone-hosted LAN loop. LAN play uses one phone's foreground service as the
+authority, strict QR/manual join payloads, real Godot clients, force-stop
+recovery, canonical durable results, and source-neutral local history.
 
-- Flutter 3.47.1 with its Dart 3.13 SDK
+## Features
+
+- **Two online games**: Gomoku and Rock Paper Scissors, each with a dedicated Godot interface
+- **Server-authoritative matches**: moves, choices, revisions, results, and active game slots are validated by the Go service
+- **Invite-only accounts**: one-time registration codes, automatic sign-in, and rotating access sessions
+- **Resilient play**: reconnect, snapshot recovery, force-stop recovery, resignation, cancellation, and return-to-lobby flows
+- **Match history**: paginated Gomoku results, win/loss/draw statistics, and win rate
+- **Offline LAN play**: phone-hosted Gomoku rooms with QR/manual join and no public account requirement
+- **Material 3 experience**: shared Flutter/Godot design tokens, light and dark themes, and responsive portrait layouts
+- **Safe Android updates**: signed APK verification, checksum validation, and side-by-side debug builds backed by staging
+- **Layered verification**: focused Flutter, Godot, Go, Android host, and deterministic two-device tests
+
+## Architecture
+
+```text
+Flutter app shell
+  registration · catalog · opponents · history · updates
+            │
+            ├─ Android bridge ─ Embedded Godot runtime
+            │                   rendering · input · reconnect
+            │
+            └─ HTTP / WebSocket ─ Go service ─ SQLite
+                                  auth · rules · events · outcomes
+```
+
+| Path | Responsibility |
+| --- | --- |
+| [`app/`](app/) | Flutter entry point, Android host, account and catalog UI, match launch, history, and updates |
+| [`game_runtime/`](game_runtime/) | Embedded Godot runtime, game scenes, interaction, reconnect behavior, and authoritative state rendering |
+| [`server/`](server/) | Go HTTP/WebSocket service, authentication, game rules, event persistence, and SQLite storage |
+| [`protocol/`](protocol/) | Versioned wire contract and compatibility fixtures |
+| [`design_system/`](design_system/) | Shared design-token source and generated Flutter/Godot outputs |
+| [`tool/`](tool/) | Bootstrap, verification, worktree, Android smoke, E2E, and release tooling |
+
+Flutter and Godot never decide whether a move or result is valid. Kotlin only bridges the Flutter host to the full-screen `GodotActivity` and passes a game ID, a one-time launch ticket, and non-secret configuration. The Go service persists accepted events before broadcasting them.
+
+## Requirements
+
+- Flutter 3.47.1 with Dart 3.13
 - Go 1.25
-- Godot 4.7 (set `GODOT_BIN` when it is not installed as the macOS app)
+- Godot 4.7 (`GODOT_BIN` can point to a non-standard installation)
 - JDK 17 or newer
-- Android SDK platform 36 and accepted Android licenses
+- Android SDK platform 36 with accepted licenses
 - Bash and zsh
 
-The complete local E2E additionally requires `adb`, `emulator`, curl,
-Git, jq, lsof, OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. It requires the installed
-`system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` image. Check
-the build/CI toolchain or the complete E2E toolchain without modifying it:
+The complete local E2E additionally uses `adb`, Android Emulator, curl, Git, jq, lsof, OpenSSL, ripgrep, Ruby, sed, `shasum`, and unzip. Its managed devices require `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a`.
+
+Check the toolchain without installing packages or accepting licenses:
 
 ```bash
+# Build and source-test requirements
 bash tool/bootstrap.sh --build-only
+
+# Full two-emulator E2E requirements
 bash tool/bootstrap.sh
 ```
 
-`bootstrap.sh` is deliberately non-destructive: it reports missing versions,
-SDK components, or licenses and exits nonzero; it does not install or accept
-anything. `--build-only` omits only the E2E-specific `adb` and emulator checks;
-the no-argument form retains them.
+## Quick start
 
-## Development and submission workflow
+### 1. Start the server
 
-完成开发并通过本地自测后，可以提交改动并直接 push。固定 Android E2E 只验证
-协议、状态和生命周期逻辑，不要求截图；UI 视觉验收另行进行。
-
-如果当前分支已关联 Pull Request，push 后等待 GitHub CI、Codex 和 CodeRabbit
-自动 review 完成；只处理仍然有效的意见，修复后重新自测并 push。
-
-## Local server
-
-The server requires two independent secrets of at least 32 bytes. Its SQLite
-file must have an existing direct parent owned by the service user and not be
-group- or world-writable.
+The server requires independent JWT and token-pepper secrets of at least 32 bytes. Use an isolated SQLite directory for local development. Run these commands in one shell so later `gameboxctl` commands reuse the same exported database path and token pepper:
 
 ```bash
 gamebox_data_dir="$(mktemp -d)"
@@ -71,64 +89,81 @@ export GAMEBOX_DB_PATH="$gamebox_data_dir/gamebox.db"
 export GAMEBOX_JWT_SECRET="$(openssl rand -base64 32)"
 export GAMEBOX_TOKEN_PEPPER="$(openssl rand -base64 32)"
 export GAMEBOX_ADDR="127.0.0.1:8080"
-(cd server && go run ./cmd/gameboxd)
+(cd server && go build -trimpath -o "$gamebox_data_dir/gameboxd" ./cmd/gameboxd)
+"$gamebox_data_dir/gameboxd" &
+gamebox_server_pid=$!
+trap 'kill "$gamebox_server_pid" 2>/dev/null || true; wait "$gamebox_server_pid" 2>/dev/null || true' EXIT INT TERM
+gamebox_server_ready=0
+for health_attempt in {1..30}; do
+  if curl --silent --fail --max-time 1 http://127.0.0.1:8080/healthz >/dev/null; then
+    gamebox_server_ready=1
+    break
+  fi
+  kill -0 "$gamebox_server_pid" 2>/dev/null || break
+  sleep 0.2
+done
+if [[ "$gamebox_server_ready" != "1" ]]; then
+  printf 'Gamebox server did not become ready\n' >&2
+  exit 1
+fi
 ```
 
-`GAMEBOX_ADDR` defaults to `127.0.0.1:8080`. `GAMEBOX_DB_PATH` defaults to
-`server/data/gamebox.db` when the daemon is launched from the repository root;
-create `server/data` with mode `0700` before using that default. Runtime SQLite
-data and its WAL/SHM sidecars are local state and are ignored by Git.
-
-For parallel linked-worktree development, use the repository lifecycle wrapper
-instead of sharing this default port or database:
+Verify the service from the same shell:
 
 ```bash
-bash tool/worktree.sh setup
-bash tool/worktree.sh status
-bash tool/worktree.sh up       # foreground, isolated DB and stable port
-bash tool/worktree.sh down
-bash tool/worktree.sh e2e      # shared Android lease + two-AVD gate
+curl --fail http://127.0.0.1:8080/healthz
 ```
 
-Setup preserves existing local state, uses the committed Flutter lockfile, and
-never copies the deployed service or Keychain. An explicit `data:pull` can copy
-a consistent primary *development* snapshot into a linked worktree with a target
-backup; reverse database synchronization is blocked because auth and gameplay
-data share one SQLite file. See
-[`docs/worktree-development.md`](docs/worktree-development.md) for state paths,
-port/lease ownership, Orca hooks, exclusions, and recovery.
+The response is exactly `{"status":"ok"}`. The default address is `127.0.0.1:8080`; the default database path is `server/data/gamebox.db` when the daemon is started from the repository root.
 
-The Android debug client defaults to `http://10.0.2.2:8080`. Android emulators
-map `10.0.2.2` to the host machine's loopback interface, whereas `127.0.0.1`
-inside an emulator refers to that emulator. Override the client endpoint at
-build time when required:
+### 2. Create registration invites
 
-```bash
-(cd app && flutter build apk --debug \
-  --dart-define=GAMEBOX_API_BASE_URL=http://10.0.2.2:8080)
-```
-
-`GET /healthz` returns exactly `{"status":"ok"}`. The daemon emits JSON-line
-operational logs to stderr. On the first `SIGINT` or `SIGTERM` it stops accepting
-new HTTP work, allows a 10-second HTTP grace period, then stops workers,
-WebSockets, and SQLite. Once graceful shutdown begins, normal signal handling
-is restored, so a second termination signal force-stops a stuck process.
-
-## One-time invites and read-only inspection
-
-Generate invites only after setting `GAMEBOX_TOKEN_PEPPER` to the same value as
-the running service:
+The exports from step 1 remain active in this shell, so the invite command uses the same database and token pepper as the running service:
 
 ```bash
 (cd server && go run ./cmd/gameboxctl invite create \
   --count 2 --db "$GAMEBOX_DB_PATH" --json)
 ```
 
-The command prints each plaintext invite only in its one success response;
-SQLite stores domain-separated hashes. A batch is atomic, and `--count` must be
-between 1 and 1000.
+Each plaintext invite is shown only once. A batch is atomic, and `--count` must be between 1 and 1000.
+Stop the local service when finished with `kill "$gamebox_server_pid"; wait "$gamebox_server_pid"; trap - EXIT INT TERM`.
 
-Inspect an existing match without mutating application data:
+### 3. Build or run the Android app
+
+Android emulators map `10.0.2.2` to the host loopback interface, so debug builds use `http://10.0.2.2:8080` by default:
+
+```bash
+cd app
+flutter pub get
+flutter run
+```
+
+Override the service endpoint when needed:
+
+```bash
+flutter run \
+  --dart-define=GAMEBOX_API_BASE_URL=http://10.0.2.2:8080
+```
+
+You can also download a packaged build from [GitHub Releases](https://github.com/shadowfish07/gamebox/releases). Stable releases use `https://gamebox.zqydev.me`; rolling debug builds use the isolated `https://staging-gamebox.zqydev.me` service and install alongside the stable app.
+
+## Development
+
+For parallel linked worktrees, use the repository lifecycle wrapper so ports, databases, and shared Android devices remain isolated:
+
+```bash
+bash tool/worktree.sh setup
+bash tool/worktree.sh status
+bash tool/worktree.sh up       # foreground server with isolated DB and port
+bash tool/worktree.sh down
+bash tool/worktree.sh e2e      # shared Android lease + two-device gate
+```
+
+Setup preserves local state and never copies deployed secrets. Database write-back to the primary checkout is intentionally blocked because authentication and gameplay share one SQLite file. See [Worktree development](docs/worktree-development.md) for lifecycle hooks, state paths, port allocation, and recovery.
+
+### Inspect a match
+
+`gameboxctl` can replay an authoritative match without mutating the source database:
 
 ```bash
 (cd server && go run ./cmd/gameboxctl match show \
@@ -136,189 +171,33 @@ Inspect an existing match without mutating application data:
   --db "$GAMEBOX_DB_PATH" --json)
 ```
 
-`match show` reuses authoritative event replay rather than a second board
-implementation. It opens a closed database read-only without creating sidecar
-files. For an active WAL database it reads through verified read-only handles
-into a private temporary snapshot, then removes that snapshot. It never
-migrates or repairs the source and does not change source bytes or metadata.
-For both management commands, exit status 0 means success (including help), 1
-means an operational failure, and 2 means invalid syntax; unknown flags and
-extra positional arguments are rejected.
+For management commands, exit code `0` means success, `1` an operational failure, and `2` invalid syntax.
 
-Keep invite output, JWT/pepper values, access and refresh tokens, launch and
-resume tickets, databases, and private input outside logs, shell history,
-commits, and shared artifacts. Server logs use request/connection/match IDs,
-never credential plaintext.
+## Testing
 
-## Android releases and in-app updates
-
-The Android app checks the latest stable GitHub Release at startup, with a
-six-hour local cache. The update button in the app bar can bypass that cache.
-When a newer semantic version is available, Gamebox downloads the APK into its
-private application-support directory, verifies its SHA-256 digest, then asks
-Android's system package installer to install it. The native bridge also rejects
-APKs with the wrong package name, a non-incrementing version code, or a different
-signing certificate. Network or update failures do not block registration or
-gameplay.
-
-The reusable implementation lives in the independent
-[`flutter_release_updater`](https://github.com/shadowfish07/flutter_release_updater)
-repository and is pinned here through the `v0.1.2` Git tag. Other Android
-Flutter applications can pin the same tag and provide their own update UI. The
-plugin contributes
-`REQUEST_INSTALL_PACKAGES` through manifest merging because Android requires
-that special access for a normal application that installs its own downloaded
-APK; it never requests the signature-only `INSTALL_PACKAGES` permission or
-attempts silent installation. Store-hosted update APIs can avoid this access
-only by moving download and installation ownership to the store.
-
-The release workflow is `.github/workflows/release.yml`. Configure these
-repository Actions secrets before the first release:
-
-- `ANDROID_KEYSTORE_BASE64`: the release JKS encoded as one base64 string
-- `ANDROID_STORE_PASSWORD`: the keystore password
-- `ANDROID_KEY_ALIAS`: the signing key alias
-- `ANDROID_KEY_PASSWORD`: the signing key password
-
-Back up the keystore and passwords outside the repository. Every published APK
-must use the same release key. Losing or replacing it prevents installed copies
-from accepting future in-app updates.
-
-Release builds use `https://gamebox.zqydev.me` as their API origin. Local debug
-builds retain the emulator-friendly `http://10.0.2.2:8080` default unless
-overridden with `GAMEBOX_API_BASE_URL`. CI-published debug builds use the
-staging origin `https://staging-gamebox.zqydev.me` (see below).
-
-For a stable release, update `app/pubspec.yaml` to the intended version, commit
-and push it, then create and push the matching tag:
+Use the lowest layer that proves the changed boundary. The standard repository gates are:
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
-```
-
-The workflow checks that the tag and pubspec versions match, runs the complete
-repository verification gate, builds signed APK and AAB files, verifies the APK
-signature, generates `checksums.txt` for manual verification, and publishes all
-three files to GitHub Releases. A manually dispatched run requires an
-already-existing matching tag.
-GitHub's `releases/latest` endpoint excludes drafts and prereleases, so only a
-stable published release is offered automatically to normal installations.
-
-## Debug artifact distribution
-
-`.github/workflows/debug.yml` builds a debug APK on every push to `main` that
-touches app or runtime sources, and on manual `workflow_dispatch`. It publishes
-immutable build-identity-named APK and checksum assets to the rolling
-pre-release tagged `debug-latest`; each name includes the commit SHA, run ID, and
-attempt, while the release notes identify the current pair. Previous assets
-remain available if a later upload fails. The workflow uses the same repository
-signing secrets as the stable release workflow, so an installed debug build can
-accept the next rolling build without an uninstall.
-
-The published debug build uses the independent application id
-`me.zqydev.gamebox.debug` (enabled by the `GAMEBOX_DEBUG_ARTIFACT` environment
-variable in `app/android/app/build.gradle.kts`), so it installs and runs
-alongside a release install on the same device and is labeled `gamebox debug`.
-It targets the staging server `https://staging-gamebox.zqydev.me` by default;
-`workflow_dispatch` can override the API origin.
-
-## macOS backend deployment
-
-`deploy/macos/install.sh` builds and installs `gameboxd` and `gameboxctl` under
-`~/.local/libexec/gamebox`, stores the JWT secret and token pepper in the login
-Keychain, and keeps the SQLite database under
-`~/Library/Application Support/Gamebox/server`. It installs LaunchAgents for
-the server, five-minute local/public health checks, and daily verified SQLite
-backups retained for 14 days.
-
-```bash
-zsh deploy/macos/install.sh
-curl --fail --silent http://127.0.0.1:18080/healthz
-```
-
-The Cloudflare Tunnel public hostname `gamebox.zqydev.me` must route to
-`http://127.0.0.1:18080`. The installer manages a dedicated Gamebox Tunnel
-LaunchAgent so failures or configuration changes do not affect other hostnames.
-
-### Staging server
-
-`deploy/macos/install-staging.sh` installs a second, fully isolated server
-instance on the same machine for staging use. It keeps an executable prefix
-(`~/.local/libexec/gamebox-staging`) separate from production, shares the
-production Cloudflare Tunnel, and keeps its own port (`127.0.0.1:18081`), SQLite
-database, Keychain secrets, and launchd agents. It is published at
-`https://staging-gamebox.zqydev.me`. Rerun it after pulling the latest `main` to
-refresh staging with current server code:
-
-```bash
-git pull
-zsh deploy/macos/install-staging.sh
-curl --fail --silent http://127.0.0.1:18081/healthz
-```
-
-The tunnel ingress for the staging hostname lives in
-`deploy/macos/cloudflared-config.yml` (shared with the production tunnel). It
-requires the one-time DNS record `staging-gamebox.zqydev.me` pointing at the
-tunnel, which `cloudflared tunnel route dns <tunnel-id>
-staging-gamebox.zqydev.me` creates. Debug builds distributed through the
-`debug-latest` release target this staging server.
-
-## Verification
-
-Run the fast source gate while iterating, or the unified CI-equivalent gate
-before committing:
-
-```bash
+# Go, Flutter, and Godot tests; Flutter analysis; smoke parser fixtures
 bash tool/verify_fast.sh
+
+# CI-equivalent gate, including Kotlin tests and debug APK assertions
 bash tool/verify.sh
 ```
 
-Verification output is compact by default: a successful gate prints one final
-summary, while a failed gate prints the failed phase and that phase's captured
-output. Warning lines are counted in the success summary. Set
-`GAMEBOX_TEST_OUTPUT=verbose` to stream complete successful subprocess output
-while debugging.
+Successful output is compact. To stream passing subprocess output while debugging:
 
-`verify_fast.sh` runs Go, Flutter, and Godot tests, Flutter analysis, and the
-Android smoke-log parser fixture. `verify.sh` first runs the non-destructive
-build-only bootstrap check, then the fast gate, Kotlin unit tests, a Flutter
-debug APK build, and APK assertions. The APK must contain a non-empty
-`libgodot_android.so` for exactly `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
-It may contain generated Godot imports only as the exact safe
-`assets/.godot/imported/*.ctex` shape; other `.godot` paths and Godot test/editor
-cache paths are rejected. A component-local path classifier rejects suspicious
-secret/token/credential/private-key and test names, while a separate content
-scan rejects the two fixed server-only configuration identifiers
-`GAMEBOX_JWT_SECRET` and `GAMEBOX_TOKEN_PEPPER`. This is not a claim that every
-possible secret value can be recognized. Branch and pull-request CI runs
-`bash tool/verify.sh` and does not install or start emulator tooling. Tag pushes
-are excluded because the release workflow runs the source tests itself.
+```bash
+GAMEBOX_TEST_OUTPUT=verbose bash tool/verify.sh
+```
 
-Before publishing, the release workflow builds and signs the APK and app bundle
-once, stages the final assets and checksums, then starts an API 35 x86_64
-emulator. `tool/smoke_android_release_apk.sh` installs the staged APK, signs a
-release-targeting instrumentation helper with the same certificate, and starts
-the packaged non-exported `GameActivity` twice with Godot's self-terminating
-host-smoke arguments. On an ARM64 device, both runs must log
-Godot's native-layer initialization and setup events,
-`GAMEBOX_GODOT_MAIN_LOOP_STARTED`, `GAMEBOX_GODOT_READY`, then
-`GAMEBOX_GODOT_EXITING` without a Java/native crash or ANR. GitHub's x86_64
-emulator runs the same APK twice in explicitly renderer-limited mode: it must
-reach both native-layer events without a crash or ANR, covering release signing,
-installation, packaged native-library loading, JNI initialization, and Godot
-native setup. It does not claim that SwiftShader started the main loop or
-rendered the packaged scene. The checksum is
-checked again immediately before those exact staged files are uploaded.
-Manual workflow runs default to a non-publishing dry run against the current
-default-branch commit; publishing an existing tag requires explicitly enabling
-the `publish` input. Tag-triggered runs continue to publish automatically.
-
-The two-emulator local release gate is:
+The local two-device acceptance gate is reserved for network, protocol, multiplayer, lifecycle, or release-candidate boundaries:
 
 ```bash
 bash tool/e2e_android.sh --self-test
-bash tool/e2e_android.sh
+bash tool/e2e_android.sh --list-scenarios
+bash tool/worktree.sh e2e --scenario gomoku-network
+bash tool/worktree.sh e2e               # release-level full suite
 ```
 
 The separate offline LAN gate uses the same lease and managed AVD pair:
@@ -341,63 +220,97 @@ prove OEM hotspot routing or camera scanning. Use
 [`docs/testing/android-lan-hotspot-acceptance.md`](docs/testing/android-lan-hotspot-acceptance.md)
 with the exact same release-candidate APK on both phones.
 
-The full E2E requires a clean worktree and records the exact starting commit
-and built/installed APK SHA-256 values. It takes the Git common-directory lease
-before using Android. With no serial overrides it creates/starts only
-`Gamebox_A_API_36` and `Gamebox_B_API_36` on ports 5560/5562 and cleans up only
-those processes/packages; it does not stop, wipe, clear logcat, or change an
-unrelated emulator such as `emulator-5554`. Alternatively, set both
+`tool/e2e_android.sh` remains the stable compatibility entrypoint, while the
+scenario CLI and harness live under `tool/e2e/`. The full E2E requires a clean
+worktree and records the exact starting commit and built/installed APK SHA-256
+values. With no serial overrides it takes one available slot from the
+Git-common-directory Android lease pool. Slot 0 owns
+`Gamebox_A0_API_36`/`Gamebox_B0_API_36` on ports 5560/5562; slot 1 owns
+`Gamebox_A1_API_36`/`Gamebox_B1_API_36` on ports 5564/5566. Two linked
+worktrees can therefore run this command concurrently, each using only its
+leased pair and cleaning up only its own processes/packages. It does not stop,
+wipe, clear logcat, or change an unrelated emulator such as `emulator-5554`.
+Alternatively, set both
 `GAMEBOX_E2E_SERIAL_A` and `GAMEBOX_E2E_SERIAL_B`; supplied devices are selected
-but not created, wiped, restarted, or stopped. Managed AVD A runs in light mode
-at a 1080x2400 large-phone viewport and B in dark mode at a 720x1600 narrow-
-phone viewport. Supplied devices keep their display overrides and must
+but not created, wiped, restarted, or stopped, and this compatibility mode
+uses the exclusive lease so it cannot overlap a managed slot. Managed AVD A
+runs in light mode at a 1080x2400 large-phone viewport and B in dark mode at a
+720x1600 narrow-phone viewport. Supplied devices keep their display overrides and must
 naturally provide the same portrait logical viewport matrix: A must resolve to
 410-414x912-918dp and B to 358-362x798-802dp after applying each device's
 effective density. The harness restores each selected device's original UI
 mode and every managed display override on success and through its exit trap.
 
-The semantics integration test always uses the selected A-device explicitly:
+The harness owns only its leased devices, writes sanitized diagnostics under
+`artifacts/e2e/`, and verifies logic and lifecycle rather than visual design.
+See the [testing strategy](docs/testing-strategy.md) for the evidence expected
+at each layer. The semantics integration test always uses the selected A-device
+explicitly:
 
 ```bash
-(cd app && flutter test -d emulator-5560 \
+(cd app && flutter test -d <selected-A-serial> \
   integration_test/semantics_test.dart)
 ```
 
-Replace `emulator-5560` with the selected Gamebox-owned serial. UI automation
-selects stable resource IDs, not translated labels or content descriptions.
-Match and revision progress require independent signals to agree: bounded
-device ready/state logs plus the authoritative read-only `gameboxctl` snapshot.
-The fixed E2E harness asserts protocol, state, and lifecycle logic; it does not
-capture screenshots or make an E2E-only board model authoritative. Pending
-logic pauses only the verified E2E-owned server PID before the move and resumes
-it after the local pending marker is visible. Reconnect and failed states stop
-and restart that same owned server with its temporary database, port, and test
-secrets; the trap will not signal a PID that fails the ownership checks.
+## Releases
 
-Artifacts are written under `artifacts/e2e/<UTC timestamp>/` only after
-sanitization and secret scanning. They include serial/API level, commit and APK
-provenance, logic assertions, sanitized server output, and the final read-only
-match snapshot, but no screenshots, invites, or tokens. Each adb/UI operation
-and build has a bounded watchdog; `GAMEBOX_E2E_*_TIMEOUT_SECONDS` variables
-exist for shorter fault-injection bounds, not for removing timeouts. Visual UX
-review, when required by the UI acceptance contract, is a separate target-
-runtime activity and is not a fixed E2E artifact gate.
+Stable Android releases are built from semantic-version tags by [the release workflow](.github/workflows/release.yml). The workflow verifies source, builds signed APK and AAB artifacts, checks the APK signature, performs Android host smoke testing, generates checksums, and publishes the artifacts.
 
-## Continue after this phase
+```bash
+# Validate the next version without modifying Git state
+bash tool/release.sh patch --dry-run
 
-Deferred features remain recorded in
-`docs/superpowers/specs/2026-08-19-gamebox-playable-loop-design.md`. Continue one
-as a separate `brainstorming -> spec -> plan -> implementation` cycle using its
-stable identifier:
+# Increment, commit, push, and trigger a release
+bash tool/release.sh patch  # or minor / major
+```
 
-- `继续 F2 公网部署` — Cloudflare Tunnel, boot startup, health monitoring, log
-  rotation, and SQLite backup/restore.
-- `继续 F3 迁移码` — one-time device migration, old-session invalidation, and
-  administrator recovery codes.
-- `继续 F4 对战记录` — history, statistics, filtering, and replay from the
-  already-persisted event stream.
-- `继续 F5 多游戏与跨端` — another game module plus iOS/desktop adapters and
-  release paths.
+Release builds require these GitHub Actions secrets:
 
-The current design document is the architecture baseline for those follow-up
-specifications; deferred work is not silently part of this playable-loop phase.
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_STORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+The [debug workflow](.github/workflows/debug.yml) uploads untrusted branch and pull-request builds as short-lived workflow artifacts without signing secrets or release permissions. Trusted builds from the default branch publish the stable-signed package to the rolling `debug-latest` prerelease. Stable and debug packages have different application IDs, so both can be installed on one device.
+
+Because release assets keep immutable provenance names, resolve the newest APK from release metadata instead of guessing a filename:
+
+```bash
+debug_apk_url="$(gh api repos/shadowfish07/gamebox/releases/tags/debug-latest \
+  --jq '[.assets[] | select(.name | endswith(".apk"))] | max_by(.created_at).browser_download_url')"
+curl --fail --location --output gamebox-debug-latest.apk "$debug_apk_url"
+```
+
+## Deployment
+
+The supported backend deployment target is macOS. The installer places binaries under `~/.local/libexec/gamebox`, stores secrets in the login Keychain, keeps data under `~/Library/Application Support/Gamebox/server`, and installs launch agents for the service, health checks, Cloudflare Tunnel, and daily verified backups.
+
+```bash
+zsh deploy/macos/install.sh
+curl --fail http://127.0.0.1:18080/healthz
+```
+
+An isolated staging installation is available through `deploy/macos/install-staging.sh`. It uses its own binaries, port, database, secrets, and launch agents while sharing the production tunnel configuration.
+
+## Security
+
+Never commit or share invite plaintext, JWT or pepper values, access or refresh tokens, launch or resume tickets, SQLite databases, or private runtime input. Server logs identify requests, connections, and matches without credential plaintext.
+
+If you discover a security issue, report it privately to the repository owner instead of opening a public issue.
+
+## Contributing
+
+Issues and pull requests are welcome. Before submitting a change:
+
+1. Keep the change focused and add tests at the lowest relevant layer.
+2. Run `bash tool/verify.sh`.
+3. For user-facing UI changes, run the actual target interface and inspect the affected states in both relevant themes and viewports.
+4. Do not include generated runtime state, credentials, E2E artifacts, or screenshots containing user-specific data.
+
+## Project status
+
+Gamebox is under active development and currently targets Android. AI opponents, local multiplayer, matchmaking, friends, chat, spectating, push notifications, iOS, and desktop clients are not currently implemented.
+
+## License
+
+Gamebox is available under the [MIT License](LICENSE).

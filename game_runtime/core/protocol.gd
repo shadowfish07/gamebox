@@ -22,6 +22,11 @@ const TYPE_GOMOKU_MOVE_REQUESTED := "gomoku.move.requested"
 const TYPE_GOMOKU_MOVE_ACCEPTED := "gomoku.move.accepted"
 const TYPE_GOMOKU_RESIGN_REQUESTED := "gomoku.resign.requested"
 const TYPE_GOMOKU_RESIGNED := "gomoku.resigned"
+const TYPE_RPS_CHOICE_REQUESTED := "rps.choice.requested"
+const TYPE_RPS_CHOICE_LOCKED := "rps.choice.locked"
+const TYPE_RPS_ROUND_REVEALED := "rps.round.revealed"
+const TYPE_RPS_RESIGN_REQUESTED := "rps.resign.requested"
+const TYPE_RPS_RESIGNED := "rps.resigned"
 const CAPABILITY_PLAYER_PRESENCE := "player_presence_v1"
 
 const _ALLOWED_FIELDS := {
@@ -51,6 +56,11 @@ const _KNOWN_TYPES := {
 	TYPE_GOMOKU_MOVE_ACCEPTED: true,
 	TYPE_GOMOKU_RESIGN_REQUESTED: true,
 	TYPE_GOMOKU_RESIGNED: true,
+	TYPE_RPS_CHOICE_REQUESTED: true,
+	TYPE_RPS_CHOICE_LOCKED: true,
+	TYPE_RPS_ROUND_REVEALED: true,
+	TYPE_RPS_RESIGN_REQUESTED: true,
+	TYPE_RPS_RESIGNED: true,
 }
 
 
@@ -217,7 +227,8 @@ static func encode_action(
 	match_id: String,
 	revision: int,
 	action_id: String,
-	payload: Variant
+	payload: Variant,
+	game_id: String = "gomoku"
 ) -> Dictionary:
 	if not payload is Dictionary:
 		return _failure("invalid_payload", "payload must be a JSON object")
@@ -225,7 +236,7 @@ static func encode_action(
 		return _failure("invalid_action", "Action identifiers are invalid")
 	var envelope := {
 		"protocolVersion": VERSION,
-		"gameId": "gomoku",
+		"gameId": game_id,
 		"matchId": match_id,
 		"expectedRevision": revision,
 		"type": message_type,
@@ -260,24 +271,24 @@ static func encode_connect(
 	})
 
 
-static func encode_pong(match_id: String, nonce: String) -> Dictionary:
+static func encode_pong(match_id: String, nonce: String, game_id: String = "gomoku") -> Dictionary:
 	if not _is_canonical_uuid(match_id) or not _is_canonical_uuid(nonce):
 		return _failure("invalid_control", "Control message is invalid")
 	return _encode_envelope({
 		"protocolVersion": VERSION,
-		"gameId": "gomoku",
+		"gameId": game_id,
 		"matchId": match_id,
 		"type": TYPE_PLATFORM_PONG,
 		"payload": {"nonce": nonce},
 	})
 
 
-static func encode_snapshot_request(match_id: String, current_revision: int) -> Dictionary:
+static func encode_snapshot_request(match_id: String, current_revision: int, game_id: String = "gomoku") -> Dictionary:
 	if not _is_canonical_uuid(match_id) or current_revision < 0:
 		return _failure("invalid_control", "Control message is invalid")
 	return _encode_envelope({
 		"protocolVersion": VERSION,
-		"gameId": "gomoku",
+		"gameId": game_id,
 		"matchId": match_id,
 		"type": TYPE_PLATFORM_SNAPSHOT_REQUESTED,
 		"payload": {"currentRevision": current_revision},
@@ -498,7 +509,12 @@ static func _restore_scanned_strings(value: Variant) -> Dictionary:
 
 
 static func _is_client_action(message_type: String) -> bool:
-	return message_type == TYPE_GOMOKU_MOVE_REQUESTED or message_type == TYPE_GOMOKU_RESIGN_REQUESTED
+	return message_type in [
+		TYPE_GOMOKU_MOVE_REQUESTED,
+		TYPE_GOMOKU_RESIGN_REQUESTED,
+		TYPE_RPS_CHOICE_REQUESTED,
+		TYPE_RPS_RESIGN_REQUESTED,
+	]
 
 
 static func _is_revisionless_control(message_type: String) -> bool:

@@ -36,7 +36,7 @@ fi
 
 if [ "$serial" = "emulator-5560" ] \
   && [ "$*" = "-s emulator-5560 shell getprop ro.boot.qemu.avd_name" ]; then
-  printf 'Gamebox_A_API_36\n'
+  printf 'Gamebox_A0_API_36\n'
   exit 0
 fi
 if [ "$serial" = "emulator-5554" ] \
@@ -58,6 +58,10 @@ case " $* " in
         printf 'I godot : GAMEBOX_GODOT_STATE match=%s revision=-1 status=loading connection=connecting opponent_presence=unknown color=none\n' \
           "$FAKE_ADB_LOADING_MATCH_ID"
       fi
+      # dash may retain builtin output while this fixture intentionally hangs.
+      # Closing stdout commits the finite fake log stream without ending the
+      # process whose cleanup behavior the harness also verifies.
+      exec 1>&-
       printf '%s\n' "$$" >"${FAKE_ADB_PID_FILE:?}"
       trap '' TERM
       while :; do sleep 1; done

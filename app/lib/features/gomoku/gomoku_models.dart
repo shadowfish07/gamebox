@@ -191,7 +191,7 @@ final class GomokuLaunchTicket {
     final timestamp = envelope['expiresAt'];
     if (gameId != gomokuGameId ||
         credential is! String ||
-        !_isCredential(credential) ||
+        !isValidGameboxCredential(credential) ||
         timestamp is! int ||
         timestamp <= 0) {
       throw const FormatException('Invalid launch ticket');
@@ -257,7 +257,7 @@ Map<String, Object?> _object(Object? value) {
   return value;
 }
 
-bool _isCredential(String value) =>
+bool isValidGameboxCredential(String value) =>
     value.isNotEmpty &&
     value.length <= 4096 &&
     value.codeUnits.every((unit) => unit >= 0x21 && unit <= 0x7e);

@@ -20,11 +20,15 @@ void main() {
   const matchId = '33333333-3333-4333-8333-333333333333';
   final now = DateTime.utc(2026, 8, 20, 12);
 
-  test('catalog exposes exactly one immutable gomoku descriptor', () {
-    expect(gameCatalog, hasLength(1));
+  test('catalog exposes immutable gomoku and rps descriptors', () {
+    expect(gameCatalog, hasLength(2));
     expect(
-      gameCatalog.single,
+      gameCatalog.first,
       const GameDescriptor(id: 'gomoku', title: '五子棋', playerCount: 2),
+    );
+    expect(
+      gameCatalog.last,
+      const GameDescriptor(id: 'rps', title: '石头剪刀布', playerCount: 2),
     );
     expect(
       () => gameCatalog.add(

@@ -40,8 +40,8 @@ Verify typical narrow and large Android phones. Pages MUST handle safe areas. At
 
 Preserve existing stable `Semantics.identifier` values, keys, UI Automator selectors, and host-smoke selectors so automation does not lose established targets; if a change is necessary, update all callers and tests deliberately. Do not add TalkBack, screen-reader semantics/roles/live regions, focus-order, enlarged-font, accessibility contrast, or reduced-motion acceptance work.
 
-## Widget and Android Checks
+## Widget and Runtime Checks
 
 Widget tests cover default, pressed, disabled, pending, loading, empty, error, success, light/dark, normal-size text, content growth, and safe areas as relevant. Flow checks cover registration/identity recovery, catalog/opponent selection, Godot launch failure/retry, and return-state refresh.
 
-Run the actual built Android App at the affected viewports and states. Verify visible and system Back parity, touch targets, safe areas, normal-size text wrapping, and absence of overflow. The fixed E2E records the relevant state and identifier assertions without screenshots. The implementing agent also captures and inspects non-sensitive screenshots of affected UI states; Widget tests, goldens, mocks, and static inspection do not replace that UX check. Treat the screenshots as transient inspection inputs, not artifacts to commit, publish, or attach unless the user explicitly asks.
+Run the actual Flutter target app at the affected viewports and states. The implementing agent captures and inspects non-sensitive screenshots of affected UI states; Widget tests, goldens, mocks, and static inspection do not replace that UX check. Use an actual Android device when navigation, IME, permissions, platform channels, native hosting, system UI, Android safe areas, or release acceptance is affected, and then verify visible/system Back parity as relevant. Fixed automation records state and identifier assertions without screenshots. Treat the screenshots as transient inspection inputs, not artifacts to commit, publish, or attach unless the user explicitly asks.

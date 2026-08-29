@@ -41,9 +41,12 @@ gamebox_run_step "Flutter tests" run_flutter_tests
 gamebox_run_step "shell syntax" bash -n \
   tool/worktree.sh tool/lib/android_lease.sh tool/lib/check_output.sh \
   tool/test_android_lease.sh tool/test_check_output.sh tool/test_verify_godot_tests.sh \
-  tool/e2e_android.sh tool/ensure_test_avds.sh \
-  tool/e2e_lan_android.sh tool/fixtures/e2e_lan_fake_adb.sh \
-  tool/smoke_android_host.sh tool/smoke_android_release_apk.sh
+  tool/e2e_android.sh tool/e2e/run.sh tool/e2e/harness.sh \
+  tool/e2e/test_cli.sh tool/e2e/lib/options.sh tool/e2e/scenarios/registry.sh \
+  tool/ensure_test_avds.sh tool/e2e_lan_android.sh \
+  tool/fixtures/e2e_lan_fake_adb.sh \
+  tool/smoke_android_host.sh tool/smoke_android_release_apk.sh \
+  tool/release.sh tool/test_release.sh tool/test_debug_workflow.sh
 verify_macos_deploy_syntax() {
   local deploy_script
   for deploy_script in deploy/macos/install.sh deploy/macos/install-staging.sh; do
@@ -52,10 +55,13 @@ verify_macos_deploy_syntax() {
 }
 
 gamebox_run_step "check output fixtures" bash tool/test_check_output.sh
+gamebox_run_step "release command fixtures" bash tool/test_release.sh
+gamebox_run_step "debug workflow fixtures" bash tool/test_debug_workflow.sh
 gamebox_run_step "Godot verifier status fixtures" bash tool/test_verify_godot_tests.sh
 gamebox_run_step "macOS deploy script syntax" verify_macos_deploy_syntax
 gamebox_run_step "macOS deploy fixtures" bash tool/test_macos_deploy.sh
 gamebox_run_step "Android lease fixtures" bash tool/test_android_lease.sh
+gamebox_run_step "E2E entrypoint fixtures" env GAMEBOX_TEST_NESTED=1 bash tool/e2e/run.sh --self-test
 gamebox_run_step "Godot tests" env GAMEBOX_TEST_NESTED=1 bash tool/verify_godot_tests.sh
 gamebox_run_step "Android smoke log fixtures" bash tool/test_android_smoke_log.sh
 gamebox_run_step "LAN Android E2E fixtures" bash tool/e2e_lan_android.sh --self-test

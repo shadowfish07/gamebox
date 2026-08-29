@@ -26,6 +26,7 @@ import (
 
 	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/clock"
+	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -374,7 +375,7 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 
 	gamesResponse := fixture.request(t, http.MethodGet, "/v1/games", "", alice.Session.AccessToken)
-	if gamesResponse.Code != http.StatusOK || gamesResponse.Body.String() != "{\"games\":[{\"id\":\"gomoku\",\"title\":\"五子棋\",\"playerCount\":2}]}\n" {
+	if gamesResponse.Code != http.StatusOK || gamesResponse.Body.String() != "{\"games\":[{\"id\":\"gomoku\",\"title\":\"五子棋\",\"playerCount\":2},{\"id\":\"rps\",\"title\":\"石头剪刀布\",\"playerCount\":2}]}\n" {
 		t.Fatalf("games=(%d,%q)", gamesResponse.Code, gamesResponse.Body.String())
 	}
 
@@ -503,6 +504,27 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 }
 
+func TestRouterRpsFormatCreationAndInviteeVisibleStatus(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "rps-alice-secret", "RpsAlice")
+	bob := fixture.register(t, "rps-bob-secret", "RpsBob")
+
+	invalid := fixture.request(t, http.MethodPost, "/v1/games/rps/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`,"format":"best_of_five"}`, alice.Session.AccessToken)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid=(%d,%s)", invalid.Code, invalid.Body.String())
+	}
+	created := fixture.request(t, http.MethodPost, "/v1/games/rps/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`,"format":"best_of_three"}`, alice.Session.AccessToken)
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"gameId":"rps"`) || !strings.Contains(created.Body.String(), `"format":"best_of_three"`) {
+		t.Fatalf("created=(%d,%s)", created.Code, created.Body.String())
+	}
+	for _, token := range []string{alice.Session.AccessToken, bob.Session.AccessToken} {
+		status := fixture.request(t, http.MethodGet, "/v1/games/rps/status", "", token)
+		if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"format":"best_of_three"`) {
+			t.Fatalf("status=(%d,%s)", status.Code, status.Body.String())
+		}
+	}
+}
+
 func TestGomokuStatusFailureWritesAIsolatedDiagnosticLog(t *testing.T) {
 	fixture := newAPIFixture(t)
 	alice := fixture.register(t, "diagnostic-a", "Alice")
@@ -530,6 +552,18 @@ func TestGomokuStatusFailureWritesAIsolatedDiagnosticLog(t *testing.T) {
 	}
 	if strings.Contains(logged, "diagnostic-a") || strings.Contains(logged, alice.Session.AccessToken) {
 		t.Fatalf("diagnostic log leaked user data or credential: %s", logged)
+	}
+}
+
+func TestServiceErrorLogIncludesWrappedDiagnosticCause(t *testing.T) {
+	logs := &lockedBuffer{}
+	router := &router{logger: log.New(logs, "", 0)}
+	request := httptest.NewRequest(http.MethodGet, "/v1/games/rps/opponents", nil)
+	router.logServiceError(request, "authenticate", diagnostics.Wrap(auth.ErrInternal, errors.New("sqlite: database is locked")))
+
+	encoded := "c3FsaXRlOiBkYXRhYmFzZSBpcyBsb2NrZWQ"
+	if logged := logs.String(); !strings.Contains(logged, "error_b64="+encoded) || strings.Contains(logged, "sqlite: database is locked") {
+		t.Fatalf("service log = %q, want encoded diagnostic cause only", logged)
 	}
 }
 

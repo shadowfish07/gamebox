@@ -185,6 +185,51 @@ func TestOpenUpgradesV1DatabaseWithMatchHistoryMigrationOnce(t *testing.T) {
 	assertSchema(t, db)
 }
 
+func TestOpenUpgradesMainV3DatabaseWithNicknameSnapshots(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "main-v3.sqlite")
+	oldDB := openRawDatabase(t, path)
+	mustExec(t, oldDB, `CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)`)
+	for _, item := range migrations[:3] {
+		contents, err := migrationFiles.ReadFile(item.path)
+		if err != nil {
+			oldDB.Close()
+			t.Fatalf("read migration %d: %v", item.version, err)
+		}
+		loaded := newLoadedMigration(item.version, string(contents))
+		mustExec(t, oldDB, loaded.script)
+		mustExec(t, oldDB, `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, 1)`, loaded.version, loaded.checksum)
+	}
+	mustExec(t, oldDB, `INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('u1','Alice','alice',1,1)`)
+	mustExec(t, oldDB, `INSERT INTO matches(id,game_id,status,created_at,updated_at,game_config_json) VALUES ('m1','gomoku','active',1,1,'{"boardSize":15}')`)
+	mustExec(t, oldDB, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u1',0,'black')`)
+	if err := oldDB.Close(); err != nil {
+		t.Fatalf("close main-v3 database: %v", err)
+	}
+
+	db := openDatabase(t, ctx, path)
+	t.Cleanup(func() { _ = db.Close() })
+	var nickname, gameConfig string
+	if err := db.QueryRow(`SELECT nickname_snapshot FROM match_players WHERE match_id = 'm1' AND user_id = 'u1'`).Scan(&nickname); err != nil {
+		t.Fatalf("read migrated nickname snapshot: %v", err)
+	}
+	if nickname != "Alice" {
+		t.Fatalf("migrated nickname snapshot = %q, want Alice", nickname)
+	}
+	if err := db.QueryRow(`SELECT game_config_json FROM matches WHERE id = 'm1'`).Scan(&gameConfig); err != nil {
+		t.Fatalf("read retained game config: %v", err)
+	}
+	if gameConfig != `{"boardSize":15}` {
+		t.Fatalf("retained game config = %q", gameConfig)
+	}
+	nicknameMigration := readMigrationRecord(t, db, 4)
+	if nicknameMigration.checksum == "" || nicknameMigration.appliedAt <= 0 {
+		t.Fatalf("nickname migration record = %+v, want a checksum and timestamp", nicknameMigration)
+	}
+}
+
 func TestFailedMigrationIsAtomicAndRetryable(t *testing.T) {
 	t.Parallel()
 
@@ -307,7 +352,14 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "future.sqlite")
 	db := openDatabase(t, ctx, path)
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (5, ?, unixepoch()), (4, ?, unixepoch())`, strings.Repeat("b", sha256.Size*2), strings.Repeat("a", sha256.Size*2)); err != nil {
+	firstFutureVersion := migrations[len(migrations)-1].version + 1
+	if _, err := db.Exec(
+		`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, unixepoch()), (?, ?, unixepoch())`,
+		firstFutureVersion+1,
+		strings.Repeat("b", sha256.Size*2),
+		firstFutureVersion,
+		strings.Repeat("a", sha256.Size*2),
+	); err != nil {
 		_ = db.Close()
 		t.Fatalf("insert future migration: %v", err)
 	}
@@ -320,7 +372,8 @@ func TestOpenRejectsUnknownFutureMigration(t *testing.T) {
 		_ = db.Close()
 		t.Fatal("Open returned a database with an unknown future migration")
 	}
-	if err == nil || !strings.Contains(err.Error(), "unknown migration version 4") {
+	wantDiagnostic := fmt.Sprintf("unknown migration version %d", firstFutureVersion)
+	if err == nil || !strings.Contains(err.Error(), wantDiagnostic) {
 		t.Fatalf("Open future-version error = %v, want stable unknown-version diagnostic", err)
 	}
 }

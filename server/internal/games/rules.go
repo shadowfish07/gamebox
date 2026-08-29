@@ -7,6 +7,7 @@ type Action = gameapi.Action
 type Event = gameapi.Event
 type Snapshot = gameapi.Snapshot
 type Rules = gameapi.Rules
+type Configurator = gameapi.Configurator
 type SingleActiveMatchPolicy = gameapi.SingleActiveMatchPolicy
 
 var (

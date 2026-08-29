@@ -26,6 +26,11 @@ const (
 	TypeGomokuMoveAccepted        = "gomoku.move.accepted"
 	TypeGomokuResignRequested     = "gomoku.resign.requested"
 	TypeGomokuResigned            = "gomoku.resigned"
+	TypeRpsChoiceRequested        = "rps.choice.requested"
+	TypeRpsChoiceLocked           = "rps.choice.locked"
+	TypeRpsRoundRevealed          = "rps.round.revealed"
+	TypeRpsResignRequested        = "rps.resign.requested"
+	TypeRpsResigned               = "rps.resigned"
 	CapabilityPlayerPresence      = "player_presence_v1"
 )
 
@@ -45,10 +50,20 @@ var knownTypes = map[string]struct{}{
 	TypeGomokuMoveAccepted:        {},
 	TypeGomokuResignRequested:     {},
 	TypeGomokuResigned:            {},
+	TypeRpsChoiceRequested:        {},
+	TypeRpsChoiceLocked:           {},
+	TypeRpsRoundRevealed:          {},
+	TypeRpsResignRequested:        {},
+	TypeRpsResigned:               {},
 }
 
 func isClientAction(messageType string) bool {
-	return messageType == TypeGomokuMoveRequested || messageType == TypeGomokuResignRequested
+	switch messageType {
+	case TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
+		return true
+	default:
+		return false
+	}
 }
 
 func isRevisionlessControl(messageType string) bool {
@@ -177,13 +192,42 @@ func validateClientMessage(envelope Envelope) error {
 			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
+	case TypeRpsChoiceRequested:
+		if err := validateClientBinding(envelope, true); err != nil {
+			return err
+		}
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"choice": {}})
+		if err != nil || len(fields) != 1 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		var choice string
+		if json.Unmarshal(fields["choice"], &choice) != nil || (choice != "rock" && choice != "paper" && choice != "scissors") {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		return nil
+	case TypeRpsResignRequested:
+		if err := validateClientBinding(envelope, true); err != nil {
+			return err
+		}
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{})
+		if err != nil || len(fields) != 0 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		return nil
 	default:
 		return protocolFailure(codeInvalidEnvelope)
 	}
 }
 
 func validateClientBinding(envelope Envelope, action bool) error {
-	if envelope.GameID != "gomoku" || !canonicalUUID(envelope.MatchID) {
+	expectedGame := ""
+	switch envelope.Type {
+	case TypeGomokuMoveRequested, TypeGomokuResignRequested:
+		expectedGame = "gomoku"
+	case TypeRpsChoiceRequested, TypeRpsResignRequested:
+		expectedGame = "rps"
+	}
+	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "gomoku" && envelope.GameID != "rps" || !canonicalUUID(envelope.MatchID) {
 		return protocolFailure(codeInvalidEnvelope)
 	}
 	if action && !canonicalUUID(envelope.ActionID) {

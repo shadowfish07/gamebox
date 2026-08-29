@@ -94,6 +94,22 @@ func TestFixtures(t *testing.T) {
 	}
 }
 
+func TestDecodeClientAcceptsOnlyCanonicalRpsChoices(t *testing.T) {
+	base := `{"protocolVersion":1,"gameId":"rps","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":0,"type":"rps.choice.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"choice":"rock"}}`
+	if envelope, err := DecodeClient([]byte(base)); err != nil || envelope.Type != TypeRpsChoiceRequested {
+		t.Fatalf("valid choice=(%+v,%v)", envelope, err)
+	}
+	for _, invalid := range []string{
+		strings.Replace(base, `"rock"`, `"lizard"`, 1),
+		strings.Replace(base, `"gameId":"rps"`, `"gameId":"gomoku"`, 1),
+		strings.Replace(base, `"choice":"rock"`, `"choice":"rock","choice":"paper"`, 1),
+	} {
+		if _, err := DecodeClient([]byte(invalid)); err == nil {
+			t.Fatalf("accepted invalid RPS action: %s", invalid)
+		}
+	}
+}
+
 func TestStringSemanticsFixtureMatchesEncodingJSONV1(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(fixtureDirectory(t), "compat", "string_semantics.json"))
 	if err != nil {

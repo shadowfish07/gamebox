@@ -85,23 +85,27 @@ is still useful for debugging.
 
 ## Android lease and cleanup
 
-All repository Android mutators use one lease at:
+Repository Android mutators coordinate through a lease pool at:
 
 ```text
-<absolute git common dir>/gamebox-android.lease
+<absolute git common dir>/gamebox-android-leases/
 ```
 
-This includes direct calls to `tool/e2e_android.sh`, `ensure_test_avds.sh`,
-`smoke_android_host.sh`, and `smoke_android_release_apk.sh`; the worktree wrapper
-is not the only lock boundary. The owner record contains a random token,
-canonical worktree path, PID, device identity, and acquisition time, but no
-credentials. `GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS` controls the wait (default
-900 seconds). A lease is reclaimed only when its recorded PID is provably dead;
-an alive or ambiguous PID remains busy.
+`tool/e2e_android.sh` automatically leases one complete managed slot: slot 0 is
+`Gamebox_A0_API_36`/`Gamebox_B0_API_36` on 5560/5562, and slot 1 is
+`Gamebox_A1_API_36`/`Gamebox_B1_API_36` on 5564/5566. The slots may coexist.
+`ensure_test_avds.sh`, `smoke_android_host.sh`, `smoke_android_release_apk.sh`,
+and supplied-serial E2E use the exclusive lease and wait for both slots to be
+idle. The legacy `gamebox-android.lease` is also treated as an exclusive
+barrier during migration. Owner records contain a random token, canonical
+worktree path, PID, lease kind/slot, device identities, and acquisition time,
+but no credentials. `GAMEBOX_ANDROID_LEASE_TIMEOUT_SECONDS` controls the wait
+(default 900 seconds). A lease is reclaimed only when its recorded PID is
+provably dead; an alive or ambiguous PID remains busy.
 
-The two-AVD E2E may start only `Gamebox_A_API_36` and `Gamebox_B_API_36`. It
-records whether it started each emulator. Normal cleanup and `worktree.sh down`
-may stop only those owned instances after matching AVD/serial/PID evidence.
+The two-AVD E2E may start only its leased pair. It records its slot and whether
+it started each emulator. Normal cleanup and `worktree.sh down` may stop only
+those owned instances after matching AVD/serial/PID evidence.
 Provided or pre-existing devices are never stopped. Package installs, package
 data, secure storage, and emulator userdata remain shared device state; the
 lease serializes access rather than pretending they are worktree-local.

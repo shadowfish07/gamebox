@@ -7,6 +7,9 @@ import '../../design_system/components/gamebox_page_body.dart';
 import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
+import '../rps/rps_controller.dart';
+import '../rps/rps_models.dart';
+import '../rps/rps_opponent_page.dart';
 import '../update/update_action.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
@@ -24,6 +27,7 @@ final class HomePage extends StatefulWidget {
     this.onOpenLan,
     this.lanRecovery,
     this.onOpenHistory,
+    this.rpsController,
     this.updateController,
   });
 
@@ -36,6 +40,7 @@ final class HomePage extends StatefulWidget {
   final VoidCallback? onOpenLan;
   final Widget? lanRecovery;
   final VoidCallback? onOpenHistory;
+  final RpsController? rpsController;
   final UpdateController? updateController;
 
   @override
@@ -48,6 +53,8 @@ final class _HomePageState extends State<HomePage> {
     super.initState();
     widget.controller?.addListener(_changed);
     widget.controller?.start();
+    widget.rpsController?.addListener(_changed);
+    widget.rpsController?.start();
   }
 
   @override
@@ -58,6 +65,11 @@ final class _HomePageState extends State<HomePage> {
       widget.controller?.addListener(_changed);
       widget.controller?.start();
     }
+    if (oldWidget.rpsController != widget.rpsController) {
+      oldWidget.rpsController?.removeListener(_changed);
+      widget.rpsController?.addListener(_changed);
+      widget.rpsController?.start();
+    }
   }
 
   void _changed() {
@@ -67,6 +79,7 @@ final class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     widget.controller?.removeListener(_changed);
+    widget.rpsController?.removeListener(_changed);
     super.dispose();
   }
 
@@ -86,6 +99,26 @@ final class _HomePageState extends State<HomePage> {
 
   Future<void> _continueMatch() async {
     final error = await widget.controller?.openActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _chooseRpsOpponent() async {
+    final controller = widget.rpsController;
+    final currentUserId = widget.currentUserId;
+    if (controller == null || currentUserId == null) return;
+    final error = await Navigator.of(context).push<ApiError?>(
+      MaterialPageRoute<ApiError?>(
+        builder: (_) => RpsOpponentPage(
+          controller: controller,
+          currentUserId: currentUserId,
+        ),
+      ),
+    );
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _continueRpsMatch() async {
+    final error = await widget.rpsController?.openActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -115,6 +148,29 @@ final class _HomePageState extends State<HomePage> {
     );
     if (confirmed != true || !mounted) return;
     final error = await widget.controller?.cancelActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _cancelRpsMatch() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('取消这局石头剪刀布对局？'),
+        content: const Text('取消后，双方将返回空闲状态。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('保留对局'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('取消对局'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final error = await widget.rpsController?.cancelActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -217,9 +273,40 @@ final class _HomePageState extends State<HomePage> {
                 onContinue: _continueMatch,
                 onCancel: _cancelMatch,
               ),
+            if (widget.lanRecovery == null && widget.rpsController != null) ...[
+              SizedBox(height: GameboxTokens.spacing.section),
+              _buildRps(widget.rpsController!),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildRps(RpsController controller) {
+    if (controller.status == null && controller.isLoading) {
+      return const GameboxAsyncPanel(
+        icon: Icons.casino_outlined,
+        title: '正在加载石头剪刀布',
+        message: '请稍候，正在获取最新对局状态。',
+        isLoading: true,
+      );
+    }
+    if (controller.status == null && controller.lastError != null) {
+      return _HomeError(
+        message: controller.lastError!.message,
+        onRetry: controller.refresh,
+      );
+    }
+    final status = controller.status;
+    if (status == null) return const SizedBox.shrink();
+    return _RpsCard(
+      status: status,
+      isLaunching: controller.isLaunching,
+      isMutating: controller.isMutating,
+      onChoose: _chooseRpsOpponent,
+      onContinue: _continueRpsMatch,
+      onCancel: _cancelRpsMatch,
     );
   }
 }
@@ -273,7 +360,7 @@ final class _GomokuCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final descriptor = gameCatalog.single;
+    final descriptor = gameCatalog.firstWhere((game) => game.id == 'gomoku');
     return Card(
       child: Padding(
         padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
@@ -400,6 +487,90 @@ final class _ActiveMatchActions extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+final class _RpsCard extends StatelessWidget {
+  const _RpsCard({
+    required this.status,
+    required this.isLaunching,
+    required this.isMutating,
+    required this.onChoose,
+    required this.onContinue,
+    required this.onCancel,
+  });
+
+  final RpsStatus status;
+  final bool isLaunching;
+  final bool isMutating;
+  final VoidCallback onChoose;
+  final VoidCallback onContinue;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final descriptor = gameCatalog.firstWhere((game) => game.id == 'rps');
+    return Card(
+      key: const Key('game-rps'),
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              descriptor.title,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text('${descriptor.playerCount} 人 · 同时出拳'),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              status is RpsIdleStatus ? '可开始新对局' : '对局进行中',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
+            switch (status) {
+              RpsIdleStatus _ => _ActionButton(
+                semanticKey: const Key('rps-choose-opponent'),
+                semanticLabel: 'rps-choose-opponent',
+                onPressed: isMutating ? null : onChoose,
+                label: '选择赛制和对手',
+                pendingLabel: '正在创建对局',
+                isPending: isMutating,
+              ),
+              RpsActiveStatus(:final match) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('对手：${match.opponent.nickname}'),
+                  Semantics(
+                    identifier: 'rps-active-format-${match.format.wireValue}',
+                    child: Text('赛制：${match.format.label}'),
+                  ),
+                  Text('当前轮次：第 ${match.revision ~/ 2 + 1} 轮'),
+                  SizedBox(height: GameboxTokens.spacing.page),
+                  _ActionButton(
+                    semanticKey: const Key('rps-continue-match'),
+                    semanticLabel: 'rps-continue-match',
+                    onPressed: isMutating ? null : onContinue,
+                    label: '继续对局',
+                    pendingLabel: '正在启动对局',
+                    isPending: isLaunching,
+                  ),
+                  if (match.revision == 0) ...[
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    TextButton(
+                      key: const Key('rps-cancel-match'),
+                      onPressed: isMutating ? null : onCancel,
+                      child: const Text('取消未开始对局'),
+                    ),
+                  ],
+                ],
+              ),
+            },
+          ],
+        ),
+      ),
     );
   }
 }

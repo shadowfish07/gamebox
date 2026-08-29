@@ -8,12 +8,25 @@ mouse_filter = 2
 theme_type_variation = &"GameboxConnectionBanner"
 script = ExtResource("1_banner")
 
-[node name="Content" type="MarginContainer" parent="."]
+[node name="Content" type="HBoxContainer" parent="."]
 layout_mode = 2
+theme_type_variation = &"GameboxConnectionBannerContent"
 
 [node name="Message" type="Label" parent="Content"]
 layout_mode = 2
+size_flags_horizontal = 3
 theme_type_variation = &"GameboxOnSecondaryContainer"
-text = "正在连接…"
-horizontal_alignment = 1
+text = "连接中…"
+horizontal_alignment = 0
+vertical_alignment = 1
 autowrap_mode = 2
+
+[node name="ReturnButton" type="Button" parent="Content"]
+visible = false
+custom_minimum_size = Vector2(192, 96)
+layout_mode = 2
+theme_type_variation = &"GameboxConnectionActionButton"
+text = "返回大厅"
+flat = true
+
+[connection signal="pressed" from="Content/ReturnButton" to="." method="_on_return_button_pressed"]

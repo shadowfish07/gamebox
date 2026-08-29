@@ -34,6 +34,9 @@ import 'features/lan/lan_recovery_card.dart';
 import 'features/lan/lan_room_controller.dart';
 import 'features/profile/nickname_page.dart';
 import 'features/profile/profile_controller.dart';
+import 'features/rps/rps_api.dart';
+import 'features/rps/rps_controller.dart';
+import 'features/rps/rps_repository.dart';
 
 class GameboxApp extends StatefulWidget {
   const GameboxApp({
@@ -43,6 +46,7 @@ class GameboxApp extends StatefulWidget {
     this.profileController,
     this.homeController,
     this.matchHistoryApi,
+    this.rpsController,
     this.updateController,
     this.lanRoomController,
     bool? hostSmokeEnabled,
@@ -58,6 +62,7 @@ class GameboxApp extends StatefulWidget {
   final ProfileController? profileController;
   final HomeController? homeController;
   final MatchHistoryApi? matchHistoryApi;
+  final RpsController? rpsController;
   final UpdateController? updateController;
   final LanRoomController? lanRoomController;
   final bool hostSmokeEnabled;
@@ -76,9 +81,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   ProfileController? _profileController;
   ApiClient? _ownedApiClient;
   HomeController? _homeController;
+  RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsProfileController = false;
   var _ownsHomeController = false;
+  var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
   String? _protectedNavigationUserId;
   LanRoomController? _lanRoomController;
@@ -221,6 +228,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       } else if (_homeControllerAuthenticated) {
         _homeController?.pauseForeground();
       }
+      if (_ownsRpsController) {
+        _rpsController?.dispose();
+        _rpsController = null;
+        _ownsRpsController = false;
+      } else if (_homeControllerAuthenticated) {
+        _rpsController?.pauseForeground();
+      }
       _homeControllerAuthenticated = false;
       _historyController.fetchPublicResult = null;
       _historyController.publicUserId = null;
@@ -244,12 +258,32 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsHomeController = true;
       }
     }
+    if (_rpsController == null &&
+        (widget.rpsController != null || widget.homeController == null)) {
+      final injected = widget.rpsController;
+      if (injected != null) {
+        _rpsController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _rpsController = RpsController(
+          repository: RpsRepository(
+            api: HttpRpsApi(apiClient, sessionController),
+            gameLauncher: widget.gameLauncher,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsRpsController = true;
+      }
+    }
     _historyController.publicUserId = sessionController.session!.user.id;
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _historyController.fetchPublicResult = _homeController?.fetchResult;
     unawaited(_historyController.refresh());
     _homeController?.resumeForeground();
+    _rpsController?.resumeForeground();
   }
 
   @override
@@ -258,6 +292,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       unawaited(_handleAppResumed());
     } else {
       _homeController?.pauseForeground();
+      _rpsController?.pauseForeground();
     }
   }
 
@@ -277,6 +312,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _syncSessionProfile();
     await _profileController?.handleAppResumed();
     _homeController?.resumeForeground();
+    _rpsController?.resumeForeground();
   }
 
   @override
@@ -298,7 +334,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsHomeController) {
       _homeController?.dispose();
     }
+    if (_ownsRpsController) {
+      _rpsController?.dispose();
+    }
     _homeController = null;
+    _rpsController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     final lanController = _lanRoomController;
@@ -460,6 +500,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
               lanController.state is LanRoomFailure
           ? null
           : LanRecoveryCard(controller: lanController),
+      rpsController: authenticated ? _rpsController : null,
       updateController: widget.updateController,
     );
   }

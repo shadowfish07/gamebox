@@ -16,6 +16,7 @@ import (
 	sqlite "modernc.org/sqlite"
 
 	"me.zqydev/gamebox/server/internal/clock"
+	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/users"
 )
 
@@ -502,7 +503,7 @@ func registrationBeginError(callerContext, operationContext context.Context, err
 		return callerErr
 	}
 	if operationContext.Err() != nil {
-		return ErrInternal
+		return diagnostics.Wrap(ErrInternal, err)
 	}
 	return databaseError(callerContext, err)
 }
@@ -517,5 +518,5 @@ func databaseError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	return ErrInternal
+	return diagnostics.Wrap(ErrInternal, err)
 }
