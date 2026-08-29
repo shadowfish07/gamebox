@@ -130,7 +130,7 @@ jobs:
       - name: Upload PR debug APK
         if: github.event_name == 'pull_request'
         id: upload-pr-debug-apk
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gamebox-debug-pr-${{ github.event.pull_request.number }}-${{ github.sha }}
           path: |
