@@ -7,6 +7,12 @@ on:
       - 'game_runtime/**'
       - 'tool/**'
       - '.github/workflows/debug.yml'
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'game_runtime/**'
+      - 'tool/**'
+      - '.github/workflows/debug.yml'
   workflow_dispatch:
     inputs:
       api_base_url:
@@ -17,12 +23,13 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
-  # All branches publish to the same rolling release, so serialize the whole
-  # workflow instead of allowing cross-branch tag and asset races.
-  group: debug-apk-publish
-  cancel-in-progress: false
+  # Keep rolling release writes serialized, while letting separate PRs build
+  # independently and canceling stale builds for the same PR.
+  group: ${{ github.event_name == 'pull_request' && format('debug-apk-pr-{0}', github.event.pull_request.number) || 'debug-apk-publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FLUTTER_VERSION: "3.47.1"
@@ -33,6 +40,9 @@ env:
 
 jobs:
   build-and-publish:
+    # Fork pull requests cannot access the stable debug-signing secrets. Do not
+    # use pull_request_target to execute untrusted fork code with those secrets.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -99,7 +109,8 @@ jobs:
 
       - name: Verify debug package name is independent
         run: |
-          aapt="${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -1)/aapt"
+          build_tools_dir="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
+          aapt="${build_tools_dir}/aapt"
           package_line="$("${aapt}" dump badging app/build/app/outputs/flutter-apk/app-debug.apk | grep '^package:')"
           printf '%s\n' "${package_line}"
           if ! grep -q "name='me.zqydev.gamebox.debug'" <<<"${package_line}"; then
@@ -116,7 +127,59 @@ jobs:
           cp app/build/app/outputs/flutter-apk/app-debug.apk "debug-assets/${asset_name}"
           (cd debug-assets && sha256sum "${asset_name}" > "${checksum_name}")
 
+      - name: Upload PR debug APK
+        if: github.event_name == 'pull_request'
+        id: upload-pr-debug-apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamebox-debug-pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+          path: |
+            debug-assets/*.apk
+            debug-assets/checksums-*.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Show PR debug APK
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BUILD_SHA: ${{ github.sha }}
+          ARTIFACT_NAME: gamebox-debug-pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+          ARTIFACT_URL: ${{ steps.upload-pr-debug-apk.outputs.artifact-url }}
+        run: |
+          marker='<!-- gamebox-pr-debug-apk -->'
+          apk_sha256="$(cut -d ' ' -f 1 debug-assets/checksums-*.txt)"
+          printf -v body "%s\n\n### Debug APK\n\n- [Download \`%s\`](%s)\n- PR head: \`%s\`\n- Tested merge: \`%s\`\n- APK SHA-256: \`%s\`\n- Retention: 14 days\n" \
+            "${marker}" \
+            "${ARTIFACT_NAME}" \
+            "${ARTIFACT_URL}" \
+            "${PR_HEAD_SHA}" \
+            "${BUILD_SHA}" \
+            "${apk_sha256}"
+
+          printf '%s\n' "${body}" >> "${GITHUB_STEP_SUMMARY}"
+
+          comment_id="$(
+            gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" |
+              jq -r '.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- gamebox-pr-debug-apk -->")) | .id' |
+              tail -n 1
+          )"
+          if [[ -n "${comment_id}" ]]; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              -f body="${body}" >/dev/null
+          else
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -f body="${body}" >/dev/null
+          fi
+
       - name: Publish rolling debug release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           API_BASE_URL: ${{ inputs.api_base_url || env.DEBUG_API_BASE_URL }}
