@@ -165,9 +165,14 @@ static func _scene_contract() -> bool:
 		and scissors.has_node("Content/Icon") and paper.has_node("Content/Icon")
 	passed = _check(image_nodes_present, "each choice must render an image") and passed
 	if image_nodes_present:
+		var neutral_modulate := rock.modulate
+		scene.call("_refresh_choice_visuals")
 		passed = _check(rock.get_node("Content/Icon").texture != null, "rock image must load") \
 			and _check(scissors.get_node("Content/Icon").texture != null, "scissors image must load") \
 			and _check(paper.get_node("Content/Icon").texture != null, "paper image must load") \
+			and _check(rock.modulate == neutral_modulate, "choice modulation must preserve authored image and text colors") \
+			and _check(scissors.modulate == neutral_modulate, "choice modulation must preserve authored image and text colors") \
+			and _check(paper.modulate == neutral_modulate, "choice modulation must preserve authored image and text colors") \
 			and passed
 	scene.free()
 	return passed

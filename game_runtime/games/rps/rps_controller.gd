@@ -485,17 +485,14 @@ func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 
 func _refresh_choice_visuals() -> void:
 	var selected_choice := _selected_choice()
-	var full_color: Color = GameboxTokens.DARK["on_surface"] if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT["on_surface"]
-	var faded_alpha: float = full_color.a - float(GameboxTokens.GAME["pending_overlay_alpha"])
+	var faded_alpha := 1.0 - float(GameboxTokens.GAME["pending_overlay_alpha"])
 	for entry in _choice_entries():
 		var button: Button = entry["button"]
 		var selected: bool = entry["choice"] == selected_choice
-		var choice_color := full_color
-		if not selected and not selected_choice.is_empty():
-			choice_color.a = faded_alpha
+		var choice_alpha := faded_alpha if not selected and not selected_choice.is_empty() else 1.0
 		button.pivot_offset = button.size * 0.5
 		button.scale = CHOICE_SELECTED_SCALE if selected else Vector2.ONE
-		button.modulate = choice_color
+		button.modulate.a = choice_alpha
 		button.get_node("Content/Indicator").visible = selected
 
 
