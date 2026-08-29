@@ -1094,8 +1094,13 @@ e2e_server_identity_is_safe() {
 pause_e2e_server() {
   ((SERVER_PAUSED == 0)) || return 0
   e2e_server_identity_is_safe || return 1
-  kill -STOP "$SERVER_PID" 2>/dev/null || return 1
   local process_state
+  process_state="$(ps -p "$SERVER_PID" -o stat= 2>/dev/null | tr -d ' ')"
+  if [[ "$process_state" == *T* ]]; then
+    SERVER_PAUSED=1
+    return 0
+  fi
+  kill -STOP "$SERVER_PID" 2>/dev/null || return 1
   process_state="$(ps -p "$SERVER_PID" -o stat= 2>/dev/null | tr -d ' ')"
   [[ "$process_state" == *T* ]] || return 1
   SERVER_PAUSED=1
@@ -1185,6 +1190,7 @@ start_first_connect_loading_watch() {
     boundary="$(boundary_for_serial "$serial")"
   fi
   [[ -x "$ROOT_DIR/tool/run_in_session.rb" ]] || return 1
+  e2e_server_identity_is_safe || return 1
   LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
   LOADING_WATCH_READY_FILE="$TEMP_DIR/first-connect-loading-session"
   LOADING_WATCH_STREAM_READY_FILE="$TEMP_DIR/first-connect-loading-stream"
@@ -1194,7 +1200,9 @@ start_first_connect_loading_watch() {
   {
     ruby "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
       "$ADB_BIN" -s "$serial" logcat -b all -v threadtime -T 100 2>/dev/null \
-      | awk -v marker="$boundary" -v stream_ready_file="$LOADING_WATCH_STREAM_READY_FILE" '
+      | awk -v marker="$boundary" \
+          -v server_pid="$SERVER_PID" \
+          -v stream_ready_file="$LOADING_WATCH_STREAM_READY_FILE" '
           {
             if (!stream_ready) {
               print "ready" > stream_ready_file
@@ -1210,8 +1218,10 @@ start_first_connect_loading_watch() {
             line = $0
             sub(/^.*GAMEBOX_GODOT_STATE match=/, "", line)
             sub(/ revision=-1.*$/, "", line)
-            print line
-            fflush()
+            if (system("kill -STOP " server_pid) == 0) {
+              print line
+              fflush()
+            }
             exit
           }
         '
@@ -1641,6 +1651,9 @@ self_test() {
   LOADING_WATCH_PROCESS_GROUP=""
   LOADING_WATCH_SESSION=""
   LOADING_WATCH_READY_FILE=""
+  export GAMEBOX_E2E_SERVER_ENV_LOG="$server_environment_log"
+  start_e2e_server \
+    || { printf 'loading watcher server fixture did not start\n' >&2; return 1; }
   local loading_watch_wait_index loading_watch_adb_pid
   start_first_connect_loading_watch fixture-A \
     || { printf 'loading watcher could not start in fixture\n' >&2; return 1; }
@@ -1655,6 +1668,12 @@ self_test() {
     || { printf 'loading watcher fixture did not observe its marker\n' >&2; return 1; }
   [[ "$LOADING_MATCH_ID" == "$loading_match_id" ]] \
     || { printf 'loading watcher fixture returned the wrong match ID\n' >&2; return 1; }
+  pause_e2e_server \
+    || { printf 'loading watcher fixture pause was not adopted\n' >&2; return 1; }
+  resume_e2e_server \
+    || { printf 'loading watcher fixture server did not resume\n' >&2; return 1; }
+  stop_e2e_server \
+    || { printf 'loading watcher fixture server did not stop\n' >&2; return 1; }
   if kill -0 "$loading_watch_adb_pid" 2>/dev/null; then
     kill -KILL "$loading_watch_adb_pid" 2>/dev/null || true
     printf 'loading watcher left adb logcat alive\n' >&2
@@ -1664,6 +1683,7 @@ self_test() {
   [[ "$FAKE_ADB_PID_FILE" == "$fake_pid_file" ]] \
     || { printf 'loading watcher fixture did not restore the fake adb pid file\n' >&2; return 1; }
   unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY FAKE_ADB_LOADING_MATCH_ID
+  unset GAMEBOX_E2E_SERVER_ENV_LOG
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
