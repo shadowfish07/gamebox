@@ -2946,9 +2946,10 @@ wait_for_presence_state() {
   local match_id="$2"
   local revision="$3"
   local presence="$4"
+  local timeout_seconds="${5:-$WAIT_SECONDS}"
   local fragment
   fragment="$(presence_state_fragment "$match_id" "$revision" "$presence")" || return $?
-  wait_for_log_marker "$serial" "$fragment"
+  wait_for_log_marker_with_timeout "$serial" "$fragment" "$timeout_seconds"
 }
 
 wait_for_new_ready_match_id() {
@@ -3632,6 +3633,7 @@ refresh_game_log_boundaries presence-recovery \
 adb_for "$RECOVERY_SERIAL" shell am force-stop "$PACKAGE" >/dev/null \
   || fail "could not force-stop only $PACKAGE on the recovery device"
 wait_for_presence_state "$SURVIVING_SERIAL" "$MATCH_ID" 3 offline \
+  "$CONNECTION_STATE_TIMEOUT_SECONDS" \
   || fail "surviving client did not render the force-stopped opponent as offline"
 sleep 1
 recovery_snapshot="$(match_show "$MATCH_ID")" || fail "match became unreadable after force-stop"
