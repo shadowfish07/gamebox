@@ -2006,6 +2006,9 @@ self_test() {
   grep -F 'refresh_game_log_boundary "$SERIAL_B" first-gomoku-ready' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'B first-match launch does not refresh its log boundary\n' >&2; return 1; }
+  grep -F 'refresh_game_log_boundary "$SERIAL_B" rps-invitee-ready' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'B RPS invitee launch does not refresh its log boundary\n' >&2; return 1; }
   grep -F 'tap_identifier_after_scroll "$serial" register' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'embedded registration action is not atomically scroll-aware\n' >&2; return 1; }
@@ -3892,6 +3895,8 @@ wait_for_identifier "$SERIAL_B" rps-continue-match >/dev/null \
   || fail "B did not expose the invited RPS match"
 wait_for_identifier "$SERIAL_B" rps-active-format-best_of_three >/dev/null \
   || fail "B could not see the persisted RPS format before launch"
+refresh_game_log_boundary "$SERIAL_B" rps-invitee-ready \
+  || fail "could not establish B RPS invitee log boundary"
 tap_identifier "$SERIAL_B" rps-continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH_ID" \
   || fail "B did not launch the invited RPS match"
