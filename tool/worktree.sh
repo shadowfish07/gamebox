@@ -38,6 +38,8 @@ readonly PORT_REGISTRY PORT_REGISTRY_LOCK
 
 # shellcheck source=tool/lib/android_lease.sh
 source "$ROOT_DIR/tool/lib/android_lease.sh"
+# shellcheck source=tool/lib/ai_rules_link.sh
+source "$ROOT_DIR/tool/lib/ai_rules_link.sh"
 
 if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   export JAVA_HOME
@@ -326,6 +328,7 @@ refuse_active_or_unsafe_server() {
 
 run_setup() {
   prepare_state
+  gamebox_ai_rules_ensure_link "$ROOT_DIR" "$PRIMARY_ROOT"
   bash "$ROOT_DIR/tool/bootstrap.sh" --build-only
   (cd "$ROOT_DIR/server" && go mod download)
   (cd "$ROOT_DIR/app" && flutter pub get --enforce-lockfile)
@@ -608,7 +611,7 @@ usage() {
 Usage: bash tool/worktree.sh <command> [options]
 
 Commands:
-  setup       Idempotently install locked dependencies and initialize private state.
+  setup       Link shared AI rules, install locked dependencies, and initialize private state.
   status      Show identity, stable port, data origin, service, and Android lease.
   up | dev    Build and run the isolated local server in the foreground.
   down        Stop only this worktree's owned server and stale Android runtime.

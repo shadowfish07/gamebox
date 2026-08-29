@@ -15,6 +15,7 @@ are never read, stopped, copied, or replaced by worktree commands.
 | SQLite development data | `.gamebox-worktree/data/gamebox.db` | One writable database per checkout, mode `0600`; never symlinked |
 | Backups | `.gamebox-worktree/backups/` | Per-target, mode `0700`, ignored by Git |
 | Flutter/Gradle/Godot outputs | `app/.dart_tool`, build directories, `.gradle`, `game_runtime/.godot` | Disposable and worktree-local |
+| Shared AI rules | `.ai/rules` | Ignored absolute symlink to a validated local `ai-rules/rules` checkout; never copied or committed |
 | E2E artifacts | `artifacts/` | Worktree-local, ignored, sanitized by the harness |
 | Android app state | Emulator package data, SharedPreferences, secure storage, downloads | Device-local and shared by every checkout using that device/package; never synchronized |
 | Port registry and Android lease | Absolute Git common directory | Shared coordination metadata, mode `0600`/`0700`; never committed |
@@ -39,9 +40,13 @@ bash tool/worktree.sh e2e
 
 `setup` is idempotent. It derives identity from the canonical checkout path and
 Git common directory, allocates one stable free loopback port, generates secrets
-only when absent, runs the build-only toolchain check, downloads Go modules, and
-runs `flutter pub get --enforce-lockfile`. Repeated setup preserves the database,
-secrets, port, and debugging state.
+only when absent, links `.ai/rules` to a validated shared rules checkout, runs the
+build-only toolchain check, downloads Go modules, and runs
+`flutter pub get --enforce-lockfile`. Repeated setup preserves the database,
+secrets, port, AI-rules target, and debugging state. The rules source resolves
+from `GAMEBOX_AI_RULES_DIR`, then the primary checkout's existing link, then
+`~/git/ai-rules/rules`. If none exists, setup reports that AI rules were skipped;
+it never clones a repository or replaces an existing directory or unrelated link.
 
 `up` builds `gameboxd` and runs it in the foreground. It binds strictly to the
 allocated `127.0.0.1` port and uses only this checkout's database. It prints both
