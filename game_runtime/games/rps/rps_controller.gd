@@ -28,6 +28,7 @@ var _awaiting_snapshot := true
 var _error_text := ""
 var _disposed := false
 var _returning := false
+var _scene_colors: Dictionary = GameboxTokens.LIGHT
 var _resign_submitted := false
 var _last_log_signature := ""
 var _terminal_logged := false
@@ -66,6 +67,7 @@ func _ready() -> void:
 	var dark_theme := GameboxTheme.system_prefers_dark()
 	theme = GameboxTheme.create(dark_theme)
 	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
+	_scene_colors = colors
 	var page_inset := GameboxTokens.SPACING["page"] * GameboxTheme.LOGICAL_SCALE
 	$ConnectionBanner.offset_left = page_inset
 	$ConnectionBanner.offset_right = -page_inset
@@ -73,25 +75,7 @@ func _ready() -> void:
 	_apply_scene_spacing()
 	$SafeContent/Layout.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$SafeContent/Layout/MySection/ChoicePanel/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
-	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
-	$TerminalArena/Backdrop/Gradient.color = Color(colors["primary_container"], GameboxTokens.COMPONENT["terminal_glow_opacity"])
-	$SafeContent/Layout/RoundStage.add_theme_stylebox_override("panel", _round_stage_style(colors))
-	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip.add_theme_stylebox_override("panel", _round_chip_style(colors))
-	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.add_theme_color_override("font_color", colors["on_primary_container"])
-	for label in [$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/PlayerLabel, $SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/PlayerLabel, $SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel, $SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel]:
-		label.add_theme_color_override("font_color", colors["on_surface_variant"])
-	$SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel.add_theme_color_override("font_color", colors["outline"])
-	for status_line in [$SafeContent/Layout/OpponentSection/StatusLine, $SafeContent/Layout/MySection/StatusLine]:
-		status_line.get_node("Identity/Avatar").add_theme_stylebox_override("panel", _avatar_style(colors))
-		status_line.get_node("Identity/Avatar/Label").add_theme_color_override("font_color", colors["on_primary_container"])
-		status_line.get_node("Identity/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
-		_apply_status_chip_emphasis(status_line, false, colors)
-	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.add_theme_stylebox_override(
-		"panel", _opponent_surface_style(colors["surface_container_high"], colors["outline_variant"])
-	)
-	$SafeContent/Layout/OpponentSection/OpponentVisual/LockedSurface.add_theme_stylebox_override(
-		"panel", _opponent_surface_style(colors["tertiary_container"], colors["on_tertiary_container"])
-	)
+	_apply_scene_colors(colors)
 	$RevealPanel/Content.add_theme_constant_override("separation", GameboxTokens.SPACING["section"] * GameboxTheme.LOGICAL_SCALE)
 	$RevealPanel/Content/Choices.add_theme_constant_override("separation", GameboxTokens.SPACING["layout"] * GameboxTheme.LOGICAL_SCALE)
 	$RevealPanel/Content/ResultLabel.add_theme_font_size_override(
@@ -108,7 +92,6 @@ func _ready() -> void:
 		button.pressed.connect(_on_choice.bind(entry["choice"]))
 		button.button_down.connect(_on_choice_button_down.bind(button))
 		button.button_up.connect(_on_choice_button_up.bind(button))
-		button.get_node("Content/Indicator").color = colors["primary"]
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResignDialog/Dialog/Content/Title.text = "认输并结束本局？"
 	$ResignDialog/Dialog/Content/Message.text = "确认后对手立即获胜，本局无法继续。"
@@ -145,6 +128,30 @@ func _ready() -> void:
 	set_process(true)
 	_refresh_ui()
 	call_deferred("_emit_ready_marker")
+
+
+func _apply_scene_colors(colors: Dictionary) -> void:
+	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
+	$TerminalArena/Backdrop/Gradient.color = Color(colors["primary_container"], GameboxTokens.COMPONENT["terminal_glow_opacity"])
+	$SafeContent/Layout/RoundStage.add_theme_stylebox_override("panel", _round_stage_style(colors))
+	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip.add_theme_stylebox_override("panel", _round_chip_style(colors))
+	$SafeContent/Layout/RoundStage/Content/RoundMeta/RoundChip/RoundLabel.add_theme_color_override("font_color", colors["on_primary_container"])
+	for label in [$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/PlayerLabel, $SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/PlayerLabel, $SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel, $SafeContent/Layout/RoundStage/Content/RoundMessage/StateSupportLabel]:
+		label.add_theme_color_override("font_color", colors["on_surface_variant"])
+	$SafeContent/Layout/RoundStage/Content/Scoreboard/VersusLabel.add_theme_color_override("font_color", colors["outline"])
+	for status_line in [$SafeContent/Layout/OpponentSection/StatusLine, $SafeContent/Layout/MySection/StatusLine]:
+		status_line.get_node("Identity/Avatar").add_theme_stylebox_override("panel", _avatar_style(colors))
+		status_line.get_node("Identity/Avatar/Label").add_theme_color_override("font_color", colors["on_primary_container"])
+		status_line.get_node("Identity/Label").add_theme_color_override("font_color", colors["on_surface_variant"])
+		_apply_status_chip_emphasis(status_line, false, colors)
+	$SafeContent/Layout/OpponentSection/OpponentVisual/UnknownSurface.add_theme_stylebox_override(
+		"panel", _opponent_surface_style(colors["surface_container_high"], colors["outline_variant"])
+	)
+	$SafeContent/Layout/OpponentSection/OpponentVisual/LockedSurface.add_theme_stylebox_override(
+		"panel", _opponent_surface_style(colors["tertiary_container"], colors["on_tertiary_container"])
+	)
+	for entry in _choice_entries():
+		entry["button"].get_node("Content/Indicator").color = colors["primary"]
 
 
 func _apply_scene_typography() -> void:
@@ -329,11 +336,9 @@ func _refresh_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var local_user_id: String = _client.local_user_id if _client != null else ""
 	var terminal: bool = has_state and _state.status in ["finished", "cancelled", "abandoned"]
-	_refresh_connection_banner(has_state)
+	_refresh_connection_banner()
 	$ErrorSnackbar.present(_error_text, "error")
-	var initial_loading := not has_state and _awaiting_snapshot \
-		and _connection_state not in ["failed", "closed"]
-	$LoadingOverlay.set_loading(initial_loading, "正在同步对局…" if initial_loading else "")
+	$LoadingOverlay.set_loading(false, "")
 	$SafeContent/Layout/TopNavigation.set_subtitle(_format_label(_state.format) if has_state else "准备对局")
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/MySide/ScoreLabel.text = str(_state.me_score) if has_state else "0"
 	$SafeContent/Layout/RoundStage/Content/Scoreboard/OpponentSide/ScoreLabel.text = str(_state.opponent_score) if has_state else "0"
@@ -398,13 +403,9 @@ func _emit_choice_automation_targets() -> void:
 		])
 
 
-func _refresh_connection_banner(has_state: bool) -> void:
+func _refresh_connection_banner() -> void:
 	if _connection_state in ["failed", "closed"]:
 		$ConnectionBanner.present(_connection_state)
-	elif not has_state:
-		# The first-connect loading overlay owns this state. Do not leave a
-		# duplicate compact banner partially visible behind it.
-		$ConnectionBanner.present("connected")
 	elif _connection_state == "reconnecting":
 		$ConnectionBanner.present("reconnecting")
 	elif _awaiting_snapshot:
@@ -459,7 +460,7 @@ func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 	$SafeContent/Layout/OpponentSection/StatusLine/StatusChip/Content/Label.text = opponent_status
 	$SafeContent/Layout/MySection/StatusLine/StatusChip/Content/Label.text = my_status
 	$SafeContent/Layout/OpponentSection/StatusLine.visible = not $ConnectionBanner.visible
-	var colors: Dictionary = GameboxTokens.DARK if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT
+	var colors := _scene_colors
 	var show_choice_emphasis := has_state and not _awaiting_snapshot and _connection_state == "connected"
 	_apply_status_chip_emphasis(
 		$SafeContent/Layout/OpponentSection/StatusLine,
@@ -485,7 +486,7 @@ func _refresh_player_statuses(has_state: bool, terminal: bool) -> void:
 
 func _refresh_choice_visuals() -> void:
 	var selected_choice := _selected_choice()
-	var full_color: Color = GameboxTokens.DARK["on_surface"] if GameboxTheme.system_prefers_dark() else GameboxTokens.LIGHT["on_surface"]
+	var full_color: Color = _scene_colors["on_surface"]
 	var faded_alpha: float = full_color.a - float(GameboxTokens.GAME["pending_overlay_alpha"])
 	for entry in _choice_entries():
 		var button: Button = entry["button"]

@@ -76,8 +76,8 @@ static func _uses_lightweight_shell() -> bool:
 		and _check((dialog.get_node("Dialog/Content/Actions/ConfirmButton") as Button).text == "确认认输" \
 			and (dialog.get_node("Dialog/Content/Actions/CancelButton") as Button).text == "继续对局", "danger actions changed") \
 		and _check(loading.has_method("set_loading") and loading.has_node("Content/Message"), "public loading component is not mounted") \
-		and _check(loading.visible and (loading.get_node("Content/Message") as Label).text == "正在同步对局…", "initial Gomoku synchronization did not use the blocking loader") \
-		and _check(not connection.visible, "initial Gomoku synchronization duplicated the loader with a compact banner") \
+		and _check(not loading.visible, "initial Gomoku synchronization still used the blocking loader") \
+		and _check(connection.visible and (connection.get_node("Content/Message") as Label).text == "连接中…", "initial Gomoku synchronization did not use compact connection status") \
 		and _check(result_panel.has_method("present_details") and result_panel.has_node("Content/Actions/ReturnButton"), "public result component is not mounted") \
 		and _check(scene.get_node("Board").has_signal("cell_pressed"), "cell_pressed automation contract changed") \
 		and _check(InputMap.has_action("ui_cancel"), "ui_cancel input action changed")
@@ -98,17 +98,18 @@ static func _renders_live_states() -> bool:
 	if not _check(_has_lightweight_nodes(scene), "live-state components are missing"):
 		return _cleanup(scene)
 	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "initial connection duplicates its prominent status") \
-		or not _check(not _connection_visible(scene), "initial connection duplicated its blocking loader") \
-		or not _check(_loading_visible(scene), "initial connection did not show blocking loading"):
+		or not _check(_connection_visible(scene) and _connection_message(scene) == "连接中…", "initial connection did not use compact status") \
+		or not _check(not _loading_visible(scene), "initial connection still showed blocking loading"):
 		return _cleanup(scene)
 	client.set_connection("connected")
 	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "initial snapshot wait duplicates its loading status") \
-		or not _check(not _connection_visible(scene), "initial snapshot wait duplicated its blocking loader") \
-		or not _check(_loading_visible(scene), "initial snapshot wait lost blocking loading"):
+		or not _check(_connection_visible(scene) and _connection_message(scene) == "同步中…", "initial snapshot wait did not use compact status") \
+		or not _check(not _loading_visible(scene), "initial snapshot wait still showed blocking loading"):
 		return _cleanup(scene)
 	client.set_connection("reconnecting")
-	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "pre-snapshot reconnect duplicates its loader") \
-		or not _check(not _connection_visible(scene) and _loading_visible(scene), "pre-snapshot reconnect replaced the blocking loader"):
+	if not _check(not scene.get_node("TopNavigation/TitleGroup/SubtitleLabel").visible, "pre-snapshot reconnect duplicates its compact status") \
+		or not _check(_connection_visible(scene) and _connection_message(scene) == "重连中…", "pre-snapshot reconnect did not use compact status") \
+		or not _check(not _loading_visible(scene), "pre-snapshot reconnect showed blocking loading"):
 		return _cleanup(scene)
 	client.accept_snapshot(_snapshot(0))
 	if not _check(_status(scene) == "轮到我", "local turn copy changed") \
@@ -221,7 +222,7 @@ static func _ignores_non_authoritative_snapshots() -> bool:
 	older_client.accept_snapshot(_snapshot(2, _two_stone_board(), "active", "black"))
 	older_client.begin_snapshot_sync()
 	older_client.emit_snapshot_raw(_snapshot(0))
-	if not (_check(_status(older_scene) == "正在同步对局…", "older snapshot callback unlocked controller") \
+	if not (_check(_status(older_scene) == "同步中…", "older snapshot callback unlocked controller") \
 		and _check(_resign_disabled(older_scene), "older snapshot callback unlocked resign")):
 		return _cleanup(older_scene)
 	_cleanup(older_scene, true)
@@ -268,7 +269,7 @@ static func _keeps_reconnect_locked() -> bool:
 	client.set_connection("connected")
 	client.set_connection("connected")
 	scene._on_cell_pressed(7, 7)
-	if not (_check(_status(scene) == "正在同步对局…", "connected-before-snapshot exposed a turn") \
+	if not (_check(_status(scene) == "同步中…", "connected-before-snapshot exposed a turn") \
 		and _check(client.move_requests.is_empty(), "connected-before-snapshot accepted a move") \
 		and _check(_resign_disabled(scene), "connected-before-snapshot enabled resign")):
 		return _cleanup(scene)
@@ -318,7 +319,7 @@ static func _locks_real_snapshot_recovery() -> bool:
 	client.poll()
 	scene._on_cell_pressed(9, 9)
 	scene._on_resign_pressed()
-	if not (_check(_status(scene) == "正在同步对局…", "revision gap left real controller actionable") \
+	if not (_check(_status(scene) == "同步中…", "revision gap left real controller actionable") \
 		and _check((scene.get_node("Board") as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE, "revision gap left board input enabled") \
 		and _check(_resign_disabled(scene), "revision gap left resign enabled") \
 		and _check(_sent_type_count(transport, "platform.snapshot.requested", sent_before) == 1, "duplicate gaps sent repeated snapshot requests") \
@@ -334,7 +335,7 @@ static func _locks_real_snapshot_recovery() -> bool:
 
 	transport.queue(_error_bound(4, "stale_revision"))
 	client.poll()
-	if not _check(_status(scene) == "正在同步对局…", "stale error did not relock real controller"):
+	if not _check(_status(scene) == "同步中…", "stale error did not relock real controller"):
 		return _cleanup(scene)
 	transport.queue(_snapshot(2, _two_stone_board(), "active", "black"))
 	client.poll()

@@ -33,7 +33,7 @@ class PreviewClient:
 	var _snapshot_envelope := {}
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, _state: Variant) -> bool:
-		if connection_state == "connecting":
+		if _state_name in ["connecting", "syncing"]:
 			return true
 		if _state_name == "resignation_move_loss":
 			call_deferred("_emit_resignation_sequence")
@@ -102,7 +102,7 @@ func _mount() -> void:
 	client._state_name = _state_name
 	if _state_name == "resignation_move_loss":
 		client.local_user_id = BLACK_ID
-	if _state_name != "connecting":
+	if _state_name not in ["connecting", "syncing"]:
 		client._snapshot_envelope = _terminal_snapshot(_state_name.begins_with("resignation_"))
 	if not scene.configure_launch({
 		"game_id": "gomoku", "match_id": MATCH_ID,
@@ -181,7 +181,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["connecting", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss", "resignation_move_loss"]:
+				if _state_name not in ["connecting", "syncing", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss", "resignation_move_loss"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
