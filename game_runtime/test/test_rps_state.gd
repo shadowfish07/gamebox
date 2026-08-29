@@ -362,10 +362,9 @@ static func _reconnect_keeps_confirmed_match() -> bool:
 	var client: FakeMatchClient = harness["client"]
 	var quit_calls: Array[int] = harness["quit_calls"]
 	var banner := scene.get_node("ConnectionBanner") as Control
-	if not _check(scene.get_node("LoadingOverlay").visible, "initial connection did not show the blocking loader") \
-		or not _check((scene.get_node("LoadingOverlay/Content/Message") as Label).text == "正在同步对局…", "initial loader copy changed") \
-		or not _check(not banner.visible, "initial connection duplicated the blocking loader with a compact banner") \
-		or not _check(scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "initial loader unexpectedly removed the opponent status row") \
+	if not _check(not scene.get_node("LoadingOverlay").visible, "initial connection still showed the blocking loader") \
+		or not _check(banner.visible and _connection_message(scene) == "连接中…", "initial connection did not use shared compact copy") \
+		or not _check(not scene.get_node("SafeContent/Layout/OpponentSection/StatusLine").visible, "initial banner overlapped the opponent status row") \
 		or not _check((scene.get_node("SafeContent/Layout/TopNavigation/TitleGroup/SubtitleLabel") as Label).text == "准备对局", "initial format retained loading copy") \
 		or not _check((scene.get_node("SafeContent/Layout/RoundStage/Content/RoundMessage/StateLabel") as Label).text == "准备开始", "initial game state duplicated network status") \
 		or not _check(banner.offset_left == GameboxTokens.SPACING["page"] * 2, "connection banner must align with the safe page inset") \

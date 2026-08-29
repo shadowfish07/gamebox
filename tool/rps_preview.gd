@@ -34,8 +34,8 @@ class PreviewClient:
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, state: Variant, _game_id: String) -> bool:
 		_state = state
-		if _state_name == "connecting":
-			connection_state = "connecting"
+		if _state_name in ["connecting", "initial_syncing"]:
+			connection_state = "connecting" if _state_name == "connecting" else "connected"
 			return true
 		_state.apply_snapshot(_snapshot())
 		if _state_name == "pending":
@@ -205,8 +205,9 @@ func _apply_preview_theme(scene: Control) -> void:
 	var dark := _theme_name == "dark"
 	scene.theme = GAMEBOX_THEME.create(dark)
 	var colors: Dictionary = GAMEBOX_TOKENS.DARK if dark else GAMEBOX_TOKENS.LIGHT
-	(scene.get_node("ResultScrim") as ColorRect).color = Color(colors["scrim"], GAMEBOX_TOKENS.COMPONENT["dialog_scrim_opacity"])
-	(scene.get_node("TerminalArena/Backdrop/Gradient") as ColorRect).color = Color(colors["primary_container"], GAMEBOX_TOKENS.COMPONENT["terminal_glow_opacity"])
+	scene._scene_colors = colors
+	scene._apply_scene_colors(colors)
+	scene._refresh_ui()
 
 
 func _parse_arguments(args: PackedStringArray) -> void:
@@ -219,7 +220,7 @@ func _parse_arguments(args: PackedStringArray) -> void:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["connecting", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss", "reconnecting", "syncing", "failed", "restored"]:
+				if _state_name not in ["connecting", "initial_syncing", "ready", "pending", "locked", "opponent_locked", "menu", "resign", "reveal", "finished", "finished_win", "finished_loss", "review_win", "review_loss", "resignation_win", "resignation_loss", "reconnecting", "syncing", "failed", "restored"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return
