@@ -2023,6 +2023,9 @@ self_test() {
   grep -F 'tap_identifier_after_scroll "$SERIAL_B" continue-match' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'narrow active-match action is not atomically scroll-aware\n' >&2; return 1; }
+  grep -F 'tap_identifier_after_scroll "$SERIAL_B" rps-continue-match' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'RPS invitee action is not atomically scroll-aware\n' >&2; return 1; }
   grep -F 'refresh_game_log_boundary "$SERIAL_B" first-gomoku-ready' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'B first-match launch does not refresh its log boundary\n' >&2; return 1; }
@@ -3913,13 +3916,13 @@ RPS_MATCH_ID="$(wait_for_new_rps_ready_match_id "$SERIAL_A")" \
 [[ "$RPS_MATCH_ID" =~ $uuid_pattern ]] \
   || fail "RPS ready marker did not contain a canonical match ID"
 MATCH_ID="$RPS_MATCH_ID"
-wait_for_identifier "$SERIAL_B" rps-continue-match >/dev/null \
+wait_for_identifier_after_scroll "$SERIAL_B" rps-continue-match >/dev/null \
   || fail "B did not expose the invited RPS match"
 wait_for_identifier "$SERIAL_B" rps-active-format-best_of_three >/dev/null \
   || fail "B could not see the persisted RPS format before launch"
 refresh_game_log_boundary "$SERIAL_B" rps-invitee-ready \
   || fail "could not establish B RPS invitee log boundary"
-tap_identifier "$SERIAL_B" rps-continue-match
+tap_identifier_after_scroll "$SERIAL_B" rps-continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH_ID" \
   || fail "B did not launch the invited RPS match"
 rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 0 active)" \
