@@ -201,7 +201,7 @@ type matchShowResponse struct {
 	WinnerUserID *string               `json:"winnerUserId"`
 	Players      []matchPlayerResponse `json:"players"`
 	BoardSize    int                   `json:"boardSize"`
-	Board        []uint8               `json:"board"`
+	Board        []int                 `json:"board"`
 	Format       string                `json:"format,omitempty"`
 	Round        int                   `json:"round,omitempty"`
 	Scores       map[string]int        `json:"scores,omitempty"`
@@ -260,7 +260,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	board := make([]uint8, gomoku.BoardSize*gomoku.BoardSize)
+	board := make([]int, gomoku.BoardSize*gomoku.BoardSize)
 	var boardSize int
 	var format string
 	var round int
@@ -289,7 +289,10 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			writeLine(stderr, matchFailed)
 			return exitFailure
 		}
-		board = append(board[:0], state.Board[:]...)
+		board = board[:0]
+		for _, cell := range state.Board {
+			board = append(board, int(cell))
+		}
 		boardSize = chinesecheckers.BoardCells
 	case gomoku.GameID:
 		var state gomokuStateView
@@ -303,7 +306,10 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 				return exitFailure
 			}
 		}
-		board = append(board[:0], state.Board[:]...)
+		board = board[:0]
+		for _, cell := range state.Board {
+			board = append(board, int(cell))
+		}
 		boardSize = state.BoardSize
 	case rps.GameID:
 		var state rpsStateView

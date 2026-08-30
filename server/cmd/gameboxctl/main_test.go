@@ -265,7 +265,7 @@ func TestMatchShowReplaysSnapshotWithPlayersAndDoesNotMutateRows(t *testing.T) {
 		t.Fatalf("players=%+v want=%+v", response.Players, wantPlayers)
 	}
 	for index, cell := range response.Board {
-		want := uint8(0)
+		want := 0
 		if index == 0 {
 			want = 1
 		}
@@ -292,15 +292,18 @@ func TestMatchShowReplaysInitialChineseCheckersBoard(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 		t.Fatalf("decode stdout %q: %v", stdout.String(), err)
 	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"board":[`)) {
+		t.Fatalf("board is not encoded as a JSON array: %q", stdout.String())
+	}
 	if response.ID != testMatchID || response.GameID != chinesecheckers.GameID || response.Status != "active" || response.Revision != 0 || response.BoardSize != chinesecheckers.BoardCells || len(response.Board) != chinesecheckers.BoardCells {
 		t.Fatalf("response metadata=%+v board=%d", response, len(response.Board))
 	}
 	for index, cell := range response.Board {
-		want := uint8(chinesecheckers.Empty)
+		want := int(chinesecheckers.Empty)
 		if index <= 9 {
-			want = uint8(chinesecheckers.Black)
+			want = int(chinesecheckers.Black)
 		} else if index >= 111 {
-			want = uint8(chinesecheckers.White)
+			want = int(chinesecheckers.White)
 		}
 		if cell != want {
 			t.Fatalf("board[%d]=%d want=%d", index, cell, want)
@@ -406,7 +409,7 @@ func TestMatchShowReadsLatestLiveWALWithoutMutatingSourceFiles(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 		t.Fatalf("decode live WAL response: %v", err)
 	}
-	if response.Revision != 2 || response.Board[0] != uint8(gomoku.Black) || response.Board[1] != uint8(gomoku.White) {
+	if response.Revision != 2 || response.Board[0] != int(gomoku.Black) || response.Board[1] != int(gomoku.White) {
 		t.Fatalf("live WAL response revision/board=(%d,%d,%d)", response.Revision, response.Board[0], response.Board[1])
 	}
 	if after := snapshotDirectory(t, directory); !reflect.DeepEqual(after, before) {
