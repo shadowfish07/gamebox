@@ -295,7 +295,7 @@ func TestMatchShowReplaysInitialChineseCheckersBoard(t *testing.T) {
 	if !bytes.Contains(stdout.Bytes(), []byte(`"board":[`)) {
 		t.Fatalf("board is not encoded as a JSON array: %q", stdout.String())
 	}
-	if response.ID != testMatchID || response.GameID != chinesecheckers.GameID || response.Status != "active" || response.Revision != 0 || response.BoardSize != chinesecheckers.BoardCells || len(response.Board) != chinesecheckers.BoardCells {
+	if response.ID != testMatchID || response.GameID != chinesecheckers.GameID || response.Status != "active" || response.Revision != 0 || response.BoardSize != chinesecheckers.BoardCells || len(response.Board) != chinesecheckers.BoardCells || response.NextColor != "black" {
 		t.Fatalf("response metadata=%+v board=%d", response, len(response.Board))
 	}
 	for index, cell := range response.Board {

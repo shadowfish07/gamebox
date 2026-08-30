@@ -202,6 +202,7 @@ type matchShowResponse struct {
 	Players      []matchPlayerResponse `json:"players"`
 	BoardSize    int                   `json:"boardSize"`
 	Board        []int                 `json:"board"`
+	NextColor    string                `json:"nextColor,omitempty"`
 	Format       string                `json:"format,omitempty"`
 	Round        int                   `json:"round,omitempty"`
 	Scores       map[string]int        `json:"scores,omitempty"`
@@ -213,7 +214,8 @@ type gomokuStateView struct {
 }
 
 type chineseCheckersStateView struct {
-	Board [chinesecheckers.BoardCells]uint8 `json:"board"`
+	Board     [chinesecheckers.BoardCells]uint8 `json:"board"`
+	NextColor string                            `json:"nextColor"`
 }
 
 type rpsStateView struct {
@@ -262,13 +264,14 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	board := make([]int, gomoku.BoardSize*gomoku.BoardSize)
 	var boardSize int
+	var nextColor string
 	var format string
 	var round int
 	var scores map[string]int
 	switch snapshot.Match.GameID {
 	case chinesecheckers.GameID:
 		var state chineseCheckersStateView
-		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil {
+		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.NextColor != "black" && state.NextColor != "white" {
 			writeLine(stderr, matchFailed)
 			return exitFailure
 		}
@@ -294,6 +297,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			board = append(board, int(cell))
 		}
 		boardSize = chinesecheckers.BoardCells
+		nextColor = state.NextColor
 	case gomoku.GameID:
 		var state gomokuStateView
 		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != gomoku.BoardSize {
@@ -337,7 +341,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		ID: snapshot.Match.ID, GameID: snapshot.Match.GameID, Status: snapshot.Match.Status,
 		Revision: snapshot.Match.Revision, Result: cloneString(snapshot.Match.Result),
 		WinnerUserID: cloneString(snapshot.Match.WinnerUserID), Players: players,
-		BoardSize: boardSize, Board: board, Format: format, Round: round, Scores: scores,
+		BoardSize: boardSize, Board: board, NextColor: nextColor, Format: format, Round: round, Scores: scores,
 	}
 	if err := json.NewEncoder(stdout).Encode(response); err != nil {
 		writeLine(stderr, matchFailed)
