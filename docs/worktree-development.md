@@ -15,6 +15,7 @@ are never read, stopped, copied, or replaced by worktree commands.
 | SQLite development data | `.gamebox-worktree/data/gamebox.db` | One writable database per checkout, mode `0600`; never symlinked |
 | Backups | `.gamebox-worktree/backups/` | Per-target, mode `0700`, ignored by Git |
 | Flutter/Gradle/Godot outputs | `app/.dart_tool`, build directories, `.gradle`, `game_runtime/.godot` | Disposable and worktree-local |
+| Shared AI rules | `.ai` | Ignored local configuration; Orca shares it from the primary checkout through `orca.yaml`; never committed |
 | E2E artifacts | `artifacts/` | Worktree-local, ignored, sanitized by the harness |
 | Android app state | Emulator package data, SharedPreferences, secure storage, downloads | Device-local and shared by every checkout using that device/package; never synchronized |
 | Port registry and Android lease | Absolute Git common directory | Shared coordination metadata, mode `0600`/`0700`; never committed |
@@ -42,6 +43,15 @@ Git common directory, allocates one stable free loopback port, generates secrets
 only when absent, runs the build-only toolchain check, downloads Go modules, and
 runs `flutter pub get --enforce-lockfile`. Repeated setup preserves the database,
 secrets, port, and debugging state.
+
+For Orca-managed worktrees, `orca.yaml` declares `.ai` under
+`worktree.sharedDirectories`. Orca shares that ignored directory from the primary
+checkout before setup runs. The source must exist as a directory in the primary
+checkout and remain gitignored; otherwise Orca skips it. The checked-in
+`orca.yaml` entry must also have reached the project's primary checkout before
+creation; adding it only on the branch being used as the new worktree's base is
+too late for that creation. A worktree created directly with Git must initialize
+its local `.ai` configuration separately.
 
 `up` builds `gameboxd` and runs it in the foreground. It binds strictly to the
 allocated `127.0.0.1` port and uses only this checkout's database. It prints both
