@@ -89,6 +89,50 @@ func TestWebSocketHandshakeValidatesPairBeforeConsumptionAndOrdersSnapshot(t *te
 	_ = reused.CloseNow()
 }
 
+func TestWebSocketPresenceCapabilityMatchesMergedGodotClient(t *testing.T) {
+	service := newTestRoom(t, 1_000, 100_000)
+	guest, err := service.Join(context.Background(), room.JoinRequest{
+		RoomID: testRoomID, Nickname: "Guest", JoinAttemptID: testAttemptID,
+		CandidateResumeToken: testGuestResume, RoomKey: testRoomKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostTicket, err := service.IssueLaunch(context.Background(), testHostID, testHostResume)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewRouter(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeTestRouter(t, router) })
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/lan/v1/ws"
+
+	guestConnection := dialWebSocket(t, wsURL)
+	writePresenceConnect(t, guestConnection, guest.LaunchTicket.Token, testGuestResume)
+	guestConnected := readEnvelope(t, guestConnection)
+	guestSnapshot := readEnvelope(t, guestConnection)
+	assertPresenceHandshake(t, guestConnected, guestSnapshot, guest.Player.PlayerID, map[string]bool{
+		testHostID: false, guest.Player.PlayerID: true,
+	})
+
+	hostConnection := dialWebSocket(t, wsURL)
+	writePresenceConnect(t, hostConnection, hostTicket.Token, testHostResume)
+	hostConnected := readEnvelope(t, hostConnection)
+	hostSnapshot := readEnvelope(t, hostConnection)
+	assertPresenceHandshake(t, hostConnected, hostSnapshot, testHostID, map[string]bool{
+		testHostID: true, guest.Player.PlayerID: true,
+	})
+	assertPresenceChange(t, readEnvelope(t, guestConnection), testHostID, true)
+
+	_ = hostConnection.CloseNow()
+	assertPresenceChange(t, readEnvelope(t, guestConnection), testHostID, false)
+	_ = guestConnection.CloseNow()
+}
+
 func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing.T) {
 	service := newTestRoom(t, 1_000, 100_000)
 	guest, err := service.Join(context.Background(), room.JoinRequest{
@@ -336,6 +380,56 @@ func writeConnect(t *testing.T, connection *websocket.Conn, launchTicket, resume
 		payload["launchTicket"] = launchTicket
 	}
 	writeEnvelope(t, connection, protocol.Envelope{ProtocolVersion: protocol.Version1, Type: protocol.TypePlatformConnect, Payload: mustJSONForTest(t, payload)})
+}
+
+func writePresenceConnect(t *testing.T, connection *websocket.Conn, launchTicket, resumeToken string) {
+	t.Helper()
+	payload := map[string]any{
+		"resumeToken":  resumeToken,
+		"capabilities": []string{protocol.CapabilityPlayerPresence},
+	}
+	if launchTicket != "" {
+		payload["launchTicket"] = launchTicket
+	}
+	writeEnvelope(t, connection, protocol.Envelope{
+		ProtocolVersion: protocol.Version1,
+		Type:            protocol.TypePlatformConnect,
+		Payload:         mustJSONForTest(t, payload),
+	})
+}
+
+func assertPresenceHandshake(t *testing.T, connected, snapshot protocol.Envelope, userID string, expected map[string]bool) {
+	t.Helper()
+	if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot || connected.Revision == nil || snapshot.Revision == nil || *connected.Revision != 0 || *snapshot.Revision != 0 {
+		t.Fatalf("presence initial order = %#v then %#v", connected, snapshot)
+	}
+	var payload struct {
+		UserID  string                  `json:"userId"`
+		Players []playerPresencePayload `json:"players"`
+	}
+	if json.Unmarshal(connected.Payload, &payload) != nil || payload.UserID != userID || len(payload.Players) != len(expected) {
+		t.Fatalf("presence connected payload = %#v", payload)
+	}
+	actual := make(map[string]bool, len(payload.Players))
+	for _, player := range payload.Players {
+		if _, duplicate := actual[player.UserID]; duplicate {
+			t.Fatalf("duplicate presence player %q", player.UserID)
+		}
+		actual[player.UserID] = player.Online
+	}
+	for expectedUserID, expectedOnline := range expected {
+		if actualOnline, found := actual[expectedUserID]; !found || actualOnline != expectedOnline {
+			t.Fatalf("presence players = %#v, want %#v", actual, expected)
+		}
+	}
+}
+
+func assertPresenceChange(t *testing.T, envelope protocol.Envelope, userID string, online bool) {
+	t.Helper()
+	var payload playerPresencePayload
+	if envelope.Type != protocol.TypePlatformPresenceChanged || envelope.Revision == nil || *envelope.Revision != 0 || json.Unmarshal(envelope.Payload, &payload) != nil || payload.UserID != userID || payload.Online != online {
+		t.Fatalf("presence change = %#v payload=%#v", envelope, payload)
+	}
 }
 
 func writeEnvelope(t *testing.T, connection *websocket.Conn, envelope protocol.Envelope) {

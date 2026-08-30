@@ -289,6 +289,10 @@ func TestDecodeLANClientRequiresPairedInitialCredentialsWithoutWeakeningPublicCo
 	if _, err := DecodeClient(initial); err == nil {
 		t.Fatal("public DecodeClient accepted LAN-only paired credentials")
 	}
+	capableInitial := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","capabilities":["player_presence_v1"]}}`)
+	if _, err := DecodeLANClient(capableInitial); err != nil {
+		t.Fatalf("DecodeLANClient capable initial connect: %v", err)
+	}
 	resume := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":"resume"}}`)
 	if _, err := DecodeLANClient(resume); err != nil {
 		t.Fatalf("DecodeLANClient resume connect: %v", err)
@@ -296,6 +300,8 @@ func TestDecodeLANClientRequiresPairedInitialCredentialsWithoutWeakeningPublicCo
 	invalid := []string{
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch"}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":""}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","capabilities":[]}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","capabilities":["unknown"]}}`,
 		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","extra":true}}`,
 	}
 	for _, input := range invalid {

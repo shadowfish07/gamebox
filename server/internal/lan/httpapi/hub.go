@@ -48,25 +48,27 @@ type Hub struct {
 }
 
 type hubConnection struct {
-	hub          *Hub
-	transport    *websocket.Conn
-	ctx          context.Context
-	cancel       context.CancelFunc
-	send         chan []byte
-	closeOnce    sync.Once
-	playerID     string
-	roomID       string
-	connectionID string
-	resumeToken  string
-	revision     atomic.Int64
-	outboundMu   sync.Mutex
-	pingMu       sync.Mutex
-	pings        map[string]struct{}
+	hub             *Hub
+	transport       *websocket.Conn
+	ctx             context.Context
+	cancel          context.CancelFunc
+	send            chan []byte
+	closeOnce       sync.Once
+	playerID        string
+	roomID          string
+	connectionID    string
+	resumeToken     string
+	presenceEnabled bool
+	revision        atomic.Int64
+	outboundMu      sync.Mutex
+	pingMu          sync.Mutex
+	pings           map[string]struct{}
 }
 
 type lanConnectPayload struct {
-	LaunchTicket string `json:"launchTicket"`
-	ResumeToken  string `json:"resumeToken"`
+	LaunchTicket string   `json:"launchTicket"`
+	ResumeToken  string   `json:"resumeToken"`
+	Capabilities []string `json:"capabilities"`
 }
 
 func (lanConnectPayload) String() string {
@@ -75,10 +77,16 @@ func (lanConnectPayload) String() string {
 func (payload lanConnectPayload) GoString() string { return payload.String() }
 
 type connectedPayload struct {
-	UserID          string `json:"userId"`
-	ConnectionID    string `json:"connectionId"`
-	ResumeToken     string `json:"resumeToken"`
-	ResumeExpiresAt int64  `json:"resumeExpiresAt"`
+	UserID          string                  `json:"userId"`
+	ConnectionID    string                  `json:"connectionId"`
+	ResumeToken     string                  `json:"resumeToken"`
+	ResumeExpiresAt int64                   `json:"resumeExpiresAt"`
+	Players         []playerPresencePayload `json:"players,omitempty"`
+}
+
+type playerPresencePayload struct {
+	UserID string `json:"userId"`
+	Online bool   `json:"online"`
 }
 
 func (connectedPayload) String() string {
@@ -200,7 +208,8 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	connection := &hubConnection{
 		hub: hub, transport: transport, ctx: connectionContext, cancel: cancelConnection,
 		send: make(chan []byte, webSocketSendQueueSize), playerID: credential.PlayerID, roomID: credential.RoomID,
-		connectionID: connectionUUID.String(), resumeToken: payload.ResumeToken, pings: make(map[string]struct{}),
+		connectionID: connectionUUID.String(), resumeToken: payload.ResumeToken,
+		presenceEnabled: supportsPlayerPresence(payload.Capabilities), pings: make(map[string]struct{}),
 	}
 	if !hub.registerWithInitial(connection) {
 		connection.close()
@@ -221,9 +230,13 @@ func (hub *Hub) registerWithInitial(connection *hubConnection) bool {
 		hub.mu.Unlock()
 		return false
 	}
-	connected, err := boundEnvelope(snapshot.GameID, snapshot.RoomID, snapshot.Revision, protocol.TypePlatformConnected, "", connectedPayload{
+	connectedData := connectedPayload{
 		UserID: connection.playerID, ConnectionID: connection.connectionID, ResumeToken: connection.resumeToken, ResumeExpiresAt: nonExpiringLANResumeMS,
-	})
+	}
+	if connection.presenceEnabled {
+		connectedData.Players = hub.playerPresencesLocked(snapshot, connection.playerID)
+	}
+	connected, err := boundEnvelope(snapshot.GameID, snapshot.RoomID, snapshot.Revision, protocol.TypePlatformConnected, "", connectedData)
 	if err != nil {
 		hub.mu.Unlock()
 		return false
@@ -246,6 +259,7 @@ func (hub *Hub) registerWithInitial(connection *hubConnection) bool {
 	}
 	connection.revision.Store(snapshot.Revision)
 	previous := make([]*hubConnection, 0, 1)
+	wasOnline := hub.playerOnlineLocked(connection.playerID)
 	for existing := range hub.connections {
 		if existing.playerID == connection.playerID {
 			previous = append(previous, existing)
@@ -254,11 +268,52 @@ func (hub *Hub) registerWithInitial(connection *hubConnection) bool {
 	hub.wait.Add(2)
 	delete(hub.pendingTransports, connection.transport)
 	hub.connections[connection] = struct{}{}
+	slow := make([]*hubConnection, 0)
+	// The new connection already receives the complete state in its
+	// platform.connected payload. Existing capable peers need only the
+	// zero-to-one boundary.
+	if !wasOnline {
+		presence, presenceErr := presenceEnvelope(snapshot.GameID, snapshot.RoomID, snapshot.Revision, connection.playerID, true)
+		if presenceErr == nil {
+			for existing := range hub.connections {
+				if existing != connection && existing.presenceEnabled && !existing.enqueuePresence(presence) {
+					slow = append(slow, existing)
+				}
+			}
+		}
+	}
 	hub.mu.Unlock()
 	for _, old := range previous {
 		old.close()
 	}
+	for _, connection := range slow {
+		connection.close()
+	}
 	return true
+}
+
+func supportsPlayerPresence(capabilities []string) bool {
+	return len(capabilities) == 1 && capabilities[0] == protocol.CapabilityPlayerPresence
+}
+
+func (hub *Hub) playerOnlineLocked(playerID string) bool {
+	for connection := range hub.connections {
+		if connection.playerID == playerID {
+			return true
+		}
+	}
+	return false
+}
+
+func (hub *Hub) playerPresencesLocked(snapshot room.Snapshot, connectingPlayerID string) []playerPresencePayload {
+	players := make([]playerPresencePayload, 0, len(snapshot.Players))
+	for _, player := range snapshot.Players {
+		players = append(players, playerPresencePayload{
+			UserID: player.PlayerID,
+			Online: player.PlayerID == connectingPlayerID || hub.playerOnlineLocked(player.PlayerID),
+		})
+	}
+	return players
 }
 
 func (hub *Hub) publish(event room.Event) {
@@ -551,6 +606,12 @@ func (connection *hubConnection) enqueue(data []byte) bool {
 	}
 }
 
+func (connection *hubConnection) enqueuePresence(data []byte) bool {
+	connection.outboundMu.Lock()
+	defer connection.outboundMu.Unlock()
+	return connection.enqueue(data)
+}
+
 func (connection *hubConnection) rememberPing(nonce string) {
 	connection.pingMu.Lock()
 	defer connection.pingMu.Unlock()
@@ -573,10 +634,26 @@ func (connection *hubConnection) consumePing(nonce string) bool {
 func (connection *hubConnection) close() {
 	connection.closeOnce.Do(func() {
 		connection.cancel()
+		snapshot := connection.hub.service.Snapshot()
+		var slow []*hubConnection
 		connection.hub.mu.Lock()
+		_, registered := connection.hub.connections[connection]
 		delete(connection.hub.connections, connection)
+		if registered && !connection.hub.closed && !connection.hub.playerOnlineLocked(connection.playerID) {
+			presence, err := presenceEnvelope(snapshot.GameID, snapshot.RoomID, snapshot.Revision, connection.playerID, false)
+			if err == nil {
+				for existing := range connection.hub.connections {
+					if existing.presenceEnabled && !existing.enqueuePresence(presence) {
+						slow = append(slow, existing)
+					}
+				}
+			}
+		}
 		connection.hub.mu.Unlock()
 		_ = connection.transport.CloseNow()
+		for _, slowConnection := range slow {
+			slowConnection.close()
+		}
 	})
 }
 
@@ -621,6 +698,10 @@ func resultEnvelope(roomID string, revision int64, encoded []byte) ([]byte, erro
 
 func errorEnvelope(roomID string, revision int64, code, actionID string) ([]byte, error) {
 	return boundEnvelope(gomoku.GameID, roomID, revision, protocol.TypePlatformError, actionID, protocolErrorPayload{Code: code, Message: fixedProtocolErrorMessage(code), Details: map[string]any{}})
+}
+
+func presenceEnvelope(gameID, roomID string, revision int64, userID string, online bool) ([]byte, error) {
+	return boundEnvelope(gameID, roomID, revision, protocol.TypePlatformPresenceChanged, "", playerPresencePayload{UserID: userID, Online: online})
 }
 
 func boundEnvelope(gameID, roomID string, revision int64, messageType, actionID string, payload any) ([]byte, error) {
