@@ -165,14 +165,34 @@ static func _scene_contract() -> bool:
 		and scissors.has_node("Content/Icon") and paper.has_node("Content/Icon")
 	passed = _check(image_nodes_present, "each choice must render an image") and passed
 	if image_nodes_present:
-		var neutral_modulate := rock.modulate
+		var rock_modulate := rock.modulate
+		var scissors_modulate := scissors.modulate
+		var paper_modulate := paper.modulate
 		scene.call("_refresh_choice_visuals")
 		passed = _check(rock.get_node("Content/Icon").texture != null, "rock image must load") \
 			and _check(scissors.get_node("Content/Icon").texture != null, "scissors image must load") \
 			and _check(paper.get_node("Content/Icon").texture != null, "paper image must load") \
-			and _check(rock.modulate == neutral_modulate, "choice modulation must preserve authored image and text colors") \
-			and _check(scissors.modulate == neutral_modulate, "choice modulation must preserve authored image and text colors") \
-			and _check(paper.modulate == neutral_modulate, "choice modulation must preserve authored image and text colors") \
+			and _check(rock.modulate == rock_modulate, "neutral rock must preserve its authored modulation") \
+			and _check(scissors.modulate == scissors_modulate, "neutral scissors must preserve its authored modulation") \
+			and _check(paper.modulate == paper_modulate, "neutral paper must preserve its authored modulation") \
+			and passed
+		var selected_state := RpsState.new(MATCH_ID)
+		var selected_state_ready: bool = selected_state.apply_snapshot(_snapshot(0, "single_round", 1, {
+			"userId": ME, "score": 0, "locked": false,
+		}, {
+			"userId": OPPONENT, "score": 0, "locked": false,
+		})).get("ok", false) and selected_state.mark_pending_choice(ACTION_ID, "scissors", ME)
+		scene.set("_state", selected_state)
+		scene.call("_refresh_choice_visuals")
+		var faded_alpha := 1.0 - float(GameboxTokens.GAME["pending_overlay_alpha"])
+		var faded_rock := rock_modulate
+		var faded_paper := paper_modulate
+		faded_rock.a = faded_alpha
+		faded_paper.a = faded_alpha
+		passed = _check(selected_state_ready, "expected pending scissors state") \
+			and _check(scissors.modulate == scissors_modulate, "selected scissors must preserve its authored modulation") \
+			and _check(rock.modulate == faded_rock, "unselected rock must preserve RGB and use the pending alpha") \
+			and _check(paper.modulate == faded_paper, "unselected paper must preserve RGB and use the pending alpha") \
 			and passed
 	scene.free()
 	return passed
