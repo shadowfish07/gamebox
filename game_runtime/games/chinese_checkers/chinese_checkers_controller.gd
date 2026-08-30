@@ -424,12 +424,16 @@ func _status_text() -> String:
 
 
 func _turn_chip_text() -> String:
+	if _state.status in TERMINAL_STATUSES:
+		return "对局结束"
 	if not _state.pending_action.is_empty():
 		return "确认中"
 	return "你的回合" if _local_color() == _state.next_color else "对手回合"
 
 
 func _hint_text() -> String:
+	if _state.status in TERMINAL_STATUSES:
+		return "对局已结束，结果已由服务器确认"
 	if _awaiting_snapshot or _connection_state != "connected":
 		return "棋盘会保留，恢复同步后继续"
 	if not _state.pending_action.is_empty():

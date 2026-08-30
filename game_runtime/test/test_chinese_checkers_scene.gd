@@ -90,6 +90,8 @@ static func _presents_authoritative_result() -> bool:
 	client.accept_snapshot(_snapshot(2, "finished", "white", "resignation", BLACK_ID))
 	var result := _check(scene.get_node("ResultPanel").visible, "terminal result panel is hidden") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "对手已认输", "authoritative result copy changed") \
+		and _check((scene.get_node("PlayerStrip/Content/Turn") as Label).text == "对局结束", "terminal turn chip retained an active-turn label") \
+		and _check((scene.get_node("HintLabel") as Label).text == "对局已结束，结果已由服务器确认", "terminal hint retained active-play copy") \
 		and _check(scene.get_node("Board").mouse_filter == Control.MOUSE_FILTER_IGNORE, "terminal board accepts input")
 	return _cleanup(scene, result)
 
