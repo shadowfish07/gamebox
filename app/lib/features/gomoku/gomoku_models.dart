@@ -1,6 +1,7 @@
 import '../../core/api/strict_json.dart';
 
 const gomokuGameId = 'gomoku';
+const chineseCheckersGameId = 'chinese_checkers';
 
 enum GomokuColor { black, white }
 
@@ -152,17 +153,20 @@ final class GomokuOpponent {
 final class CreatedGomokuMatch {
   const CreatedGomokuMatch({required this.id, required this.gameId});
 
-  factory CreatedGomokuMatch.fromEnvelope(Map<String, Object?> envelope) {
+  factory CreatedGomokuMatch.fromEnvelope(
+    Map<String, Object?> envelope, {
+    String expectedGameId = gomokuGameId,
+  }) {
     if (!hasExactJsonKeys(envelope, const {'match'})) {
       throw const FormatException('Invalid created match');
     }
     final match = _object(envelope['match']);
     if (!hasExactJsonKeys(match, const {'id', 'gameId', 'state'}) ||
-        match['gameId'] != gomokuGameId ||
+        match['gameId'] != expectedGameId ||
         match['state'] != 'active') {
       throw const FormatException('Invalid created match');
     }
-    return CreatedGomokuMatch(id: _uuid(match['id']), gameId: gomokuGameId);
+    return CreatedGomokuMatch(id: _uuid(match['id']), gameId: expectedGameId);
   }
 
   final String id;
@@ -177,7 +181,10 @@ final class GomokuLaunchTicket {
     required this.expiresAt,
   });
 
-  factory GomokuLaunchTicket.fromEnvelope(Map<String, Object?> envelope) {
+  factory GomokuLaunchTicket.fromEnvelope(
+    Map<String, Object?> envelope, {
+    String expectedGameId = gomokuGameId,
+  }) {
     if (!hasExactJsonKeys(envelope, const {
       'matchId',
       'gameId',
@@ -189,7 +196,7 @@ final class GomokuLaunchTicket {
     final gameId = envelope['gameId'];
     final credential = envelope['launchTicket'];
     final timestamp = envelope['expiresAt'];
-    if (gameId != gomokuGameId ||
+    if (gameId != expectedGameId ||
         credential is! String ||
         !isValidGameboxCredential(credential) ||
         timestamp is! int ||
@@ -204,7 +211,7 @@ final class GomokuLaunchTicket {
     }
     return GomokuLaunchTicket(
       matchId: _uuid(envelope['matchId']),
-      gameId: gomokuGameId,
+      gameId: expectedGameId,
       launchTicket: credential,
       expiresAt: expiresAt,
     );

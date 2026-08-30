@@ -16,6 +16,7 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -1098,6 +1100,37 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	var result, winner *string
 	terminal := false
 	switch request.Type {
+	case chinesecheckers.MoveRequested:
+		acceptedMoves := current.Game.Revision
+		expectedColor := ColorBlack
+		if acceptedMoves%2 == 1 {
+			expectedColor = ColorWhite
+		}
+		if actor.Color != expectedColor {
+			return Event{}, Snapshot{}, chinesecheckers.ErrNotYourTurn
+		}
+		produced, producedSnapshot, applyErr := rules.Apply(current.Game, request.ActorUserID, games.Action{
+			Type: request.Type, Payload: append(json.RawMessage(nil), request.Payload...),
+		})
+		if applyErr != nil {
+			return Event{}, Snapshot{}, safeActionRuleError(applyErr)
+		}
+		if validateErr := validateProducedChineseCheckersMove(produced, producedSnapshot, request, semantics, actor.Color, nextRevision); validateErr != nil {
+			return Event{}, Snapshot{}, validateErr
+		}
+		gameEvent, nextGame = produced, producedSnapshot
+		outcome, outcomeErr := readGameStateSummary(nextGame)
+		if outcomeErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		if outcome.Status == StatusFinished {
+			if outcome.Result == nil || *outcome.Result != ResultGoal || outcome.WinnerUserID == nil || *outcome.WinnerUserID != request.ActorUserID {
+				return Event{}, Snapshot{}, ErrInternal
+			}
+			terminal = true
+			result = cloneStringPointer(outcome.Result)
+			winner = cloneStringPointer(outcome.WinnerUserID)
+		}
 	case gomoku.MoveRequested:
 		acceptedMoves := current.Game.Revision
 		expectedColor := ColorBlack
@@ -1170,6 +1203,26 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		gameEvent = games.Event{
 			Revision: nextRevision,
 			Type:     protocol.TypeGomokuResigned,
+			ActorID:  actor.UserID,
+			Payload:  append(json.RawMessage(nil), payload...),
+		}
+		nextGame = cloneGameSnapshot(current.Game)
+		resultValue := ResultResignation
+		result = &resultValue
+		winner = &winnerID
+		terminal = true
+	case protocol.TypeChineseCheckersResignRequested:
+		if current.Game.Revision == 0 {
+			return Event{}, Snapshot{}, ErrInvalidRequest
+		}
+		winnerID := opponent.UserID
+		payload, marshalErr := json.Marshal(resignedPayload{UserID: actor.UserID, WinnerUserID: winnerID})
+		if marshalErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		gameEvent = games.Event{
+			Revision: nextRevision,
+			Type:     protocol.TypeChineseCheckersResigned,
 			ActorID:  actor.UserID,
 			Payload:  append(json.RawMessage(nil), payload...),
 		}
@@ -1582,6 +1635,7 @@ type actionSemantics struct {
 	x      int
 	y      int
 	choice string
+	path   []int
 }
 
 type resignedPayload struct {
@@ -1603,6 +1657,18 @@ func validateActionRequest(ctx context.Context, request ActionRequest) (actionSe
 		return actionSemantics{}, ErrInvalidRequest
 	}
 	switch request.Type {
+	case chinesecheckers.MoveRequested:
+		path, err := decodeChineseCheckersMoveRequest(request.Payload)
+		if err != nil {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		return actionSemantics{path: path}, nil
+	case protocol.TypeChineseCheckersResignRequested:
+		fields, err := strictJSONObject(request.Payload, map[string]struct{}{})
+		if err != nil || len(fields) != 0 {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		return actionSemantics{}, nil
 	case gomoku.MoveRequested:
 		x, y, err := decodeMoveRequest(request.Payload)
 		if err != nil {
@@ -1655,6 +1721,45 @@ func decodeMoveRequest(payload json.RawMessage) (int, int, error) {
 		return 0, 0, ErrInvalidRequest
 	}
 	return x, y, nil
+}
+
+func decodeChineseCheckersMoveRequest(payload json.RawMessage) ([]int, error) {
+	fields, err := strictJSONObject(payload, map[string]struct{}{"path": {}})
+	if err != nil || len(fields) != 1 {
+		return nil, ErrInvalidRequest
+	}
+	decoder := json.NewDecoder(bytes.NewReader(fields["path"]))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('[') {
+		return nil, ErrInvalidRequest
+	}
+	path := make([]int, 0, 8)
+	seen := make(map[int]struct{}, 8)
+	for decoder.More() {
+		if len(path) >= chinesecheckers.BoardCells {
+			return nil, ErrInvalidRequest
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, ErrInvalidRequest
+		}
+		value, err := strictJSONInteger(raw)
+		if err != nil || value < 0 || value >= chinesecheckers.BoardCells {
+			return nil, ErrInvalidRequest
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return nil, ErrInvalidRequest
+		}
+		seen[value] = struct{}{}
+		path = append(path, value)
+	}
+	if closing, err := decoder.Token(); err != nil || closing != json.Delim(']') || len(path) < 2 {
+		return nil, ErrInvalidRequest
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, ErrInvalidRequest
+	}
+	return path, nil
 }
 
 func strictJSONObject(payload json.RawMessage, allowed map[string]struct{}) (map[string]json.RawMessage, error) {
@@ -1803,6 +1908,9 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 	if match.GameID == rps.GameID {
 		return service.rebuildRpsSnapshot(ctx, transaction, match, players, rules, events)
 	}
+	if match.GameID == chinesecheckers.GameID {
+		return service.rebuildChineseCheckersSnapshot(ctx, transaction, match, players, rules, events)
+	}
 	if match.GameID != gomoku.GameID {
 		return Snapshot{}, ErrInternal
 	}
@@ -1837,6 +1945,103 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 				Payload: append(json.RawMessage(nil), event.Payload...),
 			})
 		case protocol.TypeGomokuResigned:
+			if index != len(events)-1 || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
+				return Snapshot{}, ErrInternal
+			}
+			actor, opponent, member := actionPlayers(players, *event.ActorUserID)
+			resigned, decodeErr := decodeResignedPayload(event.Payload)
+			if !member || decodeErr != nil || resigned.UserID != actor.UserID || resigned.WinnerUserID != opponent.UserID {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		case protocol.TypePlatformMatchCancelled:
+			if index != len(events)-1 || len(accepted) != 0 || event.ActionID != nil || event.ActorUserID == nil || !playerMember(players, *event.ActorUserID) || !isStrictEmptyObject(event.Payload) {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		case protocol.TypePlatformMatchAbandoned:
+			if index != len(events)-1 || event.ActionID != nil || event.ActorUserID != nil || !isStrictEmptyObject(event.Payload) {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		default:
+			return Snapshot{}, ErrInternal
+		}
+	}
+	gameSnapshot, rebuildErr := rules.Rebuild(accepted)
+	if rebuildErr != nil || gameSnapshot.Revision != int64(len(accepted)) {
+		return Snapshot{}, ErrInternal
+	}
+	summary, summaryErr := readGameStateSummary(gameSnapshot)
+	if summaryErr != nil {
+		return Snapshot{}, ErrInternal
+	}
+	if len(accepted) == 0 {
+		if summary.BlackUserID != nil || summary.WhiteUserID != nil || summary.NextColor != string(ColorBlack) {
+			return Snapshot{}, ErrInternal
+		}
+	} else {
+		if summary.BlackUserID == nil || *summary.BlackUserID != black.UserID {
+			return Snapshot{}, ErrInternal
+		}
+		if len(accepted) >= 2 {
+			if summary.WhiteUserID == nil || *summary.WhiteUserID != white.UserID {
+				return Snapshot{}, ErrInternal
+			}
+		} else if summary.WhiteUserID != nil {
+			return Snapshot{}, ErrInternal
+		}
+		wantNext := string(ColorBlack)
+		if len(accepted)%2 == 1 {
+			wantNext = string(ColorWhite)
+		}
+		if summary.NextColor != wantNext {
+			return Snapshot{}, ErrInternal
+		}
+	}
+	if lifecycleErr := validateLifecycle(match, summary, terminalType, players, events); lifecycleErr != nil {
+		return Snapshot{}, lifecycleErr
+	}
+	playerIDs := [2]string{players[0].UserID, players[1].UserID}
+	expectActiveSlots := match.Status == StatusActive && singleActiveMatch(rules)
+	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction, match.GameID, match.ID, playerIDs, expectActiveSlots); slotsErr != nil {
+		return Snapshot{}, slotsErr
+	}
+	return cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: gameSnapshot}), nil
+}
+
+func (service *Service) rebuildChineseCheckersSnapshot(ctx context.Context, transaction *sql.Tx, match Match, players []Player, rules games.Rules, events []Event) (Snapshot, error) {
+	black, white, ok := coloredPlayers(players)
+	if !ok {
+		return Snapshot{}, ErrInternal
+	}
+	accepted := make([]games.Event, 0, len(events))
+	terminalType := ""
+	for index, event := range events {
+		if event.Revision != int64(index+1) || event.MatchID != match.ID {
+			return Snapshot{}, ErrInternal
+		}
+		switch event.Type {
+		case chinesecheckers.MoveAccepted:
+			if terminalType != "" || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
+				return Snapshot{}, ErrInternal
+			}
+			move, decodeErr := decodeAcceptedChineseCheckersMove(event.Payload)
+			if decodeErr != nil || move.userID != *event.ActorUserID {
+				return Snapshot{}, ErrInternal
+			}
+			expected := black
+			if len(accepted)%2 == 1 {
+				expected = white
+			}
+			if expected.UserID != *event.ActorUserID || string(expected.Color) != move.color {
+				return Snapshot{}, ErrInternal
+			}
+			accepted = append(accepted, games.Event{
+				Revision: event.Revision, Type: event.Type, ActorID: *event.ActorUserID,
+				Payload: append(json.RawMessage(nil), event.Payload...),
+			})
+		case protocol.TypeChineseCheckersResigned:
 			if index != len(events)-1 || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
 				return Snapshot{}, ErrInternal
 			}
@@ -2013,12 +2218,21 @@ func validateLifecycle(match Match, game gameStateSummary, terminalType string, 
 				match.WinnerUserID == nil || game.WinnerUserID == nil || *match.WinnerUserID != *game.WinnerUserID || !playerMember(players, *match.WinnerUserID) {
 				return ErrInternal
 			}
+		case ResultGoal:
+			if match.GameID != chinesecheckers.GameID || terminalType != "" || game.Status != StatusFinished || game.Result == nil || *game.Result != ResultGoal ||
+				match.WinnerUserID == nil || game.WinnerUserID == nil || *match.WinnerUserID != *game.WinnerUserID || !playerMember(players, *match.WinnerUserID) {
+				return ErrInternal
+			}
 		case ResultDraw:
 			if terminalType != "" || game.Status != StatusFinished || game.Result == nil || *game.Result != ResultDraw || match.WinnerUserID != nil || game.WinnerUserID != nil {
 				return ErrInternal
 			}
 		case ResultResignation:
-			if terminalType != protocol.TypeGomokuResigned || game.Status != StatusActive || game.Result != nil || game.WinnerUserID != nil || match.WinnerUserID == nil || !playerMember(players, *match.WinnerUserID) || len(events) == 0 {
+			expectedTerminal := protocol.TypeGomokuResigned
+			if match.GameID == chinesecheckers.GameID {
+				expectedTerminal = protocol.TypeChineseCheckersResigned
+			}
+			if terminalType != expectedTerminal || game.Status != StatusActive || game.Result != nil || game.WinnerUserID != nil || match.WinnerUserID == nil || !playerMember(players, *match.WinnerUserID) || len(events) == 0 {
 				return ErrInternal
 			}
 			last := events[len(events)-1]
@@ -2115,6 +2329,29 @@ func committedActionMatches(event Event, request ActionRequest, semantics action
 		return false, ErrInternal
 	}
 	switch request.Type {
+	case chinesecheckers.MoveRequested:
+		if event.Type != chinesecheckers.MoveAccepted {
+			return false, nil
+		}
+		move, err := decodeAcceptedChineseCheckersMove(event.Payload)
+		if err != nil || move.userID != request.ActorUserID {
+			return false, ErrInternal
+		}
+		actor, _, member := actionPlayers(players, request.ActorUserID)
+		if !member || move.color != string(actor.Color) {
+			return false, ErrInternal
+		}
+		return slices.Equal(move.path, semantics.path), nil
+	case protocol.TypeChineseCheckersResignRequested:
+		if event.Type != protocol.TypeChineseCheckersResigned {
+			return false, nil
+		}
+		payload, err := decodeResignedPayload(event.Payload)
+		actor, opponent, member := actionPlayers(players, request.ActorUserID)
+		if err != nil || !member || payload.UserID != actor.UserID || payload.WinnerUserID != opponent.UserID {
+			return false, ErrInternal
+		}
+		return true, nil
 	case gomoku.MoveRequested:
 		if event.Type != gomoku.MoveAccepted {
 			return false, nil
@@ -2177,6 +2414,35 @@ type acceptedMove struct {
 	userID string
 }
 
+type acceptedChineseCheckersMove struct {
+	path   []int
+	color  string
+	userID string
+}
+
+func decodeAcceptedChineseCheckersMove(payload json.RawMessage) (acceptedChineseCheckersMove, error) {
+	fields, err := strictJSONObject(payload, map[string]struct{}{"path": {}, "color": {}, "userId": {}})
+	if err != nil || len(fields) != 3 {
+		return acceptedChineseCheckersMove{}, ErrInternal
+	}
+	pathPayload, err := json.Marshal(struct {
+		Path json.RawMessage `json:"path"`
+	}{Path: fields["path"]})
+	if err != nil {
+		return acceptedChineseCheckersMove{}, ErrInternal
+	}
+	path, err := decodeChineseCheckersMoveRequest(pathPayload)
+	if err != nil {
+		return acceptedChineseCheckersMove{}, ErrInternal
+	}
+	var color, userID string
+	if json.Unmarshal(fields["color"], &color) != nil || json.Unmarshal(fields["userId"], &userID) != nil ||
+		(color != string(ColorBlack) && color != string(ColorWhite)) || !validIdentifier(userID) {
+		return acceptedChineseCheckersMove{}, ErrInternal
+	}
+	return acceptedChineseCheckersMove{path: path, color: color, userID: userID}, nil
+}
+
 func decodeAcceptedMove(payload json.RawMessage) (acceptedMove, error) {
 	fields, err := strictJSONObject(payload, map[string]struct{}{"x": {}, "y": {}, "color": {}, "userId": {}})
 	if err != nil || len(fields) != 4 {
@@ -2217,6 +2483,17 @@ func validateProducedMove(event games.Event, snapshot games.Snapshot, request Ac
 	}
 	move, err := decodeAcceptedMove(event.Payload)
 	if err != nil || move.x != semantics.x || move.y != semantics.y || move.color != string(color) || move.userID != request.ActorUserID {
+		return ErrInternal
+	}
+	return nil
+}
+
+func validateProducedChineseCheckersMove(event games.Event, snapshot games.Snapshot, request ActionRequest, semantics actionSemantics, color Color, revision int64) error {
+	if event.Revision != revision || snapshot.Revision != revision || event.Type != chinesecheckers.MoveAccepted || event.ActorID != request.ActorUserID {
+		return ErrInternal
+	}
+	move, err := decodeAcceptedChineseCheckersMove(event.Payload)
+	if err != nil || !slices.Equal(move.path, semantics.path) || move.color != string(color) || move.userID != request.ActorUserID {
 		return ErrInternal
 	}
 	return nil
@@ -2295,6 +2572,10 @@ func validateProducedChoice(event games.Event, snapshot games.Snapshot, request 
 
 func safeActionRuleError(err error) error {
 	switch {
+	case errors.Is(err, chinesecheckers.ErrNotYourTurn):
+		return chinesecheckers.ErrNotYourTurn
+	case errors.Is(err, chinesecheckers.ErrInvalidPath):
+		return chinesecheckers.ErrInvalidPath
 	case errors.Is(err, gomoku.ErrNotYourTurn):
 		return gomoku.ErrNotYourTurn
 	case errors.Is(err, gomoku.ErrCellOccupied):

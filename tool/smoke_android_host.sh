@@ -217,6 +217,8 @@ for required_asset in \
   assets/main.tscn \
   assets/core/launch_config.gd \
   assets/core/game_registry.gd \
+	assets/games/chinese_checkers/chinese_checkers_controller.gd \
+	assets/games/chinese_checkers/chinese_checkers_scene.tscn \
   assets/games/gomoku/gomoku_controller.gd \
   assets/games/gomoku/gomoku_scene.tscn; do
   unzip -Z1 "$APK" | grep -Fx "$required_asset" >/dev/null \

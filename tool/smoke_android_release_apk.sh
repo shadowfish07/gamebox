@@ -142,6 +142,7 @@ for required_asset in \
   assets/main.gd \
   assets/main.tscn \
   assets/core/launch_config.gd \
+	assets/games/chinese_checkers/chinese_checkers_scene.tscn \
   assets/games/gomoku/gomoku_scene.tscn; do
   grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {
     echo "Release APK is missing runtime asset $required_asset" >&2

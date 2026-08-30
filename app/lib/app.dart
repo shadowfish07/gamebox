@@ -12,6 +12,7 @@ import 'design_system/gamebox_theme.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
+import 'features/gomoku/gomoku_models.dart';
 import 'features/gomoku/gomoku_repository.dart';
 import 'features/history/match_history_api.dart';
 import 'features/home/home_api.dart';
@@ -29,6 +30,7 @@ class GameboxApp extends StatefulWidget {
     this.homeController,
     this.matchHistoryApi,
     this.rpsController,
+    this.chineseCheckersController,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
@@ -43,6 +45,7 @@ class GameboxApp extends StatefulWidget {
   final HomeController? homeController;
   final MatchHistoryApi? matchHistoryApi;
   final RpsController? rpsController;
+  final HomeController? chineseCheckersController;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -57,9 +60,11 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   SessionController? _sessionController;
   ApiClient? _ownedApiClient;
   HomeController? _homeController;
+  HomeController? _chineseCheckersController;
   RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
+  var _ownsChineseCheckersController = false;
   var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
 
@@ -117,6 +122,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       } else if (_homeControllerAuthenticated) {
         _rpsController?.pauseForeground();
       }
+      if (_ownsChineseCheckersController) {
+        _chineseCheckersController?.dispose();
+        _chineseCheckersController = null;
+        _ownsChineseCheckersController = false;
+      } else if (_homeControllerAuthenticated) {
+        _chineseCheckersController?.pauseForeground();
+      }
       _homeControllerAuthenticated = false;
       return;
     }
@@ -157,10 +169,36 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsRpsController = true;
       }
     }
+    if (_chineseCheckersController == null &&
+        (widget.chineseCheckersController != null ||
+            widget.homeController == null)) {
+      final injected = widget.chineseCheckersController;
+      if (injected != null) {
+        _chineseCheckersController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _chineseCheckersController = HomeController(
+          repository: GomokuRepository(
+            api: HttpHomeApi(
+              apiClient,
+              sessionController,
+              gameId: chineseCheckersGameId,
+            ),
+            gameLauncher: widget.gameLauncher,
+            gameId: chineseCheckersGameId,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsChineseCheckersController = true;
+      }
+    }
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
+    _chineseCheckersController?.resumeForeground();
   }
 
   @override
@@ -170,6 +208,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     } else {
       _homeController?.pauseForeground();
       _rpsController?.pauseForeground();
+      _chineseCheckersController?.pauseForeground();
     }
   }
 
@@ -183,6 +222,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _syncHomeController();
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
+    _chineseCheckersController?.resumeForeground();
   }
 
   @override
@@ -202,8 +242,12 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsRpsController) {
       _rpsController?.dispose();
     }
+    if (_ownsChineseCheckersController) {
+      _chineseCheckersController?.dispose();
+    }
     _homeController = null;
     _rpsController = null;
+    _chineseCheckersController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     widget.updateController?.dispose();
@@ -346,6 +390,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       nickname: session.user.nickname,
       historyApi: historyApi,
       rpsController: _rpsController,
+      chineseCheckersController: _chineseCheckersController,
       updateController: widget.updateController,
     );
   }

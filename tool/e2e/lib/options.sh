@@ -20,6 +20,7 @@ gamebox_e2e_list_scenarios() {
   cat <<'EOF'
 full                 All cross-runtime scenarios (release-level gate)
 flutter-host         Flutter registration/update integration on the packaged app
+chinese-checkers-network Chinese Checkers direct paths, authority, and recovery
 gomoku-network       Gomoku bridge, authority, lifecycle, and recovery
 rps-network          RPS sealed-choice, reconnect, authority, and completion
 EOF
@@ -78,7 +79,7 @@ gamebox_e2e_parse_options() {
   local scenario
   for scenario in "${GAMEBOX_E2E_SCENARIOS[@]}"; do
     case "$scenario" in
-      full|flutter-host|gomoku-network|rps-network) ;;
+      full|flutter-host|chinese-checkers-network|gomoku-network|rps-network) ;;
       '') printf '%s\n' 'scenario name must not be empty' >&2; return 2 ;;
       *) printf 'unknown E2E scenario: %s\n' "$scenario" >&2; return 2 ;;
     esac

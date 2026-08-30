@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/clock"
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -147,6 +148,16 @@ type gomokuSnapshotPayload struct {
 	NextColor    string                                     `json:"nextColor"`
 	WinnerUserID *string                                    `json:"winnerUserId"`
 	Result       *string                                    `json:"result"`
+}
+
+type chineseCheckersSnapshotPayload struct {
+	Status       string                            `json:"status"`
+	Board        [chinesecheckers.BoardCells]uint8 `json:"board"`
+	BlackUserID  *string                           `json:"blackUserId"`
+	WhiteUserID  *string                           `json:"whiteUserId"`
+	NextColor    string                            `json:"nextColor"`
+	WinnerUserID *string                           `json:"winnerUserId"`
+	Result       *string                           `json:"result"`
 }
 
 type rpsPlayerSnapshot struct {
@@ -870,7 +881,7 @@ func (connection *hubConnection) readLoop() {
 				continue
 			}
 			connection.sendLatestSnapshot()
-		case protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
+		case protocol.TypeChineseCheckersMoveRequested, protocol.TypeChineseCheckersResignRequested, protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
 			connection.applyAction(envelope)
 		default:
 			connection.enqueueError("invalid_request", envelope.ActionID)
@@ -1045,6 +1056,21 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 		}
 		return rpsSnapshotEnvelope(snapshot, viewerIDs[0])
 	}
+	if snapshot.Match.GameID == chinesecheckers.GameID {
+		var payload chineseCheckersSnapshotPayload
+		if json.Unmarshal(snapshot.Game.State, &payload) != nil || len(snapshot.Players) != 2 {
+			return nil, ErrInternal
+		}
+		blackID, whiteID, err := snapshotPlayerIDs(snapshot.Players)
+		if err != nil {
+			return nil, err
+		}
+		payload.BlackUserID, payload.WhiteUserID = &blackID, &whiteID
+		payload.Status = snapshot.Match.Status
+		payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
+		payload.Result = cloneStringPointer(snapshot.Match.Result)
+		return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+	}
 	if snapshot.Match.GameID != gomoku.GameID {
 		return nil, ErrInternal
 	}
@@ -1071,6 +1097,27 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 	payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
 	payload.Result = cloneStringPointer(snapshot.Match.Result)
 	return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+}
+
+func snapshotPlayerIDs(players []Player) (string, string, error) {
+	if len(players) != 2 {
+		return "", "", ErrInternal
+	}
+	var blackID, whiteID string
+	for _, player := range players {
+		switch player.Color {
+		case ColorBlack:
+			blackID = player.UserID
+		case ColorWhite:
+			whiteID = player.UserID
+		default:
+			return "", "", ErrInternal
+		}
+	}
+	if blackID == "" || whiteID == "" {
+		return "", "", ErrInternal
+	}
+	return blackID, whiteID, nil
 }
 
 func snapshotEnvelopesByUser(snapshot Snapshot) (map[string][]byte, error) {
@@ -1178,6 +1225,10 @@ func safeActionErrorCode(err error) string {
 		return "not_your_turn"
 	case errors.Is(err, gomoku.ErrCellOccupied):
 		return "cell_occupied"
+	case errors.Is(err, chinesecheckers.ErrNotYourTurn):
+		return "not_your_turn"
+	case errors.Is(err, chinesecheckers.ErrInvalidPath):
+		return "invalid_move"
 	case errors.Is(err, rps.ErrChoiceLocked):
 		return "choice_locked"
 	case errors.Is(err, ErrInvalidRequest):
@@ -1203,6 +1254,8 @@ func fixedErrorMessage(code string) string {
 		return "It is not your turn"
 	case "cell_occupied":
 		return "The board cell is occupied"
+	case "invalid_move":
+		return "The move path is invalid"
 	case "choice_locked":
 		return "Your choice is already locked"
 	case "match_not_found":

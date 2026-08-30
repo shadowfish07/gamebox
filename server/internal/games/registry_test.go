@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -27,14 +28,15 @@ func (fakeRules) Apply(Snapshot, string, Action) (Event, Snapshot, error) {
 func TestDefaultRegistryContainsBuiltInGamesAndModuleMetadata(t *testing.T) {
 	registry := NewRegistry()
 	descriptors := registry.Descriptors()
-	if len(descriptors) != 2 {
-		t.Fatalf("descriptor count = %d, want 2", len(descriptors))
+	if len(descriptors) != 3 {
+		t.Fatalf("descriptor count = %d, want 3", len(descriptors))
 	}
 	want := []Descriptor{
+		{GameID: "chinese_checkers", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 		{GameID: "gomoku", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 		{GameID: "rps", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 	}
-	if descriptors[0] != want[0] || descriptors[1] != want[1] {
+	if !reflect.DeepEqual(descriptors, want) {
 		t.Fatalf("descriptors = %#v, want %#v", descriptors, want)
 	}
 	rules, ok := registry.Lookup("gomoku")
@@ -89,7 +91,7 @@ func TestRegistryUnknownLookupAndDescriptorDefensiveCopy(t *testing.T) {
 	first := registry.Descriptors()
 	first[0] = Descriptor{GameID: "mutated"}
 	second := registry.Descriptors()
-	if len(second) != 2 || second[0].GameID != "gomoku" || second[1].GameID != "rps" {
+	if len(second) != 3 || second[0].GameID != "chinese_checkers" || second[1].GameID != "gomoku" || second[2].GameID != "rps" {
 		t.Fatalf("registry descriptors were mutable: %#v", second)
 	}
 }
@@ -109,7 +111,7 @@ func TestRegistrySupportsConcurrentReads(t *testing.T) {
 					errorsCh <- fmt.Errorf("lookup failed")
 					return
 				}
-				if descriptors := registry.Descriptors(); len(descriptors) != 2 || descriptors[0].GameID != "gomoku" || descriptors[1].GameID != "rps" {
+				if descriptors := registry.Descriptors(); len(descriptors) != 3 || descriptors[0].GameID != "chinese_checkers" || descriptors[1].GameID != "gomoku" || descriptors[2].GameID != "rps" {
 					errorsCh <- fmt.Errorf("descriptors changed")
 					return
 				}

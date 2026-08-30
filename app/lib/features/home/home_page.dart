@@ -26,6 +26,7 @@ final class HomePage extends StatefulWidget {
     required this.nickname,
     required this.historyApi,
     this.rpsController,
+    this.chineseCheckersController,
     this.updateController,
   });
 
@@ -34,6 +35,7 @@ final class HomePage extends StatefulWidget {
   final String nickname;
   final MatchHistoryApi historyApi;
   final RpsController? rpsController;
+  final HomeController? chineseCheckersController;
   final UpdateController? updateController;
 
   @override
@@ -48,6 +50,8 @@ final class _HomePageState extends State<HomePage> {
     widget.controller.start();
     widget.rpsController?.addListener(_changed);
     widget.rpsController?.start();
+    widget.chineseCheckersController?.addListener(_changed);
+    widget.chineseCheckersController?.start();
   }
 
   @override
@@ -63,6 +67,12 @@ final class _HomePageState extends State<HomePage> {
       widget.rpsController?.addListener(_changed);
       widget.rpsController?.start();
     }
+    if (oldWidget.chineseCheckersController !=
+        widget.chineseCheckersController) {
+      oldWidget.chineseCheckersController?.removeListener(_changed);
+      widget.chineseCheckersController?.addListener(_changed);
+      widget.chineseCheckersController?.start();
+    }
   }
 
   void _changed() {
@@ -73,6 +83,7 @@ final class _HomePageState extends State<HomePage> {
   void dispose() {
     widget.controller.removeListener(_changed);
     widget.rpsController?.removeListener(_changed);
+    widget.chineseCheckersController?.removeListener(_changed);
     super.dispose();
   }
 
@@ -118,6 +129,28 @@ final class _HomePageState extends State<HomePage> {
 
   Future<void> _continueRpsMatch() async {
     final error = await widget.rpsController?.openActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _chooseChineseCheckersOpponent() async {
+    final controller = widget.chineseCheckersController;
+    if (controller == null) return;
+    final error = await Navigator.of(context).push<ApiError?>(
+      MaterialPageRoute<ApiError?>(
+        builder: (_) => OpponentPage(
+          controller: controller,
+          currentUserId: widget.currentUserId,
+          pageTitle: '选择跳棋对手',
+          semanticPrefix: 'chinese-checkers-',
+          gameTitle: '跳棋',
+        ),
+      ),
+    );
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _continueChineseCheckersMatch() async {
+    final error = await widget.chineseCheckersController?.openActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -173,6 +206,29 @@ final class _HomePageState extends State<HomePage> {
     if (mounted && error != null) _showError(error);
   }
 
+  Future<void> _cancelChineseCheckersMatch() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('取消这局尚未开始的跳棋对局？'),
+        content: const Text('取消后，双方将返回空闲状态。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('保留对局'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('取消对局'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final error = await widget.chineseCheckersController?.cancelActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
   void _showError(ApiError error) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -218,6 +274,11 @@ final class _HomePageState extends State<HomePage> {
             ),
           ),
           _buildGomoku(controller),
+          if (widget.chineseCheckersController
+              case final HomeController chineseCheckersController) ...[
+            SizedBox(height: GameboxTokens.spacing.section),
+            _buildChineseCheckers(chineseCheckersController),
+          ],
           if (widget.rpsController case final RpsController rpsController) ...[
             SizedBox(height: GameboxTokens.spacing.section),
             _buildRps(rpsController),
@@ -278,6 +339,33 @@ final class _HomePageState extends State<HomePage> {
       onChoose: _chooseRpsOpponent,
       onContinue: _continueRpsMatch,
       onCancel: _cancelRpsMatch,
+    );
+  }
+
+  Widget _buildChineseCheckers(HomeController controller) {
+    if (controller.status == null && controller.isLoading) {
+      return const GameboxAsyncPanel(
+        icon: Icons.hub_outlined,
+        title: '正在加载跳棋',
+        message: '请稍候，正在获取最新对局状态。',
+        isLoading: true,
+      );
+    }
+    if (controller.status == null && controller.lastError != null) {
+      return _HomeError(
+        message: controller.lastError!.message,
+        onRetry: controller.refresh,
+      );
+    }
+    final status = controller.status;
+    if (status == null) return const SizedBox.shrink();
+    return _ChineseCheckersCard(
+      status: status,
+      isLaunching: controller.isLaunching,
+      isMutating: controller.isMutating,
+      onChoose: _chooseChineseCheckersOpponent,
+      onContinue: _continueChineseCheckersMatch,
+      onCancel: _cancelChineseCheckersMatch,
     );
   }
 }
@@ -431,6 +519,102 @@ final class _ActiveMatchActions extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+final class _ChineseCheckersCard extends StatelessWidget {
+  const _ChineseCheckersCard({
+    required this.status,
+    required this.isLaunching,
+    required this.isMutating,
+    required this.onChoose,
+    required this.onContinue,
+    required this.onCancel,
+  });
+
+  final GomokuStatus status;
+  final bool isLaunching;
+  final bool isMutating;
+  final VoidCallback onChoose;
+  final VoidCallback onContinue;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final descriptor = gameCatalog.firstWhere(
+      (game) => game.id == chineseCheckersGameId,
+    );
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MergeSemantics(
+              key: const Key('game-chinese-checkers'),
+              child: Semantics(
+                identifier: 'game-chinese-checkers',
+                header: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      descriptor.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    Text('${descriptor.playerCount} 人 · 连跳竞速'),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              status is GomokuIdleStatus ? '可开始新对局' : '对局进行中',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
+            switch (status) {
+              GomokuIdleStatus _ => _ActionButton(
+                semanticKey: const Key('chinese-checkers-choose-opponent'),
+                semanticLabel: 'chinese-checkers-choose-opponent',
+                onPressed: isMutating ? null : onChoose,
+                label: '选择对手',
+                pendingLabel: '正在创建对局',
+                isPending: isMutating,
+              ),
+              GomokuActiveStatus(:final match) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('对手：${match.opponent.nickname}'),
+                  Text(
+                    '你的顺序：${match.color == GomokuColor.black ? '先手' : '后手'}',
+                  ),
+                  Text('当前步数：${match.revision}'),
+                  SizedBox(height: GameboxTokens.spacing.page),
+                  _ActionButton(
+                    semanticKey: const Key('chinese-checkers-continue-match'),
+                    semanticLabel: 'chinese-checkers-continue-match',
+                    onPressed: isMutating ? null : onContinue,
+                    label: '继续对局',
+                    pendingLabel: '正在启动对局',
+                    isPending: isLaunching,
+                  ),
+                  if (match.revision == 0) ...[
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    TextButton(
+                      key: const Key('chinese-checkers-cancel-match'),
+                      onPressed: isMutating ? null : onCancel,
+                      child: const Text('取消未开始对局'),
+                    ),
+                  ],
+                ],
+              ),
+            },
+          ],
+        ),
+      ),
     );
   }
 }
