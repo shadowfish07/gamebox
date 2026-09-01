@@ -4,7 +4,11 @@ import '../auth/session_controller.dart';
 import 'match_history_models.dart';
 
 abstract interface class MatchHistoryApi {
-  Future<MatchHistoryPageData> fetchPage({String? cursor, int limit = 20});
+  Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
+    String? cursor,
+    int limit = 20,
+  });
 }
 
 final class HttpMatchHistoryApi implements MatchHistoryApi {
@@ -15,11 +19,12 @@ final class HttpMatchHistoryApi implements MatchHistoryApi {
 
   @override
   Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
     String? cursor,
     int limit = 20,
   }) async {
     final query = Uri(
-      path: '/v1/games/gomoku/history',
+      path: '/v1/games/${game.id}/history',
       queryParameters: {'limit': '$limit', 'cursor': ?cursor},
     ).toString();
     final envelope = await _client.getJson(
@@ -27,7 +32,9 @@ final class HttpMatchHistoryApi implements MatchHistoryApi {
       accessToken: () => _session.accessToken,
       onUnauthorized: _session.refresh,
     );
-    return _decode(() => MatchHistoryPageData.fromEnvelope(envelope));
+    return _decode(
+      () => MatchHistoryPageData.fromEnvelope(envelope, game: game),
+    );
   }
 
   static T _decode<T>(T Function() decode) {

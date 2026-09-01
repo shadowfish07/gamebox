@@ -397,6 +397,7 @@ final class _FakeMatchHistoryApi implements MatchHistoryApi {
 
   @override
   Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
     String? cursor,
     int limit = 20,
   }) async {

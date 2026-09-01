@@ -3,12 +3,14 @@ package matches
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 )
 
 const (
@@ -48,6 +50,14 @@ type HistoryEntry struct {
 	Color            Color
 	FinishedAt       time.Time
 	MoveCount        int64
+	Format           string
+}
+
+type historyGameSpec struct {
+	decisiveResult   string
+	countedEventType string
+	allowsDraw       bool
+	requiresFormat   bool
 }
 
 type HistoryPage struct {
@@ -94,7 +104,8 @@ func (service *Service) ListHistory(ctx context.Context, gameID, userID string, 
 		return HistoryPage{}, ErrInvalidConfiguration
 	}
 	rules, registered := service.games.Lookup(gameID)
-	if ctx == nil || gameID != gomoku.GameID || !registered || rules.PlayerLimit() != 2 || !canonicalUUID(userID) ||
+	spec, supported := matchHistoryGameSpec(gameID)
+	if ctx == nil || !supported || !registered || rules.PlayerLimit() != 2 || !canonicalUUID(userID) ||
 		request.Limit < 1 || request.Limit > 50 || !validHistoryCursor(request.Cursor) {
 		return HistoryPage{}, ErrInvalidRequest
 	}
@@ -107,11 +118,11 @@ func (service *Service) ListHistory(ctx context.Context, gameID, userID string, 
 	}
 	defer rollbackReadTransaction(ctx, transaction, &err)
 
-	statistics, statisticsErr := readHistoryStatistics(ctx, transaction, gameID, userID)
+	statistics, statisticsErr := readHistoryStatistics(ctx, transaction, gameID, userID, spec)
 	if statisticsErr != nil {
 		return HistoryPage{}, statisticsErr
 	}
-	entries, next, entriesErr := readHistoryEntries(ctx, transaction, gameID, userID, request)
+	entries, next, entriesErr := readHistoryEntries(ctx, transaction, gameID, userID, request, spec)
 	if entriesErr != nil {
 		return HistoryPage{}, entriesErr
 	}
@@ -121,6 +132,25 @@ func (service *Service) ListHistory(ctx context.Context, gameID, userID string, 
 		)
 	}
 	return HistoryPage{Statistics: statistics, Matches: entries, NextCursor: next}, nil
+}
+
+func matchHistoryGameSpec(gameID string) (historyGameSpec, bool) {
+	switch gameID {
+	case gomoku.GameID:
+		return historyGameSpec{
+			decisiveResult:   ResultFive,
+			countedEventType: gomoku.MoveAccepted,
+			allowsDraw:       true,
+		}, true
+	case rps.GameID:
+		return historyGameSpec{
+			decisiveResult:   ResultRounds,
+			countedEventType: rps.RoundRevealed,
+			requiresFormat:   true,
+		}, true
+	default:
+		return historyGameSpec{}, false
+	}
 }
 
 func validHistoryCursor(cursor *HistoryCursor) bool {
@@ -150,7 +180,7 @@ func ValidHistoryWireValues(matchID string, finishedAtMillis int64) bool {
 	return version >= 1 && version <= 5
 }
 
-func readHistoryStatistics(ctx context.Context, transaction *sql.Tx, gameID, userID string) (HistoryStatistics, error) {
+func readHistoryStatistics(ctx context.Context, transaction *sql.Tx, gameID, userID string, spec historyGameSpec) (HistoryStatistics, error) {
 	var enabled int
 	callerErr := transaction.QueryRowContext(ctx, `SELECT enabled FROM users WHERE id=?`, userID).Scan(&enabled)
 	if errors.Is(callerErr, sql.ErrNoRows) {
@@ -164,7 +194,7 @@ func readHistoryStatistics(ctx context.Context, transaction *sql.Tx, gameID, use
 	if enabled != 1 {
 		return HistoryStatistics{}, ErrInvalidRequest
 	}
-	if integrityErr := validateHistoryWireRows(ctx, transaction, gameID, userID); integrityErr != nil {
+	if integrityErr := validateHistoryWireRows(ctx, transaction, gameID, userID, spec); integrityErr != nil {
 		return HistoryStatistics{}, integrityErr
 	}
 
@@ -174,15 +204,16 @@ func readHistoryStatistics(ctx context.Context, transaction *sql.Tx, gameID, use
 SELECT
   COALESCE(SUM(CASE
     WHEN matches.status='finished'
-     AND matches.result IN ('five','resignation')
+     AND matches.result IN (?,'resignation')
      AND matches.winner_user_id=current_player.user_id THEN 1 ELSE 0 END),0),
   COALESCE(SUM(CASE
     WHEN matches.status='finished'
-     AND matches.result IN ('five','resignation')
+     AND matches.result IN (?,'resignation')
      AND matches.winner_user_id<>current_player.user_id THEN 1 ELSE 0 END),0),
   COALESCE(SUM(CASE
     WHEN matches.status='finished'
      AND matches.result='draw'
+     AND ?=1
      AND matches.winner_user_id IS NULL THEN 1 ELSE 0 END),0),
   COALESCE(SUM(CASE WHEN
     matches.finished_at IS NULL
@@ -196,18 +227,21 @@ SELECT
     )
 	OR COALESCE((
 	  (matches.status='finished'
-	   AND matches.result IN ('five','resignation')
+	   AND matches.result IN (?,'resignation')
 	   AND matches.winner_user_id IN (
 	     SELECT winner_player.user_id FROM match_players AS winner_player WHERE winner_player.match_id=matches.id
 	   ))
-	  OR (matches.status='finished' AND matches.result='draw' AND matches.winner_user_id IS NULL)
+	  OR (matches.status='finished' AND matches.result='draw' AND matches.winner_user_id IS NULL AND ?=1)
 	  OR (matches.status='abandoned' AND matches.result IS NULL AND matches.winner_user_id IS NULL)
 	),0)=0
   THEN 1 ELSE 0 END),0)
 FROM match_players AS current_player
 JOIN matches ON matches.id=current_player.match_id
 WHERE current_player.user_id=? AND matches.game_id=?
-  AND matches.status IN ('finished','abandoned')`, userID, gameID).Scan(
+  AND matches.status IN ('finished','abandoned')`,
+		spec.decisiveResult, spec.decisiveResult, boolToInt(spec.allowsDraw),
+		spec.decisiveResult, boolToInt(spec.allowsDraw), userID, gameID,
+	).Scan(
 		&statistics.Wins, &statistics.Losses, &statistics.Draws, &invalidRows,
 	)
 	if statisticsErr != nil {
@@ -225,9 +259,9 @@ WHERE current_player.user_id=? AND matches.game_id=?
 	return statistics, nil
 }
 
-func validateHistoryWireRows(ctx context.Context, transaction *sql.Tx, gameID, userID string) error {
+func validateHistoryWireRows(ctx context.Context, transaction *sql.Tx, gameID, userID string, spec historyGameSpec) error {
 	rows, queryErr := transaction.QueryContext(ctx, `
-SELECT matches.id,matches.finished_at
+SELECT matches.id,matches.finished_at,matches.game_config_json
 FROM match_players AS current_player
 JOIN matches ON matches.id=current_player.match_id
 WHERE current_player.user_id=? AND matches.game_id=?
@@ -240,7 +274,8 @@ WHERE current_player.user_id=? AND matches.game_id=?
 	for rows.Next() {
 		var matchID string
 		var finishedMillis sql.NullInt64
-		if scanErr := rows.Scan(&matchID, &finishedMillis); scanErr != nil {
+		var gameConfig sql.NullString
+		if scanErr := rows.Scan(&matchID, &finishedMillis, &gameConfig); scanErr != nil {
 			_ = rows.Close()
 			category := "data_integrity"
 			cause := error(ErrInternal)
@@ -250,7 +285,8 @@ WHERE current_player.user_id=? AND matches.game_id=?
 			}
 			return newHistoryFailure("statistics", category, cause)
 		}
-		if !finishedMillis.Valid || !ValidHistoryWireValues(matchID, finishedMillis.Int64) {
+		if _, valid := historyEntryFormat(spec, gameConfig); !finishedMillis.Valid ||
+			!ValidHistoryWireValues(matchID, finishedMillis.Int64) || !valid {
 			_ = rows.Close()
 			return newHistoryFailure("statistics", "data_integrity", ErrInternal)
 		}
@@ -269,7 +305,7 @@ WHERE current_player.user_id=? AND matches.game_id=?
 	return nil
 }
 
-func readHistoryEntries(ctx context.Context, transaction *sql.Tx, gameID, userID string, request HistoryPageRequest) ([]HistoryEntry, *HistoryCursor, error) {
+func readHistoryEntries(ctx context.Context, transaction *sql.Tx, gameID, userID string, request HistoryPageRequest, spec historyGameSpec) ([]HistoryEntry, *HistoryCursor, error) {
 	query := `
 SELECT
   matches.id,
@@ -277,6 +313,7 @@ SELECT
   matches.result,
   matches.winner_user_id,
   matches.finished_at,
+  matches.game_config_json,
   current_player.user_id,
   current_player.seat,
   current_player.color,
@@ -290,7 +327,7 @@ SELECT
   (SELECT COUNT(DISTINCT counted_players.user_id) FROM match_players AS counted_players WHERE counted_players.match_id=matches.id),
   (SELECT COUNT(DISTINCT counted_players.color) FROM match_players AS counted_players WHERE counted_players.match_id=matches.id),
   (SELECT COUNT(*) FROM match_events
-   WHERE match_events.match_id=matches.id AND match_events.event_type='gomoku.move.accepted')
+   WHERE match_events.match_id=matches.id AND match_events.event_type=?)
 FROM match_players AS current_player
 JOIN matches ON matches.id=current_player.match_id
 LEFT JOIN match_players AS opponent_player
@@ -298,7 +335,7 @@ LEFT JOIN match_players AS opponent_player
 LEFT JOIN users AS opponent_user ON opponent_user.id=opponent_player.user_id
 WHERE current_player.user_id=? AND matches.game_id=?
   AND matches.status IN ('finished','abandoned')`
-	arguments := []any{userID, gameID}
+	arguments := []any{spec.countedEventType, userID, gameID}
 	if request.Cursor != nil {
 		query += `
   AND (matches.finished_at < ? OR (matches.finished_at = ? AND matches.id < ?))`
@@ -324,6 +361,7 @@ LIMIT ?`
 			matchID, status, currentUserID, currentColor string
 			result, winner, opponentID                   sql.NullString
 			finishedMillis                               sql.NullInt64
+			gameConfig                                   sql.NullString
 			currentSeat                                  int
 			opponentSeat                                 sql.NullInt64
 			opponentColor, nickname, normalized          sql.NullString
@@ -332,7 +370,7 @@ LIMIT ?`
 			moveCount                                    int64
 		)
 		scanErr := rows.Scan(
-			&matchID, &status, &result, &winner, &finishedMillis,
+			&matchID, &status, &result, &winner, &finishedMillis, &gameConfig,
 			&currentUserID, &currentSeat, &currentColor,
 			&opponentID, &opponentSeat, &opponentColor,
 			&nickname, &normalized, &opponentEnabled,
@@ -350,7 +388,7 @@ LIMIT ?`
 		}
 
 		entry, valid := validatedHistoryEntry(
-			userID, matchID, status, result, winner, finishedMillis,
+			spec, userID, matchID, status, result, winner, finishedMillis, gameConfig,
 			currentUserID, currentSeat, currentColor,
 			opponentID, opponentSeat, opponentColor, nickname, normalized, opponentEnabled,
 			memberCount, distinctUsers, distinctColors, moveCount,
@@ -384,9 +422,11 @@ LIMIT ?`
 }
 
 func validatedHistoryEntry(
+	spec historyGameSpec,
 	userID, matchID, status string,
 	result, winner sql.NullString,
 	finishedMillis sql.NullInt64,
+	gameConfig sql.NullString,
 	currentUserID string,
 	currentSeat int,
 	currentColor string,
@@ -396,7 +436,8 @@ func validatedHistoryEntry(
 	opponentEnabled sql.NullInt64,
 	memberCount, distinctUsers, distinctColors, moveCount int64,
 ) (HistoryEntry, bool) {
-	if !finishedMillis.Valid || !ValidHistoryWireValues(matchID, finishedMillis.Int64) ||
+	format, validFormat := historyEntryFormat(spec, gameConfig)
+	if !validFormat || !finishedMillis.Valid || !ValidHistoryWireValues(matchID, finishedMillis.Int64) ||
 		currentUserID != userID || !canonicalUUID(currentUserID) ||
 		!opponentID.Valid || !canonicalUUID(opponentID.String) || opponentID.String == currentUserID ||
 		memberCount != 2 || distinctUsers != 2 || distinctColors != 2 ||
@@ -411,12 +452,12 @@ func validatedHistoryEntry(
 	outcome := ""
 	switch {
 	case status == StatusFinished && result.Valid &&
-		(result.String == ResultFive || result.String == ResultResignation) && winner.Valid && winner.String == currentUserID:
+		(result.String == spec.decisiveResult || result.String == ResultResignation) && winner.Valid && winner.String == currentUserID:
 		outcome = historyOutcomeWin
 	case status == StatusFinished && result.Valid &&
-		(result.String == ResultFive || result.String == ResultResignation) && winner.Valid && winner.String == opponentID.String:
+		(result.String == spec.decisiveResult || result.String == ResultResignation) && winner.Valid && winner.String == opponentID.String:
 		outcome = historyOutcomeLoss
-	case status == StatusFinished && result.Valid && result.String == ResultDraw && !winner.Valid:
+	case spec.allowsDraw && status == StatusFinished && result.Valid && result.String == ResultDraw && !winner.Valid:
 		outcome = historyOutcomeDraw
 	case status == StatusAbandoned && !result.Valid && !winner.Valid:
 		outcome = historyOutcomeAbandoned
@@ -431,7 +472,40 @@ func validatedHistoryEntry(
 		Color:            Color(currentColor),
 		FinishedAt:       time.UnixMilli(finishedMillis.Int64).UTC(),
 		MoveCount:        moveCount,
+		Format:           format,
 	}, true
+}
+
+func historyEntryFormat(spec historyGameSpec, config sql.NullString) (string, bool) {
+	if !spec.requiresFormat {
+		return "", true
+	}
+	if !config.Valid {
+		return "", false
+	}
+	_, normalized, err := configureRules(rps.NewRules(), json.RawMessage(config.String))
+	if err != nil {
+		return "", false
+	}
+	var parsed struct {
+		Format string `json:"format"`
+	}
+	if json.Unmarshal(normalized, &parsed) != nil {
+		return "", false
+	}
+	switch parsed.Format {
+	case rps.FormatSingleRound, rps.FormatBestOfThree:
+		return parsed.Format, true
+	default:
+		return "", false
+	}
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func validHistoryColors(current, opponent Color) bool {

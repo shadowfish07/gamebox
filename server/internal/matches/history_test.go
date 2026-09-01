@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 )
 
@@ -147,6 +148,33 @@ func TestListHistoryCountsOnlyAcceptedMoves(t *testing.T) {
 	}
 	if len(page.Matches) != 1 || page.Matches[0].MoveCount != 2 {
 		t.Fatalf("matches = %+v, want one entry with two accepted moves", page.Matches)
+	}
+}
+
+func TestHistoryEntryFormatUsesStrictJSONSemantics(t *testing.T) {
+	spec := historyGameSpec{requiresFormat: true}
+	tests := []struct {
+		name   string
+		config sql.NullString
+		want   string
+		valid  bool
+	}{
+		{name: "canonical", config: sql.NullString{String: `{"format":"single_round"}`, Valid: true}, want: rps.FormatSingleRound, valid: true},
+		{name: "escaped key", config: sql.NullString{String: `{"for\u006dat":"best_of_three"}`, Valid: true}, want: rps.FormatBestOfThree, valid: true},
+		{name: "escaped value", config: sql.NullString{String: `{"format":"best_of_t\u0068ree"}`, Valid: true}, want: rps.FormatBestOfThree, valid: true},
+		{name: "missing", config: sql.NullString{}, valid: false},
+		{name: "unknown format", config: sql.NullString{String: `{"format":"best_of_five"}`, Valid: true}, valid: false},
+		{name: "extra field", config: sql.NullString{String: `{"format":"single_round","extra":true}`, Valid: true}, valid: false},
+		{name: "duplicate field", config: sql.NullString{String: `{"format":"single_round","format":"best_of_three"}`, Valid: true}, valid: false},
+		{name: "invalid json", config: sql.NullString{String: `{"format":`, Valid: true}, valid: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, valid := historyEntryFormat(spec, test.config)
+			if got != test.want || valid != test.valid {
+				t.Fatalf("historyEntryFormat() = (%q,%v), want (%q,%v)", got, valid, test.want, test.valid)
+			}
+		})
 	}
 }
 

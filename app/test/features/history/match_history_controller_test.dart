@@ -278,7 +278,11 @@ final class _FakeMatchHistoryApi implements MatchHistoryApi {
   final cursors = <String?>[];
 
   @override
-  Future<MatchHistoryPageData> fetchPage({String? cursor, int limit = 20}) {
+  Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
+    String? cursor,
+    int limit = 20,
+  }) {
     cursors.add(cursor);
     return onFetch(cursor);
   }
