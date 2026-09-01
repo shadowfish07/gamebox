@@ -3713,7 +3713,7 @@ return_to_lobby_via_android_back "$SERIAL_B" || fail "B could not leave the resi
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null || fail "A was not idle after resignation"
 wait_for_identifier "$SERIAL_B" choose-opponent >/dev/null || fail "B was not idle after resignation"
 
-tap_identifier "$SERIAL_A" open-match-history
+tap_identifier "$SERIAL_A" open-gomoku-history
 wait_for_identifier "$SERIAL_A" match-history-statistics >/dev/null \
   || fail "A history statistics did not load"
 wait_for_identifier "$SERIAL_A" "match-history-entry-$THIRD_MATCH_ID" >/dev/null \
@@ -3722,7 +3722,7 @@ tap_identifier "$SERIAL_A" match-history-back
 wait_for_identifier "$SERIAL_A" choose-opponent >/dev/null \
   || fail "visible history Back did not return A to the idle lobby"
 
-tap_identifier "$SERIAL_A" open-match-history
+tap_identifier "$SERIAL_A" open-gomoku-history
 wait_for_identifier "$SERIAL_A" match-history-page >/dev/null \
   || fail "A history page did not reopen"
 adb_for "$SERIAL_A" shell input keyevent KEYCODE_BACK >/dev/null \
