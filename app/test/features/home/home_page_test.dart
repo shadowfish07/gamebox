@@ -114,6 +114,35 @@ void main() {
     chineseCheckers.dispose();
   });
 
+  testWidgets('Chinese checkers active card preserves dedicated action ids', (
+    tester,
+  ) async {
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final chineseCheckers = _Fixture(now)..api.status = _active(revision: 0);
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        chineseCheckersController: chineseCheckers.controller,
+      ),
+    );
+    await _flushWidget(tester);
+    await _flushWidget(tester);
+
+    expect(find.text('你的顺序：先手'), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('chinese-checkers-continue-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('chinese-checkers-cancel-match'),
+      findsOneWidget,
+    );
+
+    gomoku.dispose();
+    chineseCheckers.dispose();
+  });
+
   testWidgets('active card shows opponent color revision and hides creation', (
     tester,
   ) async {

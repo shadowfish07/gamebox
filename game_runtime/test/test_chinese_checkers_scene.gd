@@ -65,6 +65,7 @@ static func _locks_during_reconnect() -> bool:
 		and _check(board.selected_hole == -1 and board.target_holes.is_empty(), "reconnect retained a stale selection") \
 		and _check(board.mouse_filter == Control.MOUSE_FILTER_IGNORE, "reconnect did not lock board input") \
 		and _check(scene.get_node("ConnectionLabel").visible, "reconnect compact banner is hidden") \
+		and _check(not scene.get_node("PlayerStrip").visible, "reconnect player strip overlaps the connection banner") \
 		and _check((scene.get_node("ConnectionLabel/Content/Message") as Label).text == "重连中…", "reconnect copy changed") \
 		and _check((scene.get_node("HintLabel") as Label).text.contains("棋盘会保留"), "reconnect does not explain preserved board state")
 	return _cleanup(scene, result)

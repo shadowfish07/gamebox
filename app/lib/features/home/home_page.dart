@@ -459,6 +459,8 @@ final class _GomokuCard extends StatelessWidget {
               ),
               GomokuActiveStatus active => _ActiveMatchActions(
                 active: active,
+                sideLabel:
+                    '你的颜色：${active.match.color == GomokuColor.black ? '黑方' : '白方'}',
                 isLaunching: isLaunching,
                 isMutating: isMutating,
                 onContinue: onContinue,
@@ -475,31 +477,37 @@ final class _GomokuCard extends StatelessWidget {
 final class _ActiveMatchActions extends StatelessWidget {
   const _ActiveMatchActions({
     required this.active,
+    required this.sideLabel,
     required this.isLaunching,
     required this.isMutating,
     required this.onContinue,
     required this.onCancel,
+    this.semanticPrefix = '',
   });
 
   final GomokuActiveStatus active;
+  final String sideLabel;
   final bool isLaunching;
   final bool isMutating;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
+  final String semanticPrefix;
 
   @override
   Widget build(BuildContext context) {
     final match = active.match;
+    final continueIdentifier = '${semanticPrefix}continue-match';
+    final cancelIdentifier = '${semanticPrefix}cancel-match';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text('对手：${match.opponent.nickname}'),
-        Text('你的颜色：${match.color == GomokuColor.black ? '黑方' : '白方'}'),
+        Text(sideLabel),
         Text('当前步数：${match.revision}'),
         SizedBox(height: GameboxTokens.spacing.page),
         _ActionButton(
-          semanticKey: const Key('continue-match'),
-          semanticLabel: 'continue-match',
+          semanticKey: Key(continueIdentifier),
+          semanticLabel: continueIdentifier,
           onPressed: isMutating ? null : onContinue,
           label: '继续对局',
           pendingLabel: '正在启动对局',
@@ -508,9 +516,9 @@ final class _ActiveMatchActions extends StatelessWidget {
         if (match.revision == 0) ...[
           SizedBox(height: GameboxTokens.spacing.layout),
           MergeSemantics(
-            key: const Key('cancel-match'),
+            key: Key(cancelIdentifier),
             child: Semantics(
-              identifier: 'cancel-match',
+              identifier: cancelIdentifier,
               child: TextButton(
                 onPressed: isMutating ? null : onCancel,
                 child: const Text('取消未开始对局'),
@@ -584,32 +592,15 @@ final class _ChineseCheckersCard extends StatelessWidget {
                 pendingLabel: '正在创建对局',
                 isPending: isMutating,
               ),
-              GomokuActiveStatus(:final match) => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('对手：${match.opponent.nickname}'),
-                  Text(
-                    '你的顺序：${match.color == GomokuColor.black ? '先手' : '后手'}',
-                  ),
-                  Text('当前步数：${match.revision}'),
-                  SizedBox(height: GameboxTokens.spacing.page),
-                  _ActionButton(
-                    semanticKey: const Key('chinese-checkers-continue-match'),
-                    semanticLabel: 'chinese-checkers-continue-match',
-                    onPressed: isMutating ? null : onContinue,
-                    label: '继续对局',
-                    pendingLabel: '正在启动对局',
-                    isPending: isLaunching,
-                  ),
-                  if (match.revision == 0) ...[
-                    SizedBox(height: GameboxTokens.spacing.layout),
-                    TextButton(
-                      key: const Key('chinese-checkers-cancel-match'),
-                      onPressed: isMutating ? null : onCancel,
-                      child: const Text('取消未开始对局'),
-                    ),
-                  ],
-                ],
+              GomokuActiveStatus active => _ActiveMatchActions(
+                active: active,
+                sideLabel:
+                    '你的顺序：${active.match.color == GomokuColor.black ? '先手' : '后手'}',
+                semanticPrefix: 'chinese-checkers-',
+                isLaunching: isLaunching,
+                isMutating: isMutating,
+                onContinue: onContinue,
+                onCancel: onCancel,
               ),
             },
           ],

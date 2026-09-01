@@ -303,7 +303,7 @@ func _refresh_ui() -> void:
 	$TopNavigation.set_menu_item_disabled("resign", not _can_offer_resign())
 	$ConnectionLabel.present(_connection_banner_state(), _error_text if _force_return else "")
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
-	$PlayerStrip.visible = has_state
+	$PlayerStrip.visible = has_state and not $ConnectionLabel.visible
 	if has_state:
 		$PlayerStrip/Content/Me.text = "我 · %s" % ("先手" if local_color == "black" else "后手")
 		$PlayerStrip/Content/Opponent.text = "%s · 对手" % _opponent_presence_text()

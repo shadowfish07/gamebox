@@ -73,6 +73,62 @@ func TestChineseCheckersMoveRetrySnapshotAndResignation(t *testing.T) {
 	assertTableCount(t, fixture.db, "active_game_slots", 0)
 }
 
+func TestChineseCheckersCancelRejectsAcceptedMoveWithoutCorruptingMatch(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), chinesecheckers.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ApplyAction(context.Background(), chineseCheckersMoveRequest(created.ID, initiatorID, 920, 0, 6, 14)); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+
+	if _, err := service.Cancel(context.Background(), created.ID, opponentID); !errors.Is(err, ErrMatchNotCancellable) {
+		t.Fatalf("Cancel error=%v, want %v", err, ErrMatchNotCancellable)
+	}
+	snapshot, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil || snapshot.Match.Status != StatusActive || snapshot.Match.Revision != 1 || snapshot.Game.Revision != 1 {
+		t.Fatalf("snapshot after rejected cancel=(%+v,%v)", snapshot, err)
+	}
+	assertTableCount(t, fixture.db, "active_game_slots", 2)
+}
+
+func TestChineseCheckersReservesFinalHistoryEventForResignation(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), chinesecheckers.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle := [][]int{{6, 14}, {111, 102}, {14, 6}, {102, 111}}
+	for revision := int64(0); revision < maximumMatchEvents-1; revision++ {
+		actor := initiatorID
+		if revision%2 == 1 {
+			actor = opponentID
+		}
+		path := cycle[int(revision)%len(cycle)]
+		request := chineseCheckersMoveRequest(created.ID, actor, 1000+int(revision), revision, path...)
+		if _, _, err := service.ApplyAction(context.Background(), request); err != nil {
+			t.Fatalf("move revision=%d path=%v: %v", revision, path, err)
+		}
+	}
+
+	if _, _, err := service.ApplyAction(context.Background(), chineseCheckersMoveRequest(created.ID, opponentID, 1300, maximumMatchEvents-1, 111, 102)); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("limit error=%v, want %v", err, ErrInvalidRequest)
+	}
+	if snapshot, err := service.Snapshot(context.Background(), created.ID); err != nil || snapshot.Match.Revision != maximumMatchEvents-1 {
+		t.Fatalf("snapshot at history reserve=(%+v,%v)", snapshot.Match, err)
+	}
+	resign := ActionRequest{
+		MatchID: created.ID, ActorUserID: opponentID, ActionID: actionID(1301), ExpectedRevision: maximumMatchEvents - 1,
+		Type: protocol.TypeChineseCheckersResignRequested, Payload: json.RawMessage(`{}`),
+	}
+	if _, snapshot, err := service.ApplyAction(context.Background(), resign); err != nil || snapshot.Match.Status != StatusFinished || snapshot.Match.Revision != maximumMatchEvents {
+		t.Fatalf("resign at history limit=(%+v,%v)", snapshot.Match, err)
+	}
+}
+
 func chineseCheckersMoveRequest(matchID, actorID string, actionNumber int, expectedRevision int64, path ...int) ActionRequest {
 	payload, _ := json.Marshal(struct {
 		Path []int `json:"path"`

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"me.zqydev/gamebox/server/internal/games/gameapi"
@@ -146,7 +147,7 @@ func TestApplyRejectsMalformedPayloadWithoutLeakingIt(t *testing.T) {
 		Type:    MoveRequested,
 		Payload: json.RawMessage(`{"path":[6,14],"secret":"` + secret + `"}`),
 	})
-	if !errors.Is(err, gameapi.ErrInvalidAction) || err.Error() == secret {
+	if !errors.Is(err, gameapi.ErrInvalidAction) || strings.Contains(err.Error(), secret) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 }

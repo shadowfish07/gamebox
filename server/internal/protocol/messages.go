@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	chineseCheckersBoardCells          = 121
 	TypePlatformConnect                = "platform.connect"
 	TypePlatformConnected              = "platform.connected"
 	TypePlatformPing                   = "platform.ping"
@@ -238,7 +239,7 @@ func validateChineseCheckersPath(raw json.RawMessage) error {
 	seen := make(map[int64]struct{}, 8)
 	count := 0
 	for decoder.More() {
-		if count >= 121 {
+		if count >= chineseCheckersBoardCells {
 			return errors.New("invalid path")
 		}
 		var value json.RawMessage
@@ -246,7 +247,7 @@ func validateChineseCheckersPath(raw json.RawMessage) error {
 			return errors.New("invalid path")
 		}
 		index, err := strictInteger(value)
-		if err != nil || index < 0 || index >= 121 {
+		if err != nil || index < 0 || index >= chineseCheckersBoardCells {
 			return errors.New("invalid path")
 		}
 		if _, duplicate := seen[index]; duplicate {

@@ -1078,19 +1078,9 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 	if json.Unmarshal(snapshot.Game.State, &payload) != nil || len(snapshot.Players) != 2 {
 		return nil, ErrInternal
 	}
-	var blackID, whiteID string
-	for _, player := range snapshot.Players {
-		switch player.Color {
-		case ColorBlack:
-			blackID = player.UserID
-		case ColorWhite:
-			whiteID = player.UserID
-		default:
-			return nil, ErrInternal
-		}
-	}
-	if blackID == "" || whiteID == "" {
-		return nil, ErrInternal
+	blackID, whiteID, err := snapshotPlayerIDs(snapshot.Players)
+	if err != nil {
+		return nil, err
 	}
 	payload.BlackUserID, payload.WhiteUserID = &blackID, &whiteID
 	payload.Status = snapshot.Match.Status

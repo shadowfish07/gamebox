@@ -5,6 +5,7 @@ gameId: chinese_checkers
 displayName: 跳棋
 defaultOrientation: portrait
 uxProfile: lightweight-board
+designSystemVersion: 2.3.0
 inputMethods: [touch, android-back]
 gameThemeRoles: [board, grid, blackPiece, whitePiece, whitePieceOutline, pressedMove, pendingMove]
 ```

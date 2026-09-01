@@ -904,8 +904,8 @@ WHERE id=?`, matchID).Scan(&gameID, &status, &revision)
 	if queryErr := transaction.QueryRowContext(ctx, `
 SELECT EXISTS(
   SELECT 1 FROM match_events
-  WHERE match_id=? AND event_type IN (?,?,?)
-)`, matchID, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed).Scan(&gameplayEvents); queryErr != nil {
+  WHERE match_id=? AND event_type IN (?,?,?,?)
+)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed).Scan(&gameplayEvents); queryErr != nil {
 		return Event{}, matchDatabaseError(ctx, queryErr)
 	}
 	if gameplayEvents != 0 {
@@ -1101,6 +1101,12 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	terminal := false
 	switch request.Type {
 	case chinesecheckers.MoveRequested:
+		// Keep one durable event available for resignation. Chinese Checkers
+		// positions can cycle, so unlike Gomoku the board does not bound the
+		// number of accepted moves before the shared history limit.
+		if match.Revision >= maximumMatchEvents-1 {
+			return Event{}, Snapshot{}, ErrInvalidRequest
+		}
 		acceptedMoves := current.Game.Revision
 		expectedColor := ColorBlack
 		if acceptedMoves%2 == 1 {
@@ -1728,7 +1734,11 @@ func decodeChineseCheckersMoveRequest(payload json.RawMessage) ([]int, error) {
 	if err != nil || len(fields) != 1 {
 		return nil, ErrInvalidRequest
 	}
-	decoder := json.NewDecoder(bytes.NewReader(fields["path"]))
+	return decodeChineseCheckersPath(fields["path"])
+}
+
+func decodeChineseCheckersPath(raw json.RawMessage) ([]int, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('[') {
 		return nil, ErrInvalidRequest
@@ -2425,13 +2435,7 @@ func decodeAcceptedChineseCheckersMove(payload json.RawMessage) (acceptedChinese
 	if err != nil || len(fields) != 3 {
 		return acceptedChineseCheckersMove{}, ErrInternal
 	}
-	pathPayload, err := json.Marshal(struct {
-		Path json.RawMessage `json:"path"`
-	}{Path: fields["path"]})
-	if err != nil {
-		return acceptedChineseCheckersMove{}, ErrInternal
-	}
-	path, err := decodeChineseCheckersMoveRequest(pathPayload)
+	path, err := decodeChineseCheckersPath(fields["path"])
 	if err != nil {
 		return acceptedChineseCheckersMove{}, ErrInternal
 	}
