@@ -35,10 +35,14 @@ if [[ "${GAMEBOX_VERIFY_INTERNAL:-0}" != "1" ]]; then
   fi
   failed_phase="$(sed -n 's/^GAMEBOX_VERIFY_PHASE=//p' "$verify_log" | tail -1)"
   printf 'Gamebox verification failed in phase: %s (exit %s)\n' "${failed_phase:-initialization}" "$verify_exit" >&2
-  awk -v marker="GAMEBOX_VERIFY_PHASE=${failed_phase}" '
-    $0 == marker { printing=1; next }
-    printing { print }
-  ' "$verify_log" >&2
+  if [[ -n "$failed_phase" ]]; then
+    awk -v marker="GAMEBOX_VERIFY_PHASE=${failed_phase}" '
+      $0 == marker { printing=1; next }
+      printing { print }
+    ' "$verify_log" >&2
+  else
+    cat "$verify_log" >&2
+  fi
   printf 'Full log: %s\n' "$verify_log" >&2
   exit "$verify_exit"
 fi
@@ -399,6 +403,7 @@ fi
   printf 'usage: %s [--self-test]\n' "$0" >&2
   exit 2
 }
+verify_phase "fixtures"
 gamebox_test_output_init
 trap gamebox_test_output_cleanup EXIT
 gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
@@ -417,7 +422,9 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
+verify_phase "toolchain bootstrap"
 gamebox_run_step "toolchain bootstrap" bash tool/bootstrap.sh --build-only
+verify_phase "fast verification"
 gamebox_run_step "fast verification" env GAMEBOX_TEST_NESTED=1 bash tool/verify_fast.sh
 
 run_android_unit_tests() {
@@ -430,7 +437,9 @@ run_flutter_debug_build() {
   (cd app && flutter build apk --debug)
 }
 
+verify_phase "Android unit tests"
 gamebox_run_step "Android unit tests" run_android_unit_tests
+verify_phase "Flutter debug APK build"
 gamebox_run_step "Flutter debug APK build" run_flutter_debug_build
 
 verify_debug_apk() (
@@ -561,6 +570,8 @@ PY
   fi
 }
 
+verify_phase "debug APK assertions"
 gamebox_run_step "debug APK assertions" verify_debug_apk
+verify_phase "LAN Android manifest assertions"
 gamebox_run_step "LAN Android manifest assertions" verify_lan_manifest_contract
 gamebox_test_output_finish verify
