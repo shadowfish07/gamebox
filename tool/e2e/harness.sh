@@ -532,6 +532,11 @@ xml_query() {
       matches = nodes.select { |node| pattern.match?(node.attributes["resource-id"].to_s) && enabled.call(node) && bounds.call(node) }
       exit 3 unless matches.length == 1
       puts matches.first.attributes["resource-id"]
+    when "chinese-checkers-opponent"
+      pattern = /\Achinese-checkers-opponent-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
+      matches = nodes.select { |node| pattern.match?(node.attributes["resource-id"].to_s) && enabled.call(node) && bounds.call(node) }
+      exit 3 unless matches.length == 1
+      puts matches.first.attributes["resource-id"]
     when "field-text"
       matches = nodes.select { |node| node.attributes["resource-id"] == expected }
       exit 3 unless matches.length == 1
@@ -2590,6 +2595,9 @@ readonly APK
 packaged_abis="$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | paste -sd ' ' -)"
 [[ "$packaged_abis" == "arm64-v8a" ]] || fail "APK ABI set is '${packaged_abis:-empty}', expected arm64-v8a only"
 for required_asset in \
+	assets/games/chinese_checkers/chinese_checkers_scene.tscn \
+	assets/games/chinese_checkers/chinese_checkers_board.gd \
+	assets/games/chinese_checkers/chinese_checkers_state.gd \
   assets/games/gomoku/gomoku_scene.tscn \
   assets/games/gomoku/gomoku_board.gd \
   assets/games/gomoku/gomoku_preferences.gd \
@@ -2818,6 +2826,40 @@ wait_for_rps_opponent_identifier() {
     sleep 1
   done
   return 1
+}
+
+wait_for_chinese_checkers_opponent_identifier() {
+	local serial="$1"
+	local deadline=$((SECONDS + WAIT_SECONDS))
+	local xml="$TEMP_DIR/ui-chinese-checkers-opponent-${serial//[^A-Za-z0-9_.-]/_}.xml"
+	while ((SECONDS < deadline)); do
+		if dump_ui "$serial" "$xml"; then
+			local identifier
+			identifier="$(xml_query chinese-checkers-opponent "$xml" 2>/dev/null)" && {
+				printf '%s\n' "$identifier"
+				return 0
+			}
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+gamebox_e2e_visual_gate() {
+	local phase="$1"
+	local serial="$2"
+	local gate_dir="${GAMEBOX_E2E_VISUAL_GATE_DIR:-}"
+	[[ -n "$gate_dir" ]] || return 0
+	[[ "$gate_dir" == /* && -d "$gate_dir" && "$phase" =~ ^[a-z0-9-]{1,32}$ ]] \
+		|| fail "visual acceptance gate configuration is invalid"
+	printf '%s\n' "$serial" >"$gate_dir/$phase.serial"
+	: >"$gate_dir/$phase.ready"
+	gamebox_test_progress "Gamebox E2E: visual acceptance gate $phase is ready..."
+	local deadline=$((SECONDS + 180))
+	while [[ ! -f "$gate_dir/$phase.release" ]]; do
+		((SECONDS < deadline)) || fail "visual acceptance gate $phase timed out"
+		sleep 0.2
+	done
 }
 
 input_text_by_identifier() {
@@ -3097,6 +3139,240 @@ gamebox_e2e_record_scenario_result flutter-host '{
 fi
 
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+
+if gamebox_e2e_scenario_enabled chinese-checkers-network; then
+gamebox_e2e_enter_phase scenario:chinese-checkers-network
+
+wait_for_new_chinese_checkers_ready_match_id() {
+	local serial="$1"
+	local deadline=$((SECONDS + WAIT_SECONDS))
+	while ((SECONDS < deadline)); do
+		local candidates candidate_count
+		candidates="$(
+			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+				| sed -E -n 's/.*GAMEBOX_GODOT_READY game=chinese_checkers match=([0-9a-f-]{36}).*/\1/p' \
+				| sort -u
+		)"
+		candidate_count="$(printf '%s\n' "$candidates" | awk 'NF { count++ } END { print count + 0 }')"
+		if [[ "$candidate_count" == "1" ]]; then
+			printf '%s\n' "$candidates"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+chinese_checkers_match_show() {
+	"$CTL_BIN" match show --id "$1" --db "$DB_PATH" --json
+}
+
+wait_for_chinese_checkers_match() {
+	local match_id="$1"
+	local expected_revision="$2"
+	local expected_status="$3"
+	local deadline=$((SECONDS + WAIT_SECONDS)) snapshot=""
+	while ((SECONDS < deadline)); do
+		snapshot="$(chinese_checkers_match_show "$match_id" 2>/dev/null || true)"
+		if [[ "$(jq -r '.id // ""' <<<"$snapshot" 2>/dev/null)" == "$match_id" \
+			&& "$(jq -r '.revision // -1' <<<"$snapshot" 2>/dev/null)" == "$expected_revision" \
+			&& "$(jq -r '.status // ""' <<<"$snapshot" 2>/dev/null)" == "$expected_status" ]]; then
+			printf '%s\n' "$snapshot"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+chinese_checkers_design_point() {
+	local serial="$1"
+	local design_x="$2"
+	local design_y="$3"
+	local width height
+	read -r width height <<<"$(device_effective_size "$serial")"
+	ruby -e '
+		width, height, design_width, design_height, x, y = ARGV.map(&:to_f)
+		scale = [width / design_width, height / design_height].min
+		puts "#{(x * scale).round} #{(y * scale).round}"
+	' "$width" "$height" "$DESIGN_WIDTH" "$DESIGN_HEIGHT" "$design_x" "$design_y"
+}
+
+tap_chinese_checkers_hole() {
+	local serial="$1"
+	local index="$2"
+	local design_x design_y point pixel_x pixel_y
+	case "$index" in
+		6) design_x=648; design_y=1186 ;;
+		14) design_x=684; design_y=1123 ;;
+		*) return 2 ;;
+	esac
+	point="$(chinese_checkers_design_point "$serial" "$design_x" "$design_y")"
+	read -r pixel_x pixel_y <<<"$point"
+	adb_for "$serial" shell input tap "$pixel_x" "$pixel_y" >/dev/null
+}
+
+tap_chinese_checkers_resign() {
+	local serial="$1" point x y
+	point="$(chinese_checkers_design_point "$serial" 984 120)"
+	read -r x y <<<"$point"
+	adb_for "$serial" shell input tap "$x" "$y" >/dev/null || return 1
+	sleep 0.5
+	point="$(chinese_checkers_design_point "$serial" 936 256)"
+	read -r x y <<<"$point"
+	adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_chinese_checkers_confirm_resign() {
+	local serial="$1" point x y
+	point="$(chinese_checkers_design_point "$serial" 640 1230)"
+	read -r x y <<<"$point"
+	adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+refresh_game_log_boundaries chinese-checkers-create \
+	|| fail "could not establish Chinese Checkers log boundaries"
+tap_identifier_after_scroll "$SERIAL_A" chinese-checkers-choose-opponent \
+	|| fail "A could not open the Chinese Checkers opponent list"
+chinese_opponent_identifier="$(wait_for_chinese_checkers_opponent_identifier "$SERIAL_A")" \
+	|| fail "A did not expose exactly one enabled Chinese Checkers opponent"
+CHINESE_USER_ID_B="${chinese_opponent_identifier#chinese-checkers-opponent-}"
+[[ "$CHINESE_USER_ID_B" =~ $uuid_pattern ]] \
+	|| fail "Chinese Checkers opponent identifier did not contain B's canonical user ID"
+tap_identifier "$SERIAL_A" "$chinese_opponent_identifier"
+CHINESE_MATCH_ID="$(wait_for_new_chinese_checkers_ready_match_id "$SERIAL_A")" \
+	|| fail "A did not launch the new Chinese Checkers match"
+[[ "$CHINESE_MATCH_ID" =~ $uuid_pattern ]] \
+	|| fail "Chinese Checkers ready marker did not contain a canonical match ID"
+
+chinese_snapshot="$(wait_for_chinese_checkers_match "$CHINESE_MATCH_ID" 0 active)" \
+	|| fail "Chinese Checkers initial match was not readable"
+CHINESE_BLACK_USER_ID="$(jq -er '.players[] | select(.color == "black") | .userId' <<<"$chinese_snapshot")"
+CHINESE_WHITE_USER_ID="$(jq -er '.players[] | select(.color == "white") | .userId' <<<"$chinese_snapshot")"
+CHINESE_USER_ID_A="$(jq -er --arg userB "$CHINESE_USER_ID_B" '.players[] | select(.userId != $userB) | .userId' <<<"$chinese_snapshot")"
+if [[ "$CHINESE_BLACK_USER_ID" == "$CHINESE_USER_ID_A" && "$CHINESE_WHITE_USER_ID" == "$CHINESE_USER_ID_B" ]]; then
+	CHINESE_BLACK_SERIAL="$SERIAL_A"
+	CHINESE_WHITE_SERIAL="$SERIAL_B"
+elif [[ "$CHINESE_BLACK_USER_ID" == "$CHINESE_USER_ID_B" && "$CHINESE_WHITE_USER_ID" == "$CHINESE_USER_ID_A" ]]; then
+	CHINESE_BLACK_SERIAL="$SERIAL_B"
+	CHINESE_WHITE_SERIAL="$SERIAL_A"
+else
+	fail "Chinese Checkers colors did not map to both registered users"
+fi
+jq -e '
+	.gameId == "chinese_checkers" and .revision == 0 and .status == "active"
+	and (.board | length == 121)
+	and ([.board[] | select(. == 1)] | length == 10)
+	and ([.board[] | select(. == 2)] | length == 10)
+' <<<"$chinese_snapshot" >/dev/null \
+	|| fail "Chinese Checkers initial authoritative board was malformed"
+
+wait_for_identifier_after_scroll "$SERIAL_B" chinese-checkers-continue-match >/dev/null \
+	|| fail "B did not expose the active Chinese Checkers match"
+tap_identifier_after_scroll "$SERIAL_B" chinese-checkers-continue-match \
+	|| fail "B could not launch the active Chinese Checkers match"
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_READY_MARKER game=chinese_checkers match=$CHINESE_MATCH_ID" \
+		|| fail "$serial did not render the Chinese Checkers scene"
+	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$CHINESE_MATCH_ID revision=0 status=active connection=connected" \
+		|| fail "$serial did not render the initial authoritative Chinese Checkers state"
+done
+
+tap_chinese_checkers_hole "$CHINESE_BLACK_SERIAL" 6 \
+	|| fail "black player could not select Chinese Checkers hole 6"
+wait_for_log_marker "$CHINESE_BLACK_SERIAL" "GAMEBOX_CHINESE_CHECKERS_STATE match=$CHINESE_MATCH_ID revision=0 selected=6" \
+	|| fail "Chinese Checkers did not expose direct legal endpoints"
+gamebox_e2e_visual_gate selected "$CHINESE_BLACK_SERIAL"
+
+pause_e2e_server || fail "could not pause the server before the pending path assertion"
+tap_chinese_checkers_hole "$CHINESE_BLACK_SERIAL" 14 \
+	|| fail "black player could not submit Chinese Checkers endpoint 14"
+wait_for_log_marker "$CHINESE_BLACK_SERIAL" "GAMEBOX_CHINESE_CHECKERS_STATE match=$CHINESE_MATCH_ID revision=0 selected=-1 targets=0 pending=true" \
+	|| fail "Chinese Checkers path did not remain pending before server acknowledgement"
+chinese_pending_snapshot="$(chinese_checkers_match_show "$CHINESE_MATCH_ID")" \
+	|| fail "could not inspect the pending Chinese Checkers match"
+[[ "$(jq -r '.revision' <<<"$chinese_pending_snapshot")" == "0" \
+	&& "$(jq -r '.board[6]' <<<"$chinese_pending_snapshot")" == "1" \
+	&& "$(jq -r '.board[14]' <<<"$chinese_pending_snapshot")" == "0" ]] \
+	|| fail "pending path changed the authoritative Chinese Checkers board"
+gamebox_e2e_visual_gate pending "$CHINESE_BLACK_SERIAL"
+resume_e2e_server || fail "could not resume the server after the pending path assertion"
+
+chinese_snapshot="$(wait_for_chinese_checkers_match "$CHINESE_MATCH_ID" 1 active)" \
+	|| fail "Chinese Checkers path did not commit as revision one"
+[[ "$(jq -r '.board[6]' <<<"$chinese_snapshot")" == "0" \
+	&& "$(jq -r '.board[14]' <<<"$chinese_snapshot")" == "1" \
+	&& "$(jq -r '.nextColor' <<<"$chinese_snapshot")" == "white" ]] \
+	|| fail "authoritative Chinese Checkers path or turn was wrong"
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$CHINESE_MATCH_ID revision=1 status=active connection=connected" \
+		|| fail "$serial did not render Chinese Checkers revision one"
+done
+
+refresh_game_log_boundary "$CHINESE_BLACK_SERIAL" chinese-checkers-recovery \
+	|| fail "could not establish the Chinese Checkers recovery log boundary"
+adb_for "$CHINESE_BLACK_SERIAL" shell am force-stop "$PACKAGE" >/dev/null \
+	|| fail "could not force-stop the Chinese Checkers black client"
+start_flutter "$CHINESE_BLACK_SERIAL"
+wait_for_identifier_after_scroll "$CHINESE_BLACK_SERIAL" chinese-checkers-continue-match >/dev/null \
+	|| fail "black player did not retain the active Chinese Checkers match"
+tap_identifier_after_scroll "$CHINESE_BLACK_SERIAL" chinese-checkers-continue-match \
+	|| fail "black player could not resume Chinese Checkers"
+wait_for_log_marker "$CHINESE_BLACK_SERIAL" "$GAMEBOX_READY_MARKER game=chinese_checkers match=$CHINESE_MATCH_ID" \
+	|| fail "Chinese Checkers did not relaunch after force-stop"
+wait_for_log_marker "$CHINESE_BLACK_SERIAL" "$GAMEBOX_STATE_MARKER match=$CHINESE_MATCH_ID revision=1 status=active connection=connected" \
+	|| fail "Chinese Checkers reconnect did not restore revision one"
+
+return_to_lobby_via_android_back "$CHINESE_BLACK_SERIAL" \
+	|| fail "Chinese Checkers Back could not return to the lobby"
+wait_for_identifier_after_scroll "$CHINESE_BLACK_SERIAL" chinese-checkers-continue-match >/dev/null \
+	|| fail "Chinese Checkers Back destroyed the active match"
+chinese_snapshot="$(chinese_checkers_match_show "$CHINESE_MATCH_ID")" \
+	|| fail "Chinese Checkers match became unreadable after Back"
+[[ "$(jq -r '.status' <<<"$chinese_snapshot")" == "active" \
+	&& "$(jq -r '.revision' <<<"$chinese_snapshot")" == "1" ]] \
+	|| fail "Chinese Checkers Back resigned or mutated the match"
+
+refresh_game_log_boundary "$CHINESE_BLACK_SERIAL" chinese-checkers-resign \
+	|| fail "could not establish the Chinese Checkers resignation boundary"
+tap_identifier_after_scroll "$CHINESE_BLACK_SERIAL" chinese-checkers-continue-match \
+	|| fail "black player could not reopen Chinese Checkers before resignation"
+wait_for_log_marker "$CHINESE_BLACK_SERIAL" "$GAMEBOX_READY_MARKER game=chinese_checkers match=$CHINESE_MATCH_ID" \
+	|| fail "Chinese Checkers did not reopen before resignation"
+tap_chinese_checkers_resign "$CHINESE_BLACK_SERIAL" \
+	|| fail "Chinese Checkers overflow did not open resignation"
+sleep 0.5
+tap_chinese_checkers_confirm_resign "$CHINESE_BLACK_SERIAL" \
+	|| fail "Chinese Checkers resignation could not be confirmed"
+chinese_snapshot="$(wait_for_chinese_checkers_match "$CHINESE_MATCH_ID" 2 finished)" \
+	|| fail "Chinese Checkers resignation did not finish authoritatively"
+[[ "$(jq -r '.result' <<<"$chinese_snapshot")" == "resignation" \
+	&& "$(jq -r '.winnerUserId' <<<"$chinese_snapshot")" == "$CHINESE_WHITE_USER_ID" ]] \
+	|| fail "Chinese Checkers resignation result or winner was wrong"
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$CHINESE_MATCH_ID result=resignation" \
+		|| fail "$serial did not render the authoritative Chinese Checkers result"
+done
+gamebox_e2e_visual_gate result "$CHINESE_BLACK_SERIAL"
+
+return_to_lobby_via_android_back "$SERIAL_A" || fail "A could not leave the Chinese Checkers result"
+return_to_lobby_via_android_back "$SERIAL_B" || fail "B could not leave the Chinese Checkers result"
+wait_for_identifier_after_scroll "$SERIAL_A" chinese-checkers-choose-opponent >/dev/null \
+	|| fail "A Chinese Checkers slot was not released"
+wait_for_identifier_after_scroll "$SERIAL_B" chinese-checkers-choose-opponent >/dev/null \
+	|| fail "B Chinese Checkers slot was not released"
+gamebox_e2e_record_scenario_result chinese-checkers-network "$(jq -n \
+	--arg matchId "$CHINESE_MATCH_ID" \
+	'{
+		match:{id:$matchId,revision:2,status:"finished",result:"resignation",slotsReleased:true},
+		assertions:[
+			"chinese-checkers-121-hole-snapshot","chinese-checkers-direct-endpoints",
+			"chinese-checkers-pending-before-authority","chinese-checkers-path-accepted",
+			"chinese-checkers-force-stop-resume","chinese-checkers-back-non-destructive",
+			"chinese-checkers-authoritative-resignation"
+		]
+	}')"
+fi
 
 if gamebox_e2e_scenario_enabled gomoku-network; then
 gamebox_e2e_enter_phase scenario:gomoku-network

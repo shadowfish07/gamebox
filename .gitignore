@@ -1,7 +1,7 @@
 .superpowers/
 .worktrees/
 .gamebox-worktree/
-.ai/
+/.ai
 app/build/
 app/android/build/
 app/.dart_tool/

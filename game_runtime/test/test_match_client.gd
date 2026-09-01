@@ -2,6 +2,7 @@ extends RefCounted
 
 const MatchClient = preload("res://core/match_client.gd")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
+const ChineseCheckersState = preload("res://games/chinese_checkers/chinese_checkers_state.gd")
 const Protocol = preload("res://core/protocol.gd")
 
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
@@ -251,6 +252,7 @@ static func cases() -> Array:
 		{"name": "match client tracks generic player presence independently of game revision", "run": _tracks_player_presence},
 		{"name": "match client signals every transition into snapshot recovery once", "run": _signals_snapshot_recovery_once},
 		{"name": "match client sends UUIDv4 actions without optimistic stones", "run": _sends_actions_authoritatively},
+		{"name": "match client sends Chinese Checkers paths without optimistic moves", "run": _sends_chinese_checkers_paths_authoritatively},
 		{"name": "match client sends a fresh resignation action after the first move", "run": _sends_resignation},
 		{"name": "match client rolls back pending when send fails", "run": _rolls_back_failed_send},
 		{"name": "match client never replays ambiguous pending actions", "run": _never_replays_pending},
@@ -611,6 +613,26 @@ static func _sends_actions_authoritatively() -> bool:
 	return _check(fixture.state.cell(7, 7) == 1 and fixture.state.pending_action.is_empty(), "accepted move did not commit and clear pending")
 
 
+static func _sends_chinese_checkers_paths_authoritatively() -> bool:
+	var fixture := _connected_chinese_checkers_fixture()
+	var before: Array = fixture.state.board
+	var action_id: String = fixture.client.request_chinese_checkers_move([6, 14])
+	if not _check(action_id == "00010203-0405-4607-8809-0a0b0c0d0e0f", "deterministic Chinese Checkers action UUID wrong") \
+		or not _check(fixture.state.board == before, "path request changed the board optimistically") \
+		or not _check(fixture.state.pending_action.get("path") == [6, 14], "path request did not mark pending"):
+		return false
+	var action := _last_sent(fixture.transport)
+	if not _check(action.get("gameId") == "chinese_checkers", "Chinese Checkers game binding changed") \
+		or not _check(action.get("type") == "chinese_checkers.move.requested", "wrong Chinese Checkers action type") \
+		or not _check(action.get("payload") == {"path": [6, 14]}, "wrong Chinese Checkers path payload") \
+		or not _check(fixture.client.request_chinese_checkers_move([6, 14]).is_empty(), "second pending path was allowed"):
+		return false
+	fixture.transport.queue(_chinese_checkers_move(1, action_id, [6, 14]))
+	fixture.client.poll()
+	return _check(fixture.state.board[6] == 0 and fixture.state.board[14] == 1, "accepted path did not move the piece") \
+		and _check(fixture.state.pending_action.is_empty(), "accepted path did not clear pending")
+
+
 static func _tracks_player_presence() -> bool:
 	var fixture := _connected_fixture()
 	if not (_check(fixture.client.has_player_presence(BLACK_ID), "local player presence missing from handshake") \
@@ -748,6 +770,21 @@ static func _connected_fixture() -> Dictionary:
 	return fixture
 
 
+static func _connected_chinese_checkers_fixture() -> Dictionary:
+	var transport := FakeTransport.new()
+	var scheduler := FakeScheduler.new()
+	var random := FakeRandom.new()
+	var state = ChineseCheckersState.new(MATCH_ID)
+	var client = MatchClient.new(transport, scheduler, random)
+	client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "launch-secret", state, "chinese_checkers")
+	transport.open()
+	client.poll()
+	transport.queue(_chinese_checkers_connected(0, "resume-secret"))
+	transport.queue(_chinese_checkers_snapshot(0))
+	client.poll()
+	return {"client": client, "transport": transport, "scheduler": scheduler, "random": random, "state": state}
+
+
 static func _last_sent(transport: FakeTransport) -> Dictionary:
 	if transport.sent.is_empty():
 		return {}
@@ -775,6 +812,38 @@ static func _connected(revision: int, resume_token: String) -> Dictionary:
 				{"userId": WHITE_ID, "online": false},
 			],
 		},
+	}
+
+
+static func _chinese_checkers_connected(revision: int, resume_token: String) -> Dictionary:
+	var envelope := _connected(revision, resume_token)
+	envelope["gameId"] = "chinese_checkers"
+	return envelope
+
+
+static func _chinese_checkers_snapshot(revision: int) -> Dictionary:
+	var board: Array = []
+	board.resize(121)
+	board.fill(0)
+	for index in 10:
+		board[index] = 1
+	for index in range(111, 121):
+		board[index] = 2
+	return {
+		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID, "revision": revision,
+		"type": "platform.snapshot", "payload": {
+			"status": "active", "board": board,
+			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
+			"winnerUserId": null, "result": null,
+		},
+	}
+
+
+static func _chinese_checkers_move(revision: int, action_id: String, path: Array) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID, "revision": revision,
+		"type": "chinese_checkers.move.accepted", "actionId": action_id,
+		"payload": {"userId": BLACK_ID, "color": "black", "path": path.duplicate()},
 	}
 
 

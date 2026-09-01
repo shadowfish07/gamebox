@@ -1,0 +1,95 @@
+name: Comment PR Debug APK
+
+on:
+  workflow_run:
+    workflows:
+      - Debug APK
+    types:
+      - completed
+
+permissions:
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0].number > 0
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add debug APK download to pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          if [[ ! "${RUN_ID}" =~ ^[0-9]+$ ]]; then
+            printf 'Invalid Debug APK run ID: %s\n' "${RUN_ID}" >&2
+            exit 1
+          fi
+          if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            printf 'Invalid pull request number: %s\n' "${PR_NUMBER}" >&2
+            exit 1
+          fi
+          if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'Invalid pull request head SHA: %s\n' "${HEAD_SHA}" >&2
+            exit 1
+          fi
+
+          artifact="$({
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?per_page=100"
+          } | jq -er '
+            [.artifacts[]
+              | select(.expired == false)
+              | select(.name | test("^gamebox-debug-[0-9a-f]{40}$"))]
+            | sort_by(.created_at)
+            | last
+            | [.id, .name, .expires_at, .size_in_bytes]
+            | @tsv
+          ')"
+          IFS=$'\t' read -r artifact_id artifact_name expires_at size_bytes <<<"${artifact}"
+          if [[ ! "${artifact_id}" =~ ^[0-9]+$ ]] || [[ ! "${size_bytes}" =~ ^[0-9]+$ ]]; then
+            printf 'Debug APK run %s returned invalid artifact metadata\n' "${RUN_ID}" >&2
+            exit 1
+          fi
+
+          marker='<!-- gamebox-pr-debug-apk -->'
+          artifact_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts/${artifact_id}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA}"
+          size_mib="$(( (size_bytes + 1048575) / 1048576 ))"
+          short_sha="${HEAD_SHA:0:7}"
+          printf -v body "%s\n\n### Debug APK\n\n- [Download \`%s\`](%s)\n- PR head: [\`%s\`](%s)\n- Build: [Debug APK run \`%s\`](%s)\n- Size: \`%s MiB\`\n- Expires: \`%s\`\n\n> GitHub sign-in is required. The APK and its checksum are downloaded together as a ZIP archive.\n" \
+            "${marker}" \
+            "${artifact_name}" \
+            "${artifact_url}" \
+            "${short_sha}" \
+            "${commit_url}" \
+            "${RUN_ID}" \
+            "${run_url}" \
+            "${size_mib}" \
+            "${expires_at}"
+
+          comment_id="$({
+            gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100"
+          } | jq -r '
+            .[][]
+            | select(.user.login == "github-actions[bot]")
+            | select(.body | contains("<!-- gamebox-pr-debug-apk -->"))
+            | .id
+          ' | tail -n 1)"
+          if [[ -n "${comment_id}" ]]; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              -f body="${body}" >/dev/null
+          else
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -f body="${body}" >/dev/null
+          fi
+
+          printf '%s\n' "${body}" >> "${GITHUB_STEP_SUMMARY}"

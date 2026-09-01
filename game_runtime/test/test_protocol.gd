@@ -18,7 +18,7 @@ static func cases() -> Array:
 		{"name": "protocol enforces bounded JSON resources", "run": _enforces_resource_limits},
 		{"name": "protocol errors never echo untrusted input", "run": _errors_do_not_echo_untrusted_input},
 		{"name": "protocol action encoding uses canonical camelCase fields", "run": _encodes_action_with_camel_case},
-		{"name": "protocol encodes both client action types", "run": _encodes_both_client_actions},
+		{"name": "protocol encodes all board-game client actions", "run": _encodes_board_game_client_actions},
 		{"name": "protocol action encoding preflights byte budget", "run": _preflights_action_byte_budget},
 		{"name": "protocol action encoding enforces depth budget", "run": _enforces_action_depth_budget},
 		{"name": "protocol action encoding fails closed", "run": _rejects_invalid_action_encoding},
@@ -289,10 +289,16 @@ static func _encodes_action_with_camel_case() -> bool:
 		and _check(Protocol.decode(encoded).get("ok", false), "successful encoding must pass strict decode")
 
 
-static func _encodes_both_client_actions() -> bool:
-	for message_type in ["gomoku.move.requested", "gomoku.resign.requested"]:
-		var payload := {"x": 7, "y": 7} if message_type == "gomoku.move.requested" else {}
-		var result: Dictionary = Protocol.encode_action(message_type, MATCH_ID, 3, ACTION_ID, payload)
+static func _encodes_board_game_client_actions() -> bool:
+	var actions := [
+		["gomoku.move.requested", "gomoku", {"x": 7, "y": 7}],
+		["gomoku.resign.requested", "gomoku", {}],
+		["chinese_checkers.move.requested", "chinese_checkers", {"path": [6, 14]}],
+		["chinese_checkers.resign.requested", "chinese_checkers", {}],
+	]
+	for action in actions:
+		var message_type: String = action[0]
+		var result: Dictionary = Protocol.encode_action(message_type, MATCH_ID, 3, ACTION_ID, action[2], action[1])
 		if not _check(result.get("ok", false), "expected %s to encode" % message_type):
 			return false
 		if not _check(Protocol.decode(result.get("text", "")).get("ok", false), "encoded %s must decode" % message_type):

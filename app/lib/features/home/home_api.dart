@@ -16,15 +16,21 @@ abstract interface class HomeApi {
 }
 
 final class HttpHomeApi implements HomeApi {
-  HttpHomeApi(this._client, this._session);
+  HttpHomeApi(this._client, this._session, {String gameId = gomokuGameId})
+    : _gameId = gameId {
+    if (gameId != gomokuGameId && gameId != chineseCheckersGameId) {
+      throw ArgumentError.value(gameId, 'gameId', 'unsupported board game');
+    }
+  }
 
   final ApiClient _client;
   final SessionController _session;
+  final String _gameId;
 
   @override
   Future<GomokuStatus> fetchStatus() async {
     final envelope = await _client.getJson(
-      '/v1/games/gomoku/status',
+      '/v1/games/$_gameId/status',
       accessToken: _accessToken,
       onUnauthorized: _session.refresh,
     );
@@ -34,7 +40,7 @@ final class HttpHomeApi implements HomeApi {
   @override
   Future<List<GomokuOpponent>> fetchOpponents() async {
     final envelope = await _client.getJson(
-      '/v1/games/gomoku/opponents',
+      '/v1/games/$_gameId/opponents',
       accessToken: _accessToken,
       onUnauthorized: _session.refresh,
     );
@@ -45,13 +51,15 @@ final class HttpHomeApi implements HomeApi {
   Future<CreatedGomokuMatch> createMatch(String opponentId) async {
     _requireUuid(opponentId);
     final envelope = await _client.postJson(
-      '/v1/games/gomoku/matches',
+      '/v1/games/$_gameId/matches',
       {'opponentId': opponentId},
       accessToken: _accessToken,
       onUnauthorized: _session.refresh,
       expectedStatuses: const {201},
     );
-    return _decode(() => CreatedGomokuMatch.fromEnvelope(envelope));
+    return _decode(
+      () => CreatedGomokuMatch.fromEnvelope(envelope, expectedGameId: _gameId),
+    );
   }
 
   @override
@@ -74,7 +82,9 @@ final class HttpHomeApi implements HomeApi {
       onUnauthorized: _session.refresh,
       expectedStatuses: const {201},
     );
-    final ticket = _decode(() => GomokuLaunchTicket.fromEnvelope(envelope));
+    final ticket = _decode(
+      () => GomokuLaunchTicket.fromEnvelope(envelope, expectedGameId: _gameId),
+    );
     if (ticket.matchId != matchId) {
       throw _invalidResponse;
     }

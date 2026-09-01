@@ -19,14 +19,18 @@ void main() {
   const matchId = '33333333-3333-4333-8333-333333333333';
   final now = DateTime.utc(2026, 8, 20, 12);
 
-  test('catalog exposes immutable gomoku and rps descriptors', () {
-    expect(gameCatalog, hasLength(2));
+  test('catalog exposes immutable built-in game descriptors', () {
+    expect(gameCatalog, hasLength(3));
     expect(
       gameCatalog.first,
       const GameDescriptor(id: 'gomoku', title: '五子棋', playerCount: 2),
     );
     expect(
-      gameCatalog.last,
+      gameCatalog[1],
+      const GameDescriptor(id: 'chinese_checkers', title: '跳棋', playerCount: 2),
+    );
+    expect(
+      gameCatalog[2],
       const GameDescriptor(id: 'rps', title: '石头剪刀布', playerCount: 2),
     );
     expect(
@@ -36,6 +40,53 @@ void main() {
       throwsUnsupportedError,
     );
   });
+
+  test(
+    'board-game API binds every route and response to its game id',
+    () async {
+      final requests = <String>[];
+      final fixture = await _ApiFixture.create(now, (request) async {
+        requests.add('${request.method} ${request.url.path}');
+        return switch (request.url.path) {
+          '/v1/games/chinese_checkers/status' => _json({'state': 'idle'}),
+          '/v1/games/chinese_checkers/opponents' => _json({'opponents': []}),
+          '/v1/games/chinese_checkers/matches' => _json({
+            'match': {
+              'id': matchId,
+              'gameId': chineseCheckersGameId,
+              'state': 'active',
+            },
+          }, status: 201),
+          '/v1/matches/$matchId/launch-ticket' => _json({
+            'matchId': matchId,
+            'gameId': chineseCheckersGameId,
+            'launchTicket': 'launch-ticket',
+            'expiresAt': now
+                .add(const Duration(minutes: 1))
+                .millisecondsSinceEpoch,
+          }, status: 201),
+          _ => throw StateError('unexpected route ${request.url.path}'),
+        };
+      }, gameId: chineseCheckersGameId);
+
+      expect(await fixture.api.fetchStatus(), isA<GomokuIdleStatus>());
+      expect(await fixture.api.fetchOpponents(), isEmpty);
+      expect(
+        (await fixture.api.createMatch(bobId)).gameId,
+        chineseCheckersGameId,
+      );
+      expect(
+        (await fixture.api.createLaunchTicket(matchId)).gameId,
+        chineseCheckersGameId,
+      );
+      expect(requests, [
+        'GET /v1/games/chinese_checkers/status',
+        'GET /v1/games/chinese_checkers/opponents',
+        'POST /v1/games/chinese_checkers/matches',
+        'POST /v1/matches/$matchId/launch-ticket',
+      ]);
+    },
+  );
 
   test('status decodes the exact idle and active unions', () async {
     var calls = 0;
@@ -360,6 +411,7 @@ final class _ApiFixture {
     DateTime now,
     Future<http.Response> Function(http.Request request) handler, {
     Future<Session> Function(String refreshToken)? refresh,
+    String gameId = gomokuGameId,
   }) async {
     final auth = _FakeAuthApi(
       refresh ??
@@ -379,7 +431,7 @@ final class _ApiFixture {
       baseUri: Uri.parse('https://gamebox.test'),
       httpClient: MockClient(handler),
     );
-    return _ApiFixture(HttpHomeApi(client, session), auth);
+    return _ApiFixture(HttpHomeApi(client, session, gameId: gameId), auth);
   }
 
   final HttpHomeApi api;
