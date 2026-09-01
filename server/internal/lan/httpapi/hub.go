@@ -321,6 +321,7 @@ func (hub *Hub) publish(event room.Event) {
 		return
 	}
 	var slow []*hubConnection
+	var terminalRecipients []*hubConnection
 	hub.mu.Lock()
 	if hub.closed || event.Revision <= hub.publishedRevision {
 		hub.mu.Unlock()
@@ -343,8 +344,11 @@ func (hub *Hub) publish(event room.Event) {
 		delete(hub.pending, next)
 		hub.publishedRevision = next
 		for connection := range hub.connections {
-			if !connection.enqueueCommittedEvent(data, next) {
+			queued, ok := connection.enqueueCommittedEvent(data, next)
+			if !ok {
 				slow = append(slow, connection)
+			} else if next == event.Revision && queued {
+				terminalRecipients = append(terminalRecipients, connection)
 			}
 		}
 	}
@@ -354,11 +358,11 @@ func (hub *Hub) publish(event room.Event) {
 	}
 	snapshot := hub.service.Snapshot()
 	if snapshot.Status == room.StatusFinished && snapshot.Revision == event.Revision {
-		hub.publishResult(snapshot.Revision)
+		hub.publishResult(snapshot.Revision, terminalRecipients)
 	}
 }
 
-func (hub *Hub) publishResult(revision int64) {
+func (hub *Hub) publishResult(revision int64, recipients []*hubConnection) {
 	_, encoded, err := hub.service.Result()
 	snapshot := hub.service.Snapshot()
 	message, marshalErr := resultEnvelope(snapshot.RoomID, revision, encoded)
@@ -367,8 +371,8 @@ func (hub *Hub) publishResult(revision int64) {
 	}
 	var slow []*hubConnection
 	hub.mu.Lock()
-	for connection := range hub.connections {
-		if connection.revision.Load() == revision && !connection.enqueueRevision(message, revision) {
+	for _, connection := range recipients {
+		if _, registered := hub.connections[connection]; registered && connection.revision.Load() == revision && !connection.enqueueRevision(message, revision) {
 			slow = append(slow, connection)
 		}
 	}
@@ -584,17 +588,17 @@ func (connection *hubConnection) enqueueRevision(data []byte, revision int64) bo
 	return true
 }
 
-func (connection *hubConnection) enqueueCommittedEvent(data []byte, revision int64) bool {
+func (connection *hubConnection) enqueueCommittedEvent(data []byte, revision int64) (bool, bool) {
 	connection.outboundMu.Lock()
 	defer connection.outboundMu.Unlock()
 	if revision <= connection.revision.Load() {
-		return true
+		return false, true
 	}
 	if !connection.enqueue(data) {
-		return false
+		return false, false
 	}
 	connection.revision.Store(revision)
-	return true
+	return true, true
 }
 
 func (connection *hubConnection) enqueue(data []byte) bool {

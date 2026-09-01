@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/lan/room"
 	"me.zqydev/gamebox/server/internal/protocol"
+	"me.zqydev/gamebox/server/internal/results"
 )
 
 type applyBarrierService struct {
@@ -34,6 +36,26 @@ func (service *applyBarrierService) Apply(ctx context.Context, request room.Acti
 }
 
 func (service *applyBarrierService) releaseApply() {
+	service.releaseOnce.Do(func() { close(service.release) })
+}
+
+type resultBarrierService struct {
+	RoomService
+	entered     chan struct{}
+	release     chan struct{}
+	blocked     atomic.Bool
+	releaseOnce sync.Once
+}
+
+func (service *resultBarrierService) Result() (results.GameResult, []byte, error) {
+	if service.blocked.CompareAndSwap(false, true) {
+		close(service.entered)
+		<-service.release
+	}
+	return service.RoomService.Result()
+}
+
+func (service *resultBarrierService) releaseResult() {
 	service.releaseOnce.Do(func() { close(service.release) })
 }
 
@@ -146,11 +168,17 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	router, err := NewRouter(service)
+	barrier := &resultBarrierService{
+		RoomService: service,
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	router, err := NewRouter(barrier)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { closeTestRouter(t, router) })
+	t.Cleanup(barrier.releaseResult)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/lan/v1/ws"
@@ -213,6 +241,11 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 			t.Fatalf("terminal event = %#v", event)
 		}
 	}
+	select {
+	case <-barrier.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("terminal result publication did not reach the barrier")
+	}
 
 	reconnected := dialWebSocket(t, wsURL)
 	writeConnect(t, reconnected, "", testGuestResume)
@@ -224,6 +257,7 @@ func TestWebSocketBroadcastSnapshotResyncAndTerminalReconnectOrdering(t *testing
 			third.Type, third.Revision,
 		)
 	}
+	barrier.releaseResult()
 	readContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, _, err := reconnected.Read(readContext); err == nil {
