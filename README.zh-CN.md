@@ -236,6 +236,15 @@ curl --fail http://127.0.0.1:18080/healthz
 
 `deploy/macos/install-staging.sh` 可安装独立的预发服务。它使用独立的二进制文件、端口、数据库、密钥和 launch agent，但共享生产环境的 tunnel 配置。
 
+使用与目标服务、数据库和 Keychain 密钥匹配的环境配置生成一个邀请码：
+
+```bash
+zsh deploy/macos/create-invite.sh production
+zsh deploy/macos/create-invite.sh staging
+```
+
+可通过第二个参数指定 1 到 1000 的生成数量，例如 `zsh deploy/macos/create-invite.sh staging 2`。
+
 ## 安全
 
 请勿提交或分享明文邀请码、JWT 或 pepper 值、access/refresh token、启动/恢复票据、SQLite 数据库或私有运行时输入。服务日志只使用请求、连接和对局 ID 进行识别，不记录明文凭据。

@@ -266,6 +266,15 @@ curl --fail http://127.0.0.1:18080/healthz
 
 An isolated staging installation is available through `deploy/macos/install-staging.sh`. It uses its own binaries, port, database, secrets, and launch agents while sharing the production tunnel configuration.
 
+Generate one invite against an installed environment with the matching service, database, and Keychain secret:
+
+```bash
+zsh deploy/macos/create-invite.sh production
+zsh deploy/macos/create-invite.sh staging
+```
+
+Pass a count from 1 to 1000 as the optional second argument, for example `zsh deploy/macos/create-invite.sh staging 2`.
+
 ## Security
 
 Never commit or share invite plaintext, JWT or pepper values, access or refresh tokens, launch or resume tickets, SQLite databases, or private runtime input. Server logs identify requests, connections, and matches without credential plaintext.
