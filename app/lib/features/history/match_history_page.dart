@@ -330,41 +330,64 @@ final class _HistoryEntry extends StatelessWidget {
       container: true,
       excludeSemantics: true,
       child: Card(
-        child: ListTile(
-          contentPadding: EdgeInsets.all(GameboxTokens.components.pagePadding),
-          title: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        child: Padding(
+          padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Chip(
-                label: Text(
-                  outcome.label,
-                  style: TextStyle(color: outcome.foreground),
-                ),
-                backgroundColor: outcome.background,
-              ),
-              SizedBox(width: GameboxTokens.spacing.layout),
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(top: GameboxTokens.spacing.layout),
-                  child: Text(
-                    entry.opponentNickname,
-                    style: Theme.of(context).textTheme.titleMedium,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '对手',
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                        ),
+                        SizedBox(height: GameboxTokens.spacing.base),
+                        Text(
+                          entry.opponentNickname,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                  SizedBox(width: GameboxTokens.spacing.compact),
+                  _OutcomeBadge(
+                    badgeKey: Key('$identifier-outcome'),
+                    outcome: outcome,
+                  ),
+                ],
+              ),
+              SizedBox(height: GameboxTokens.spacing.page),
+              Wrap(
+                spacing: GameboxTokens.spacing.page,
+                runSpacing: GameboxTokens.spacing.layout,
+                children: [
+                  _HistoryMetadata(
+                    icon: Icons.sports_esports_outlined,
+                    label: leadingDetail,
+                  ),
+                  _HistoryMetadata(
+                    icon: Icons.format_list_numbered_rounded,
+                    label: countDetail,
+                  ),
+                ],
+              ),
+              SizedBox(height: GameboxTokens.spacing.layout),
+              _HistoryMetadata(
+                icon: Icons.schedule_rounded,
+                label: finished,
+                fillWidth: true,
               ),
             ],
-          ),
-          subtitle: Padding(
-            padding: EdgeInsets.only(top: GameboxTokens.spacing.layout),
-            child: Wrap(
-              spacing: GameboxTokens.spacing.compact,
-              runSpacing: GameboxTokens.spacing.layout,
-              children: [
-                Text(leadingDetail),
-                Text(finished),
-                Text(countDetail),
-              ],
-            ),
           ),
         ),
       ),
@@ -372,9 +395,79 @@ final class _HistoryEntry extends StatelessWidget {
   }
 }
 
+final class _OutcomeBadge extends StatelessWidget {
+  const _OutcomeBadge({required this.badgeKey, required this.outcome});
+
+  final Key badgeKey;
+  final _OutcomeStyle outcome;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(GameboxTokens.shape.full),
+      child: ColoredBox(
+        key: badgeKey,
+        color: outcome.background,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: GameboxTokens.spacing.compact,
+            vertical: GameboxTokens.spacing.base,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                outcome.icon,
+                size: GameboxTokens.spacing.page,
+                color: outcome.foreground,
+              ),
+              SizedBox(width: GameboxTokens.spacing.base),
+              Text(
+                outcome.label,
+                style: Theme.of(context).textTheme.labelLarge
+                    ?.copyWith(color: outcome.foreground),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _HistoryMetadata extends StatelessWidget {
+  const _HistoryMetadata({
+    required this.icon,
+    required this.label,
+    this.fillWidth = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool fillWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    final text = Text(
+      label,
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: GameboxTokens.spacing.page, color: color),
+        SizedBox(width: GameboxTokens.spacing.base),
+        if (fillWidth) Expanded(child: text) else text,
+      ],
+    );
+  }
+}
+
 final class _OutcomeStyle {
   const _OutcomeStyle({
     required this.label,
+    required this.icon,
     required this.background,
     required this.foreground,
   });
@@ -383,22 +476,26 @@ final class _OutcomeStyle {
     final scheme = Theme.of(context).colorScheme;
     return switch (outcome) {
       MatchOutcome.win => _OutcomeStyle(
-        label: '胜',
+        label: '胜利',
+        icon: Icons.check_rounded,
         background: scheme.primaryContainer,
         foreground: scheme.onPrimaryContainer,
       ),
       MatchOutcome.loss => _OutcomeStyle(
-        label: '负',
+        label: '失利',
+        icon: Icons.close_rounded,
         background: scheme.surfaceContainerHighest,
-        foreground: scheme.onSurface,
+        foreground: scheme.onSurfaceVariant,
       ),
       MatchOutcome.draw => _OutcomeStyle(
-        label: '和',
+        label: '平局',
+        icon: Icons.remove_rounded,
         background: scheme.tertiaryContainer,
         foreground: scheme.onTertiaryContainer,
       ),
       MatchOutcome.abandoned => _OutcomeStyle(
         label: '作废',
+        icon: Icons.block_rounded,
         background: scheme.surfaceContainer,
         foreground: scheme.onSurfaceVariant,
       ),
@@ -406,6 +503,7 @@ final class _OutcomeStyle {
   }
 
   final String label;
+  final IconData icon;
   final Color background;
   final Color foreground;
 }

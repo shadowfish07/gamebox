@@ -113,7 +113,7 @@ void main() {
   );
 
   testWidgets(
-    'data rows expose literal result color time and move semantics without tap',
+    'data rows expose compact result status and metadata without tap',
     (tester) async {
       final entries = [
         _entry(
@@ -184,6 +184,18 @@ void main() {
         entries[2].id: scheme.tertiaryContainer,
         entries[3].id: scheme.surfaceContainer,
       };
+      final expectedLabels = {
+        entries[0].id: '胜利',
+        entries[1].id: '失利',
+        entries[2].id: '平局',
+        entries[3].id: '作废',
+      };
+      final expectedIcons = {
+        entries[0].id: Icons.check_rounded,
+        entries[1].id: Icons.close_rounded,
+        entries[2].id: Icons.remove_rounded,
+        entries[3].id: Icons.block_rounded,
+      };
       for (final entry in entries) {
         final finder = find.byKey(Key('match-history-entry-${entry.id}'));
         await tester.scrollUntilVisible(
@@ -199,23 +211,31 @@ void main() {
               .hasAction(SemanticsAction.tap),
           isFalse,
         );
-        expect(
-          tester
-              .widget<ListTile>(
-                find.descendant(of: finder, matching: find.byType(ListTile)),
-              )
-              .onTap,
-          isNull,
+        final outcomeFinder = find.descendant(
+          of: finder,
+          matching: find.byKey(Key('match-history-entry-${entry.id}-outcome')),
         );
+        expect(outcomeFinder, findsOneWidget);
         expect(
-          tester
-              .widget<Chip>(
-                find.descendant(of: finder, matching: find.byType(Chip)),
-              )
-              .backgroundColor,
+          tester.widget<ColoredBox>(outcomeFinder).color,
           expectedColors[entry.id],
         );
+        expect(
+          find.descendant(
+            of: finder,
+            matching: find.text(expectedLabels[entry.id]!),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: finder,
+            matching: find.byIcon(expectedIcons[entry.id]!),
+          ),
+          findsOneWidget,
+        );
       }
+      expect(find.byType(Chip), findsNothing);
       expect(
         tester.getSemantics(
           find.byKey(
@@ -227,7 +247,7 @@ void main() {
         matchesSemantics(
           identifier:
               'match-history-entry-11111111-1111-4111-8111-111111111111',
-          label: '胜，对手棋手乙，黑方，结束于 Aug 25, 2026 20:30，57 手',
+          label: '胜利，对手棋手乙，黑方，结束于 Aug 25, 2026 20:30，57 手',
         ),
       );
       expect(find.byType(RefreshIndicator), findsNothing);
