@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"me.zqydev/gamebox/server/internal/auth"
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
 )
@@ -18,13 +19,14 @@ var errorMessages = map[string]string{
 	"invite_invalid":        "邀请码无效或已使用",
 	"nickname_taken":        "昵称已被使用",
 	"opponent_busy":         "对手已进入其他对局",
-	"active_match_exists":   "你已在五子棋对局中",
+	"active_match_exists":   "你已在该游戏对局中",
 	"match_not_found":       "对局不存在",
 	"match_not_cancellable": "对局无法取消",
 	"ticket_invalid":        "启动票据无效",
 	"stale_revision":        "对局状态已更新",
 	"not_your_turn":         "还未轮到你",
 	"cell_occupied":         "该位置已有棋子",
+	"invalid_move":          "这一步走法无效",
 	"action_conflict":       "动作编号已被使用",
 	"internal_error":        "服务器内部错误",
 }
@@ -74,6 +76,10 @@ func writeServiceError(writer http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "not_your_turn"
 	case errors.Is(err, gomoku.ErrCellOccupied):
 		status, code = http.StatusConflict, "cell_occupied"
+	case errors.Is(err, chinesecheckers.ErrNotYourTurn):
+		status, code = http.StatusConflict, "not_your_turn"
+	case errors.Is(err, chinesecheckers.ErrInvalidPath):
+		status, code = http.StatusConflict, "invalid_move"
 	case errors.Is(err, matches.ErrActionConflict):
 		status, code = http.StatusConflict, "action_conflict"
 	}

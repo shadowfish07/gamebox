@@ -67,7 +67,14 @@
         "resultLossContainerDark",
         "pressedMove",
         "pendingMove",
-        "pendingOverlayAlpha"
+        "pendingOverlayAlpha",
+        "boardCenterAlpha",
+        "boardGridAlpha",
+        "boardHoleAlpha",
+        "boardSideCampAlpha",
+        "boardTargetCampAlpha",
+        "boardTargetFillAlpha",
+        "pieceShadowAlpha"
       ],
       "properties": {
         "board": { "$ref": "#/$defs/color" },
@@ -84,6 +91,41 @@
         "pressedMove": { "$ref": "#/$defs/color" },
         "pendingMove": { "$ref": "#/$defs/color" },
         "pendingOverlayAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "boardCenterAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "boardGridAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "boardHoleAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "boardSideCampAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "boardTargetCampAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "boardTargetFillAlpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "pieceShadowAlpha": {
           "type": "number",
           "exclusiveMinimum": 0,
           "maximum": 1

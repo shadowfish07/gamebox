@@ -2,6 +2,7 @@ class_name GameRegistry
 extends RefCounted
 
 const SCENES := {
+	"chinese_checkers": preload("res://games/chinese_checkers/chinese_checkers_scene.tscn"),
 	"gomoku": preload("res://games/gomoku/gomoku_scene.tscn"),
 	"rps": preload("res://games/rps/rps_scene.tscn"),
 }

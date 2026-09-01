@@ -79,6 +79,70 @@ void main() {
     },
   );
 
+  testWidgets('Chinese checkers card uses dedicated direct-play actions', (
+    tester,
+  ) async {
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final chineseCheckers = _Fixture(now)
+      ..api.status = const GomokuIdleStatus();
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        chineseCheckersController: chineseCheckers.controller,
+      ),
+    );
+    await _flushWidget(tester);
+
+    expect(find.byKey(const Key('game-chinese-checkers')), findsOneWidget);
+    expect(find.text('跳棋'), findsOneWidget);
+    expect(find.text('2 人 · 连跳竞速'), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('chinese-checkers-choose-opponent'),
+      findsOneWidget,
+    );
+    expect(
+      tester.getSemantics(find.byKey(const Key('game-chinese-checkers'))),
+      isSemantics(
+        identifier: 'game-chinese-checkers',
+        label: '跳棋\n2 人 · 连跳竞速',
+        isHeader: true,
+      ),
+    );
+
+    gomoku.dispose();
+    chineseCheckers.dispose();
+  });
+
+  testWidgets('Chinese checkers active card preserves dedicated action ids', (
+    tester,
+  ) async {
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final chineseCheckers = _Fixture(now)..api.status = _active(revision: 0);
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        chineseCheckersController: chineseCheckers.controller,
+      ),
+    );
+    await _flushWidget(tester);
+    await _flushWidget(tester);
+
+    expect(find.text('你的顺序：先手'), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('chinese-checkers-continue-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('chinese-checkers-cancel-match'),
+      findsOneWidget,
+    );
+
+    gomoku.dispose();
+    chineseCheckers.dispose();
+  });
+
   testWidgets('active card shows opponent color revision and hides creation', (
     tester,
   ) async {
@@ -548,6 +612,7 @@ Widget _app(
   bool dark = false,
   MatchHistoryApi? historyApi,
   RpsController? rpsController,
+  HomeController? chineseCheckersController,
 }) => MaterialApp(
   theme: GameboxTheme.light(),
   darkTheme: GameboxTheme.dark(),
@@ -558,6 +623,7 @@ Widget _app(
     nickname: nickname,
     historyApi: historyApi ?? _FakeMatchHistoryApi(),
     rpsController: rpsController,
+    chineseCheckersController: chineseCheckersController,
   ),
 );
 

@@ -350,6 +350,10 @@ verify_debug_apk() (
     assets/core/launch_config.gd \
     assets/core/match_client.gd \
     assets/core/protocol.gd \
+	assets/games/chinese_checkers/chinese_checkers_board.gd \
+	assets/games/chinese_checkers/chinese_checkers_controller.gd \
+	assets/games/chinese_checkers/chinese_checkers_scene.tscn \
+	assets/games/chinese_checkers/chinese_checkers_state.gd \
     assets/games/gomoku/gomoku_board.gd \
     assets/games/gomoku/gomoku_controller.gd \
     assets/games/gomoku/gomoku_preferences.gd \

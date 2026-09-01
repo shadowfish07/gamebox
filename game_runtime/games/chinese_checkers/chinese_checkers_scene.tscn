@@ -1,0 +1,141 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://games/chinese_checkers/chinese_checkers_controller.gd" id="1_controller"]
+[ext_resource type="Script" path="res://games/chinese_checkers/chinese_checkers_board.gd" id="2_board"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_portrait_top_bar.tscn" id="3_top_bar"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_connection_banner.tscn" id="4_connection"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_snackbar.tscn" id="5_snackbar"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="6_confirmation"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="7_result"]
+
+[node name="ChineseCheckers" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_controller")
+
+[node name="Background" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="TopNavigation" parent="." instance=ExtResource("3_top_bar")]
+offset_left = 48.0
+offset_top = 48.0
+offset_right = 1032.0
+offset_bottom = 208.0
+title_text = "跳棋"
+action_text = "⋯"
+show_action = true
+
+[node name="ConnectionLabel" parent="." instance=ExtResource("4_connection")]
+offset_left = 48.0
+offset_top = 220.0
+offset_right = 1032.0
+offset_bottom = 324.0
+
+[node name="PlayerStrip" type="PanelContainer" parent="."]
+offset_left = 48.0
+offset_top = 228.0
+offset_right = 1032.0
+offset_bottom = 332.0
+mouse_filter = 2
+
+[node name="Content" type="HBoxContainer" parent="PlayerStrip"]
+layout_mode = 2
+alignment = 1
+
+[node name="Me" type="Label" parent="PlayerStrip/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "我 · 先手"
+vertical_alignment = 1
+
+[node name="Turn" type="Label" parent="PlayerStrip/Content"]
+custom_minimum_size = Vector2(200, 64)
+layout_mode = 2
+text = "你的回合"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Opponent" type="Label" parent="PlayerStrip/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "后手 · 对手"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="Board" type="Control" parent="."]
+offset_left = 60.0
+offset_top = 350.0
+offset_right = 1020.0
+offset_bottom = 1400.0
+custom_minimum_size = Vector2(960, 1050)
+script = ExtResource("2_board")
+
+[node name="HintLabel" type="Label" parent="."]
+offset_left = 72.0
+offset_top = 1424.0
+offset_right = 1008.0
+offset_bottom = 1504.0
+text = "点选你的棋子，再点高亮终点"
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="ErrorLabel" parent="." instance=ExtResource("5_snackbar")]
+offset_left = 48.0
+offset_top = 1524.0
+offset_right = 1032.0
+offset_bottom = 1634.0
+z_index = 30
+
+[node name="ResignDialog" parent="." instance=ExtResource("6_confirmation")]
+
+[node name="ResultScrim" type="ColorRect" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+z_index = 50
+
+[node name="ResultPanel" parent="." instance=ExtResource("7_result")]
+layout_mode = 1
+anchors_preset = 12
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 48.0
+offset_top = -848.0
+offset_right = -48.0
+offset_bottom = -48.0
+grow_horizontal = 2
+grow_vertical = 0
+z_index = 51
+
+[node name="ResultPill" type="Button" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = -144.0
+offset_right = -48.0
+offset_bottom = -48.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "查看结果"
+z_index = 51

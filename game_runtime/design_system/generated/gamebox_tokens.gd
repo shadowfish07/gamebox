@@ -4,7 +4,7 @@
 class_name GameboxTokens
 extends RefCounted
 
-const VERSION := "2.2.0"
+const VERSION := "2.3.0"
 const BRAND_SEED := "#006B60"
 
 const LIGHT := {
@@ -108,10 +108,17 @@ const DARK := {
 const GAME := {
     "black_piece": Color("#151A24"),
     "board": Color("#D9B277"),
+    "board_center_alpha": 0.03,
+    "board_grid_alpha": 0.34,
+    "board_hole_alpha": 0.5,
+    "board_side_camp_alpha": 0.08,
+    "board_target_camp_alpha": 0.13,
+    "board_target_fill_alpha": 0.2,
     "grid": Color("#8D6E46"),
     "last_move": Color("#F04438"),
     "pending_move": Color("#0072B2"),
     "pending_overlay_alpha": 0.56,
+    "piece_shadow_alpha": 0.24,
     "pressed_move": Color("#7A5AF8"),
     "result_loss_container_dark": Color("#514500"),
     "result_loss_container_light": Color("#F6E49C"),

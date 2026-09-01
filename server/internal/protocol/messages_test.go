@@ -99,6 +99,24 @@ func TestDecodeClientAcceptsOnlyCanonicalRpsChoices(t *testing.T) {
 	}
 }
 
+func TestDecodeClientAcceptsOnlyBoundedChineseCheckersPaths(t *testing.T) {
+	base := `{"protocolVersion":1,"gameId":"chinese_checkers","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":0,"type":"chinese_checkers.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"path":[6,14]}}`
+	if envelope, err := DecodeClient([]byte(base)); err != nil || envelope.Type != TypeChineseCheckersMoveRequested {
+		t.Fatalf("valid path=(%+v,%v)", envelope, err)
+	}
+	for _, invalid := range []string{
+		strings.Replace(base, `[6,14]`, `[6]`, 1),
+		strings.Replace(base, `[6,14]`, `[6,6]`, 1),
+		strings.Replace(base, `[6,14]`, `[6,121]`, 1),
+		strings.Replace(base, `[6,14]`, `[6,14.0]`, 1),
+		strings.Replace(base, `"gameId":"chinese_checkers"`, `"gameId":"gomoku"`, 1),
+	} {
+		if _, err := DecodeClient([]byte(invalid)); err == nil {
+			t.Fatalf("accepted invalid Chinese checkers action: %s", invalid)
+		}
+	}
+}
+
 func TestStringSemanticsFixtureMatchesEncodingJSONV1(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(fixtureDirectory(t), "compat", "string_semantics.json"))
 	if err != nil {

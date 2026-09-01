@@ -12,10 +12,16 @@ final class OpponentPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.currentUserId,
+    this.pageTitle = '选择对手',
+    this.semanticPrefix = '',
+    this.gameTitle = '五子棋',
   });
 
   final HomeController controller;
   final String currentUserId;
+  final String pageTitle;
+  final String semanticPrefix;
+  final String gameTitle;
 
   @override
   State<OpponentPage> createState() => _OpponentPageState();
@@ -107,7 +113,7 @@ final class _OpponentPageState extends State<OpponentPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('选择对手')),
+      appBar: AppBar(title: Text(widget.pageTitle)),
       body: _buildBody(context),
     );
   }
@@ -116,10 +122,10 @@ final class _OpponentPageState extends State<OpponentPage> {
     final opponents = _opponents;
     if (opponents == null) {
       if (_loading) {
-        return const GameboxPageBody(
+        return GameboxPageBody(
           children: [
             GameboxAsyncPanel(
-              key: Key('opponent-loading'),
+              key: Key('${widget.semanticPrefix}opponent-loading'),
               icon: Icons.group_outlined,
               title: '正在加载对手',
               message: '请稍候，正在获取最新在线状态。',
@@ -138,12 +144,14 @@ final class _OpponentPageState extends State<OpponentPage> {
     return GameboxPageBody(
       children: [
         if (_loading)
-          const LinearProgressIndicator(key: Key('opponent-loading')),
+          LinearProgressIndicator(
+            key: Key('${widget.semanticPrefix}opponent-loading'),
+          ),
         if (_errorMessage != null)
           MergeSemantics(
-            key: const Key('opponent-error'),
+            key: Key('${widget.semanticPrefix}opponent-error'),
             child: Semantics(
-              identifier: 'opponent-error',
+              identifier: '${widget.semanticPrefix}opponent-error',
               liveRegion: true,
               child: GameboxAsyncPanel(
                 icon: Icons.error_outline,
@@ -174,8 +182,8 @@ final class _OpponentPageState extends State<OpponentPage> {
         opponent.availability == OpponentAvailability.idle;
     final onTap = enabled ? () => _choose(opponent) : null;
     return Semantics(
-      key: Key('opponent-${opponent.id}'),
-      identifier: 'opponent-${opponent.id}',
+      key: Key('${widget.semanticPrefix}opponent-${opponent.id}'),
+      identifier: '${widget.semanticPrefix}opponent-${opponent.id}',
       label: creating
           ? '${opponent.nickname}\n${_availabilityText(opponent)}\n正在创建对局'
           : '${opponent.nickname}\n${_availabilityText(opponent)}',
@@ -216,9 +224,9 @@ final class _OpponentPageState extends State<OpponentPage> {
         : '在线 · 可邀请';
   }
 
-  static String _actionError(ApiError error) => switch (error.code) {
+  String _actionError(ApiError error) => switch (error.code) {
     'opponent_busy' => '对手已进入其他对局',
-    'active_match_exists' => '你已在五子棋对局中',
+    'active_match_exists' => '你已在${widget.gameTitle}对局中',
     'network_error' => '网络连接失败，请稍后重试',
     'timeout' => '请求超时，请稍后重试',
     'launch_failed' => '无法启动游戏，请重试',

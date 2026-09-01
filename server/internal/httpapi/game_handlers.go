@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -32,7 +33,7 @@ func (router *router) listGames(writer http.ResponseWriter, _ *http.Request) {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		title := map[string]string{gomoku.GameID: "五子棋", rps.GameID: "石头剪刀布"}[descriptor.GameID]
+		title := map[string]string{chinesecheckers.GameID: "跳棋", gomoku.GameID: "五子棋", rps.GameID: "石头剪刀布"}[descriptor.GameID]
 		if title == "" {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")
 			return
@@ -53,6 +54,10 @@ type opponentResponse struct {
 
 func (router *router) gomokuOpponents(writer http.ResponseWriter, request *http.Request) {
 	router.gameOpponents(writer, request, gomoku.GameID)
+}
+
+func (router *router) chineseCheckersOpponents(writer http.ResponseWriter, request *http.Request) {
+	router.gameOpponents(writer, request, chinesecheckers.GameID)
 }
 
 func (router *router) rpsOpponents(writer http.ResponseWriter, request *http.Request) {
@@ -95,6 +100,10 @@ type activeStatusMatchResponse struct {
 
 func (router *router) gomokuStatus(writer http.ResponseWriter, request *http.Request) {
 	router.gameStatus(writer, request, gomoku.GameID, "gomoku_status")
+}
+
+func (router *router) chineseCheckersStatus(writer http.ResponseWriter, request *http.Request) {
+	router.gameStatus(writer, request, chinesecheckers.GameID, "chinese_checkers_status")
 }
 
 func (router *router) rpsStatus(writer http.ResponseWriter, request *http.Request) {
@@ -143,6 +152,14 @@ type createMatchRequest struct {
 }
 
 func (router *router) createGomokuMatch(writer http.ResponseWriter, request *http.Request) {
+	router.createUnconfiguredMatch(writer, request, gomoku.GameID)
+}
+
+func (router *router) createChineseCheckersMatch(writer http.ResponseWriter, request *http.Request) {
+	router.createUnconfiguredMatch(writer, request, chinesecheckers.GameID)
+}
+
+func (router *router) createUnconfiguredMatch(writer http.ResponseWriter, request *http.Request, gameID string) {
 	user, ok := authenticatedUser(request)
 	if !ok {
 		writeAPIError(writer, http.StatusUnauthorized, "unauthorized")
@@ -153,7 +170,7 @@ func (router *router) createGomokuMatch(writer http.ResponseWriter, request *htt
 		writeAPIError(writer, status, "invalid_request")
 		return
 	}
-	match, createErr := router.matches.Create(request.Context(), gomoku.GameID, user.ID, body.OpponentID)
+	match, createErr := router.matches.Create(request.Context(), gameID, user.ID, body.OpponentID)
 	if createErr != nil {
 		writeServiceError(writer, createErr)
 		return
