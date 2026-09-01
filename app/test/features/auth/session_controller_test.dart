@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
@@ -638,6 +639,193 @@ void main() {
   });
 
   test(
+    'nickname success replaces only the current in-memory session user',
+    () async {
+      final api = _FakeAuthApi();
+      api.onRefresh = (_) async => _session(
+        accessToken: 'access-one',
+        refreshToken: 'refresh-one',
+        now: now,
+      );
+      api.onUpdateNickname = (nickname, accessToken, onUnauthorized) async {
+        expect(nickname, '新昵称');
+        expect(accessToken(), 'access-one');
+        return const SessionUser(
+          id: '11111111-1111-4111-8111-111111111111',
+          nickname: '新昵称',
+        );
+      };
+      final store = _MemoryTokenStore(value: 'refresh-zero');
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+      await controller.restore();
+      final before = controller.session!;
+      final writesAfterRestore = List<String>.of(store.writes);
+
+      final error = await controller.updateNickname('新昵称');
+
+      expect(error, isNull);
+      final after = controller.session!;
+      expect(after.user.nickname, '新昵称');
+      expect(after.user.id, before.user.id);
+      expect(after.accessToken, before.accessToken);
+      expect(after.accessExpiresAt, before.accessExpiresAt);
+      expect(after.refreshToken, before.refreshToken);
+      expect(after.refreshExpiresAt, before.refreshExpiresAt);
+      expect(store.writes, writesAfterRestore);
+    },
+  );
+
+  test(
+    'newer nickname completion supersedes an older in-flight response',
+    () async {
+      final first = Completer<SessionUser>();
+      final second = Completer<SessionUser>();
+      final api = _FakeAuthApi();
+      api.onRefresh = (_) async => _session(
+        accessToken: 'access-one',
+        refreshToken: 'refresh-one',
+        now: now,
+      );
+      api.onUpdateNickname = (nickname, _, _) =>
+          nickname == '第一版' ? first.future : second.future;
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: _MemoryTokenStore(value: 'refresh-zero'),
+        now: () => now,
+      );
+      await controller.restore();
+
+      final oldUpdate = controller.updateNickname('第一版');
+      final newUpdate = controller.updateNickname('第二版');
+      second.complete(
+        const SessionUser(
+          id: '11111111-1111-4111-8111-111111111111',
+          nickname: '第二版',
+        ),
+      );
+      expect(await newUpdate, isNull);
+      first.complete(
+        const SessionUser(
+          id: '11111111-1111-4111-8111-111111111111',
+          nickname: '第一版',
+        ),
+      );
+      expect(await oldUpdate, isNull);
+
+      expect(controller.session?.user.nickname, '第二版');
+    },
+  );
+
+  test(
+    'nickname completion after token refresh preserves rotated credentials',
+    () async {
+      final update = Completer<SessionUser>();
+      final api = _FakeAuthApi();
+      api.onRefresh = (_) async => _session(
+        accessToken: 'access-one',
+        refreshToken: 'refresh-one',
+        now: now,
+      );
+      api.onUpdateNickname = (_, _, _) => update.future;
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: _MemoryTokenStore(value: 'refresh-zero'),
+        now: () => now,
+      );
+      await controller.restore();
+      final nicknameUpdate = controller.updateNickname('新昵称');
+      api.onRefresh = (_) async => _session(
+        accessToken: 'access-two',
+        refreshToken: 'refresh-two',
+        now: now,
+      );
+      expect(await controller.refresh(), isTrue);
+      update.complete(
+        const SessionUser(
+          id: '11111111-1111-4111-8111-111111111111',
+          nickname: '新昵称',
+        ),
+      );
+
+      expect(await nicknameUpdate, isNull);
+      expect(controller.session?.user.nickname, '新昵称');
+      expect(controller.session?.accessToken, 'access-two');
+      expect(controller.session?.refreshToken, 'refresh-two');
+    },
+  );
+
+  test('nickname response must confirm the exact requested nickname', () async {
+    final api = _FakeAuthApi();
+    api.onRefresh = (_) async => _session(
+      accessToken: 'access-one',
+      refreshToken: 'refresh-one',
+      now: now,
+    );
+    api.onUpdateNickname = (_, _, _) async => const SessionUser(
+      id: '11111111-1111-4111-8111-111111111111',
+      nickname: '其他合法名',
+    );
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: _MemoryTokenStore(value: 'refresh-zero'),
+      now: () => now,
+    );
+    await controller.restore();
+
+    final error = await controller.updateNickname('请求昵称');
+
+    expect(error?.code, 'invalid_response');
+    expect(controller.session?.user.nickname, '小鱼');
+    expect(controller.session?.accessToken, 'access-one');
+  });
+
+  test('nickname completion from an old user generation cannot overwrite a new account', () async {
+    final staleUpdate = Completer<SessionUser>();
+    final api = _FakeAuthApi();
+    api.onRefresh = (_) async => _session(
+      accessToken: 'old-access',
+      refreshToken: 'old-refresh',
+      now: now,
+    );
+    api.onUpdateNickname = (_, _, _) => staleUpdate.future;
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: _MemoryTokenStore(value: 'stored-refresh'),
+      now: () => now,
+    );
+    await controller.restore();
+    final oldUpdate = controller.updateNickname('旧请求');
+    api.onRefresh = (_) => Future<Session>.error(
+      const ApiError(code: 'unauthorized', message: '身份验证失败'),
+    );
+    expect(await controller.refresh(), isFalse);
+    api.onRegister = (_, _) async => _session(
+      accessToken: 'new-access',
+      refreshToken: 'new-refresh',
+      now: now,
+      userId: '22222222-2222-4222-8222-222222222222',
+      nickname: '新用户',
+    );
+    expect(await controller.register('new-invite', '新用户'), isNull);
+
+    staleUpdate.complete(
+      const SessionUser(
+        id: '11111111-1111-4111-8111-111111111111',
+        nickname: '旧请求',
+      ),
+    );
+    await oldUpdate;
+
+    expect(controller.session?.user.id, '22222222-2222-4222-8222-222222222222');
+    expect(controller.session?.user.nickname, '新用户');
+    expect(controller.session?.accessToken, 'new-access');
+  });
+
+  test(
     'resume refreshes only when the in-memory access token is expired',
     () async {
       var clock = now;
@@ -739,12 +927,11 @@ Session _session({
   required DateTime now,
   DateTime? accessExpiresAt,
   DateTime? refreshExpiresAt,
+  String userId = '11111111-1111-4111-8111-111111111111',
+  String nickname = '小鱼',
 }) {
   return Session(
-    user: const SessionUser(
-      id: '11111111-1111-4111-8111-111111111111',
-      nickname: '小鱼',
-    ),
+    user: SessionUser(id: userId, nickname: nickname),
     accessToken: accessToken,
     accessExpiresAt: accessExpiresAt ?? now.add(const Duration(minutes: 15)),
     refreshToken: refreshToken,
@@ -755,8 +942,15 @@ Session _session({
 final class _FakeAuthApi implements AuthApi {
   Future<Session> Function(String refreshToken)? onRefresh;
   Future<Session> Function(String inviteCode, String nickname)? onRegister;
+  Future<SessionUser> Function(
+    String nickname,
+    AccessTokenProvider accessToken,
+    UnauthorizedHandler onUnauthorized,
+  )?
+  onUpdateNickname;
   int refreshCalls = 0;
   int registerCalls = 0;
+  int updateNicknameCalls = 0;
   final refreshStarted = Completer<void>();
 
   @override
@@ -774,6 +968,17 @@ final class _FakeAuthApi implements AuthApi {
     registerCalls += 1;
     return onRegister?.call(inviteCode, nickname) ??
         Future<Session>.error(StateError('unexpected register'));
+  }
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) {
+    updateNicknameCalls += 1;
+    return onUpdateNickname?.call(nickname, accessToken, onUnauthorized) ??
+        Future<SessionUser>.error(StateError('unexpected nickname update'));
   }
 }
 

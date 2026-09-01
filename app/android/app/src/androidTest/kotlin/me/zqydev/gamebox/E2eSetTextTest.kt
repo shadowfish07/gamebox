@@ -148,6 +148,6 @@ class E2eSetTextTest {
         const val FILE_MODE_MASK = 0x1ff
         const val PRIVATE_FILE_MODE = 0x180
         val PRIVATE_INPUT_NAME = Regex("gamebox-e2e-input-[A-Za-z0-9_.-]{8,96}")
-        val APPROVED_TARGETS = setOf("invite-code", "nickname")
+        val APPROVED_TARGETS = setOf("invite-code", "nickname", "local-nickname")
     }
 }

@@ -204,6 +204,13 @@ final class _FakeAuthApi implements AuthApi {
   @override
   Future<Session> register(String inviteCode, String nickname) =>
       Future<Session>.error(StateError('unexpected register'));
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) => Future<SessionUser>.error(StateError('unexpected updateNickname'));
 }
 
 final class _MemoryTokenStore implements TokenStore {

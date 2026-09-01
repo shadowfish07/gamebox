@@ -503,8 +503,8 @@ func seedMatch(t *testing.T, path string) {
 		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testBlackID, "Alice", "alice", now, now}},
 		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testWhiteID, "Bob", "bob", now, now}},
 		{`INSERT INTO matches(id,game_id,status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?)`, []any{testMatchID, gomoku.GameID, "active", 1, now, now}},
-		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testBlackID, 0, "black"}},
-		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
+		{`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,?,?)`, []any{testMatchID, testBlackID, "Black", 0, "black"}},
+		{`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,?,?)`, []any{testMatchID, testWhiteID, "White", 1, "white"}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{gomoku.GameID, testBlackID, testMatchID}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{gomoku.GameID, testWhiteID, testMatchID}},
 		{`INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES (?,?,?,?,?,?,?)`, []any{

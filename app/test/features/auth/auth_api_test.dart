@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/api/api_error.dart';
+import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:http/http.dart' as http;
@@ -52,6 +53,72 @@ void main() {
       expect(session.refreshToken, 'refresh-new');
     },
   );
+
+  test('updateNickname matches PATCH /v1/me and decodes exact user', () async {
+    final client = ApiClient(
+      baseUri: Uri.parse('https://gamebox.test'),
+      httpClient: MockClient((request) async {
+        expect(request.method, 'PATCH');
+        expect(request.url.path, '/v1/me');
+        expect(request.headers['authorization'], 'Bearer access-current');
+        expect(jsonDecode(request.body), {'nickname': '新昵称'});
+        return http.Response(
+          '{"user":{"id":"11111111-1111-4111-8111-111111111111","nickname":"新昵称"}}',
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+
+    final user = await HttpAuthApi(client).updateNickname(
+      '新昵称',
+      accessToken: () => 'access-current',
+      onUnauthorized: (_) async => false,
+    );
+
+    expect(user.id, '11111111-1111-4111-8111-111111111111');
+    expect(user.nickname, '新昵称');
+    expect(user, isA<SessionUser>());
+  });
+
+  test('updateNickname rejects non-canonical user envelopes', () async {
+    final cases = <String, String>{
+      'extra root key': '{"user":{"id":"11111111-1111-4111-8111-111111111111","nickname":"新昵称"},"extra":true}',
+      'extra user key': '{"user":{"id":"11111111-1111-4111-8111-111111111111","nickname":"新昵称","extra":true}}',
+      'invalid uuid': '{"user":{"id":"not-a-uuid","nickname":"新昵称"}}',
+      'invalid nickname': '{"user":{"id":"11111111-1111-4111-8111-111111111111","nickname":"x"}}',
+    };
+    for (final entry in cases.entries) {
+      final api = HttpAuthApi(
+        ApiClient(
+          baseUri: Uri.parse('https://gamebox.test'),
+          httpClient: MockClient(
+            (_) async => http.Response(
+              entry.value,
+              200,
+              headers: const {
+                'content-type': 'application/json; charset=utf-8',
+              },
+            ),
+          ),
+        ),
+      );
+      await expectLater(
+        api.updateNickname(
+          '新昵称',
+          accessToken: () => 'access-current',
+          onUnauthorized: (_) async => false,
+        ),
+        throwsA(
+          isA<ApiError>().having(
+            (error) => error.code,
+            entry.key,
+            'invalid_response',
+          ),
+        ),
+      );
+    }
+  });
 
   test(
     'malformed session becomes a safe error and diagnostics redact tokens',

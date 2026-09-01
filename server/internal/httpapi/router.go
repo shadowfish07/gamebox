@@ -70,6 +70,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/auth/register", router.register)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refresh)
 	mux.Handle("GET /v1/me", router.authenticated(http.HandlerFunc(router.me)))
+	mux.Handle("PATCH /v1/me", router.authenticated(http.HandlerFunc(router.patchMe)))
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
@@ -80,12 +81,13 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("POST /v1/games/rps/matches", router.authenticated(http.HandlerFunc(router.createRpsMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
+	mux.Handle("GET /v1/matches/{matchId}/result", router.authenticated(http.HandlerFunc(router.matchResult)))
 	mux.HandleFunc("GET /v1/ws", router.webSocket)
 
 	registerMethodFallback(mux, "/healthz", http.MethodGet)
 	registerMethodFallback(mux, "/v1/auth/register", http.MethodPost)
 	registerMethodFallback(mux, "/v1/auth/refresh", http.MethodPost)
-	registerMethodFallback(mux, "/v1/me", http.MethodGet)
+	registerMethodFallback(mux, "/v1/me", "GET, HEAD, PATCH")
 	registerMethodFallback(mux, "/v1/games", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
@@ -96,6 +98,7 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games/rps/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
+	registerMethodFallback(mux, "/v1/matches/{matchId}/result", http.MethodGet)
 	registerMethodFallback(mux, "/v1/ws", http.MethodGet)
 	mux.HandleFunc("/", func(writer http.ResponseWriter, _ *http.Request) {
 		writeAPIError(writer, http.StatusNotFound, "invalid_request")
@@ -285,7 +288,7 @@ func requestMiddleware(logger *log.Logger, requestIDs requestIDGenerator) func(h
 
 func safeRequestMethod(method string) string {
 	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete, http.MethodOptions:
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions:
 		return method
 	default:
 		return "OTHER"
@@ -293,6 +296,9 @@ func safeRequestMethod(method string) string {
 }
 
 func requestAcceptsJSONBody(request *http.Request) bool {
+	if request.Method == http.MethodPatch {
+		return request.URL.Path == "/v1/me"
+	}
 	if request.Method != http.MethodPost {
 		return false
 	}

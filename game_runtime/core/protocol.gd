@@ -17,6 +17,7 @@ const TYPE_PLATFORM_SNAPSHOT_REQUESTED := "platform.snapshot.requested"
 const TYPE_PLATFORM_ERROR := "platform.error"
 const TYPE_PLATFORM_MATCH_CANCELLED := "platform.match.cancelled"
 const TYPE_PLATFORM_MATCH_ABANDONED := "platform.match.abandoned"
+const TYPE_PLATFORM_MATCH_RESULT := "platform.match.result"
 const TYPE_GOMOKU_MOVE_REQUESTED := "gomoku.move.requested"
 const TYPE_GOMOKU_MOVE_ACCEPTED := "gomoku.move.accepted"
 const TYPE_GOMOKU_RESIGN_REQUESTED := "gomoku.resign.requested"
@@ -50,6 +51,7 @@ const _KNOWN_TYPES := {
 	TYPE_PLATFORM_ERROR: true,
 	TYPE_PLATFORM_MATCH_CANCELLED: true,
 	TYPE_PLATFORM_MATCH_ABANDONED: true,
+	TYPE_PLATFORM_MATCH_RESULT: true,
 	TYPE_GOMOKU_MOVE_REQUESTED: true,
 	TYPE_GOMOKU_MOVE_ACCEPTED: true,
 	TYPE_GOMOKU_RESIGN_REQUESTED: true,
@@ -60,6 +62,80 @@ const _KNOWN_TYPES := {
 	TYPE_RPS_RESIGN_REQUESTED: true,
 	TYPE_RPS_RESIGNED: true,
 }
+
+
+static func validate_game_result(value: Variant) -> Dictionary:
+	if not value is Dictionary or not _exact_keys(value, [
+		"schemaVersion", "matchId", "gameId", "players", "winnerUserId", "result",
+		"startedAt", "finishedAt", "finalRevision", "events",
+	]):
+		return _failure("invalid_result", "Result schema is invalid")
+	if value.get("schemaVersion") != 1 or value.get("gameId") != "gomoku" \
+		or not _is_canonical_uuid(value.get("matchId", "")) \
+		or typeof(value.get("startedAt")) != TYPE_INT or value["startedAt"] <= 0 \
+		or typeof(value.get("finishedAt")) != TYPE_INT or value["finishedAt"] < value["startedAt"] \
+		or typeof(value.get("finalRevision")) != TYPE_INT or value["finalRevision"] <= 0 \
+		or value["finalRevision"] > 226 or not value.get("events") is Array \
+		or value["events"].size() != value["finalRevision"]:
+		return _failure("invalid_result", "Result fields are invalid")
+	var players: Variant = value.get("players")
+	if not players is Array or players.size() != 2:
+		return _failure("invalid_result", "Result players are invalid")
+	var users := {}
+	var seats := {}
+	var colors := {}
+	for player in players:
+		if not player is Dictionary or not _exact_keys(player, ["userId", "nickname", "seat", "color"]) \
+			or not _is_canonical_uuid(player.get("userId", "")) or not player.get("nickname") is String \
+			or player["nickname"].is_empty() or player["nickname"].to_utf8_buffer().size() > 80 \
+			or typeof(player.get("seat")) != TYPE_INT or player["seat"] not in [0, 1] \
+			or player.get("color") not in ["black", "white"]:
+			return _failure("invalid_result", "Result players are invalid")
+		users[player["userId"]] = true
+		seats[player["seat"]] = true
+		colors[player["color"]] = true
+	if users.size() != 2 or seats.size() != 2 or colors.size() != 2:
+		return _failure("invalid_result", "Result players are invalid")
+	var result: Variant = value.get("result")
+	var winner: Variant = value.get("winnerUserId")
+	if result not in ["five", "resignation", "draw"] \
+		or (result == "draw" and winner != null) \
+		or (result != "draw" and (not winner is String or not users.has(winner))):
+		return _failure("invalid_result", "Result outcome is invalid")
+	var actions := {}
+	var previous_time: int = value["startedAt"]
+	for index in value["events"].size():
+		var event: Variant = value["events"][index]
+		if not event is Dictionary or not _exact_keys(event, [
+			"revision", "type", "actionId", "actorId", "payload", "committedAt",
+		]) or event.get("revision") != index + 1 or not event.get("type") is String \
+			or event["type"].is_empty() or event["type"].length() > 128 \
+			or not event.get("payload") is Dictionary or typeof(event.get("committedAt")) != TYPE_INT \
+			or event["committedAt"] < previous_time or event["committedAt"] > value["finishedAt"]:
+			return _failure("invalid_result", "Result event is invalid")
+		for field in ["actionId", "actorId"]:
+			var identifier: Variant = event.get(field)
+			if identifier != null and not _is_canonical_uuid(identifier):
+				return _failure("invalid_result", "Result event identity is invalid")
+		if event["actorId"] != null and not users.has(event["actorId"]):
+			return _failure("invalid_result", "Result actor is invalid")
+		if event["actionId"] != null:
+			if actions.has(event["actionId"]):
+				return _failure("invalid_result", "Result action is duplicated")
+			actions[event["actionId"]] = true
+		previous_time = event["committedAt"]
+	if previous_time != value["finishedAt"]:
+		return _failure("invalid_result", "Result terminal time is invalid")
+	return {"ok": true, "result": value.duplicate(true)}
+
+
+static func _exact_keys(value: Dictionary, expected: Array) -> bool:
+	if value.size() != expected.size():
+		return false
+	for key in value:
+		if not key is String or not expected.has(key):
+			return false
+	return true
 
 
 static func decode(text: String) -> Dictionary:
@@ -173,17 +249,25 @@ static func encode_action(
 	return _encode_envelope(envelope)
 
 
-static func encode_connect(credential_name: String, credential: String) -> Dictionary:
+static func encode_connect(
+	credential_name: String,
+	credential: String,
+	paired_resume_token: String = "",
+) -> Dictionary:
 	if credential_name not in ["launchTicket", "resumeToken"] or credential.is_empty() \
 		or credential.length() > 256 or credential.to_utf8_buffer().size() > 256:
 		return _failure("invalid_connect", "Connection credential is invalid")
+	if not paired_resume_token.is_empty() and (credential_name != "launchTicket" \
+		or paired_resume_token.length() > 256 or paired_resume_token.to_utf8_buffer().size() > 256):
+		return _failure("invalid_connect", "Connection credential is invalid")
+	var payload := {credential_name: credential}
+	if not paired_resume_token.is_empty():
+		payload["resumeToken"] = paired_resume_token
+	payload["capabilities"] = [CAPABILITY_PLAYER_PRESENCE]
 	return _encode_envelope({
 		"protocolVersion": VERSION,
 		"type": TYPE_PLATFORM_CONNECT,
-		"payload": {
-			credential_name: credential,
-			"capabilities": [CAPABILITY_PLAYER_PRESENCE],
-		},
+		"payload": payload,
 	})
 
 

@@ -4,6 +4,7 @@ signal connection_state_changed(next_state: String)
 signal snapshot_sync_started
 signal snapshot_received(envelope: Dictionary)
 signal event_received(envelope: Dictionary)
+signal authoritative_result_received(result: Dictionary)
 signal player_presence_changed(user_id: String, online: bool)
 signal match_error(code: String)
 signal return_to_lobby_requested(code: String)
@@ -51,6 +52,7 @@ var _retry_generation := 0
 var _watchdog_handle := -1
 var _watchdog_generation := 0
 var _issued_action_ids := {}
+var _accepted_result_text := ""
 var _player_presence := {}
 
 
@@ -72,20 +74,24 @@ func start(
 	match_id: String,
 	launch_ticket: String,
 	game_state: Variant,
-	game_id: String = "gomoku"
+	initial_resume_token: String = "",
+	game_id: String = "gomoku",
 ) -> bool:
 	if connection_state != STATE_CLOSED or not _dependencies_configured() \
 		or not _valid_ws_url(ws_url) or not _canonical_uuid(match_id) \
 		or launch_ticket.is_empty() or launch_ticket.length() > 256 or launch_ticket.to_utf8_buffer().size() > 256 \
+		or initial_resume_token.length() > 256 or initial_resume_token.to_utf8_buffer().size() > 256 \
 		or game_state == null or game_id not in ["gomoku", "rps"]:
 		return false
 	_ws_url = ws_url
 	_match_id = match_id
 	_game_id = game_id
 	_launch_ticket = launch_ticket
+	_resume_token = initial_resume_token
 	_game_state = game_state
 	_failure_count = 0
 	_issued_action_ids.clear()
+	_accepted_result_text = ""
 	_player_presence.clear()
 	last_error_code = ""
 	_begin_attempt(true)
@@ -265,9 +271,10 @@ func _begin_attempt(initial: bool = false) -> void:
 
 
 func _send_connect() -> bool:
-	var credential_name := "resumeToken" if not _resume_token.is_empty() else "launchTicket"
-	var credential := _resume_token if credential_name == "resumeToken" else _launch_ticket
-	var encoded: Dictionary = Protocol.encode_connect(credential_name, credential)
+	var credential_name := "launchTicket" if not _launch_ticket.is_empty() else "resumeToken"
+	var credential := _launch_ticket if credential_name == "launchTicket" else _resume_token
+	var paired_resume := _resume_token if not _launch_ticket.is_empty() else ""
+	var encoded: Dictionary = Protocol.encode_connect(credential_name, credential, paired_resume)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
 		return false
 	_connect_sent = true
@@ -293,6 +300,8 @@ func _handle_text(text: String) -> bool:
 			handled = _handle_presence_changed(envelope)
 		Protocol.TYPE_PLATFORM_ERROR:
 			handled = _handle_error(envelope)
+		Protocol.TYPE_PLATFORM_MATCH_RESULT:
+			handled = _handle_result(envelope)
 		Protocol.TYPE_GOMOKU_MOVE_ACCEPTED, Protocol.TYPE_GOMOKU_RESIGNED, \
 		Protocol.TYPE_RPS_CHOICE_LOCKED, Protocol.TYPE_RPS_ROUND_REVEALED, Protocol.TYPE_RPS_RESIGNED, \
 		Protocol.TYPE_PLATFORM_MATCH_CANCELLED, Protocol.TYPE_PLATFORM_MATCH_ABANDONED:
@@ -338,6 +347,38 @@ func _handle_connected(envelope: Dictionary) -> bool:
 	_handshake_revision = envelope["revision"]
 	_awaiting_initial_snapshot = true
 	_set_connection_state(STATE_CONNECTED)
+	return true
+
+
+func _handle_result(envelope: Dictionary) -> bool:
+	if connection_state != STATE_CONNECTED or _awaiting_initial_snapshot or local_user_id.is_empty() \
+		or not _valid_bound(envelope, Protocol.TYPE_PLATFORM_MATCH_RESULT) \
+		or _game_state == null or _game_state.status != "finished" \
+		or envelope["revision"] != _game_state.revision:
+		return _protocol_failure()
+	var validation := Protocol.validate_game_result(envelope.get("payload"))
+	if not validation.get("ok", false):
+		return _protocol_failure()
+	var result: Dictionary = validation["result"]
+	if result.get("matchId") != _match_id or result.get("finalRevision") != _game_state.revision:
+		return _protocol_failure()
+	var black_player: Dictionary = {}
+	var white_player: Dictionary = {}
+	for player in result["players"]:
+		if player["color"] == "black":
+			black_player = player
+		else:
+			white_player = player
+	if black_player.get("userId") != _game_state.black_user_id \
+		or white_player.get("userId") != _game_state.white_user_id \
+		or result.get("winnerUserId") != _game_state.winner_user_id \
+		or result.get("result") != _game_state.result:
+		return _protocol_failure()
+	var result_text := JSON.stringify(result, "", true, true)
+	if not _accepted_result_text.is_empty():
+		return true if result_text == _accepted_result_text else _protocol_failure()
+	_accepted_result_text = result_text
+	authoritative_result_received.emit(result)
 	return true
 
 

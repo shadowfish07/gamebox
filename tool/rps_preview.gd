@@ -32,7 +32,14 @@ class PreviewClient:
 	var _state_name := "ready"
 	var _delay_reveal := true
 
-	func start(_ws_url: String, _match_id: String, _ticket: String, state: Variant, _game_id: String) -> bool:
+	func start(
+		_ws_url: String,
+		_match_id: String,
+		_ticket: String,
+		state: Variant,
+		_resume_token: String,
+		_game_id: String,
+	) -> bool:
 		_state = state
 		if _state_name in ["connecting", "initial_syncing"]:
 			connection_state = "connecting" if _state_name == "connecting" else "connected"

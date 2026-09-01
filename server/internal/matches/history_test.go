@@ -394,11 +394,11 @@ INSERT INTO matches(id,game_id,status,revision,result,winner_user_id,created_at,
 VALUES (?,?,?,?,?,?,?,?,?)`, id, gomoku.GameID, status, 0, resultValue, winnerValue, created, created, finishedValue); err != nil {
 		t.Fatalf("insert history match %s: %v", id, err)
 	}
-	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,?)`, id, initiatorID, ColorBlack); err != nil {
+	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,0,?)`, id, initiatorID, "Initiator", ColorBlack); err != nil {
 		t.Fatalf("insert current player for %s: %v", id, err)
 	}
 	if includeOpponent {
-		if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,1,?)`, id, opponentID, ColorWhite); err != nil {
+		if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,1,?)`, id, opponentID, "Opponent", ColorWhite); err != nil {
 			t.Fatalf("insert opponent for %s: %v", id, err)
 		}
 	}

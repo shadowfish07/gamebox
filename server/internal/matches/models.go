@@ -44,9 +44,10 @@ type Match struct {
 // Player records stable platform seating and the randomly assigned color.
 // Seat zero is always the initiator and seat one is always the opponent.
 type Player struct {
-	UserID string
-	Seat   int
-	Color  Color
+	UserID   string
+	Nickname string
+	Seat     int
+	Color    Color
 }
 
 // Event is a committed match event suitable for publication after the

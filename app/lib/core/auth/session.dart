@@ -4,6 +4,22 @@ import '../api/strict_json.dart';
 final class SessionUser {
   const SessionUser({required this.id, required this.nickname});
 
+  factory SessionUser.fromEnvelope(Map<String, Object?> envelope) {
+    if (!hasExactJsonKeys(envelope, const {'user'})) {
+      throw const FormatException('Invalid user response');
+    }
+    final user = Session._object(envelope['user']);
+    if (!hasExactJsonKeys(user, const {'id', 'nickname'})) {
+      throw const FormatException('Invalid user response');
+    }
+    final id = Session._string(user['id']);
+    final nickname = Session._string(user['nickname']);
+    if (!Session._isCanonicalUuid(id) || !Session._isValidNickname(nickname)) {
+      throw const FormatException('Invalid user response');
+    }
+    return SessionUser(id: id, nickname: nickname);
+  }
+
   final String id;
   final String nickname;
 

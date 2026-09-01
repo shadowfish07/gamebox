@@ -1,3 +1,5 @@
+enum GameLaunchSource { public, lan }
+
 /// An immutable, validated request for launching a game in the native host.
 final class GameLaunchRequest {
   GameLaunchRequest({
@@ -5,6 +7,9 @@ final class GameLaunchRequest {
     required this.matchId,
     required this.launchTicket,
     required this.wsUrl,
+    this.source = GameLaunchSource.public,
+    this.resumeToken,
+    this.localUserId,
   }) {
     if (gameId.trim().isEmpty) {
       throw ArgumentError('gameId must not be blank');
@@ -18,12 +23,27 @@ final class GameLaunchRequest {
     if (!_isValidWebSocketUrl(wsUrl)) {
       throw ArgumentError('wsUrl must use a valid ws or wss URL');
     }
+    if (source == GameLaunchSource.lan) {
+      if (resumeToken == null || resumeToken!.trim().isEmpty) {
+        throw ArgumentError('LAN launches require a resume token');
+      }
+      if (localUserId == null || !_isCanonicalUuid(localUserId!)) {
+        throw ArgumentError('LAN launches require a canonical local user ID');
+      }
+    } else if (resumeToken != null) {
+      throw ArgumentError('public launches must not include a resume token');
+    } else if (localUserId != null) {
+      throw ArgumentError('public launches must not include a local user ID');
+    }
   }
 
   final String gameId;
   final String matchId;
   final String launchTicket;
   final String wsUrl;
+  final GameLaunchSource source;
+  final String? resumeToken;
+  final String? localUserId;
 
   static final RegExp _canonicalUuid = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

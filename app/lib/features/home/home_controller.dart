@@ -6,6 +6,7 @@ import '../../core/api/api_error.dart';
 import '../../core/platform/game_launcher.dart';
 import '../gomoku/gomoku_models.dart';
 import '../gomoku/gomoku_repository.dart';
+import '../../core/lan/lan_models.dart';
 
 abstract interface class HomeScheduledCall {
   void cancel();
@@ -109,6 +110,9 @@ final class HomeController extends ChangeNotifier {
   }
 
   Future<List<GomokuOpponent>> fetchOpponents() => _repository.fetchOpponents();
+
+  Future<AuthoritativeGameResult> fetchResult(String matchId) =>
+      _repository.fetchResult(matchId);
 
   Future<ApiError?> openActiveMatch() {
     if (_disposed) return Future<ApiError?>.value(_invalidState);

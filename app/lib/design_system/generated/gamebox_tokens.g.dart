@@ -209,6 +209,7 @@ abstract final class GameboxTokens {
   );
   static const components = GameboxComponentTokens(
     dialogScrimOpacity: 0.32,
+    mediaViewportHeight: 260.0,
     minimumTouchTarget: 48.0,
     pageMaxWidth: 560.0,
     pagePadding: 16.0,
@@ -359,6 +360,7 @@ final class GameboxMotion {
 final class GameboxComponentTokens {
   const GameboxComponentTokens({
     required this.dialogScrimOpacity,
+    required this.mediaViewportHeight,
     required this.minimumTouchTarget,
     required this.pageMaxWidth,
     required this.pagePadding,
@@ -390,6 +392,7 @@ final class GameboxComponentTokens {
   });
 
   final double dialogScrimOpacity;
+  final double mediaViewportHeight;
   final double minimumTouchTarget;
   final double pageMaxWidth;
   final double pagePadding;

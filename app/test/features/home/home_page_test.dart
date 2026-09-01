@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_error.dart';
+import 'package:gamebox/core/lan/lan_models.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/design_system/components/gamebox_async_panel.dart';
@@ -12,7 +13,9 @@ import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
+import 'package:gamebox/features/history/match_history_controller.dart';
 import 'package:gamebox/features/history/match_history_models.dart';
+import 'package:gamebox/features/history/match_history_page.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
 import 'package:gamebox/features/home/home_page.dart';
@@ -492,6 +495,12 @@ void main() {
       _app(fixture.controller, aliceId, rpsController: rpsController),
     );
     await _flushWidget(tester);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('game-rps')),
+      300,
+      scrollable: find.byType(Scrollable),
+    );
+    await tester.pump();
 
     expect(find.text('赛制：三局两胜'), findsOneWidget);
     expect(find.text('当前轮次：第 3 轮'), findsOneWidget);
@@ -552,12 +561,22 @@ Widget _app(
   theme: GameboxTheme.light(),
   darkTheme: GameboxTheme.dark(),
   themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-  home: HomePage(
-    controller: controller,
-    currentUserId: userId,
-    nickname: nickname,
-    historyApi: historyApi ?? _FakeMatchHistoryApi(),
-    rpsController: rpsController,
+  home: Builder(
+    builder: (context) => HomePage(
+      controller: controller,
+      currentUserId: userId,
+      nickname: nickname,
+      onOpenHistory: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MatchHistoryPage(
+            controller: MatchHistoryController(
+              api: historyApi ?? _FakeMatchHistoryApi(),
+            ),
+          ),
+        ),
+      ),
+      rpsController: rpsController,
+    ),
   ),
 );
 
@@ -653,6 +672,9 @@ final class _FakeLauncher implements GameLauncher {
 }
 
 final class _FakeHomeApi implements HomeApi {
+  @override
+  Future<AuthoritativeGameResult> fetchResult(String matchId) =>
+      throw UnimplementedError();
   GomokuStatus status = const GomokuIdleStatus();
   List<GomokuOpponent> opponents = const [];
   ApiError? statusError;

@@ -256,8 +256,8 @@ func createCrossProcessMatch(t *testing.T, database *sql.DB) {
 		args  []any
 	}{
 		{`INSERT INTO matches(id,game_id,status,revision,created_at,updated_at) VALUES (?,?,'active',0,1,1)`, []any{crossProcessMatchID, "gomoku"}},
-		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,'black')`, []any{crossProcessMatchID, crossProcessOwnerID}},
-		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,1,'white')`, []any{crossProcessMatchID, crossProcessPeerID}},
+		{`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,0,'black')`, []any{crossProcessMatchID, crossProcessOwnerID, "Owner"}},
+		{`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,1,'white')`, []any{crossProcessMatchID, crossProcessPeerID, "Peer"}},
 	}
 	for _, statement := range statements {
 		if _, err := transaction.Exec(statement.query, statement.args...); err != nil {

@@ -4,17 +4,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/core/profile/app_profile.dart';
+import 'package:gamebox/core/profile/app_profile_store.dart';
+import 'package:gamebox/core/profile/nickname_rules.dart';
 import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/design_system/generated/gamebox_tokens.g.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/registration_page.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
+import 'package:gamebox/features/profile/profile_controller.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
@@ -30,6 +35,7 @@ void main() {
       GameboxApp(
         gameLauncher: _NoopGameLauncher(),
         sessionController: fixture.controller,
+        profileController: fixture.profile,
       ),
     );
     await tester.pump();
@@ -48,12 +54,16 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: GameboxTheme.dark(),
-          home: RegistrationPage(controller: fixture.controller),
+          home: RegistrationPage(
+            controller: fixture.controller,
+            nickname: '小鱼',
+            onEditNickname: () {},
+          ),
         ),
       );
 
-      expect(find.text('加入 Gamebox'), findsOneWidget);
-      expect(find.text('输入邀请码，和朋友开始一局游戏'), findsOneWidget);
+      expect(find.text('使用邀请码加入'), findsOneWidget);
+      expect(find.textContaining('昵称使用本机资料'), findsOneWidget);
       expect(find.byIcon(Icons.sports_esports_outlined), findsOneWidget);
       expect(find.byType(GameboxPendingButton), findsOneWidget);
       expect(
@@ -75,23 +85,8 @@ void main() {
             ?.errorText,
         '请输入邀请码',
       );
-
-      await _enter(tester, const Key('invite-code'), 'invite-one');
-      await _enter(tester, const Key('nickname'), '鱼');
-      await tester.tap(find.byKey(const Key('register')));
-      await tester.pump();
-      expect(
-        tester
-            .widget<TextField>(
-              find.descendant(
-                of: find.byKey(const Key('nickname')),
-                matching: find.byType(TextField),
-              ),
-            )
-            .decoration
-            ?.errorText,
-        '昵称至少需要 2 个字符',
-      );
+      expect(find.byKey(const Key('nickname')), findsNothing);
+      expect(find.text('小鱼'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
@@ -104,7 +99,6 @@ void main() {
         tester.view.physicalSize = size;
         addTearDown(tester.view.reset);
         const invite = 'invite-code-with-long-safe-value-20260822';
-        const nickname = 'LongNickname1234';
         const rawServerMessage = 'private-storage-provider-detail';
         const safeMessage = '无法安全保存登录信息，请申请新的邀请码';
         final fixture = await _RegistrationFixture.create(now)
@@ -114,11 +108,14 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             theme: GameboxTheme.light(),
-            home: RegistrationPage(controller: fixture.controller),
+            home: RegistrationPage(
+              controller: fixture.controller,
+              nickname: 'LongNickname1234',
+              onEditNickname: () {},
+            ),
           ),
         );
         await _enter(tester, const Key('invite-code'), invite);
-        await _enter(tester, const Key('nickname'), nickname);
 
         await tester.tap(find.byKey(const Key('register')));
         await tester.pump();
@@ -139,10 +136,7 @@ void main() {
           _field(tester, const Key('invite-code')).controller?.text,
           invite,
         );
-        expect(
-          _field(tester, const Key('nickname')).controller?.text,
-          nickname,
-        );
+        expect(find.text('LongNickname1234'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
@@ -160,15 +154,20 @@ void main() {
       addTearDown(tester.view.reset);
       final fixture = await _RegistrationFixture.create(now);
       await tester.pumpWidget(
-        MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+        MaterialApp(
+          home: RegistrationPage(
+            controller: fixture.controller,
+            nickname: '小鱼',
+            onEditNickname: () {},
+          ),
+        ),
       );
       await tester.pump();
 
-      // Focus the nickname field, as the E2E harness does before tapping
-      // register, then open the keyboard.
+      // Focus the invite field, then open the keyboard.
       await tester.tap(
         find.descendant(
-          of: find.byKey(const Key('nickname')),
+          of: find.byKey(const Key('invite-code')),
           matching: find.byType(TextField),
         ),
       );
@@ -184,10 +183,10 @@ void main() {
         reason: 'register must survive the keyboard shrinking the viewport',
       );
       final registerRect = tester.getRect(register);
-      final logicalHeight = tester.view.physicalSize.height /
-          tester.view.devicePixelRatio;
-      final logicalInset = tester.view.viewInsets.bottom /
-          tester.view.devicePixelRatio;
+      final logicalHeight =
+          tester.view.physicalSize.height / tester.view.devicePixelRatio;
+      final logicalInset =
+          tester.view.viewInsets.bottom / tester.view.devicePixelRatio;
       expect(
         registerRect.bottom,
         lessThanOrEqualTo(logicalHeight - logicalInset),
@@ -201,17 +200,22 @@ void main() {
   ) async {
     final fixture = await _RegistrationFixture.create(now);
     await tester.pumpWidget(
-      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+      MaterialApp(
+        home: RegistrationPage(
+          controller: fixture.controller,
+          nickname: '小鱼',
+          onEditNickname: () {},
+        ),
+      ),
     );
 
     expect(
       tester.getSemantics(find.byKey(const Key('invite-code'))),
       matchesSemantics(label: 'invite-code', isTextField: true),
     );
-    expect(
-      tester.getSemantics(find.byKey(const Key('nickname'))),
-      matchesSemantics(label: 'nickname', isTextField: true),
-    );
+    expect(find.byKey(const Key('nickname')), findsNothing);
+    expect(find.text('小鱼'), findsOneWidget);
+    expect(find.byKey(const Key('edit-nickname')), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(const Key('register'))),
       matchesSemantics(
@@ -224,40 +228,6 @@ void main() {
     );
   });
 
-  testWidgets('nickname shorter than two runes is rejected locally', (
-    tester,
-  ) async {
-    final fixture = await _RegistrationFixture.create(now);
-    await tester.pumpWidget(
-      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
-    );
-    await _enter(tester, const Key('invite-code'), 'invite-one');
-    await _enter(tester, const Key('nickname'), '鱼');
-
-    await tester.tap(find.byKey(const Key('register')));
-    await tester.pump();
-
-    expect(find.text('昵称至少需要 2 个字符'), findsOneWidget);
-    expect(fixture.api.registerCalls, 0);
-  });
-
-  testWidgets('nickname longer than sixteen runes is rejected locally', (
-    tester,
-  ) async {
-    final fixture = await _RegistrationFixture.create(now);
-    await tester.pumpWidget(
-      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
-    );
-    await _enter(tester, const Key('invite-code'), 'invite-one');
-    await _enter(tester, const Key('nickname'), List.filled(17, '鱼').join());
-
-    await tester.tap(find.byKey(const Key('register')));
-    await tester.pump();
-
-    expect(find.text('昵称不能超过 16 个字符'), findsOneWidget);
-    expect(fixture.api.registerCalls, 0);
-  });
-
   testWidgets('submitting disables the button and prevents double submit', (
     tester,
   ) async {
@@ -265,10 +235,15 @@ void main() {
     final fixture = await _RegistrationFixture.create(now)
       ..api.onRegister = (_, _) => pending.future;
     await tester.pumpWidget(
-      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+      MaterialApp(
+        home: RegistrationPage(
+          controller: fixture.controller,
+          nickname: '小鱼',
+          onEditNickname: () {},
+        ),
+      ),
     );
     await _enter(tester, const Key('invite-code'), 'invite-one');
-    await _enter(tester, const Key('nickname'), '小鱼');
 
     await tester.tap(find.byKey(const Key('register')));
     await tester.pump();
@@ -311,10 +286,15 @@ void main() {
           ApiError(code: testCase.code, message: testCase.serverMessage),
         );
       await tester.pumpWidget(
-        MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+        MaterialApp(
+          home: RegistrationPage(
+            controller: fixture.controller,
+            nickname: '小鱼',
+            onEditNickname: () {},
+          ),
+        ),
       );
       await _enter(tester, const Key('invite-code'), 'invite-one');
-      await _enter(tester, const Key('nickname'), '小鱼');
 
       await tester.tap(find.byKey(const Key('register')));
       await tester.pump();
@@ -333,10 +313,15 @@ void main() {
         const ApiError(code: 'future_error', message: secret),
       );
     await tester.pumpWidget(
-      MaterialApp(home: RegistrationPage(controller: fixture.controller)),
+      MaterialApp(
+        home: RegistrationPage(
+          controller: fixture.controller,
+          nickname: '小鱼',
+          onEditNickname: () {},
+        ),
+      ),
     );
     await _enter(tester, const Key('invite-code'), 'invite-one');
-    await _enter(tester, const Key('nickname'), '小鱼');
 
     await tester.tap(find.byKey(const Key('register')));
     await tester.pump();
@@ -352,15 +337,17 @@ void main() {
       GameboxApp(
         gameLauncher: _NoopGameLauncher(),
         sessionController: fixture.controller,
+        profileController: fixture.profile,
       ),
     );
     await tester.pump();
     await _enter(tester, const Key('invite-code'), 'invite-one');
-    await _enter(tester, const Key('nickname'), '小鱼');
 
     await tester.tap(find.byKey(const Key('register')));
     await tester.pump();
 
+    expect(fixture.api.lastInviteCode, 'invite-one');
+    expect(fixture.api.lastNickname, '小鱼');
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(find.text('你好，小鱼'), findsOneWidget);
   });
@@ -383,12 +370,15 @@ void main() {
         now: () => now,
       );
       await controller.restore();
+      final profile = await _readyProfile();
       await tester.pumpWidget(
         GameboxApp(
           gameLauncher: _NoopGameLauncher(),
           sessionController: controller,
+          profileController: profile,
         ),
       );
+      await tester.pump();
 
       expect(find.byKey(const Key('invite-code')), findsNothing);
       expect(find.byKey(const Key('register')), findsNothing);
@@ -403,7 +393,7 @@ void main() {
   );
 
   testWidgets(
-    'credential cleanup immediately hides Home and registration until complete',
+    'credential cleanup stays inside Home and hides registration until complete',
     (tester) async {
       final api = _FakeAuthApi()..onRefresh = (_) async => _session(now);
       final deletion = Completer<void>();
@@ -415,12 +405,15 @@ void main() {
         now: () => now,
       );
       await controller.restore();
+      final profile = await _readyProfile();
       await tester.pumpWidget(
         GameboxApp(
           gameLauncher: _NoopGameLauncher(),
           sessionController: controller,
+          profileController: profile,
         ),
       );
+      await tester.pump();
       expect(find.byKey(const Key('home-shell')), findsOneWidget);
       api.onRefresh = (_) => Future<Session>.error(
         const ApiError(code: 'unauthorized', message: '身份验证失败'),
@@ -431,7 +424,7 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      expect(find.byKey(const Key('home-shell')), findsNothing);
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
       expect(
         find.byKey(const Key('credential-cleanup-pending')),
         findsOneWidget,
@@ -471,15 +464,18 @@ void main() {
       const ApiError(code: 'unauthorized', message: '身份验证失败'),
     );
     await controller.refresh('access-token');
+    final profile = await _readyProfile();
     await tester.pumpWidget(
       GameboxApp(
         gameLauncher: _NoopGameLauncher(),
         sessionController: controller,
+        profileController: profile,
       ),
     );
+    await tester.pump();
 
     expect(find.byKey(const Key('retry-credential-cleanup')), findsOneWidget);
-    expect(find.byKey(const Key('home-shell')), findsNothing);
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
     expect(find.byKey(const Key('register')), findsNothing);
     expect(find.textContaining('private-platform-detail'), findsNothing);
 
@@ -530,7 +526,7 @@ Session _session(DateTime now) => Session(
 );
 
 final class _RegistrationFixture {
-  _RegistrationFixture(this.api, this.controller);
+  _RegistrationFixture(this.api, this.controller, this.profile);
 
   static Future<_RegistrationFixture> create(DateTime now) async {
     final api = _FakeAuthApi();
@@ -540,17 +536,54 @@ final class _RegistrationFixture {
       now: () => now,
     );
     await controller.restore();
-    return _RegistrationFixture(api, controller);
+    return _RegistrationFixture(api, controller, await _readyProfile());
   }
 
   final _FakeAuthApi api;
   final SessionController controller;
+  final ProfileController profile;
+}
+
+Future<ProfileController> _readyProfile() async {
+  final controller = ProfileController(
+    store: _MemoryProfileStore(
+      const AppProfile(
+        schemaVersion: 1,
+        nickname: '小鱼',
+        syncState: ProfileSyncState.pending,
+      ),
+    ),
+    nicknameRules: const _NicknameRules(),
+  );
+  await controller.load();
+  return controller;
+}
+
+final class _MemoryProfileStore implements AppProfileStore {
+  _MemoryProfileStore(this.value);
+
+  AppProfile? value;
+
+  @override
+  Future<AppProfile?> read() async => value;
+
+  @override
+  Future<void> write(AppProfile profile) async => value = profile;
+}
+
+final class _NicknameRules implements NicknameRules {
+  const _NicknameRules();
+
+  @override
+  Future<String> normalize(String raw) async => raw.trim();
 }
 
 final class _FakeAuthApi implements AuthApi {
   Future<Session> Function(String inviteCode, String nickname)? onRegister;
   Future<Session> Function(String refreshToken)? onRefresh;
   int registerCalls = 0;
+  String? lastInviteCode;
+  String? lastNickname;
 
   @override
   Future<Session> refresh(String refreshToken) =>
@@ -560,9 +593,18 @@ final class _FakeAuthApi implements AuthApi {
   @override
   Future<Session> register(String inviteCode, String nickname) {
     registerCalls += 1;
+    lastInviteCode = inviteCode;
+    lastNickname = nickname;
     return onRegister?.call(inviteCode, nickname) ??
         Future<Session>.error(StateError('unexpected registration'));
   }
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) => Future<SessionUser>.error(StateError('unexpected nickname update'));
 }
 
 final class _MemoryTokenStore implements TokenStore {

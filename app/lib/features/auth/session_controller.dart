@@ -32,6 +32,7 @@ final class SessionController extends ChangeNotifier {
   Future<bool>? _refreshInFlight;
   Future<bool>? _credentialCleanupInFlight;
   Future<ApiError?>? _registrationInFlight;
+  var _nicknameUpdateGeneration = 0;
   var _hasStoredRefreshToken = false;
   var _credentialCleanupRequired = false;
   var _credentialCleanupPending = false;
@@ -183,7 +184,7 @@ final class SessionController extends ChangeNotifier {
     }
   }
 
-  Future<ApiError?> register(String inviteCode, String nickname) {
+  Future<ApiError?> register(String inviteCode, String localNickname) {
     final existing = _registrationInFlight;
     if (existing != null) {
       return existing;
@@ -196,7 +197,7 @@ final class SessionController extends ChangeNotifier {
     final generation = ++_generation;
     _transition(SessionStatus.submitting);
     late final Future<ApiError?> operation;
-    operation = _performRegistration(inviteCode, nickname, generation)
+    operation = _performRegistration(inviteCode, localNickname, generation)
         .whenComplete(() {
           if (identical(_registrationInFlight, operation)) {
             _registrationInFlight = null;
@@ -243,6 +244,51 @@ final class SessionController extends ChangeNotifier {
         _transition(SessionStatus.unauthenticated);
       }
       return const ApiError(code: 'internal_error', message: '注册失败，请稍后重试');
+    }
+  }
+
+  /// Updates only the public user carried in memory. Credential persistence is
+  /// deliberately untouched because the server does not rotate this session.
+  Future<ApiError?> updateNickname(String nickname) async {
+    final previous = _session;
+    if (_disposed ||
+        _status != SessionStatus.authenticated ||
+        previous == null) {
+      return const ApiError(code: 'unauthorized', message: '身份验证失败');
+    }
+    final sessionGeneration = _generation;
+    final updateGeneration = ++_nicknameUpdateGeneration;
+    try {
+      final updated = await _authApi.updateNickname(
+        nickname,
+        accessToken: () => accessToken,
+        onUnauthorized: refresh,
+      );
+      if (!_isCurrent(sessionGeneration) ||
+          updateGeneration != _nicknameUpdateGeneration ||
+          _status != SessionStatus.authenticated) {
+        return null;
+      }
+      final current = _session;
+      if (current == null ||
+          current.user.id != previous.user.id ||
+          updated.id != current.user.id ||
+          updated.nickname != nickname) {
+        return const ApiError(code: 'invalid_response', message: '服务器响应无效');
+      }
+      _session = Session(
+        user: updated,
+        accessToken: current.accessToken,
+        accessExpiresAt: current.accessExpiresAt,
+        refreshToken: current.refreshToken,
+        refreshExpiresAt: current.refreshExpiresAt,
+      );
+      _notify();
+      return null;
+    } on ApiError catch (error) {
+      return error;
+    } catch (_) {
+      return const ApiError(code: 'internal_error', message: '昵称同步失败，请稍后重试');
     }
   }
 
@@ -472,6 +518,7 @@ final class SessionController extends ChangeNotifier {
     _refreshInFlight = null;
     _credentialCleanupInFlight = null;
     _registrationInFlight = null;
+    _nicknameUpdateGeneration += 1;
     _credentialCleanupPending = false;
     super.dispose();
   }

@@ -93,6 +93,19 @@ final class MatchHistoryController extends ChangeNotifier {
     return Future<void>.value();
   }
 
+  Future<void> refresh() {
+    if (_disposed || _isInitialLoading || _isLoadingMore) {
+      return Future<void>.value();
+    }
+    _matches = const [];
+    _statistics = null;
+    _nextCursor = null;
+    _initialError = null;
+    _loadMoreError = null;
+    _hasLoaded = false;
+    return load();
+  }
+
   @override
   void dispose() {
     if (_disposed) return;

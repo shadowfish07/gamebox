@@ -284,3 +284,25 @@ func (router *router) createLaunchTicket(writer http.ResponseWriter, request *ht
 		LaunchTicket: ticket.Token, ExpiresAt: ticket.ExpiresAt.UTC().UnixMilli(),
 	})
 }
+
+func (router *router) matchResult(writer http.ResponseWriter, request *http.Request) {
+	user, ok := authenticatedUser(request)
+	if !ok {
+		writeAPIError(writer, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	matchID, valid := literalCanonicalPathUUID(request, "matchId")
+	if !valid {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	_, encoded, resultErr := router.matches.Result(request.Context(), matchID, user.ID)
+	if resultErr != nil {
+		writeServiceError(writer, resultErr)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, struct {
+		Result json.RawMessage `json:"result"`
+	}{Result: encoded})
+}

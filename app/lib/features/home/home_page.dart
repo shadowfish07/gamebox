@@ -7,9 +7,6 @@ import '../../design_system/components/gamebox_page_body.dart';
 import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
-import '../history/match_history_api.dart';
-import '../history/match_history_controller.dart';
-import '../history/match_history_page.dart';
 import '../rps/rps_controller.dart';
 import '../rps/rps_models.dart';
 import '../rps/rps_opponent_page.dart';
@@ -21,18 +18,28 @@ import 'opponent_page.dart';
 final class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
-    required this.controller,
-    required this.currentUserId,
     required this.nickname,
-    required this.historyApi,
+    this.controller,
+    this.currentUserId,
+    this.publicSection,
+    this.onEditNickname,
+    this.onOpenPublic,
+    this.onOpenLan,
+    this.lanRecovery,
+    this.onOpenHistory,
     this.rpsController,
     this.updateController,
   });
 
-  final HomeController controller;
-  final String currentUserId;
+  final HomeController? controller;
+  final String? currentUserId;
   final String nickname;
-  final MatchHistoryApi historyApi;
+  final Widget? publicSection;
+  final VoidCallback? onEditNickname;
+  final VoidCallback? onOpenPublic;
+  final VoidCallback? onOpenLan;
+  final Widget? lanRecovery;
+  final VoidCallback? onOpenHistory;
   final RpsController? rpsController;
   final UpdateController? updateController;
 
@@ -44,8 +51,8 @@ final class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_changed);
-    widget.controller.start();
+    widget.controller?.addListener(_changed);
+    widget.controller?.start();
     widget.rpsController?.addListener(_changed);
     widget.rpsController?.start();
   }
@@ -54,9 +61,9 @@ final class _HomePageState extends State<HomePage> {
   void didUpdateWidget(HomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_changed);
-      widget.controller.addListener(_changed);
-      widget.controller.start();
+      oldWidget.controller?.removeListener(_changed);
+      widget.controller?.addListener(_changed);
+      widget.controller?.start();
     }
     if (oldWidget.rpsController != widget.rpsController) {
       oldWidget.rpsController?.removeListener(_changed);
@@ -71,45 +78,39 @@ final class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    widget.controller.removeListener(_changed);
+    widget.controller?.removeListener(_changed);
     widget.rpsController?.removeListener(_changed);
     super.dispose();
   }
 
   Future<void> _chooseOpponent() async {
+    final controller = widget.controller;
+    final currentUserId = widget.currentUserId;
+    if (controller == null || currentUserId == null) return;
     final error = await Navigator.of(context).push<ApiError?>(
       MaterialPageRoute<ApiError?>(
-        builder: (_) => OpponentPage(
-          controller: widget.controller,
-          currentUserId: widget.currentUserId,
-        ),
+        settings: const RouteSettings(name: 'public/opponents'),
+        builder: (_) =>
+            OpponentPage(controller: controller, currentUserId: currentUserId),
       ),
     );
     if (mounted && error != null) _showError(error);
   }
 
   Future<void> _continueMatch() async {
-    final error = await widget.controller.openActiveMatch();
+    final error = await widget.controller?.openActiveMatch();
     if (mounted && error != null) _showError(error);
-  }
-
-  Future<void> _openHistory() {
-    final controller = MatchHistoryController(api: widget.historyApi);
-    return Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => MatchHistoryPage(controller: controller),
-      ),
-    );
   }
 
   Future<void> _chooseRpsOpponent() async {
     final controller = widget.rpsController;
-    if (controller == null) return;
+    final currentUserId = widget.currentUserId;
+    if (controller == null || currentUserId == null) return;
     final error = await Navigator.of(context).push<ApiError?>(
       MaterialPageRoute<ApiError?>(
         builder: (_) => RpsOpponentPage(
           controller: controller,
-          currentUserId: widget.currentUserId,
+          currentUserId: currentUserId,
         ),
       ),
     );
@@ -146,7 +147,7 @@ final class _HomePageState extends State<HomePage> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final error = await widget.controller.cancelActiveMatch();
+    final error = await widget.controller?.cancelActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -182,75 +183,103 @@ final class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    return Scaffold(
+    return Semantics(
       key: const Key('home-shell'),
-      appBar: AppBar(
-        title: const Text('Gamebox'),
-        actions: [
-          if (widget.updateController case final controller?)
-            UpdateActionButton(controller: controller),
-        ],
-      ),
-      body: GameboxPageBody(
-        children: [
-          Card(
-            child: Padding(
-              padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '你好，${widget.nickname}',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  SizedBox(height: GameboxTokens.spacing.page),
-                  Semantics(
-                    key: const Key('open-match-history'),
-                    identifier: 'open-match-history',
-                    child: OutlinedButton.icon(
-                      onPressed: _openHistory,
-                      icon: const Icon(Icons.history),
-                      label: const Text('我的战绩'),
+      label: 'home-shell',
+      container: true,
+      explicitChildNodes: true,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Gamebox'),
+          actions: [
+            if (widget.onEditNickname != null)
+              IconButton(
+                key: const Key('edit-local-nickname'),
+                tooltip: '编辑昵称',
+                onPressed: widget.onEditNickname,
+                icon: const Icon(Icons.edit_outlined),
+              ),
+            if (widget.updateController case final controller?)
+              UpdateActionButton(controller: controller),
+          ],
+        ),
+        body: GameboxPageBody(
+          children: [
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '你好，${widget.nickname}',
+                      style: Theme.of(context).textTheme.titleLarge,
                     ),
-                  ),
-                ],
+                    SizedBox(height: GameboxTokens.spacing.page),
+                    Semantics(
+                      key: const Key('open-match-history'),
+                      identifier: 'open-match-history',
+                      child: OutlinedButton.icon(
+                        onPressed: widget.onOpenHistory,
+                        icon: const Icon(Icons.history),
+                        label: const Text('我的战绩'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          _buildGomoku(controller),
-          if (widget.rpsController case final RpsController rpsController) ...[
-            SizedBox(height: GameboxTokens.spacing.section),
-            _buildRps(rpsController),
+            if (widget.publicSection case final publicSection?) ...[
+              Card(
+                key: const Key('public-section'),
+                child: Padding(
+                  padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+                  child: publicSection,
+                ),
+              ),
+            ],
+            if (widget.lanRecovery case final recovery?)
+              recovery
+            else if (controller != null &&
+                controller.status == null &&
+                controller.isLoading)
+              const GameboxAsyncPanel(
+                icon: Icons.sports_esports_outlined,
+                title: '正在加载游戏',
+                message: '请稍候，正在获取最新对局状态。',
+                isLoading: true,
+              )
+            else if (controller != null &&
+                controller.status == null &&
+                controller.lastError != null)
+              _HomeError(
+                message: controller.lastError!.message,
+                onRetry: controller.refresh,
+              )
+            else if (controller != null && controller.status == null)
+              const GameboxAsyncPanel(
+                icon: Icons.sports_esports_outlined,
+                title: '正在加载游戏',
+                message: '请稍候，正在获取最新对局状态。',
+                isLoading: true,
+              )
+            else
+              _GomokuCard(
+                status: controller?.status,
+                isLaunching: controller?.isLaunching ?? false,
+                isMutating: controller?.isMutating ?? false,
+                onChoose: widget.onOpenPublic ?? _chooseOpponent,
+                onLan: widget.onOpenLan,
+                onContinue: _continueMatch,
+                onCancel: _cancelMatch,
+              ),
+            if (widget.lanRecovery == null && widget.rpsController != null) ...[
+              SizedBox(height: GameboxTokens.spacing.section),
+              _buildRps(widget.rpsController!),
+            ],
           ],
-        ],
+        ),
       ),
-    );
-  }
-
-  Widget _buildGomoku(HomeController controller) {
-    if (controller.status == null && controller.isLoading) {
-      return const GameboxAsyncPanel(
-        icon: Icons.sports_esports_outlined,
-        title: '正在加载游戏',
-        message: '请稍候，正在获取最新对局状态。',
-        isLoading: true,
-      );
-    }
-    if (controller.status == null && controller.lastError != null) {
-      return _HomeError(
-        message: controller.lastError!.message,
-        onRetry: controller.refresh,
-      );
-    }
-    final status = controller.status;
-    if (status == null) return const SizedBox.shrink();
-    return _GomokuCard(
-      status: status,
-      isLaunching: controller.isLaunching,
-      isMutating: controller.isMutating,
-      onChoose: _chooseOpponent,
-      onContinue: _continueMatch,
-      onCancel: _cancelMatch,
     );
   }
 
@@ -316,14 +345,16 @@ final class _GomokuCard extends StatelessWidget {
     required this.isLaunching,
     required this.isMutating,
     required this.onChoose,
+    required this.onLan,
     required this.onContinue,
     required this.onCancel,
   });
 
-  final GomokuStatus status;
+  final GomokuStatus? status;
   final bool isLaunching;
   final bool isMutating;
   final VoidCallback onChoose;
+  final VoidCallback? onLan;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
 
@@ -356,11 +387,24 @@ final class _GomokuCard extends StatelessWidget {
             ),
             SizedBox(height: GameboxTokens.spacing.layout),
             Text(
-              status is GomokuIdleStatus ? '可开始新对局' : '对局进行中',
+              status == null
+                  ? '可直接局域网对战，也可注册后使用公网匹配'
+                  : status is GomokuIdleStatus
+                  ? '可开始新对局'
+                  : '对局进行中',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             SizedBox(height: GameboxTokens.spacing.page),
+            Text('公网对战', style: Theme.of(context).textTheme.titleMedium),
+            SizedBox(height: GameboxTokens.spacing.layout),
             switch (status) {
+              null => _ActionButton(
+                semanticKey: const Key('open-public-mode'),
+                semanticLabel: 'open-public-mode',
+                onPressed: isMutating ? null : onChoose,
+                label: '使用邀请码注册',
+                pendingLabel: '正在打开注册',
+              ),
               GomokuIdleStatus _ => _ActionButton(
                 semanticKey: const Key('choose-opponent'),
                 semanticLabel: 'choose-opponent',
@@ -377,6 +421,18 @@ final class _GomokuCard extends StatelessWidget {
                 onCancel: onCancel,
               ),
             },
+            SizedBox(height: GameboxTokens.spacing.page),
+            Text('局域网对战', style: Theme.of(context).textTheme.titleMedium),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Semantics(
+              key: const Key('open-lan-mode'),
+              identifier: 'open-lan-mode',
+              child: OutlinedButton.icon(
+                onPressed: onLan,
+                icon: const Icon(Icons.wifi_tethering),
+                label: const Text('打开局域网模式'),
+              ),
+            ),
           ],
         ),
       ),

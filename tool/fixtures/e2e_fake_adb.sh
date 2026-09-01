@@ -55,7 +55,7 @@ case " $* " in
     if [ "${FAKE_ADB_MODE:-}" = "loading-watch" ]; then
       printf '%s\n' "${FAKE_ADB_LOG_BOUNDARY:?}"
       if [ -n "${FAKE_ADB_LOADING_MATCH_ID:-}" ]; then
-        printf 'I godot : GAMEBOX_GODOT_STATE match=%s revision=-1 status=loading connection=connecting opponent_presence=unknown\n' \
+        printf 'I godot : GAMEBOX_GODOT_STATE match=%s revision=-1 status=loading connection=connecting opponent_presence=unknown color=none\n' \
           "$FAKE_ADB_LOADING_MATCH_ID"
       fi
       # dash may retain builtin output while this fixture intentionally hangs.

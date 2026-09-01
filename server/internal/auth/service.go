@@ -167,6 +167,50 @@ WHERE code_hash = ? AND consumed_at IS NULL AND consumed_by IS NULL`, userID.Str
 	return users.User{ID: userID.String(), Nickname: displayNickname}, nil
 }
 
+// UpdateNickname atomically replaces the public display and uniqueness key for
+// one enabled account. Existing sessions and match history remain untouched.
+func (service *Service) UpdateNickname(ctx context.Context, userID, rawNickname string) (_ users.User, err error) {
+	if ctx == nil || userID == "" {
+		return users.User{}, ErrInvalidRequest
+	}
+	displayNickname, normalizedNickname, normalizeErr := users.NormalizeNickname(rawNickname)
+	if normalizeErr != nil {
+		return users.User{}, ErrInvalidRequest
+	}
+	transaction, beginErr := service.beginWriteTransaction(ctx)
+	if beginErr != nil {
+		return users.User{}, beginErr
+	}
+	defer func() {
+		if rollbackErr := transaction.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+			err = databaseError(ctx, rollbackErr)
+		}
+		_ = transaction.release()
+	}()
+
+	result, updateErr := transaction.ExecContext(ctx, `
+UPDATE users
+SET nickname = ?, normalized_nickname = ?, updated_at = ?
+WHERE id = ? AND enabled = 1`, displayNickname, normalizedNickname, service.clock.Now().UTC().Unix(), userID)
+	if updateErr != nil {
+		if isNormalizedNicknameConflict(updateErr) {
+			return users.User{}, ErrNicknameTaken
+		}
+		return users.User{}, databaseError(ctx, updateErr)
+	}
+	affected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return users.User{}, databaseError(ctx, rowsErr)
+	}
+	if affected != 1 {
+		return users.User{}, ErrUnauthorized
+	}
+	if commitErr := service.commit(transaction); commitErr != nil {
+		return users.User{}, databaseError(ctx, commitErr)
+	}
+	return users.User{ID: userID, Nickname: displayNickname}, nil
+}
+
 // RegisterAndIssue creates the account, consumes its one-time invitation, and
 // persists the first refresh credential in one immediate transaction. No user
 // or consumed invitation can survive a token-generation, collision, insert,

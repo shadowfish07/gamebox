@@ -7,6 +7,7 @@ const HOST_SMOKE_MAX_DELAY_MS := 60000
 const HOST_SMOKE_EXITING_MARKER := "GAMEBOX_GODOT_EXITING"
 const NORMAL_READY_MARKER := "GAMEBOX_GODOT_NORMAL_READY"
 const PRIVATE_TICKET_ENVIRONMENT := "GAMEBOX_PRIVATE_LAUNCH_TICKET"
+const PRIVATE_RESUME_ENVIRONMENT := "GAMEBOX_PRIVATE_RESUME_TOKEN"
 const PRIVATE_TICKET_PLACEHOLDER := "__GAMEBOX_PRIVATE_LAUNCH_TICKET__"
 const NORMAL_ARGUMENT_COUNT := 8
 const NORMAL_TICKET_VALUE_INDEX := 5
@@ -27,11 +28,16 @@ func _start_with_args(args: PackedStringArray) -> void:
 		_show_launch_error("invalid_private_launch_ticket")
 		return
 	args = hydration_result["args"]
+	var private_resume_token: String = hydration_result.get("resume_token", "")
 
 	var config_result: Dictionary = LaunchConfig.parse(args)
 	if not config_result.get("ok", false):
+		private_resume_token = ""
 		_show_launch_error(config_result.get("code", "invalid_launch_configuration"))
 		return
+	if not private_resume_token.is_empty():
+		config_result["config"]["resume_token"] = private_resume_token
+	private_resume_token = ""
 
 	var registry_result: Dictionary = GameRegistry.resolve(config_result["config"]["game_id"])
 	if not registry_result.get("ok", false):
@@ -42,10 +48,12 @@ func _start_with_args(args: PackedStringArray) -> void:
 	if not game_scene.has_method("configure_launch") \
 		or not game_scene.configure_launch(config_result["config"].duplicate(true)):
 		config_result["config"]["launch_ticket"] = ""
+		config_result["config"]["resume_token"] = ""
 		game_scene.free()
 		_show_launch_error("game_configuration_rejected")
 		return
 	config_result["config"]["launch_ticket"] = ""
+	config_result["config"]["resume_token"] = ""
 	$ReadyLabel.hide()
 	add_child(game_scene)
 	print(NORMAL_READY_MARKER)
@@ -53,18 +61,20 @@ func _start_with_args(args: PackedStringArray) -> void:
 
 func _hydrate_private_launch_ticket(args: PackedStringArray) -> Dictionary:
 	var hydrated_args := args.duplicate()
+	var private_resume := OS.get_environment(PRIVATE_RESUME_ENVIRONMENT)
+	OS.unset_environment(PRIVATE_RESUME_ENVIRONMENT)
 	if not _has_normal_launch_shape(hydrated_args):
 		OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
 		return {"ok": false}
 	if hydrated_args[NORMAL_TICKET_VALUE_INDEX] != PRIVATE_TICKET_PLACEHOLDER:
 		OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
-		return {"ok": true, "args": hydrated_args}
+		return {"ok": true, "args": hydrated_args, "resume_token": private_resume}
 	var private_ticket := OS.get_environment(PRIVATE_TICKET_ENVIRONMENT)
 	OS.unset_environment(PRIVATE_TICKET_ENVIRONMENT)
 	if private_ticket.is_empty() or private_ticket == PRIVATE_TICKET_PLACEHOLDER:
 		return {"ok": false}
 	hydrated_args[NORMAL_TICKET_VALUE_INDEX] = private_ticket
-	return {"ok": true, "args": hydrated_args}
+	return {"ok": true, "args": hydrated_args, "resume_token": private_resume}
 
 
 func _has_normal_launch_shape(args: PackedStringArray) -> bool:

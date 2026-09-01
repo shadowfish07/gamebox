@@ -94,7 +94,9 @@ static func _injects_hydrated_config_once() -> bool:
 	var args := _valid_launch_args()
 	args[args.find("--launch-ticket") + 1] = MainScript.PRIVATE_TICKET_PLACEHOLDER
 	const PRIVATE_CANARY := "private-injected-canary-ticket"
+	const PRIVATE_RESUME_CANARY := "private-injected-resume-token"
 	OS.set_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT, PRIVATE_CANARY)
+	OS.set_environment(MainScript.PRIVATE_RESUME_ENVIRONMENT, PRIVATE_RESUME_CANARY)
 	host._start_with_args(args)
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	var gomoku_children := _gomoku_children(host)
@@ -103,8 +105,10 @@ static func _injects_hydrated_config_once() -> bool:
 		var controller: Control = gomoku_children[0]
 		result = _check(controller._launch_config.is_empty(), "controller retained injected config after start") \
 			and _check(controller._client._launch_ticket == PRIVATE_CANARY, "hydrated ticket was not passed to MatchClient") \
+			and _check(controller._client._resume_token == PRIVATE_RESUME_CANARY, "hydrated resume token was not passed to MatchClient") \
 			and _check(not str(controller).contains(PRIVATE_CANARY), "controller string exposed private ticket")
 	result = _check(not OS.has_environment(MainScript.PRIVATE_TICKET_ENVIRONMENT), "private environment survived controller injection") and result
+	result = _check(not OS.has_environment(MainScript.PRIVATE_RESUME_ENVIRONMENT), "private resume environment survived controller injection") and result
 	host.queue_free()
 	return result
 

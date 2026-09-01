@@ -180,6 +180,7 @@
       "additionalProperties": false,
       "required": [
         "dialogScrimOpacity",
+        "mediaViewportHeight",
         "resultTintMix",
         "resultShadowOpacity",
         "resultContentSpacing",
@@ -215,6 +216,7 @@
           "exclusiveMinimum": 0,
           "maximum": 1
         },
+        "mediaViewportHeight": { "$ref": "#/$defs/positiveNumber" },
         "resultShadowOpacity": {
           "type": "number",
           "exclusiveMinimum": 0,

@@ -7,6 +7,50 @@ cd "$ROOT_DIR"
 # shellcheck source=tool/lib/check_output.sh
 source "$ROOT_DIR/tool/lib/check_output.sh"
 
+if [[ "${GAMEBOX_VERIFY_INTERNAL:-0}" != "1" ]]; then
+  verify_verbose=0
+  verify_self_test=0
+  for argument in "$@"; do
+    case "$argument" in
+      --verbose) verify_verbose=1 ;;
+      --self-test) verify_self_test=1 ;;
+      *) printf 'usage: %s [--self-test] [--verbose]\n' "$0" >&2; exit 2 ;;
+    esac
+  done
+  internal_arguments=()
+  ((verify_self_test == 0)) || internal_arguments+=(--self-test)
+  if ((verify_verbose == 1)); then
+    export GAMEBOX_VERIFY_INTERNAL=1
+    exec bash "$0" "${internal_arguments[@]}"
+  fi
+  verify_log_dir="$ROOT_DIR/app/build/verify-logs"
+  mkdir -p "$verify_log_dir"
+  verify_log="$verify_log_dir/verify-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+  if GAMEBOX_VERIFY_INTERNAL=1 bash "$0" "${internal_arguments[@]}" >"$verify_log" 2>&1; then
+    warning_count="$(LC_ALL=C grep -Eic '(^|[^a-z])(warning|deprecated)([^a-z]|$)' "$verify_log" || true)"
+    printf 'Gamebox verification passed (%s warnings summarized). Log: %s\n' "$warning_count" "$verify_log"
+    exit 0
+  else
+    verify_exit=$?
+  fi
+  failed_phase="$(sed -n 's/^GAMEBOX_VERIFY_PHASE=//p' "$verify_log" | tail -1)"
+  printf 'Gamebox verification failed in phase: %s (exit %s)\n' "${failed_phase:-initialization}" "$verify_exit" >&2
+  if [[ -n "$failed_phase" ]]; then
+    awk -v marker="GAMEBOX_VERIFY_PHASE=${failed_phase}" '
+      $0 == marker { printing=1; next }
+      printing { print }
+    ' "$verify_log" >&2
+  else
+    cat "$verify_log" >&2
+  fi
+  printf 'Full log: %s\n' "$verify_log" >&2
+  exit "$verify_exit"
+fi
+
+verify_phase() {
+  printf 'GAMEBOX_VERIFY_PHASE=%s\n' "$1"
+}
+
 godot_imported_asset_is_allowed() {
   local asset_path="$1"
   [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.ctex$ ]]
@@ -212,7 +256,7 @@ verify_asset_path_fixtures() {
 validate_apk_native_runtime() {
   local listing_text="$1"
   local source_name="$2"
-  local packaged_abis expected_abis abi target
+  local packaged_abis expected_abis abi library target
   expected_abis='arm64-v8a armeabi-v7a x86_64'
   packaged_abis="$(awk '$NF ~ /^lib\/[^\/]+\// { split($NF, parts, "/"); print parts[2] }' <<<"$listing_text" | LC_ALL=C sort -u | paste -sd ' ' -)"
   if [[ "$packaged_abis" != "$expected_abis" ]]; then
@@ -220,33 +264,35 @@ validate_apk_native_runtime() {
     return 1
   fi
   for abi in arm64-v8a armeabi-v7a x86_64; do
-    target="lib/$abi/libgodot_android.so"
-    if ! awk -v target="$target" '
-      $NF == target {
-        count++
-        if ($1 ~ /^[0-9]+$/ && $1 > 0) valid++
-      }
-      END { exit !(count == 1 && valid == 1) }
-    ' <<<"$listing_text"; then
-      printf '%s must contain one non-empty %s.\n' "$source_name" "$target" >&2
-      return 1
-    fi
+    for library in libgodot_android.so libgojni.so; do
+      target="lib/$abi/$library"
+      if ! awk -v target="$target" '
+        $NF == target {
+          count++
+          if ($1 ~ /^[0-9]+$/ && $1 > 0) valid++
+        }
+        END { exit !(count == 1 && valid == 1) }
+      ' <<<"$listing_text"; then
+        printf '%s must contain one non-empty %s.\n' "$source_name" "$target" >&2
+        return 1
+      fi
+    done
   done
 }
 
 verify_native_runtime_fixtures() {
   local good_listing bad_listing
-  good_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so'
+  good_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n71148032  01-01-1980 00:00 lib/arm64-v8a/libgojni.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgojni.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so\n74034072  01-01-1980 00:00 lib/x86_64/libgojni.so'
   validate_apk_native_runtime "$good_listing" 'valid native fixture' || return 1
 
-  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so'
-  if validate_apk_native_runtime "$bad_listing" 'missing ABI fixture' >/dev/null 2>&1; then
-    printf 'Native runtime fixture accepted a missing ABI.\n' >&2
+  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n71148032  01-01-1980 00:00 lib/arm64-v8a/libgojni.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgojni.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so'
+  if validate_apk_native_runtime "$bad_listing" 'missing Go JNI fixture' >/dev/null 2>&1; then
+    printf 'Native runtime fixture accepted a missing Go JNI library.\n' >&2
     return 1
   fi
-  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n0  01-01-1980 00:00 lib/x86_64/libgodot_android.so'
-  if validate_apk_native_runtime "$bad_listing" 'empty library fixture' >/dev/null 2>&1; then
-    printf 'Native runtime fixture accepted an empty Godot library.\n' >&2
+  bad_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so\n71148032  01-01-1980 00:00 lib/arm64-v8a/libgojni.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgodot_android.so\n74943696  01-01-1980 00:00 lib/armeabi-v7a/libgojni.so\n74034072  01-01-1980 00:00 lib/x86_64/libgodot_android.so\n0  01-01-1980 00:00 lib/x86_64/libgojni.so'
+  if validate_apk_native_runtime "$bad_listing" 'empty Go JNI fixture' >/dev/null 2>&1; then
+    printf 'Native runtime fixture accepted an empty Go JNI library.\n' >&2
     return 1
   fi
   bad_listing="$good_listing"$'\n1  01-01-1980 00:00 lib/riscv64/libfixture.so'
@@ -254,7 +300,90 @@ verify_native_runtime_fixtures() {
     printf 'Native runtime fixture accepted an unexpected ABI.\n' >&2
     return 1
   fi
+  bad_listing="$good_listing"$'\n1  01-01-1980 00:00 lib/x86_64/libgojni.so'
+  if validate_apk_native_runtime "$bad_listing" 'duplicate Go JNI fixture' >/dev/null 2>&1; then
+    printf 'Native runtime fixture accepted a duplicate Go JNI library.\n' >&2
+    return 1
+  fi
   printf 'APK native runtime fixtures passed.\n'
+}
+
+verify_lan_aar_fixtures() {
+  local fixture_root fake_bin fake_go fake_gopath fake_mod_cache fixture_output go_log
+  fixture_root="$(mktemp -d "$ROOT_DIR/app/build/gamebox-lan-aar-fixture.XXXXXX")"
+  fake_bin="$fixture_root/bin"
+  fake_go="$fake_bin/go"
+  fake_gopath="$fixture_root/fake-gopath"
+  fake_mod_cache="$fixture_root/fake-mod-cache"
+  fixture_output="$fixture_root/empty-gojni.aar"
+  go_log="$fixture_root/go.log"
+  mkdir -p "$fake_bin" "$fake_gopath" "$fake_mod_cache"
+  # shellcheck disable=SC2016 # The fixture script expands these at execution time.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "%s\n" "$*" >>"${GAMEBOX_FAKE_GO_LOG:?}"' \
+    'case "${1:-} ${2:-} ${3:-}" in' \
+    '  "env GOPATH ") printf "%s\n" "${GAMEBOX_FAKE_GOPATH:?}" ;;' \
+    '  "env GOMODCACHE ") printf "%s\n" "${GAMEBOX_FAKE_GOMODCACHE:?}" ;;' \
+    '  "install golang.org/x/mobile/cmd/gobind ")' \
+    '    mkdir -p "${GOBIN:?}"' \
+    '    printf "#!/usr/bin/env bash\nexit 0\n" >"$GOBIN/gobind"' \
+    '    chmod +x "$GOBIN/gobind"' \
+    '    ;;' \
+    '  "tool gomobile bind")' \
+    '    shift 3' \
+    '    output=""' \
+    '    while (( $# )); do' \
+    '      case "$1" in' \
+    '        -o) output="$2"; shift 2 ;;' \
+    '        *) shift ;;' \
+    '      esac' \
+    '    done' \
+    '    [[ -n "$output" ]]' \
+    '    archive_root="$(mktemp -d)"' \
+    '    content_root="$archive_root/content"' \
+    '    cleanup() { find "$archive_root" -depth -delete; }' \
+    '    trap cleanup EXIT' \
+    '    mkdir -p "$content_root/jni/arm64-v8a" "$content_root/jni/armeabi-v7a" "$content_root/jni/x86_64"' \
+    '    printf classes >"$content_root/classes.jar"' \
+    '    printf arm64 >"$content_root/jni/arm64-v8a/libgojni.so"' \
+    '    printf arm >"$content_root/jni/armeabi-v7a/libgojni.so"' \
+    '    : >"$content_root/jni/x86_64/libgojni.so"' \
+    '    (cd "$content_root" && zip -q -D -r "$archive_root/generated.aar" .)' \
+    '    mv -f "$archive_root/generated.aar" "$output"' \
+    '    ;;' \
+    '  *) exit 99 ;;' \
+    'esac' >"$fake_go"
+  chmod +x "$fake_go"
+
+  if GAMEBOX_FAKE_GO_LOG="$go_log" GAMEBOX_FAKE_GOPATH="$fake_gopath" \
+    GAMEBOX_FAKE_GOMODCACHE="$fake_mod_cache" PATH="$fake_bin:$PATH" \
+    bash "$ROOT_DIR/tool/build_lan_aar.sh" "$fixture_output" >"$fixture_root/build.log" 2>&1; then
+    printf 'AAR fixture accepted an empty Go JNI library.\n' >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  if grep -Eq '(^|[[:space:]])(.*@latest|tool gomobile init)([[:space:]]|$)' "$go_log"; then
+    printf 'AAR fixture used an unpinned or deprecated mobile tool command:\n' >&2
+    cat "$go_log" >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  if ! grep -Fxq 'install golang.org/x/mobile/cmd/gobind' "$go_log"; then
+    printf 'AAR fixture did not install gobind from the pinned module graph.\n' >&2
+    cat "$go_log" >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  if ! grep -Fq 'must contain one non-empty jni/x86_64/libgojni.so' "$fixture_root/build.log"; then
+    printf 'AAR fixture did not report the empty Go JNI library:\n' >&2
+    cat "$fixture_root/build.log" >&2
+    find "$fixture_root" -depth -delete
+    return 1
+  fi
+  find "$fixture_root" -depth -delete
+  printf 'AAR Go JNI fixtures passed.\n'
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -266,6 +395,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   trap gamebox_test_output_cleanup EXIT
   gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
   gamebox_run_step "APK native runtime fixtures" verify_native_runtime_fixtures
+  gamebox_run_step "LAN AAR fixtures" verify_lan_aar_fixtures
   gamebox_test_output_finish verify-self-test
   exit 0
 fi
@@ -273,10 +403,12 @@ fi
   printf 'usage: %s [--self-test]\n' "$0" >&2
   exit 2
 }
+verify_phase "fixtures"
 gamebox_test_output_init
 trap gamebox_test_output_cleanup EXIT
 gamebox_run_step "APK asset path fixtures" verify_asset_path_fixtures
 gamebox_run_step "APK native runtime fixtures" verify_native_runtime_fixtures
+gamebox_run_step "LAN AAR fixtures" verify_lan_aar_fixtures
 
 # setup-godot exposes the executable on PATH in CI, while the local bootstrap
 # retains its macOS application-bundle default.
@@ -290,7 +422,9 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
   JAVA_HOME="$(/usr/libexec/java_home -v 17)"
 fi
 
+verify_phase "toolchain bootstrap"
 gamebox_run_step "toolchain bootstrap" bash tool/bootstrap.sh --build-only
+verify_phase "fast verification"
 gamebox_run_step "fast verification" env GAMEBOX_TEST_NESTED=1 bash tool/verify_fast.sh
 
 run_android_unit_tests() {
@@ -303,7 +437,9 @@ run_flutter_debug_build() {
   (cd app && flutter build apk --debug)
 }
 
+verify_phase "Android unit tests"
 gamebox_run_step "Android unit tests" run_android_unit_tests
+verify_phase "Flutter debug APK build"
 gamebox_run_step "Flutter debug APK build" run_flutter_debug_build
 
 verify_debug_apk() (
@@ -401,5 +537,41 @@ verify_debug_apk() (
   fi
 )
 
+verify_lan_manifest_contract() {
+  local manifest_source="$ROOT_DIR/app/android/app/src/main/AndroidManifest.xml"
+  local required_manifest_contract
+  for required_manifest_contract in \
+    'android.permission.INTERNET' \
+    'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' \
+    'android.permission.CHANGE_NETWORK_STATE' \
+    'android:name=".LanHostService"' \
+    'android:foregroundServiceType="connectedDevice"'; do
+    grep -F "$required_manifest_contract" "$manifest_source" >/dev/null || {
+      printf 'Android manifest is missing required LAN contract %s.\n' "$required_manifest_contract" >&2
+      return 1
+    }
+  done
+  python3 - "$manifest_source" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+android = "{http://schemas.android.com/apk/res/android}"
+root = ET.parse(sys.argv[1]).getroot()
+services = [
+    service for service in root.findall("./application/service")
+    if service.get(android + "name") == ".LanHostService"
+]
+if len(services) != 1 or services[0].get(android + "exported") != "false" or services[0].get(android + "foregroundServiceType") != "connectedDevice":
+    raise SystemExit("LanHostService must be exactly one non-exported connectedDevice service.")
+PY
+  if grep -F 'android.permission.ACCESS_LOCAL_NETWORK' "$manifest_source" >/dev/null; then
+    printf 'Target SDK 36 must not declare the Android 17 ACCESS_LOCAL_NETWORK permission.\n' >&2
+    return 1
+  fi
+}
+
+verify_phase "debug APK assertions"
 gamebox_run_step "debug APK assertions" verify_debug_apk
+verify_phase "LAN Android manifest assertions"
+gamebox_run_step "LAN Android manifest assertions" verify_lan_manifest_contract
 gamebox_test_output_finish verify

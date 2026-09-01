@@ -117,7 +117,7 @@ func _ready() -> void:
 		return
 	_connect_signals()
 	var started: bool = _client.start(
-		config["ws_url"], _match_id, config["launch_ticket"], _state, "rps"
+		config["ws_url"], _match_id, config["launch_ticket"], _state, "", "rps"
 	)
 	config["launch_ticket"] = ""
 	_launch_config.clear()

@@ -64,6 +64,41 @@ func TestInitialSnapshotIsEmpty15By15(t *testing.T) {
 	}
 }
 
+func TestNewSnapshotSeedsCanonicalSeatsAndReplaysByteEquivalentState(t *testing.T) {
+	snapshot, err := NewSnapshot(blackActor, whiteActor)
+	if err != nil {
+		t.Fatalf("NewSnapshot: %v", err)
+	}
+	view := decodeSnapshotView(t, snapshot)
+	if snapshot.Revision != 0 || !pointerEquals(view.BlackUserID, blackActor) || !pointerEquals(view.WhiteUserID, whiteActor) || view.NextColor != "black" {
+		t.Fatalf("seeded snapshot = revision %d view %#v", snapshot.Revision, view)
+	}
+	blackEvent, afterBlack, err := NewRules().Apply(snapshot, blackActor, moveAction(2, 3))
+	if err != nil {
+		t.Fatalf("black first move: %v", err)
+	}
+	whiteEvent, next, err := NewRules().Apply(afterBlack, whiteActor, moveAction(4, 5))
+	if err != nil {
+		t.Fatalf("white second move: %v", err)
+	}
+	rebuilt, err := NewRules().Rebuild([]games.Event{blackEvent, whiteEvent})
+	if err != nil || !bytes.Equal(rebuilt.State, next.State) {
+		t.Fatalf("seeded replay = err %v\n%s\n%s", err, rebuilt.State, next.State)
+	}
+
+	for _, test := range []struct{ name, black, white string }{
+		{name: "non canonical black", black: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", white: whiteActor},
+		{name: "non canonical white", black: blackActor, white: strings.ReplaceAll(whiteActor, "-", "")},
+		{name: "same player", black: blackActor, white: blackActor},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got, gotErr := NewSnapshot(test.black, test.white); !errors.Is(gotErr, games.ErrInvalidSnapshot) || got.Revision != 0 || len(got.State) != 0 {
+				t.Fatalf("NewSnapshot() = (%#v, %v), want empty invalid snapshot", got, gotErr)
+			}
+		})
+	}
+}
+
 func TestApplyRejectsIllegalMovesWithoutMutation(t *testing.T) {
 	rules := NewRules()
 	initial, err := rules.Rebuild(nil)
@@ -522,7 +557,6 @@ func TestSnapshotActorPresenceMatchesStonePresence(t *testing.T) {
 		{name: "empty snapshot prebinds black", snapshot: rewriteSnapshot(t, initial, func(view *snapshotView) { view.BlackUserID = stringPointer(blackActor) })},
 		{name: "empty snapshot prebinds white", snapshot: rewriteSnapshot(t, initial, func(view *snapshotView) { view.WhiteUserID = stringPointer(whiteActor) })},
 		{name: "black stone missing black actor", snapshot: rewriteSnapshot(t, afterBlack, func(view *snapshotView) { view.BlackUserID = nil })},
-		{name: "no white stones but white actor present", snapshot: rewriteSnapshot(t, afterBlack, func(view *snapshotView) { view.WhiteUserID = stringPointer(whiteActor) })},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -18,20 +18,31 @@ func TestFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("glob fixtures: %v", err)
 	}
-	if len(paths) != 4 {
-		t.Fatalf("fixture count = %d, want 4", len(paths))
-	}
-
 	wantTypes := map[string]string{
 		"snapshot.json":      TypePlatformSnapshot,
 		"move_action.json":   TypeGomokuMoveRequested,
 		"move_accepted.json": TypeGomokuMoveAccepted,
 		"error.json":         TypePlatformError,
+		"lan_connected.json": TypePlatformConnected,
+	}
+	auxiliaryFixtures := map[string]struct{}{
+		"nickname_cases.json": {},
+		"game_result.json":    {},
+	}
+	if want := len(wantTypes) + len(auxiliaryFixtures); len(paths) != want {
+		t.Fatalf("fixture count = %d, want %d", len(paths), want)
 	}
 
 	for _, path := range paths {
 		path := path
 		name := filepath.Base(path)
+		if _, ok := auxiliaryFixtures[name]; ok {
+			continue
+		}
+		wantType, ok := wantTypes[name]
+		if !ok {
+			t.Fatalf("unexpected protocol fixture %q", name)
+		}
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -48,8 +59,8 @@ func TestFixtures(t *testing.T) {
 			if envelope.Type == "" {
 				t.Fatal("type is required")
 			}
-			if envelope.Type != wantTypes[name] {
-				t.Fatalf("type = %q, want %q", envelope.Type, wantTypes[name])
+			if envelope.Type != wantType {
+				t.Fatalf("type = %q, want %q", envelope.Type, wantType)
 			}
 			if envelope.Revision != nil && envelope.ExpectedRevision != nil {
 				t.Fatal("revision and expectedRevision must be mutually exclusive")
@@ -266,6 +277,36 @@ func TestDecodeClientRequiresExactControlPayloadsAndCanonicalBindings(t *testing
 	for _, input := range invalid {
 		if _, err := DecodeClient([]byte(input)); err == nil {
 			t.Fatalf("DecodeClient accepted %s", input)
+		}
+	}
+}
+
+func TestDecodeLANClientRequiresPairedInitialCredentialsWithoutWeakeningPublicConnect(t *testing.T) {
+	initial := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume"}}`)
+	if _, err := DecodeLANClient(initial); err != nil {
+		t.Fatalf("DecodeLANClient initial connect: %v", err)
+	}
+	if _, err := DecodeClient(initial); err == nil {
+		t.Fatal("public DecodeClient accepted LAN-only paired credentials")
+	}
+	capableInitial := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","capabilities":["player_presence_v1"]}}`)
+	if _, err := DecodeLANClient(capableInitial); err != nil {
+		t.Fatalf("DecodeLANClient capable initial connect: %v", err)
+	}
+	resume := []byte(`{"protocolVersion":1,"type":"platform.connect","payload":{"resumeToken":"resume"}}`)
+	if _, err := DecodeLANClient(resume); err != nil {
+		t.Fatalf("DecodeLANClient resume connect: %v", err)
+	}
+	invalid := []string{
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch"}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":""}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","capabilities":[]}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","capabilities":["unknown"]}}`,
+		`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":"launch","resumeToken":"resume","extra":true}}`,
+	}
+	for _, input := range invalid {
+		if _, err := DecodeLANClient([]byte(input)); err == nil {
+			t.Fatalf("DecodeLANClient accepted %s", input)
 		}
 	}
 }

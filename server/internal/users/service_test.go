@@ -1,11 +1,42 @@
 package users
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestPublicNicknameCompatibilityMatchesSharedFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "protocol", "fixtures", "nickname_cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Name, Input, Display, Normalized string
+			Valid                            bool
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range fixture.Cases {
+		t.Run(test.Name, func(t *testing.T) {
+			display, normalized, gotErr := NormalizeNickname(test.Input)
+			if test.Valid {
+				if gotErr != nil || display != test.Display || normalized != test.Normalized {
+					t.Fatalf("NormalizeNickname() = (%q, %q, %v)", display, normalized, gotErr)
+				}
+			} else if !errors.Is(gotErr, ErrInvalidNickname) || display != "" || normalized != "" {
+				t.Fatalf("NormalizeNickname() invalid = (%q, %q, %v)", display, normalized, gotErr)
+			}
+		})
+	}
+}
 
 func TestNicknameNormalizationPreservesTrimmedDisplayAndFoldsCase(t *testing.T) {
 	display, normalized, err := NormalizeNickname("\u2003Alice-\u4e2d\U0001F642\u2003")

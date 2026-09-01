@@ -221,6 +221,7 @@
   },
   "component": {
     "dialogScrimOpacity": 0.32,
+    "mediaViewportHeight": 260,
     "resultTintMix": 0.06,
     "resultShadowOpacity": 0.22,
     "resultContentSpacing": 22,

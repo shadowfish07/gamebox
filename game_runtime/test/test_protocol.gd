@@ -23,7 +23,27 @@ static func cases() -> Array:
 		{"name": "protocol action encoding enforces depth budget", "run": _enforces_action_depth_budget},
 		{"name": "protocol action encoding fails closed", "run": _rejects_invalid_action_encoding},
 		{"name": "protocol matches Go JSON v1 string escape semantics without diagnostics", "run": _matches_go_string_semantics},
-	]
+		{"name": "protocol validates the shared authoritative result fixture strictly", "run": _validates_result_fixture},
+]
+
+
+static func _validates_result_fixture() -> bool:
+	var decoded := Protocol.decode(
+		'{"protocolVersion":1,"gameId":"gomoku","matchId":"%s","revision":2,"type":"platform.match.result","payload":%s}' \
+		% [MATCH_ID, _read_fixture("game_result.json")]
+	)
+	if not _check(decoded.get("ok", false), "shared result envelope was rejected"):
+		return false
+	var fixture: Variant = decoded["envelope"]["payload"]
+	if not _check(Protocol.validate_game_result(fixture).get("ok", false), "shared result fixture was rejected"):
+		return false
+	var unknown: Dictionary = fixture.duplicate(true)
+	unknown["source"] = "lan"
+	if not _check(not Protocol.validate_game_result(unknown).get("ok", true), "unknown result field was accepted"):
+		return false
+	var gap: Dictionary = fixture.duplicate(true)
+	gap["events"][0]["revision"] = 2
+	return _check(not Protocol.validate_game_result(gap).get("ok", true), "result revision gap was accepted")
 
 
 static func _decodes_shared_fixtures() -> bool:

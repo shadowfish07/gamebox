@@ -553,6 +553,13 @@ xml_query() {
       exit 3 unless values.all?(&:empty?)
     when "identifier-count"
       puts nodes.count { |node| node.attributes["resource-id"] == expected }
+    when "identifier-diagnostics"
+      matches = nodes.select { |node| node.attributes["resource-id"] == expected }
+      puts "identifier=#{expected} count=#{matches.length}"
+      matches.each_with_index do |node, index|
+        puts "match=#{index} enabled=#{node.attributes["enabled"]} " \
+          "visible=#{node.attributes["visible-to-user"]} bounds=#{node.attributes["bounds"]}"
+      end
     when "visible-text", "visible-text-count"
       matches = nodes.select do |node|
         (node.attributes["text"].to_s == expected || node.attributes["content-desc"].to_s == expected) \
@@ -1087,8 +1094,13 @@ e2e_server_identity_is_safe() {
 pause_e2e_server() {
   ((SERVER_PAUSED == 0)) || return 0
   e2e_server_identity_is_safe || return 1
-  kill -STOP "$SERVER_PID" 2>/dev/null || return 1
   local process_state
+  process_state="$(ps -p "$SERVER_PID" -o stat= 2>/dev/null | tr -d ' ')"
+  if [[ "$process_state" == *T* ]]; then
+    SERVER_PAUSED=1
+    return 0
+  fi
+  kill -STOP "$SERVER_PID" 2>/dev/null || return 1
   process_state="$(ps -p "$SERVER_PID" -o stat= 2>/dev/null | tr -d ' ')"
   [[ "$process_state" == *T* ]] || return 1
   SERVER_PAUSED=1
@@ -1178,6 +1190,7 @@ start_first_connect_loading_watch() {
     boundary="$(boundary_for_serial "$serial")"
   fi
   [[ -x "$ROOT_DIR/tool/run_in_session.rb" ]] || return 1
+  e2e_server_identity_is_safe || return 1
   LOADING_WATCH_FILE="$TEMP_DIR/first-connect-loading-match-id"
   LOADING_WATCH_READY_FILE="$TEMP_DIR/first-connect-loading-session"
   LOADING_WATCH_STREAM_READY_FILE="$TEMP_DIR/first-connect-loading-stream"
@@ -1187,7 +1200,9 @@ start_first_connect_loading_watch() {
   {
     ruby "$ROOT_DIR/tool/run_in_session.rb" "$LOADING_WATCH_READY_FILE" -- \
       "$ADB_BIN" -s "$serial" logcat -b all -v threadtime -T 100 2>/dev/null \
-      | awk -v marker="$boundary" -v stream_ready_file="$LOADING_WATCH_STREAM_READY_FILE" '
+      | awk -v marker="$boundary" \
+          -v server_pid="$SERVER_PID" \
+          -v stream_ready_file="$LOADING_WATCH_STREAM_READY_FILE" '
           {
             if (!stream_ready) {
               print "ready" > stream_ready_file
@@ -1203,8 +1218,10 @@ start_first_connect_loading_watch() {
             line = $0
             sub(/^.*GAMEBOX_GODOT_STATE match=/, "", line)
             sub(/ revision=-1.*$/, "", line)
-            print line
-            fflush()
+            if (system("kill -STOP " server_pid) == 0) {
+              print line
+              fflush()
+            }
             exit
           }
         '
@@ -1367,6 +1384,16 @@ self_test() {
 
   [[ "$(xml_query bounds "$fixture" invite-code)" == "60 120" ]] \
     || { printf 'bounds fixture failed\n' >&2; return 1; }
+  local identifier_diagnostics
+  identifier_diagnostics="$(xml_query identifier-diagnostics "$fixture" invite-code)"
+  grep -F 'identifier=invite-code count=1' <<<"$identifier_diagnostics" >/dev/null \
+    && grep -F 'enabled=true visible=true bounds=[10,20][110,220]' \
+      <<<"$identifier_diagnostics" >/dev/null \
+    || { printf 'identifier-only diagnostics fixture failed\n' >&2; return 1; }
+  if grep -F 'fixture-secret' <<<"$identifier_diagnostics" >/dev/null; then
+    printf 'identifier-only diagnostics exposed field text\n' >&2
+    return 1
+  fi
   [[ "$(xml_query field-text "$fixture" invite-code)" == "fixture-secret" ]] \
     || { printf 'field text fixture failed\n' >&2; return 1; }
   [[ "$(xml_query field-text "$fixture" nickname)" == "fixture-nickname" ]] \
@@ -1624,6 +1651,9 @@ self_test() {
   LOADING_WATCH_PROCESS_GROUP=""
   LOADING_WATCH_SESSION=""
   LOADING_WATCH_READY_FILE=""
+  export GAMEBOX_E2E_SERVER_ENV_LOG="$server_environment_log"
+  start_e2e_server \
+    || { printf 'loading watcher server fixture did not start\n' >&2; return 1; }
   local loading_watch_wait_index loading_watch_adb_pid
   start_first_connect_loading_watch fixture-A \
     || { printf 'loading watcher could not start in fixture\n' >&2; return 1; }
@@ -1638,6 +1668,12 @@ self_test() {
     || { printf 'loading watcher fixture did not observe its marker\n' >&2; return 1; }
   [[ "$LOADING_MATCH_ID" == "$loading_match_id" ]] \
     || { printf 'loading watcher fixture returned the wrong match ID\n' >&2; return 1; }
+  pause_e2e_server \
+    || { printf 'loading watcher fixture pause was not adopted\n' >&2; return 1; }
+  resume_e2e_server \
+    || { printf 'loading watcher fixture server did not resume\n' >&2; return 1; }
+  stop_e2e_server \
+    || { printf 'loading watcher fixture server did not stop\n' >&2; return 1; }
   if kill -0 "$loading_watch_adb_pid" 2>/dev/null; then
     kill -KILL "$loading_watch_adb_pid" 2>/dev/null || true
     printf 'loading watcher left adb logcat alive\n' >&2
@@ -1647,6 +1683,7 @@ self_test() {
   [[ "$FAKE_ADB_PID_FILE" == "$fake_pid_file" ]] \
     || { printf 'loading watcher fixture did not restore the fake adb pid file\n' >&2; return 1; }
   unset FAKE_ADB_MODE FAKE_ADB_LOG_BOUNDARY FAKE_ADB_LOADING_MATCH_ID
+  unset GAMEBOX_E2E_SERVER_ENV_LOG
   ADB_TIMEOUT_SECONDS=1
   INPUT_TIMEOUT_SECONDS=1
   TIMEOUT_KILL_GRACE_SECONDS=1
@@ -1986,6 +2023,24 @@ self_test() {
   grep -F 'tap_identifier_after_scroll "$SERIAL_B" continue-match' \
     <<<"$runtime_source" >/dev/null \
     || { printf 'narrow active-match action is not atomically scroll-aware\n' >&2; return 1; }
+  grep -F 'tap_identifier_after_scroll "$SERIAL_B" rps-continue-match' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'RPS invitee action is not atomically scroll-aware\n' >&2; return 1; }
+  grep -F 'refresh_game_log_boundary "$SERIAL_B" first-gomoku-ready' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'B first-match launch does not refresh its log boundary\n' >&2; return 1; }
+  grep -F 'refresh_game_log_boundary "$SERIAL_B" rps-invitee-ready' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'B RPS invitee launch does not refresh its log boundary\n' >&2; return 1; }
+  grep -F 'tap_identifier_after_scroll "$serial" register' \
+    <<<"$runtime_source" >/dev/null \
+    || { printf 'embedded registration action is not atomically scroll-aware\n' >&2; return 1; }
+  local registration_source
+  registration_source="$(sed -n '/^register_user() {/,/^}/p' "${BASH_SOURCE[0]}")"
+  if grep -F 'KEYCODE_BACK' <<<"$registration_source" >/dev/null; then
+    printf 'private registration input incorrectly assumes a soft keyboard is open\n' >&2
+    return 1
+  fi
   if grep -E 'tap_identifier "\$[A-Za-z_][A-Za-z0-9_]*" continue-match' \
     <<<"$runtime_source" >/dev/null; then
     printf 'a continue-match action still uses the non-scroll-aware tap helper\n' >&2
@@ -2723,13 +2778,15 @@ wait_for_identifier() {
 wait_for_identifier_after_scroll() {
   local serial="$1"
   local identifier="$2"
-  local deadline=$((SECONDS + WAIT_SECONDS))
+  local timeout_seconds="${3:-$WAIT_SECONDS}"
+  local deadline=$((SECONDS + timeout_seconds))
   local xml="$TEMP_DIR/ui-scroll-${serial//[^A-Za-z0-9_.-]/_}.xml"
-  local width height center
+  local width height center dump_successes=0
   read -r width height <<<"$(device_effective_size "$serial")"
   [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] || return 1
   while ((SECONDS < deadline)); do
     if dump_ui "$serial" "$xml"; then
+      dump_successes=$((dump_successes + 1))
       center="$(xml_query bounds "$xml" "$identifier" 2>/dev/null)" && {
         printf '%s\n' "$center"
         return 0
@@ -2740,6 +2797,11 @@ wait_for_identifier_after_scroll() {
       "$((width / 2))" "$((height * 2 / 5))" 250 >/dev/null || return 1
     sleep 0.5
   done
+  printf 'Scroll-aware identifier timeout: serial=%s identifier=%s dumps=%s\n' \
+    "$serial" "$identifier" "$dump_successes" >&2
+  if [[ -s "$xml" ]]; then
+    xml_query identifier-diagnostics "$xml" "$identifier" >&2 || true
+  fi
   return 1
 }
 
@@ -2761,8 +2823,9 @@ wait_for_visible_text() {
 tap_identifier_after_scroll() {
   local serial="$1"
   local identifier="$2"
+  local timeout_seconds="${3:-$WAIT_SECONDS}"
   local center x y
-  center="$(wait_for_identifier_after_scroll "$serial" "$identifier")" || return 1
+  center="$(wait_for_identifier_after_scroll "$serial" "$identifier" "$timeout_seconds")" || return 1
   read -r x y <<<"$center"
   adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
@@ -2886,9 +2949,10 @@ wait_for_presence_state() {
   local match_id="$2"
   local revision="$3"
   local presence="$4"
+  local timeout_seconds="${5:-$WAIT_SECONDS}"
   local fragment
   fragment="$(presence_state_fragment "$match_id" "$revision" "$presence")" || return $?
-  wait_for_log_marker "$serial" "$fragment"
+  wait_for_log_marker_with_timeout "$serial" "$fragment" "$timeout_seconds"
 }
 
 wait_for_new_ready_match_id() {
@@ -3053,6 +3117,11 @@ register_user() {
   local nickname="$3"
   local secret_flag="$4"
   start_flutter "$serial"
+  wait_for_identifier "$serial" local-nickname >/dev/null \
+    || fail "nickname setup did not expose local-nickname on $serial"
+  input_text_by_identifier "$serial" local-nickname "$nickname"
+  assert_field_text "$serial" local-nickname "$nickname"
+  tap_identifier "$serial" save-nickname
   wait_for_identifier "$serial" invite-code >/dev/null \
     || fail "registration page did not expose invite-code on $serial"
   assert_ui_state_safe "$serial" "${!secret_flag}" \
@@ -3060,9 +3129,17 @@ register_user() {
   printf -v "$secret_flag" '%s' 1
   input_text_by_identifier "$serial" invite-code "$invite"
   assert_field_text "$serial" invite-code "$invite"
-  input_text_by_identifier "$serial" nickname "$nickname"
-  assert_field_text "$serial" nickname "$nickname"
-  tap_identifier "$serial" register
+  local register_width register_height
+  read -r register_width register_height <<<"$(device_effective_size "$serial")"
+  [[ "$register_width" =~ ^[1-9][0-9]*$ && "$register_height" =~ ^[1-9][0-9]*$ ]] \
+    || fail "could not determine the registration viewport on $serial"
+  adb_for "$serial" shell input swipe \
+    "$((register_width / 2))" "$((register_height * 3 / 4))" \
+    "$((register_width / 2))" "$((register_height * 2 / 5))" 250 >/dev/null \
+    || fail "could not reveal the embedded registration action on $serial"
+  sleep 0.5
+  tap_identifier_after_scroll "$serial" register "$((WAIT_SECONDS * 2))" \
+    || fail "register could not be revealed and tapped by resource-id on $serial"
   wait_for_identifier "$serial" game-gomoku >/dev/null \
     || fail "registration did not reach the catalog on $serial"
   printf -v "$secret_flag" '%s' 0
@@ -3186,6 +3263,8 @@ wait_for_identifier_after_scroll "$SERIAL_B" continue-match >/dev/null \
   || fail "B did not expose the active-match automation identifier"
 assert_ui_state_safe "$SERIAL_B" "$SECRETS_ON_UI_B" \
   || fail "could not verify the dark narrow active lobby UI state"
+refresh_game_log_boundary "$SERIAL_B" first-gomoku-ready \
+  || fail "could not establish B first-match log boundary"
 tap_identifier_after_scroll "$SERIAL_B" continue-match \
   || fail "B could not activate the narrow active-match action"
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=gomoku match=$MATCH_ID" \
@@ -3557,6 +3636,7 @@ refresh_game_log_boundaries presence-recovery \
 adb_for "$RECOVERY_SERIAL" shell am force-stop "$PACKAGE" >/dev/null \
   || fail "could not force-stop only $PACKAGE on the recovery device"
 wait_for_presence_state "$SURVIVING_SERIAL" "$MATCH_ID" 3 offline \
+  "$CONNECTION_STATE_TIMEOUT_SECONDS" \
   || fail "surviving client did not render the force-stopped opponent as offline"
 sleep 1
 recovery_snapshot="$(match_show "$MATCH_ID")" || fail "match became unreadable after force-stop"
@@ -3836,11 +3916,13 @@ RPS_MATCH_ID="$(wait_for_new_rps_ready_match_id "$SERIAL_A")" \
 [[ "$RPS_MATCH_ID" =~ $uuid_pattern ]] \
   || fail "RPS ready marker did not contain a canonical match ID"
 MATCH_ID="$RPS_MATCH_ID"
-wait_for_identifier "$SERIAL_B" rps-continue-match >/dev/null \
+wait_for_identifier_after_scroll "$SERIAL_B" rps-continue-match >/dev/null \
   || fail "B did not expose the invited RPS match"
 wait_for_identifier "$SERIAL_B" rps-active-format-best_of_three >/dev/null \
   || fail "B could not see the persisted RPS format before launch"
-tap_identifier "$SERIAL_B" rps-continue-match
+refresh_game_log_boundary "$SERIAL_B" rps-invitee-ready \
+  || fail "could not establish B RPS invitee log boundary"
+tap_identifier_after_scroll "$SERIAL_B" rps-continue-match
 wait_for_log_marker "$SERIAL_B" "$GAMEBOX_READY_MARKER game=rps match=$RPS_MATCH_ID" \
   || fail "B did not launch the invited RPS match"
 rps_snapshot="$(wait_for_rps_revision "$RPS_MATCH_ID" 0 active)" \

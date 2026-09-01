@@ -3,20 +3,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/app.dart';
+import 'package:gamebox/core/api/api_client.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
+import 'package:gamebox/core/lan/lan_models.dart';
 import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
+import 'package:gamebox/core/profile/app_profile.dart';
+import 'package:gamebox/core/profile/app_profile_store.dart';
+import 'package:gamebox/core/profile/nickname_rules.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
 import 'package:gamebox/features/history/match_history_models.dart';
-import 'package:gamebox/features/history/match_history_page.dart';
 import 'package:gamebox/features/home/home_api.dart';
 import 'package:gamebox/features/home/home_controller.dart';
+import 'package:gamebox/features/profile/profile_controller.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
@@ -30,6 +35,7 @@ void main() {
       GameboxApp(
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
+        profileController: fixture.profile,
         homeController: fixture.home,
         matchHistoryApi: fixture.historyApi,
       ),
@@ -42,11 +48,13 @@ void main() {
     expect(fixture.api.statusCalls, 1);
 
     await tester.tap(find.byKey(const Key('open-match-history')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(kThemeAnimationDuration);
     expect(find.byKey(const Key('match-history-page')), findsOneWidget);
     expect(fixture.historyApi.calls, 1);
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(kThemeAnimationDuration);
     expect(find.byKey(const Key('home-shell')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -61,6 +69,7 @@ void main() {
       GameboxApp(
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
+        profileController: fixture.profile,
         homeController: fixture.home,
         matchHistoryApi: fixture.historyApi,
       ),
@@ -93,6 +102,7 @@ void main() {
         GameboxApp(
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
+          profileController: fixture.profile,
           homeController: fixture.home,
           matchHistoryApi: fixture.historyApi,
         ),
@@ -106,7 +116,7 @@ void main() {
         expect(await fixture.session.refresh(), isFalse);
         await _flush(tester);
 
-        expect(find.byKey(const Key('home-shell')), findsNothing);
+        expect(find.byKey(const Key('home-shell')), findsOneWidget);
         expect(fixture.scheduler.activeCount, 0);
         final callsWhileLoggedOut = fixture.api.statusCalls;
         fixture.scheduler.fireAllIncludingCancelled();
@@ -145,6 +155,7 @@ void main() {
         GameboxApp(
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
+          profileController: fixture.profile,
           homeController: fixture.home,
           matchHistoryApi: fixture.historyApi,
         ),
@@ -182,7 +193,7 @@ void main() {
       await _flush(tester);
 
       expect(find.byKey(const Key('home-shell')), findsOneWidget);
-      expect(find.text('你好，新用户'), findsOneWidget);
+      expect(find.text('你好，自己'), findsOneWidget);
       expect(find.text('选择对手'), findsOneWidget);
       expect(find.byKey(const Key('opponent-$opponentId')), findsNothing);
       expect(await tester.binding.handlePopRoute(), isFalse);
@@ -212,6 +223,7 @@ void main() {
       GameboxApp(
         gameLauncher: fixture.launcher,
         sessionController: fixture.session,
+        profileController: fixture.profile,
         homeController: fixture.home,
         matchHistoryApi: fixture.historyApi,
       ),
@@ -232,86 +244,158 @@ void main() {
     fixture.dispose();
   });
 
-  testWidgets(
-    'same-user refresh retains loaded History controller until route pop',
-    (tester) async {
-      const matchId = '77777777-7777-4777-8777-777777777777';
-      final fixture = await _Fixture.create(now);
-      fixture.historyApi.page = MatchHistoryPageData(
-        statistics: const MatchHistoryStatistics(
-          validMatches: 1,
-          wins: 1,
-          losses: 0,
-          draws: 0,
-          winRate: 1,
-        ),
-        matches: [
-          MatchHistoryEntry(
-            id: matchId,
-            outcome: MatchOutcome.win,
-            opponentNickname: '棋手乙',
-            color: GomokuColor.black,
-            finishedAt: DateTime.utc(2026, 8, 20, 11),
-            moveCount: 31,
+  for (final code in const ['network_error', 'nickname_taken']) {
+    testWidgets(
+      '$code nickname sync keeps local greeting and public play enabled',
+      (tester) async {
+        const currentUserId = '11111111-1111-4111-8111-111111111111';
+        const opponentId = '44444444-4444-4444-8444-444444444444';
+        final fixture = await _Fixture.create(now);
+        fixture.authApi.nicknameUpdateResults.add(
+          ApiError(code: code, message: '安全同步错误'),
+        );
+        fixture.api.opponents = const [
+          GomokuOpponent(
+            id: currentUserId,
+            nickname: '服务端自己',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.online,
           ),
-        ],
-        nextCursor: 'older-page',
-      );
+          GomokuOpponent(
+            id: opponentId,
+            nickname: '小鸟',
+            availability: OpponentAvailability.idle,
+            presence: OpponentPresence.online,
+          ),
+        ];
+        await fixture.profile.commitNickname('本地显示名');
+
+        await tester.pumpWidget(
+          GameboxApp(
+            gameLauncher: fixture.launcher,
+            sessionController: fixture.session,
+            profileController: fixture.profile,
+            homeController: fixture.home,
+          ),
+        );
+        await _flush(tester);
+
+        expect(fixture.authApi.nicknameUpdateCalls, 1);
+        expect(fixture.profile.status, ProfileStatus.ready);
+        expect(fixture.profile.profile?.nickname, '本地显示名');
+        expect(
+          fixture.profile.profile?.syncState,
+          code == 'nickname_taken'
+              ? ProfileSyncState.blocked
+              : ProfileSyncState.pending,
+        );
+        expect(find.text('你好，本地显示名'), findsOneWidget);
+        expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('choose-opponent')));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key('opponent-$currentUserId')), findsNothing);
+        expect(find.byKey(const Key('opponent-$opponentId')), findsOneWidget);
+        expect(fixture.api.opponentCalls, 1);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        fixture.dispose();
+      },
+    );
+  }
+
+  testWidgets(
+    'foreground retries pending nickname after the five minute cooldown',
+    (tester) async {
+      var profileNow = now;
+      final fixture = await _Fixture.create(now, profileNow: () => profileNow);
+      fixture.authApi.nicknameUpdateResults
+        ..add(const ApiError(code: 'timeout', message: '请求超时'))
+        ..add(null);
+      await fixture.profile.commitNickname('本地显示名');
       await tester.pumpWidget(
         GameboxApp(
           gameLauncher: fixture.launcher,
           sessionController: fixture.session,
+          profileController: fixture.profile,
           homeController: fixture.home,
-          matchHistoryApi: fixture.historyApi,
         ),
       );
       await _flush(tester);
+      expect(fixture.authApi.nicknameUpdateCalls, 1);
+      expect(fixture.profile.profile?.syncState, ProfileSyncState.pending);
 
-      await tester.tap(find.byKey(const Key('open-match-history')));
-      await tester.pumpAndSettle();
-      final original = tester
-          .widget<MatchHistoryPage>(find.byType(MatchHistoryPage))
-          .controller;
-      expect(
-        find.byKey(const Key('match-history-entry-$matchId')),
-        findsOneWidget,
-      );
-      expect(find.text('棋手乙'), findsOneWidget);
-      expect(fixture.historyApi.calls, 1);
-
-      expect(await fixture.session.refresh(), isTrue);
+      profileNow = profileNow.add(const Duration(minutes: 5));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await _flush(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await _flush(tester);
 
-      expect(find.byKey(const Key('match-history-page')), findsOneWidget);
-      expect(find.byKey(const Key('match-history-loading')), findsNothing);
-      expect(
-        find.byKey(const Key('match-history-entry-$matchId')),
-        findsOneWidget,
-      );
-      expect(find.text('棋手乙'), findsOneWidget);
-      expect(fixture.historyApi.calls, 1);
-      expect(
-        tester
-            .widget<MatchHistoryPage>(find.byType(MatchHistoryPage))
-            .controller,
-        same(original),
-      );
-      void probe() {}
-      expect(() => original.addListener(probe), returnsNormally);
-      original.removeListener(probe);
-
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('home-shell')), findsOneWidget);
-      expect(() => original.addListener(probe), throwsFlutterError);
-      await original.loadMore();
-      expect(fixture.historyApi.calls, 1);
+      expect(fixture.authApi.nicknameUpdateCalls, 2);
+      expect(fixture.profile.profile?.syncState, ProfileSyncState.synced);
+      expect(find.text('你好，本地显示名'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       fixture.dispose();
     },
   );
+
+  testWidgets('same-user refresh retains the unified history route', (
+    tester,
+  ) async {
+    const matchId = '77777777-7777-4777-8777-777777777777';
+    final fixture = await _Fixture.create(now);
+    fixture.historyApi.page = MatchHistoryPageData(
+      statistics: const MatchHistoryStatistics(
+        validMatches: 1,
+        wins: 1,
+        losses: 0,
+        draws: 0,
+        winRate: 1,
+      ),
+      matches: [
+        MatchHistoryEntry(
+          id: matchId,
+          outcome: MatchOutcome.win,
+          opponentNickname: '棋手乙',
+          color: GomokuColor.black,
+          finishedAt: DateTime.utc(2026, 8, 20, 11),
+          moveCount: 31,
+        ),
+      ],
+      nextCursor: null,
+    );
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: fixture.launcher,
+        sessionController: fixture.session,
+        profileController: fixture.profile,
+        homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
+      ),
+    );
+    await _flush(tester);
+
+    await tester.tap(find.byKey(const Key('open-match-history')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(Key('history-$matchId')), findsOneWidget);
+    expect(find.textContaining('棋手乙'), findsOneWidget);
+    expect(fixture.historyApi.calls, 1);
+
+    expect(await fixture.session.refresh(), isTrue);
+    await _flush(tester);
+    expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+    expect(find.byKey(Key('history-$matchId')), findsOneWidget);
+    expect(fixture.historyApi.calls, 1);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fixture.dispose();
+  });
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -323,6 +407,7 @@ final class _Fixture {
   _Fixture({
     required this.session,
     required this.home,
+    required this.profile,
     required this.api,
     required this.scheduler,
     required this.launcher,
@@ -331,7 +416,10 @@ final class _Fixture {
     required this.historyApi,
   });
 
-  static Future<_Fixture> create(DateTime now) async {
+  static Future<_Fixture> create(
+    DateTime now, {
+    DateTime Function()? profileNow,
+  }) async {
     final authApi = _FakeAuthApi(now);
     final tokenStore = _MemoryTokenStore('refresh-zero');
     final session = SessionController(
@@ -353,10 +441,24 @@ final class _Fixture {
       scheduler: scheduler,
       now: () => now,
     );
+    final profile = ProfileController(
+      store: _MemoryProfileStore(
+        const AppProfile(
+          schemaVersion: 1,
+          nickname: '自己',
+          syncState: ProfileSyncState.synced,
+          lastSyncedNickname: '自己',
+        ),
+      ),
+      nicknameRules: const _NicknameRules(),
+      now: profileNow,
+    );
+    await profile.load();
     final historyApi = _FakeMatchHistoryApi();
     return _Fixture(
       session: session,
       home: home,
+      profile: profile,
       api: api,
       scheduler: scheduler,
       launcher: launcher,
@@ -368,6 +470,7 @@ final class _Fixture {
 
   final SessionController session;
   final HomeController home;
+  final ProfileController profile;
   final _FakeHomeApi api;
   final _FakeScheduler scheduler;
   final _FakeLauncher launcher;
@@ -377,8 +480,28 @@ final class _Fixture {
 
   void dispose() {
     home.dispose();
+    profile.dispose();
     session.dispose();
   }
+}
+
+final class _MemoryProfileStore implements AppProfileStore {
+  _MemoryProfileStore(this.value);
+
+  AppProfile? value;
+
+  @override
+  Future<AppProfile?> read() async => value;
+
+  @override
+  Future<void> write(AppProfile profile) async => value = profile;
+}
+
+final class _NicknameRules implements NicknameRules {
+  const _NicknameRules();
+
+  @override
+  Future<String> normalize(String raw) async => raw.trim();
 }
 
 final class _FakeMatchHistoryApi implements MatchHistoryApi {
@@ -447,6 +570,9 @@ final class _FakeLauncher implements GameLauncher {
 }
 
 final class _FakeHomeApi implements HomeApi {
+  @override
+  Future<AuthoritativeGameResult> fetchResult(String matchId) =>
+      throw UnimplementedError();
   int statusCalls = 0;
   int opponentCalls = 0;
   List<GomokuOpponent> opponents = const [];
@@ -482,6 +608,8 @@ final class _FakeAuthApi implements AuthApi {
   bool rejectRefresh = false;
   String userId = '11111111-1111-4111-8111-111111111111';
   String nickname = '自己';
+  int nicknameUpdateCalls = 0;
+  final List<ApiError?> nicknameUpdateResults = [];
 
   @override
   Future<Session> refresh(String refreshToken) async {
@@ -494,6 +622,21 @@ final class _FakeAuthApi implements AuthApi {
   @override
   Future<Session> register(String inviteCode, String nickname) async =>
       _session();
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) async {
+    nicknameUpdateCalls += 1;
+    final result = nicknameUpdateResults.isEmpty
+        ? null
+        : nicknameUpdateResults.removeAt(0);
+    if (result != null) throw result;
+    this.nickname = nickname;
+    return SessionUser(id: userId, nickname: nickname);
+  }
 
   Session _session() => Session(
     user: SessionUser(id: userId, nickname: nickname),

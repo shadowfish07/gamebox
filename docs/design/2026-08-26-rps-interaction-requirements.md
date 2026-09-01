@@ -1,9 +1,9 @@
 # 石头剪刀布对局页交互改版需求文档
 
-> 状态：待产品确认  
-> 日期：2026-08-26  
-> 适用版本：Gamebox Android / Godot `rps`  
-> 视觉原型：[rps-interaction-prototype.html](./rps-interaction-prototype.html)  
+> 状态：待产品确认
+> 日期：2026-08-26
+> 适用版本：Gamebox Android / Godot `rps`
+> 视觉原型：[rps-interaction-prototype.html](./rps-interaction-prototype.html)
 > 原型提交：`f1560f1`
 
 ## 1. 文档目的

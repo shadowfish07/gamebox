@@ -1,6 +1,11 @@
 import java.util.Properties
 import javax.inject.Inject
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.InputFile
+import org.gradle.process.ExecOperations
 
 plugins {
     id("com.android.application")
@@ -51,10 +56,50 @@ abstract class StageGameRuntimeAssets : DefaultTask() {
     }
 }
 
+@CacheableTask
+abstract class BuildLanAar : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val buildScript: RegularFileProperty
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val engineSource: DirectoryProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val goModule: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val goSum: RegularFileProperty
+
+    @get:OutputFile
+    abstract val outputAar: RegularFileProperty
+
+    @TaskAction
+    fun build() {
+        execOperations.exec {
+            commandLine(
+                "bash",
+                buildScript.get().asFile.absolutePath,
+                outputAar.get().asFile.absolutePath,
+            )
+        }
+    }
+}
+
 val supportedGameboxAbis = setOf("armeabi-v7a", "arm64-v8a", "x86_64")
 val selectedGameboxAbi = providers.gradleProperty("gameboxAndroidAbi").orNull
 require(selectedGameboxAbi == null || selectedGameboxAbi in supportedGameboxAbis) {
     "Unsupported gameboxAndroidAbi"
+}
+val gameboxTargetSdk = providers.gradleProperty("GAMEBOX_TARGET_SDK").orNull?.toIntOrNull()
+require(gameboxTargetSdk != null && gameboxTargetSdk in 24..flutter.compileSdkVersion) {
+    "GAMEBOX_TARGET_SDK must be between minSdk and compileSdk"
 }
 val standaloneAndroidTestRuntime by configurations.creating
 val signingPropertiesFile = rootProject.file("key.properties")
@@ -75,6 +120,16 @@ val stageGameRuntimeAssets = tasks.register<StageGameRuntimeAssets>("stageGameRu
     sourceDirectory.set(gameRuntimeSource)
     outputDirectory.set(layout.buildDirectory.dir("generated/gameboxRuntimeAssets"))
 }
+val buildLanAar = tasks.register<BuildLanAar>("buildLanAar") {
+    buildScript.set(rootProject.file("../../tool/build_lan_aar.sh"))
+    engineSource.set(rootProject.file("../../server/mobile/lanengine"))
+    goModule.set(rootProject.file("../../server/go.mod"))
+    goSum.set(rootProject.file("../../server/go.sum"))
+    outputAar.set(layout.buildDirectory.file("generated/gameboxLan/gamebox-lan.aar"))
+}
+tasks.named("preBuild").configure {
+    dependsOn(buildLanAar)
+}
 
 android {
     namespace = "me.zqydev.gamebox"
@@ -94,11 +149,15 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = gameboxTargetSdk
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    sourceSets.getByName("androidTest").assets.srcDir(
+        rootProject.file("../../protocol/fixtures"),
+    )
 
     signingConfigs {
         if (signingPropertiesFile.isFile) {
@@ -178,14 +237,19 @@ flutter {
 }
 
 dependencies {
+    implementation(files(buildLanAar.flatMap { it.outputAar }))
     implementation("org.godotengine:godot:4.7.0.stable")
     // 1.19.0 requires compileSdk 37; 1.18.0 is the latest API 36-compatible release.
     implementation("androidx.core:core-ktx:1.18.0")
     add(standaloneAndroidTestRuntime.name, "androidx.test.ext:junit:1.3.0")
     add(standaloneAndroidTestRuntime.name, "androidx.test:runner:1.7.0")
     add(standaloneAndroidTestRuntime.name, "androidx.test.uiautomator:uiautomator:2.4.0")
+    // Match Flutter embedding's lifecycle ABI when app-target instrumentation
+    // loads the helper APK into the target process.
+    add(standaloneAndroidTestRuntime.name, "androidx.lifecycle:lifecycle-common:2.7.0")
     add(standaloneAndroidTestRuntime.name, "org.jetbrains.kotlin:kotlin-stdlib:2.4.0")
     // The self-targeting smoke runner cannot borrow runtime classes from the tested APK.
     androidTestImplementation(files(standaloneAndroidTestRuntime))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }

@@ -59,6 +59,7 @@ var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
 var _ready_marker_emitted := false
 var _ready_marker_text := ""
+var _result_persisted := false
 var _resign_submitted := false
 var _confirm_move_enabled := false
 var _selected_move := INVALID_CELL
@@ -144,8 +145,12 @@ func _ready() -> void:
 		_show_start_failure()
 		return
 	_connect_client_signals()
-	var started: bool = _client.start(config["ws_url"], _match_id, config["launch_ticket"], _state)
+	var started: bool = _client.start(
+		config["ws_url"], _match_id, config["launch_ticket"], _state,
+		config.get("resume_token", ""),
+	)
 	config["launch_ticket"] = ""
+	config["resume_token"] = ""
 	_launch_config.clear()
 	if not started:
 		_show_start_failure()
@@ -391,6 +396,31 @@ func _on_match_error(code: String) -> void:
 	_selected_move = INVALID_CELL
 	if code == "stale_revision":
 		_awaiting_snapshot = true
+	_refresh_ui()
+
+
+func _on_authoritative_result_received(result: Dictionary) -> void:
+	if _result_persisted:
+		return
+	var persisted := false
+	var has_singleton := Engine.has_singleton("GameboxResultBridge")
+	var advertised_method := false
+	if has_singleton:
+		var bridge: Variant = Engine.get_singleton("GameboxResultBridge")
+		advertised_method = bridge != null and bridge.has_method("persistAuthoritativeResult")
+		if bridge != null:
+			var response: Variant = bridge.call(
+				"persistAuthoritativeResult", JSON.stringify(result, "", true, true)
+			)
+			persisted = response == "persisted"
+	print("GAMEBOX_RESULT_BRIDGE singleton=%s advertised=%s persisted=%s" % [
+		has_singleton, advertised_method, persisted,
+	])
+	_result_persisted = persisted
+	if persisted and _error_text == "战绩保存待重试":
+		_error_text = ""
+	elif not persisted:
+		_error_text = "战绩保存待重试"
 	_refresh_ui()
 
 
@@ -672,15 +702,23 @@ func _resolve_launch_config() -> Dictionary:
 
 
 func _validated_config(config: Dictionary) -> Dictionary:
-	if config.size() != 4:
+	if config.size() not in [4, 5]:
 		return {"ok": false}
 	for key in config:
-		if key not in ["game_id", "match_id", "launch_ticket", "ws_url"] or not config[key] is String:
+		if key not in ["game_id", "match_id", "launch_ticket", "ws_url", "resume_token"] or not config[key] is String:
 			return {"ok": false}
-	return LaunchConfig.parse(PackedStringArray([
+	var parsed := LaunchConfig.parse(PackedStringArray([
 		"--game-id", config["game_id"], "--match-id", config["match_id"],
 		"--launch-ticket", config["launch_ticket"], "--ws-url", config["ws_url"],
 	]))
+	if not parsed.get("ok", false):
+		return parsed
+	var resume_token: String = config.get("resume_token", "")
+	if resume_token.length() > 256 or resume_token.to_utf8_buffer().size() > 256:
+		return {"ok": false}
+	if not resume_token.is_empty():
+		parsed["config"]["resume_token"] = resume_token
+	return parsed
 
 
 func _connect_client_signals() -> void:
@@ -688,6 +726,7 @@ func _connect_client_signals() -> void:
 	_client.snapshot_sync_started.connect(_on_snapshot_sync_started)
 	_client.snapshot_received.connect(_on_snapshot_received)
 	_client.event_received.connect(_on_event_received)
+	_client.authoritative_result_received.connect(_on_authoritative_result_received)
 	_client.player_presence_changed.connect(_on_player_presence_changed)
 	_client.match_error.connect(_on_match_error)
 	_client.return_to_lobby_requested.connect(_on_return_to_lobby_requested)
@@ -699,7 +738,7 @@ func _valid_client(client: Variant) -> bool:
 	for method in ["start", "poll", "request_move", "request_resign", "has_player_presence", "is_player_online", "dispose"]:
 		if not client.has_method(method):
 			return false
-	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "player_presence_changed", "match_error", "return_to_lobby_requested"]:
+	for signal_name in ["connection_state_changed", "snapshot_sync_started", "snapshot_received", "event_received", "authoritative_result_received", "player_presence_changed", "match_error", "return_to_lobby_requested"]:
 		if not client.has_signal(signal_name):
 			return false
 	return true
@@ -718,6 +757,9 @@ func _disconnect_client_signals() -> void:
 		_client.snapshot_received.disconnect(_on_snapshot_received)
 	if _client.has_signal("event_received") and _client.event_received.is_connected(_on_event_received):
 		_client.event_received.disconnect(_on_event_received)
+	if _client.has_signal("authoritative_result_received") \
+		and _client.authoritative_result_received.is_connected(_on_authoritative_result_received):
+		_client.authoritative_result_received.disconnect(_on_authoritative_result_received)
 	if _client.has_signal("player_presence_changed") \
 		and _client.player_presence_changed.is_connected(_on_player_presence_changed):
 		_client.player_presence_changed.disconnect(_on_player_presence_changed)
@@ -791,10 +833,14 @@ func _log_safe_state(has_state: bool, opponent_presence: String) -> void:
 		return
 	var revision: int = _state.revision if has_state else -1
 	var status: String = _state.status if has_state else "loading"
-	var signature := "%d|%s|%s|%s" % [revision, status, _connection_state, opponent_presence]
+	var local_user_id: String = _client.local_user_id if _client != null else ""
+	var local_color := _local_color(local_user_id) if has_state else "none"
+	if local_color.is_empty():
+		local_color = "none"
+	var signature := "%d|%s|%s|%s|%s" % [revision, status, _connection_state, opponent_presence, local_color]
 	if signature != _last_log_signature:
 		_last_log_signature = signature
-		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s opponent_presence=%s" % [_match_id, revision, status, _connection_state, opponent_presence])
+		print("GAMEBOX_GODOT_STATE match=%s revision=%d status=%s connection=%s opponent_presence=%s color=%s" % [_match_id, revision, status, _connection_state, opponent_presence, local_color])
 	if has_state and status in TERMINAL_STATUSES:
 		var result: String = str(_state.result) if _state.result in ["five", "resignation", "draw"] else status
 		var terminal_signature := "%d|%s" % [revision, result]

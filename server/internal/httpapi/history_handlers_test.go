@@ -309,7 +309,7 @@ INSERT INTO matches(id,game_id,status,revision,result,winner_user_id,created_at,
 VALUES (?,'gomoku','finished',0,?,?,?,?,?)`, matchID, result, winnerUserID, finishedAt-1_000, finishedAt, finishedAt); err != nil {
 		t.Fatalf("insert history match %s: %v", matchID, err)
 	}
-	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,'black'),(?,?,1,'white')`, matchID, currentUserID, matchID, opponentUserID); err != nil {
+	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (?,?,?,0,'black'),(?,?,?,1,'white')`, matchID, currentUserID, "Current", matchID, opponentUserID, "Opponent"); err != nil {
 		t.Fatalf("insert history players %s: %v", matchID, err)
 	}
 	for revision := 1; revision <= acceptedMoves; revision++ {

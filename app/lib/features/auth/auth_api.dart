@@ -6,6 +6,12 @@ abstract interface class AuthApi {
   Future<Session> register(String inviteCode, String nickname);
 
   Future<Session> refresh(String refreshToken);
+
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  });
 }
 
 final class HttpAuthApi implements AuthApi {
@@ -31,6 +37,26 @@ final class HttpAuthApi implements AuthApi {
       expectedStatuses: const {200},
     );
     return _sessionFromEnvelope(envelope);
+  }
+
+  @override
+  Future<SessionUser> updateNickname(
+    String nickname, {
+    required AccessTokenProvider accessToken,
+    required UnauthorizedHandler onUnauthorized,
+  }) async {
+    final envelope = await _client.patchJson(
+      '/v1/me',
+      {'nickname': nickname},
+      accessToken: accessToken,
+      onUnauthorized: onUnauthorized,
+      expectedStatuses: const {200},
+    );
+    try {
+      return SessionUser.fromEnvelope(envelope);
+    } on FormatException {
+      throw const ApiError(code: 'invalid_response', message: '服务器响应无效');
+    }
   }
 
   Session _sessionFromEnvelope(Map<String, Object?> envelope) {

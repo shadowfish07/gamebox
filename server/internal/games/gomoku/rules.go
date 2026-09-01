@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"me.zqydev/gamebox/server/internal/games/gameapi"
 )
 
@@ -32,6 +34,16 @@ var (
 type Rules struct{}
 
 func NewRules() *Rules { return &Rules{} }
+
+// NewSnapshot seeds the fixed player-to-color allocation before the first
+// move. Both identifiers must be canonical RFC 4122 UUID strings.
+func NewSnapshot(blackUserID, whiteUserID string) (gameapi.Snapshot, error) {
+	if !canonicalPlayerID(blackUserID) || !canonicalPlayerID(whiteUserID) || blackUserID == whiteUserID {
+		return gameapi.Snapshot{}, gameapi.ErrInvalidSnapshot
+	}
+	blackCopy, whiteCopy := blackUserID, whiteUserID
+	return encodeInitialSnapshot(&blackCopy, &whiteCopy)
+}
 
 func (*Rules) GameID() string { return GameID }
 
@@ -184,10 +196,13 @@ func applyMove(snapshot gameapi.Snapshot, actorID string, point Point) (gameapi.
 }
 
 func initialSnapshot() (gameapi.Snapshot, error) {
+	return encodeInitialSnapshot(nil, nil)
+}
+
+func encodeInitialSnapshot(blackUserID, whiteUserID *string) (gameapi.Snapshot, error) {
 	state := snapshotState{
-		BoardSize: BoardSize,
-		NextColor: Black.String(),
-		Status:    statusActive,
+		BoardSize: BoardSize, BlackUserID: blackUserID, WhiteUserID: whiteUserID,
+		NextColor: Black.String(), Status: statusActive,
 	}
 	encoded, err := json.Marshal(state)
 	if err != nil {
@@ -319,7 +334,8 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 	if state.BlackUserID != nil && state.WhiteUserID != nil && *state.BlackUserID == *state.WhiteUserID {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
-	if (blackCount > 0) != (state.BlackUserID != nil) || (whiteCount > 0) != (state.WhiteUserID != nil) {
+	if blackCount > 0 && state.BlackUserID == nil || whiteCount > 0 && state.WhiteUserID == nil ||
+		moveCount == 0 && (state.BlackUserID == nil) != (state.WhiteUserID == nil) {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
 	expectedColor := Black
@@ -413,6 +429,11 @@ func validActorID(actorID string) bool {
 		}
 	}
 	return true
+}
+
+func canonicalPlayerID(actorID string) bool {
+	parsed, err := uuid.Parse(actorID)
+	return err == nil && parsed.String() == actorID && parsed.Variant() == uuid.RFC4122
 }
 
 func validOptionalActor(actorID *string) bool {

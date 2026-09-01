@@ -3,6 +3,7 @@ import '../../core/platform/game_launch_request.dart';
 import '../../core/platform/game_launcher.dart';
 import '../home/home_api.dart';
 import 'gomoku_models.dart';
+import '../../core/lan/lan_models.dart';
 
 final class GomokuRepository {
   GomokuRepository({
@@ -27,6 +28,9 @@ final class GomokuRepository {
   Future<List<GomokuOpponent>> fetchOpponents() => _api.fetchOpponents();
 
   Future<void> cancelMatch(String matchId) => _api.cancelMatch(matchId);
+
+  Future<AuthoritativeGameResult> fetchResult(String matchId) =>
+      _api.fetchResult(matchId);
 
   Future<String> createAndOpen(String opponentId) async {
     final created = await _api.createMatch(opponentId);

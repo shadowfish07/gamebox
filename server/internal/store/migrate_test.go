@@ -185,6 +185,51 @@ func TestOpenUpgradesV1DatabaseWithMatchHistoryMigrationOnce(t *testing.T) {
 	assertSchema(t, db)
 }
 
+func TestOpenUpgradesMainV3DatabaseWithNicknameSnapshots(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "main-v3.sqlite")
+	oldDB := openRawDatabase(t, path)
+	mustExec(t, oldDB, `CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)`)
+	for _, item := range migrations[:3] {
+		contents, err := migrationFiles.ReadFile(item.path)
+		if err != nil {
+			oldDB.Close()
+			t.Fatalf("read migration %d: %v", item.version, err)
+		}
+		loaded := newLoadedMigration(item.version, string(contents))
+		mustExec(t, oldDB, loaded.script)
+		mustExec(t, oldDB, `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, 1)`, loaded.version, loaded.checksum)
+	}
+	mustExec(t, oldDB, `INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES ('u1','Alice','alice',1,1)`)
+	mustExec(t, oldDB, `INSERT INTO matches(id,game_id,status,created_at,updated_at,game_config_json) VALUES ('m1','gomoku','active',1,1,'{"boardSize":15}')`)
+	mustExec(t, oldDB, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u1',0,'black')`)
+	if err := oldDB.Close(); err != nil {
+		t.Fatalf("close main-v3 database: %v", err)
+	}
+
+	db := openDatabase(t, ctx, path)
+	t.Cleanup(func() { _ = db.Close() })
+	var nickname, gameConfig string
+	if err := db.QueryRow(`SELECT nickname_snapshot FROM match_players WHERE match_id = 'm1' AND user_id = 'u1'`).Scan(&nickname); err != nil {
+		t.Fatalf("read migrated nickname snapshot: %v", err)
+	}
+	if nickname != "Alice" {
+		t.Fatalf("migrated nickname snapshot = %q, want Alice", nickname)
+	}
+	if err := db.QueryRow(`SELECT game_config_json FROM matches WHERE id = 'm1'`).Scan(&gameConfig); err != nil {
+		t.Fatalf("read retained game config: %v", err)
+	}
+	if gameConfig != `{"boardSize":15}` {
+		t.Fatalf("retained game config = %q", gameConfig)
+	}
+	nicknameMigration := readMigrationRecord(t, db, 4)
+	if nicknameMigration.checksum == "" || nicknameMigration.appliedAt <= 0 {
+		t.Fatalf("nickname migration record = %+v, want a checksum and timestamp", nicknameMigration)
+	}
+}
+
 func TestFailedMigrationIsAtomicAndRetryable(t *testing.T) {
 	t.Parallel()
 
@@ -387,8 +432,8 @@ func TestTextPrimaryKeysRejectNull(t *testing.T) {
 		{name: "matches.id", query: `INSERT INTO matches(id,game_id,status,created_at,updated_at) VALUES (NULL,'gomoku','active',1,1)`},
 		{name: "launch_tickets.token_hash", query: `INSERT INTO launch_tickets(token_hash,match_id,user_id,game_id,expires_at,created_at) VALUES (NULL,'m1','u1','gomoku',2,1)`},
 		{name: "resume_tokens.token_hash", query: `INSERT INTO resume_tokens(token_hash,match_id,user_id,expires_at,last_used_at,created_at) VALUES (NULL,'m1','u1',2,1,1)`},
-		{name: "match_players.match_id", query: `INSERT INTO match_players(match_id,user_id,seat,color) VALUES (NULL,'u1',0,'black')`},
-		{name: "match_players.user_id", query: `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1',NULL,0,'black')`},
+		{name: "match_players.match_id", query: `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES (NULL,'u1','Alice',0,'black')`},
+		{name: "match_players.user_id", query: `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1',NULL,'Alice',0,'black')`},
 		{name: "match_events.match_id", query: `INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES (NULL,1,'move','{}',1)`},
 		{name: "match_events.revision", query: `INSERT INTO match_events(match_id,revision,event_type,payload_json,created_at) VALUES ('m1',NULL,'move','{}',1)`},
 		{name: "active_game_slots.game_id", query: `INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (NULL,'u1','m1')`},
@@ -915,6 +960,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 		"match_players": {
 			"match_id TEXT NOT NULL REFERENCES matches(id)",
 			"user_id TEXT NOT NULL REFERENCES users(id)",
+			"nickname_snapshot TEXT NOT NULL",
 			"seat INTEGER NOT NULL CHECK (seat IN (0,1))",
 			"color TEXT NOT NULL CHECK (color IN ('black','white'))",
 			"PRIMARY KEY (match_id, user_id)",
@@ -999,11 +1045,11 @@ func assertConstraints(t *testing.T, db *sql.DB) {
 	mustFail(t, db, `INSERT INTO matches(id,game_id,status,created_at,updated_at) VALUES ('m-bad','gomoku','pending',1,1)`)
 	mustFail(t, db, `INSERT INTO matches(id,game_id,status,winner_user_id,created_at,updated_at) VALUES ('m-fk','gomoku','finished','missing',1,1)`)
 
-	mustExec(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u1',0,'black')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',0,'white')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',1,'black')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',2,'white')`)
-	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,seat,color) VALUES ('m1','u2',1,'red')`)
+	mustExec(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u1','Alice',0,'black')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',0,'white')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',1,'black')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',2,'white')`)
+	mustFail(t, db, `INSERT INTO match_players(match_id,user_id,nickname_snapshot,seat,color) VALUES ('m1','u2','Bob',1,'red')`)
 
 	mustExec(t, db, `INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES ('m1',1,'move','a1','u1','{}',1)`)
 	mustFail(t, db, `INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at) VALUES ('m1',1,'move','a2','u2','{}',1)`)

@@ -21,6 +21,7 @@ const (
 	TypePlatformError             = "platform.error"
 	TypePlatformMatchCancelled    = "platform.match.cancelled"
 	TypePlatformMatchAbandoned    = "platform.match.abandoned"
+	TypePlatformMatchResult       = "platform.match.result"
 	TypeGomokuMoveRequested       = "gomoku.move.requested"
 	TypeGomokuMoveAccepted        = "gomoku.move.accepted"
 	TypeGomokuResignRequested     = "gomoku.resign.requested"
@@ -44,6 +45,7 @@ var knownTypes = map[string]struct{}{
 	TypePlatformError:             {},
 	TypePlatformMatchCancelled:    {},
 	TypePlatformMatchAbandoned:    {},
+	TypePlatformMatchResult:       {},
 	TypeGomokuMoveRequested:       {},
 	TypeGomokuMoveAccepted:        {},
 	TypeGomokuResignRequested:     {},
@@ -83,6 +85,53 @@ func DecodeClient(data []byte) (Envelope, error) {
 	}
 	if err := validateClientMessage(envelope); err != nil {
 		return Envelope{}, err
+	}
+	return envelope, nil
+}
+
+// DecodeLANClient preserves the public client contract while allowing the LAN
+// transport's initial connect to prove both the one-time launch credential and
+// its durable resume binding in one room transaction.
+func DecodeLANClient(data []byte) (Envelope, error) {
+	envelope, err := Decode(data)
+	if err != nil {
+		return Envelope{}, err
+	}
+	if envelope.Type != TypePlatformConnect {
+		if err := validateClientMessage(envelope); err != nil {
+			return Envelope{}, err
+		}
+		return envelope, nil
+	}
+	fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"launchTicket": {}, "resumeToken": {}, "capabilities": {}})
+	if err != nil || len(fields) == 0 || len(fields) > 3 {
+		return Envelope{}, protocolFailure(codeInvalidEnvelope)
+	}
+	credentialCount := 1
+	if _, capabilities := fields["capabilities"]; capabilities {
+		credentialCount++
+	}
+	if _, launch := fields["launchTicket"]; launch && len(fields) != credentialCount+1 {
+		return Envelope{}, protocolFailure(codeInvalidEnvelope)
+	}
+	if _, resume := fields["resumeToken"]; !resume {
+		return Envelope{}, protocolFailure(codeInvalidEnvelope)
+	}
+	for _, key := range []string{"launchTicket", "resumeToken"} {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var token string
+		if json.Unmarshal(raw, &token) != nil || token == "" || len(token) > 256 || !utf8.ValidString(token) {
+			return Envelope{}, protocolFailure(codeInvalidEnvelope)
+		}
+	}
+	if raw, ok := fields["capabilities"]; ok {
+		var capabilities []string
+		if json.Unmarshal(raw, &capabilities) != nil || len(capabilities) != 1 || capabilities[0] != CapabilityPlayerPresence {
+			return Envelope{}, protocolFailure(codeInvalidEnvelope)
+		}
 	}
 	return envelope, nil
 }

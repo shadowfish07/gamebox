@@ -228,6 +228,7 @@ const MOTION := {
 
 const COMPONENT := {
     "dialog_scrim_opacity": 0.32,
+    "media_viewport_height": 260,
     "minimum_touch_target": 48,
     "page_max_width": 560,
     "page_padding": 16,

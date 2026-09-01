@@ -25,7 +25,10 @@ class PrivateCommandLineArgsTest {
             "--ws-url",
             "ws://127.0.0.1/canary",
         )
-        val intent = Intent().putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, source)
+        val resumeSource = arrayOf("resume-canary-secret")
+        val intent = Intent()
+            .putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, source)
+            .putExtra(PrivateCommandLineArgs.PRIVATE_RESUME_EXTRA, resumeSource)
         val environment = FakePrivateTicketEnvironment()
         val privateArgs = PrivateCommandLineArgs(environment)
 
@@ -33,6 +36,7 @@ class PrivateCommandLineArgsTest {
         source[6] = "mutated"
 
         assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
+        assertNull(intent.getStringArrayExtra(PrivateCommandLineArgs.PRIVATE_RESUME_EXTRA))
         assertArrayEquals(
             arrayOf(
                 "project.godot",
@@ -48,7 +52,8 @@ class PrivateCommandLineArgsTest {
             ),
             privateArgs.combineWith(listOf("project.godot")).toTypedArray(),
         )
-        assertEquals("canary-secret", environment.value)
+        assertEquals("canary-secret", environment.ticket)
+        assertEquals("resume-canary-secret", environment.resumeToken)
         val mutatedRead = privateArgs.combineWith(emptyList())
         mutatedRead[6] = "changed"
         assertArrayEquals(
@@ -68,20 +73,23 @@ class PrivateCommandLineArgsTest {
 
         privateArgs.clear()
         assertFalse(privateArgs.combineWith(emptyList()).isNotEmpty())
-        assertNull(environment.value)
+        assertNull(environment.ticket)
     }
 
     @Test
     fun discardsSecretArgsFromReplacementIntent() {
-        val intent = Intent().putExtra(
-            GodotActivity.EXTRA_COMMAND_LINE_PARAMS,
-            arrayOf("--launch-ticket", "replacement-secret"),
-        )
+        val intent = Intent()
+            .putExtra(
+                GodotActivity.EXTRA_COMMAND_LINE_PARAMS,
+                arrayOf("--launch-ticket", "replacement-secret"),
+            )
+            .putExtra(PrivateCommandLineArgs.PRIVATE_RESUME_EXTRA, arrayOf("replacement-resume"))
         val privateArgs = PrivateCommandLineArgs()
 
         privateArgs.discardFrom(intent)
 
         assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
+        assertNull(intent.getStringArrayExtra(PrivateCommandLineArgs.PRIVATE_RESUME_EXTRA))
         assertFalse(privateArgs.combineWith(emptyList()).isNotEmpty())
     }
 
@@ -118,7 +126,7 @@ class PrivateCommandLineArgsTest {
             ),
             privateArgs.combineWith(emptyList()).toTypedArray(),
         )
-        assertEquals("collision-canary-secret", environment.value)
+        assertEquals("collision-canary-secret", environment.ticket)
     }
 
     @Test
@@ -157,21 +165,24 @@ class PrivateCommandLineArgsTest {
             privateArgs.consumeFrom(intent)
 
             assertFalse(privateArgs.combineWith(emptyList()).isNotEmpty())
-            assertNull(environment.value)
+            assertNull(environment.ticket)
             assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
         }
     }
 
     private class FakePrivateTicketEnvironment : PrivateTicketEnvironment {
-        var value: String? = null
+        var ticket: String? = null
+        var resumeToken: String? = null
 
-        override fun replace(value: String): Boolean {
-            this.value = value
+        override fun replace(ticket: String, resumeToken: String?): Boolean {
+            this.ticket = ticket
+            this.resumeToken = resumeToken
             return true
         }
 
         override fun clear() {
-            value = null
+            ticket = null
+            resumeToken = null
         }
     }
 }

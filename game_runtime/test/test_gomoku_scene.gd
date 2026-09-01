@@ -504,8 +504,10 @@ static func _android_go_back_closes_dialog_first() -> bool:
 		or not _check(not dialog.visible, "suppressed duplicate go-back reopened the confirmation") \
 		or not _check(client.resign_requests == 0, "duplicate go-back submitted resignation"):
 		return _cleanup(scene)
-	scene._go_back_debounce_ms = 1
-	await (Engine.get_main_loop() as SceneTree).create_timer(0.05).timeout
+	# Headless SceneTree timers can advance game time without advancing the
+	# monotonic wall clock used by the production debounce. Move the recorded
+	# timestamp instead so the threshold boundary is deterministic.
+	scene._last_go_back_time_ms -= scene._go_back_debounce_ms
 	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
 	var result := _check(quit_calls.size() == 1, "genuine later Android go-back did not return exactly once") \
 		and _check(client.resign_requests == 0, "ordinary Android go-back return submitted resignation")
@@ -1001,6 +1003,7 @@ class FakeMatchClient:
 	signal snapshot_sync_started
 	signal snapshot_received(envelope: Dictionary)
 	signal event_received(envelope: Dictionary)
+	signal authoritative_result_received(result: Dictionary)
 	signal player_presence_changed(user_id: String, online: bool)
 	signal match_error(code: String)
 	signal return_to_lobby_requested(code: String)
@@ -1014,7 +1017,14 @@ class FakeMatchClient:
 	var dispose_calls := 0
 	var player_presence := {}
 
-	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant) -> bool:
+	func start(
+		_ws_url: String,
+		_match_id: String,
+		_ticket: String,
+		game_state: Variant,
+		_initial_resume_token: String = "",
+		_game_id: String = "gomoku",
+	) -> bool:
 		state = game_state
 		connection_state = "connecting"
 		return true

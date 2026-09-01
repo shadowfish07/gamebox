@@ -126,6 +126,8 @@ func TestDurableTwoPlayerMatchHappyPath(t *testing.T) {
 			blackID: black, whiteID: white, revision: revision + 1, x: move.x, y: move.y,
 		})
 	}
+	assertTerminalResultEnvelope(t, mustReadEnvelope(t, ctx, aliceWS), created.ID, int64(len(winningMoves)))
+	assertTerminalResultEnvelope(t, mustReadEnvelope(t, ctx, bobWS), created.ID, int64(len(winningMoves)))
 
 	terminalAlice := requestSnapshot(t, ctx, aliceWS, created.ID, int64(len(winningMoves)))
 	terminalBob := requestSnapshot(t, ctx, bobWS, created.ID, int64(len(winningMoves)))
@@ -493,6 +495,8 @@ func TestDurableMatchRestoresAfterCompleteServerAndDatabaseRestart(t *testing.T)
 			blackID: black, whiteID: white, revision: revision + 1, x: move.x, y: move.y,
 		})
 	}
+	assertTerminalResultEnvelope(t, mustReadEnvelope(t, ctx, aliceAfterRestart), created.ID, 9)
+	assertTerminalResultEnvelope(t, mustReadEnvelope(t, ctx, bobAfterRestart), created.ID, 9)
 	terminalAlice := requestSnapshot(t, ctx, aliceAfterRestart, created.ID, 9)
 	terminalBob := requestSnapshot(t, ctx, bobAfterRestart, created.ID, 9)
 	if !snapshotsEqual(terminalAlice, terminalBob) || terminalAlice.Status != "finished" || terminalAlice.Result == nil || *terminalAlice.Result != "five" || terminalAlice.WinnerUserID == nil || *terminalAlice.WinnerUserID != black {
@@ -1243,6 +1247,13 @@ func mustReadEnvelope(t *testing.T, ctx context.Context, client *testutil.WebSoc
 		t.Fatalf("read websocket envelope: %v", err)
 	}
 	return envelope
+}
+
+func assertTerminalResultEnvelope(t *testing.T, envelope protocol.Envelope, matchID string, revision int64) {
+	t.Helper()
+	if envelope.Type != protocol.TypePlatformMatchResult || envelope.MatchID != matchID || envelope.Revision == nil || *envelope.Revision != revision || len(envelope.Payload) == 0 {
+		t.Fatalf("terminal result envelope = %#v", envelope)
+	}
 }
 
 func assertPresenceChange(t *testing.T, envelope protocol.Envelope, userID string, online bool) {
