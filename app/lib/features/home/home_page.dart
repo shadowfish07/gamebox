@@ -232,8 +232,10 @@ final class _HomePageState extends State<HomePage> {
     }
     if (controller.status == null && controller.lastError != null) {
       return _HomeError(
+        game: MatchHistoryGame.gomoku,
         message: controller.lastError!.message,
         onRetry: controller.refresh,
+        onOpenHistory: () => _openHistory(MatchHistoryGame.gomoku),
       );
     }
     final status = controller.status;
@@ -260,8 +262,10 @@ final class _HomePageState extends State<HomePage> {
     }
     if (controller.status == null && controller.lastError != null) {
       return _HomeError(
+        game: MatchHistoryGame.rps,
         message: controller.lastError!.message,
         onRetry: controller.refresh,
+        onOpenHistory: () => _openHistory(MatchHistoryGame.rps),
       );
     }
     final status = controller.status;
@@ -279,10 +283,17 @@ final class _HomePageState extends State<HomePage> {
 }
 
 final class _HomeError extends StatelessWidget {
-  const _HomeError({required this.message, required this.onRetry});
+  const _HomeError({
+    required this.game,
+    required this.message,
+    required this.onRetry,
+    required this.onOpenHistory,
+  });
 
+  final MatchHistoryGame game;
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -294,12 +305,20 @@ final class _HomeError extends StatelessWidget {
           message: message,
         ),
         SizedBox(height: GameboxTokens.spacing.page),
-        _ActionButton(
-          semanticKey: const Key('retry-home'),
-          semanticLabel: 'retry-home',
-          label: '重试',
-          pendingLabel: '正在重试',
-          onPressed: onRetry,
+        _PrimaryAndHistoryActions(
+          game: game,
+          onOpenHistory: onOpenHistory,
+          primary: _ActionButton(
+            semanticKey: Key(
+              game == MatchHistoryGame.gomoku ? 'retry-home' : 'retry-rps-home',
+            ),
+            semanticLabel: game == MatchHistoryGame.gomoku
+                ? 'retry-home'
+                : 'retry-rps-home',
+            label: '重试',
+            pendingLabel: '正在重试',
+            onPressed: onRetry,
+          ),
         ),
       ],
     );
@@ -551,12 +570,33 @@ final class _PrimaryAndHistoryActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(child: primary),
-        SizedBox(width: GameboxTokens.spacing.layout),
-        _HistoryButton(game: game, onPressed: onOpenHistory),
-      ],
+    final labelStyle = Theme.of(context).textTheme.labelLarge;
+    final labelSize = labelStyle?.fontSize ?? 14;
+    final scaledLabelSize = MediaQuery.textScalerOf(context).scale(labelSize);
+    final usesAccessibilityTextScale = scaledLabelSize > labelSize * 1.3;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final usesNarrowLayout =
+            constraints.hasBoundedWidth && constraints.maxWidth < 280;
+        final history = _HistoryButton(game: game, onPressed: onOpenHistory);
+        if (usesAccessibilityTextScale || usesNarrowLayout) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              primary,
+              SizedBox(height: GameboxTokens.spacing.layout),
+              history,
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: primary),
+            SizedBox(width: GameboxTokens.spacing.layout),
+            history,
+          ],
+        );
+      },
     );
   }
 }
@@ -569,9 +609,12 @@ final class _HistoryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final identifier = 'open-${game.id}-history';
+    final key = 'open-${game.id}-history';
+    final identifier = game == MatchHistoryGame.gomoku
+        ? 'open-match-history'
+        : key;
     return Semantics(
-      key: Key(identifier),
+      key: Key(key),
       identifier: identifier,
       child: OutlinedButton.icon(
         onPressed: onPressed,

@@ -393,7 +393,9 @@ void main() {
         code: 'network_error',
         message: '网络连接失败，请稍后重试',
       );
-    await tester.pumpWidget(_app(fixture.controller, aliceId));
+    await tester.pumpWidget(
+      _app(fixture.controller, aliceId, historyApi: fixture.historyApi),
+    );
     await _flushWidget(tester);
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -401,6 +403,8 @@ void main() {
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
     expect(find.bySemanticsIdentifier('retry-home'), findsOneWidget);
+    expect(find.byKey(const Key('open-gomoku-history')), findsOneWidget);
+    expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
     expect(
       tester
           .widget<FilledButton>(
@@ -413,10 +417,55 @@ void main() {
       isNotNull,
     );
 
+    await tester.tap(find.byKey(const Key('open-gomoku-history')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+    expect(fixture.historyApi.games, [MatchHistoryGame.gomoku]);
+    await tester.tap(find.byKey(const Key('match-history-back')));
+    await tester.pumpAndSettle();
+
     fixture.api.statusError = null;
     await tester.tap(find.byKey(const Key('retry-home')));
     await _flushWidget(tester);
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
+    fixture.dispose();
+  });
+
+  testWidgets('RPS history remains reachable when its status request fails', (
+    tester,
+  ) async {
+    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final rpsController = RpsController(
+      repository: RpsRepository(
+        api: const _FakeRpsApi(
+          statusError: ApiError(code: 'network_error', message: '石头剪刀布状态加载失败'),
+        ),
+        gameLauncher: fixture.launcher,
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
+    await tester.pumpWidget(
+      _app(
+        fixture.controller,
+        aliceId,
+        historyApi: fixture.historyApi,
+        rpsController: rpsController,
+      ),
+    );
+    await _flushWidget(tester);
+    await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('石头剪刀布状态加载失败'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('retry-rps-home'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('open-rps-history'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('open-rps-history')));
+    await tester.pumpAndSettle();
+    expect(find.text('石头剪刀布战绩'), findsOneWidget);
+    expect(fixture.historyApi.games, [MatchHistoryGame.rps]);
+
+    rpsController.dispose();
     fixture.dispose();
   });
 
@@ -443,8 +492,9 @@ void main() {
       await _flushWidget(tester);
       final statusCalls = fixture.api.statusCalls;
 
-      expect(find.bySemanticsIdentifier('open-match-history'), findsNothing);
-      expect(find.bySemanticsIdentifier('open-gomoku-history'), findsOneWidget);
+      expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
+      expect(find.bySemanticsIdentifier('open-gomoku-history'), findsNothing);
+      expect(find.byKey(const Key('open-gomoku-history')), findsOneWidget);
       expect(find.bySemanticsIdentifier('open-rps-history'), findsOneWidget);
       expect(
         find.descendant(
@@ -587,12 +637,14 @@ void main() {
     });
   }
 
-  testWidgets('320dp Home fits per-game primary and history actions', (
+  testWidgets('320dp Home stacks per-game actions at 200% text scale', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(320, 640);
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
     addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
     final rpsController = RpsController(
       repository: RpsRepository(
@@ -611,8 +663,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('选择赛制和对手'), findsOneWidget);
-    expect(find.bySemanticsIdentifier('open-gomoku-history'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
     expect(find.bySemanticsIdentifier('open-rps-history'), findsOneWidget);
+    final primaryBounds = tester.getRect(
+      find.byKey(const Key('rps-choose-opponent')),
+    );
+    final historyBounds = tester.getRect(
+      find.byKey(const Key('open-rps-history')),
+    );
+    expect(historyBounds.top, greaterThanOrEqualTo(primaryBounds.bottom));
     expect(tester.takeException(), isNull);
 
     rpsController.dispose();
@@ -794,25 +853,29 @@ final class _FakeHomeApi implements HomeApi {
 }
 
 final class _FakeRpsApi implements RpsApi {
-  const _FakeRpsApi({this.revision = 0, this.isIdle = false});
+  const _FakeRpsApi({this.revision = 0, this.isIdle = false, this.statusError});
 
   final int revision;
   final bool isIdle;
+  final ApiError? statusError;
 
   @override
-  Future<RpsStatus> fetchStatus() async => isIdle
-      ? const RpsIdleStatus()
-      : RpsActiveStatus(
-          match: RpsActiveMatch(
-            id: '33333333-3333-4333-8333-333333333333',
-            opponent: GomokuOpponentIdentity(
-              id: '22222222-2222-4222-8222-222222222222',
-              nickname: '小猫',
+  Future<RpsStatus> fetchStatus() async {
+    if (statusError case final error?) throw error;
+    return isIdle
+        ? const RpsIdleStatus()
+        : RpsActiveStatus(
+            match: RpsActiveMatch(
+              id: '33333333-3333-4333-8333-333333333333',
+              opponent: GomokuOpponentIdentity(
+                id: '22222222-2222-4222-8222-222222222222',
+                nickname: '小猫',
+              ),
+              revision: revision,
+              format: RpsFormat.bestOfThree,
             ),
-            revision: revision,
-            format: RpsFormat.bestOfThree,
-          ),
-        );
+          );
+  }
 
   @override
   Future<void> cancelMatch(String matchId) async {}

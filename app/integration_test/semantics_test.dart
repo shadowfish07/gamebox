@@ -170,7 +170,7 @@ void main() {
     await tester.pumpWidget(fixture.app());
     await _flush(tester);
 
-    await tester.tap(find.bySemanticsIdentifier('open-gomoku-history'));
+    await tester.tap(find.bySemanticsIdentifier('open-match-history'));
     await _flush(tester);
     expect(
       find.bySemanticsIdentifier('match-history-statistics'),
