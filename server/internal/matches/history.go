@@ -3,6 +3,7 @@ package matches
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -479,11 +480,22 @@ func historyEntryFormat(spec historyGameSpec, config sql.NullString) (string, bo
 	if !spec.requiresFormat {
 		return "", true
 	}
-	switch config.String {
-	case `{"format":"single_round"}`:
-		return rps.FormatSingleRound, config.Valid
-	case `{"format":"best_of_three"}`:
-		return rps.FormatBestOfThree, config.Valid
+	if !config.Valid {
+		return "", false
+	}
+	_, normalized, err := configureRules(rps.NewRules(), json.RawMessage(config.String))
+	if err != nil {
+		return "", false
+	}
+	var parsed struct {
+		Format string `json:"format"`
+	}
+	if json.Unmarshal(normalized, &parsed) != nil {
+		return "", false
+	}
+	switch parsed.Format {
+	case rps.FormatSingleRound, rps.FormatBestOfThree:
+		return parsed.Format, true
 	default:
 		return "", false
 	}
