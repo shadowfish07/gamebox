@@ -36,8 +36,18 @@ jobs:
         run: yes | flutter doctor --android-licenses
       - name: Pin Android build toolchain
         run: |
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$android_sdk_root" ]]; then
+            echo "Android SDK root is not configured" >&2
+            exit 1
+          fi
+          sdkmanager_bin="$android_sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager_bin" ]]; then
+            echo "sdkmanager is missing: $sdkmanager_bin" >&2
+            exit 1
+          fi
+          "$sdkmanager_bin" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+          echo "ANDROID_NDK_HOME=$android_sdk_root/ndk/27.0.12077973" >> "$GITHUB_ENV"
       - uses: chickensoft-games/setup-godot@v2
         with:
           version: '4.7.0'
