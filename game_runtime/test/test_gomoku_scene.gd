@@ -504,8 +504,10 @@ static func _android_go_back_closes_dialog_first() -> bool:
 		or not _check(not dialog.visible, "suppressed duplicate go-back reopened the confirmation") \
 		or not _check(client.resign_requests == 0, "duplicate go-back submitted resignation"):
 		return _cleanup(scene)
-	scene._go_back_debounce_ms = 1
-	await (Engine.get_main_loop() as SceneTree).create_timer(0.05).timeout
+	# Headless SceneTree timers can advance game time without advancing the
+	# monotonic wall clock used by the production debounce. Move the recorded
+	# timestamp instead so the threshold boundary is deterministic.
+	scene._last_go_back_time_ms -= scene._go_back_debounce_ms
 	scene.notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
 	var result := _check(quit_calls.size() == 1, "genuine later Android go-back did not return exactly once") \
 		and _check(client.resign_requests == 0, "ordinary Android go-back return submitted resignation")
