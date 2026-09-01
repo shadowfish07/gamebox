@@ -802,12 +802,11 @@ final class _HistoryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final key = 'open-${game.id}-history';
     final identifier = game == MatchHistoryGame.gomoku
         ? 'open-match-history'
-        : key;
+        : 'open-${game.id}-history';
     return Semantics(
-      key: Key(key),
+      key: Key(identifier),
       identifier: identifier,
       child: OutlinedButton.icon(
         onPressed: onPressed,

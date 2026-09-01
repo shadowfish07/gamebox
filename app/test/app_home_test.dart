@@ -41,7 +41,7 @@ void main() {
     expect(find.byKey(const Key('choose-opponent')), findsOneWidget);
     expect(fixture.api.statusCalls, 1);
 
-    await tester.tap(find.byKey(const Key('open-gomoku-history')));
+    await tester.tap(find.byKey(const Key('open-match-history')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('match-history-page')), findsOneWidget);
     expect(fixture.historyApi.calls, 1);
@@ -267,7 +267,7 @@ void main() {
       );
       await _flush(tester);
 
-      await tester.tap(find.byKey(const Key('open-gomoku-history')));
+      await tester.tap(find.byKey(const Key('open-match-history')));
       await tester.pumpAndSettle();
       final original = tester
           .widget<MatchHistoryPage>(find.byType(MatchHistoryPage))

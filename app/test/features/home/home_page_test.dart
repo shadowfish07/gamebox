@@ -467,7 +467,7 @@ void main() {
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.byKey(const Key('retry-home')), findsOneWidget);
     expect(find.bySemanticsIdentifier('retry-home'), findsOneWidget);
-    expect(find.byKey(const Key('open-gomoku-history')), findsOneWidget);
+    expect(find.byKey(const Key('open-match-history')), findsOneWidget);
     expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
     expect(
       tester
@@ -481,7 +481,7 @@ void main() {
       isNotNull,
     );
 
-    await tester.tap(find.byKey(const Key('open-gomoku-history')));
+    await tester.tap(find.byKey(const Key('open-match-history')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('match-history-page')), findsOneWidget);
     expect(fixture.historyApi.games, [MatchHistoryGame.gomoku]);
@@ -558,16 +558,16 @@ void main() {
 
       expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
       expect(find.bySemanticsIdentifier('open-gomoku-history'), findsNothing);
-      expect(find.byKey(const Key('open-gomoku-history')), findsOneWidget);
+      expect(find.byKey(const Key('open-match-history')), findsOneWidget);
       expect(find.bySemanticsIdentifier('open-rps-history'), findsOneWidget);
       expect(
         find.descendant(
-          of: find.byKey(const Key('open-gomoku-history')),
+          of: find.byKey(const Key('open-match-history')),
           matching: find.byType(OutlinedButton),
         ),
         findsOneWidget,
       );
-      await tester.tap(find.byKey(const Key('open-gomoku-history')));
+      await tester.tap(find.byKey(const Key('open-match-history')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('match-history-page')), findsOneWidget);
       expect(find.text('五子棋战绩'), findsOneWidget);
