@@ -163,6 +163,7 @@ final class _RecordingMatchHistoryApi implements MatchHistoryApi {
 
   @override
   Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
     String? cursor,
     int limit = 20,
   }) async {

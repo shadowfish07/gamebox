@@ -58,7 +58,7 @@ final class _MatchHistoryPageState extends State<MatchHistoryPage> {
             identifier: 'match-history-back',
             child: BackButton(onPressed: () => Navigator.of(context).pop()),
           ),
-          title: const Text('我的战绩'),
+          title: Text(widget.controller.game.pageTitle),
         ),
         body: NotificationListener<ScrollNotification>(
           onNotification: _onScroll,
@@ -101,13 +101,14 @@ final class _MatchHistoryPageState extends State<MatchHistoryPage> {
       return GameboxPageBody(
         children: [
           _StatisticsCard(statistics: statistics),
-          const _EmptyHistory(),
+          _EmptyHistory(game: controller.game),
         ],
       );
     }
     return _HistoryContent(
       statistics: statistics,
       matches: controller.matches,
+      game: controller.game,
       footer: footer,
     );
   }
@@ -205,7 +206,9 @@ final class _StatisticsCard extends StatelessWidget {
 }
 
 final class _EmptyHistory extends StatelessWidget {
-  const _EmptyHistory();
+  const _EmptyHistory({required this.game});
+
+  final MatchHistoryGame game;
 
   @override
   Widget build(BuildContext context) {
@@ -213,10 +216,10 @@ final class _EmptyHistory extends StatelessWidget {
       key: const Key('match-history-empty'),
       identifier: 'match-history-empty',
       container: true,
-      child: const GameboxAsyncPanel(
+      child: GameboxAsyncPanel(
         icon: Icons.history_toggle_off_outlined,
         title: '还没有已结束的对局',
-        message: '完成一局五子棋后，战绩会显示在这里。',
+        message: game.emptyMessage,
       ),
     );
   }
@@ -226,11 +229,13 @@ final class _HistoryContent extends StatelessWidget {
   const _HistoryContent({
     required this.statistics,
     required this.matches,
+    required this.game,
     this.footer,
   });
 
   final MatchHistoryStatistics statistics;
   final List<MatchHistoryEntry> matches;
+  final MatchHistoryGame game;
   final Widget? footer;
 
   @override
@@ -279,7 +284,7 @@ final class _HistoryContent extends StatelessWidget {
                     itemCount: matches.length + (footer == null ? 0 : 1),
                     itemBuilder: (context, index) => index == matches.length
                         ? footer!
-                        : _HistoryEntry(entry: matches[index]),
+                        : _HistoryEntry(entry: matches[index], game: game),
                     separatorBuilder: (context, index) =>
                         SizedBox(height: GameboxTokens.spacing.layout),
                   ),
@@ -297,9 +302,10 @@ final class _HistoryContent extends StatelessWidget {
 }
 
 final class _HistoryEntry extends StatelessWidget {
-  const _HistoryEntry({required this.entry});
+  const _HistoryEntry({required this.entry, required this.game});
 
   final MatchHistoryEntry entry;
+  final MatchHistoryGame game;
 
   @override
   Widget build(BuildContext context) {
@@ -308,15 +314,19 @@ final class _HistoryEntry extends StatelessWidget {
     final finished =
         '${material.formatShortDate(local)} '
         '${material.formatTimeOfDay(TimeOfDay.fromDateTime(local), alwaysUse24HourFormat: true)}';
-    final color = entry.color == GomokuColor.black ? '黑方' : '白方';
+    final leadingDetail = switch (game) {
+      MatchHistoryGame.gomoku => entry.color == GomokuColor.black ? '黑方' : '白方',
+      MatchHistoryGame.rps => entry.rpsFormat!.label,
+    };
+    final countDetail = '${entry.moveCount} ${game.countUnit}';
     final outcome = _OutcomeStyle.resolve(context, entry.outcome);
     final identifier = 'match-history-entry-${entry.id}';
     return Semantics(
       key: Key(identifier),
       identifier: identifier,
       label:
-          '${outcome.label}，对手${entry.opponentNickname}，$color，'
-          '结束于 $finished，${entry.moveCount} 手',
+          '${outcome.label}，对手${entry.opponentNickname}，'
+          '$leadingDetail，结束于 $finished，$countDetail',
       container: true,
       excludeSemantics: true,
       child: Card(
@@ -350,9 +360,9 @@ final class _HistoryEntry extends StatelessWidget {
               spacing: GameboxTokens.spacing.compact,
               runSpacing: GameboxTokens.spacing.layout,
               children: [
-                Text(color),
+                Text(leadingDetail),
                 Text(finished),
-                Text('${entry.moveCount} 手'),
+                Text(countDetail),
               ],
             ),
           ),

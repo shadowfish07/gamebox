@@ -170,7 +170,7 @@ void main() {
     await tester.pumpWidget(fixture.app());
     await _flush(tester);
 
-    await tester.tap(find.bySemanticsIdentifier('open-match-history'));
+    await tester.tap(find.bySemanticsIdentifier('open-gomoku-history'));
     await _flush(tester);
     expect(
       find.bySemanticsIdentifier('match-history-statistics'),
@@ -350,6 +350,7 @@ final class _FakeHomeApi implements HomeApi {
 final class _FakeMatchHistoryApi implements MatchHistoryApi {
   @override
   Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
     String? cursor,
     int limit = 20,
   }) async {

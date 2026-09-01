@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 )
 
@@ -138,6 +139,7 @@ type historyMatchResponse struct {
 	Color            string `json:"color"`
 	FinishedAt       int64  `json:"finishedAt"`
 	MoveCount        int64  `json:"moveCount"`
+	Format           string `json:"format,omitempty"`
 }
 
 type historyResponse struct {
@@ -147,6 +149,14 @@ type historyResponse struct {
 }
 
 func (router *router) gomokuHistory(writer http.ResponseWriter, request *http.Request) {
+	router.gameHistory(writer, request, gomoku.GameID)
+}
+
+func (router *router) rpsHistory(writer http.ResponseWriter, request *http.Request) {
+	router.gameHistory(writer, request, rps.GameID)
+}
+
+func (router *router) gameHistory(writer http.ResponseWriter, request *http.Request, gameID string) {
 	user, ok := authenticatedUser(request)
 	if !ok {
 		writeAPIError(writer, http.StatusUnauthorized, "unauthorized")
@@ -157,7 +167,7 @@ func (router *router) gomokuHistory(writer http.ResponseWriter, request *http.Re
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	page, historyErr := router.matches.ListHistory(request.Context(), gomoku.GameID, user.ID, pageRequest)
+	page, historyErr := router.matches.ListHistory(request.Context(), gameID, user.ID, pageRequest)
 	if historyErr != nil {
 		if phase, category, hasMetadata := matches.HistoryFailureMetadata(historyErr); hasMetadata {
 			router.logger.Printf(
@@ -197,6 +207,7 @@ func (router *router) gomokuHistory(writer http.ResponseWriter, request *http.Re
 			Color:            string(entry.Color),
 			FinishedAt:       entry.FinishedAt.UTC().UnixMilli(),
 			MoveCount:        entry.MoveCount,
+			Format:           entry.Format,
 		})
 	}
 	writeJSON(writer, http.StatusOK, response)

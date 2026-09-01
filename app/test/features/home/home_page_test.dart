@@ -420,49 +420,95 @@ void main() {
     fixture.dispose();
   });
 
-  testWidgets('history entry and visible back preserve the Home instance', (
-    tester,
-  ) async {
-    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
-    await tester.pumpWidget(
-      _app(fixture.controller, aliceId, historyApi: fixture.historyApi),
-    );
-    await _flushWidget(tester);
-    final statusCalls = fixture.api.statusCalls;
+  testWidgets(
+    'game cards open their own history and visible back preserves Home',
+    (tester) async {
+      final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+      final rpsController = RpsController(
+        repository: RpsRepository(
+          api: _FakeRpsApi(revision: 0),
+          gameLauncher: fixture.launcher,
+          apiBaseUri: Uri.parse('https://gamebox.test'),
+          now: () => now,
+        ),
+      );
+      await tester.pumpWidget(
+        _app(
+          fixture.controller,
+          aliceId,
+          historyApi: fixture.historyApi,
+          rpsController: rpsController,
+        ),
+      );
+      await _flushWidget(tester);
+      final statusCalls = fixture.api.statusCalls;
 
-    expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('open-match-history')),
-        matching: find.byType(OutlinedButton),
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('open-match-history')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+      expect(find.bySemanticsIdentifier('open-match-history'), findsNothing);
+      expect(find.bySemanticsIdentifier('open-gomoku-history'), findsOneWidget);
+      expect(find.bySemanticsIdentifier('open-rps-history'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('open-gomoku-history')),
+          matching: find.byType(OutlinedButton),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('open-gomoku-history')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('match-history-page')), findsOneWidget);
+      expect(find.text('五子棋战绩'), findsOneWidget);
+      expect(find.text('石头剪刀布战绩'), findsNothing);
+      expect(fixture.historyApi.games, [MatchHistoryGame.gomoku]);
 
-    await tester.tap(find.byKey(const Key('match-history-back')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('match-history-back')));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('home-shell')), findsOneWidget);
-    expect(
-      tester.widget<HomePage>(find.byType(HomePage)).controller,
-      same(fixture.controller),
-    );
-    expect(fixture.api.statusCalls, statusCalls);
-    fixture.dispose();
-  });
+      expect(find.byKey(const Key('home-shell')), findsOneWidget);
+      expect(
+        tester.widget<HomePage>(find.byType(HomePage)).controller,
+        same(fixture.controller),
+      );
+      expect(fixture.api.statusCalls, statusCalls);
+
+      await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-rps-history')));
+      await tester.pumpAndSettle();
+      expect(find.text('石头剪刀布战绩'), findsOneWidget);
+      expect(find.text('五子棋战绩'), findsNothing);
+      expect(fixture.historyApi.games, [
+        MatchHistoryGame.gomoku,
+        MatchHistoryGame.rps,
+      ]);
+      rpsController.dispose();
+      fixture.dispose();
+    },
+  );
 
   testWidgets('system back returns to the same Home instance', (tester) async {
     final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final rpsController = RpsController(
+      repository: RpsRepository(
+        api: _FakeRpsApi(revision: 0),
+        gameLauncher: fixture.launcher,
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
     await tester.pumpWidget(
-      _app(fixture.controller, aliceId, historyApi: fixture.historyApi),
+      _app(
+        fixture.controller,
+        aliceId,
+        historyApi: fixture.historyApi,
+        rpsController: rpsController,
+      ),
     );
     await _flushWidget(tester);
     final statusCalls = fixture.api.statusCalls;
 
-    await tester.tap(find.byKey(const Key('open-match-history')));
+    await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('open-rps-history')));
     await tester.pumpAndSettle();
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -473,6 +519,7 @@ void main() {
       same(fixture.controller),
     );
     expect(fixture.api.statusCalls, statusCalls);
+    rpsController.dispose();
     fixture.dispose();
   });
 
@@ -539,6 +586,38 @@ void main() {
       fixture.dispose();
     });
   }
+
+  testWidgets('320dp Home fits per-game primary and history actions', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+    addTearDown(tester.view.reset);
+    final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final rpsController = RpsController(
+      repository: RpsRepository(
+        api: const _FakeRpsApi(isIdle: true),
+        gameLauncher: fixture.launcher,
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _app(fixture.controller, aliceId, rpsController: rpsController),
+    );
+    await _flushWidget(tester);
+    await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('选择赛制和对手'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('open-gomoku-history'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('open-rps-history'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    rpsController.dispose();
+    fixture.dispose();
+  });
 }
 
 Widget _app(
@@ -603,13 +682,16 @@ final class _Fixture {
 
 final class _FakeMatchHistoryApi implements MatchHistoryApi {
   int calls = 0;
+  final games = <MatchHistoryGame>[];
 
   @override
   Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
     String? cursor,
     int limit = 20,
   }) async {
     calls += 1;
+    games.add(game);
     return const MatchHistoryPageData(
       statistics: MatchHistoryStatistics(
         validMatches: 0,
@@ -712,22 +794,25 @@ final class _FakeHomeApi implements HomeApi {
 }
 
 final class _FakeRpsApi implements RpsApi {
-  const _FakeRpsApi({this.revision = 0});
+  const _FakeRpsApi({this.revision = 0, this.isIdle = false});
 
   final int revision;
+  final bool isIdle;
 
   @override
-  Future<RpsStatus> fetchStatus() async => RpsActiveStatus(
-    match: RpsActiveMatch(
-      id: '33333333-3333-4333-8333-333333333333',
-      opponent: GomokuOpponentIdentity(
-        id: '22222222-2222-4222-8222-222222222222',
-        nickname: '小猫',
-      ),
-      revision: revision,
-      format: RpsFormat.bestOfThree,
-    ),
-  );
+  Future<RpsStatus> fetchStatus() async => isIdle
+      ? const RpsIdleStatus()
+      : RpsActiveStatus(
+          match: RpsActiveMatch(
+            id: '33333333-3333-4333-8333-333333333333',
+            opponent: GomokuOpponentIdentity(
+              id: '22222222-2222-4222-8222-222222222222',
+              nickname: '小猫',
+            ),
+            revision: revision,
+            format: RpsFormat.bestOfThree,
+          ),
+        );
 
   @override
   Future<void> cancelMatch(String matchId) async {}

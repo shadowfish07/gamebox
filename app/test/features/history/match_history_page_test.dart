@@ -11,6 +11,7 @@ import 'package:gamebox/features/history/match_history_api.dart';
 import 'package:gamebox/features/history/match_history_controller.dart';
 import 'package:gamebox/features/history/match_history_models.dart';
 import 'package:gamebox/features/history/match_history_page.dart';
+import 'package:gamebox/features/rps/rps_models.dart';
 
 void main() {
   testWidgets('initial request keeps a stable loading panel visible', (
@@ -76,6 +77,40 @@ void main() {
     expect(find.byKey(const Key('match-history-empty')), findsOneWidget);
     expect(find.byKey(const Key('match-history-error')), findsNothing);
   });
+
+  testWidgets(
+    'RPS page shows its title, format and round count without color',
+    (tester) async {
+      final api = _FakeMatchHistoryApi()
+        ..responses.add(
+          (_) async => MatchHistoryPageData(
+            statistics: _statistics(1),
+            matches: [
+              _entry(
+                '11111111-1111-4111-8111-111111111111',
+                outcome: MatchOutcome.win,
+                nickname: '猜拳玩家',
+                color: GomokuColor.black,
+                hour: 20,
+                moveCount: 3,
+                rpsFormat: RpsFormat.bestOfThree,
+              ),
+            ],
+            nextCursor: null,
+          ),
+        );
+
+      await _pumpPage(tester, api, game: MatchHistoryGame.rps);
+      await _flush(tester);
+
+      expect(find.text('石头剪刀布战绩'), findsOneWidget);
+      expect(find.text('三局两胜'), findsOneWidget);
+      expect(find.text('3 局'), findsOneWidget);
+      expect(find.text('黑方'), findsNothing);
+      expect(find.text('3 手'), findsNothing);
+      expect(api.games, [MatchHistoryGame.rps]);
+    },
+  );
 
   testWidgets(
     'data rows expose literal result color time and move semantics without tap',
@@ -366,13 +401,16 @@ Future<void> _pumpPage(
   WidgetTester tester,
   MatchHistoryApi api, {
   bool dark = false,
+  MatchHistoryGame game = MatchHistoryGame.gomoku,
 }) {
   return tester.pumpWidget(
     MaterialApp(
       theme: GameboxTheme.light(),
       darkTheme: GameboxTheme.dark(),
       themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-      home: MatchHistoryPage(controller: MatchHistoryController(api: api)),
+      home: MatchHistoryPage(
+        controller: MatchHistoryController(api: api, game: game),
+      ),
     ),
   );
 }
@@ -404,6 +442,7 @@ MatchHistoryEntry _entry(
   required int hour,
   int minute = 0,
   required int moveCount,
+  RpsFormat? rpsFormat,
 }) => MatchHistoryEntry(
   id: id,
   outcome: outcome,
@@ -411,15 +450,22 @@ MatchHistoryEntry _entry(
   color: color,
   finishedAt: DateTime(2026, 8, 25, hour, minute).toUtc(),
   moveCount: moveCount,
+  rpsFormat: rpsFormat,
 );
 
 final class _FakeMatchHistoryApi implements MatchHistoryApi {
   final responses = <Future<MatchHistoryPageData> Function(String? cursor)>[];
   final cursors = <String?>[];
+  final games = <MatchHistoryGame>[];
 
   @override
-  Future<MatchHistoryPageData> fetchPage({String? cursor, int limit = 20}) {
+  Future<MatchHistoryPageData> fetchPage({
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
+    String? cursor,
+    int limit = 20,
+  }) {
     cursors.add(cursor);
+    games.add(game);
     if (responses.isEmpty) {
       return Future.error(StateError('Unexpected history request'));
     }

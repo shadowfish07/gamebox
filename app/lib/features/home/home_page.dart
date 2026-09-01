@@ -9,6 +9,7 @@ import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../gomoku/gomoku_models.dart';
 import '../history/match_history_api.dart';
 import '../history/match_history_controller.dart';
+import '../history/match_history_models.dart';
 import '../history/match_history_page.dart';
 import '../rps/rps_controller.dart';
 import '../rps/rps_models.dart';
@@ -93,8 +94,11 @@ final class _HomePageState extends State<HomePage> {
     if (mounted && error != null) _showError(error);
   }
 
-  Future<void> _openHistory() {
-    final controller = MatchHistoryController(api: widget.historyApi);
+  Future<void> _openHistory(MatchHistoryGame game) {
+    final controller = MatchHistoryController(
+      api: widget.historyApi,
+      game: game,
+    );
     return Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => MatchHistoryPage(controller: controller),
@@ -203,16 +207,6 @@ final class _HomePageState extends State<HomePage> {
                     '你好，${widget.nickname}',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
-                  SizedBox(height: GameboxTokens.spacing.page),
-                  Semantics(
-                    key: const Key('open-match-history'),
-                    identifier: 'open-match-history',
-                    child: OutlinedButton.icon(
-                      onPressed: _openHistory,
-                      icon: const Icon(Icons.history),
-                      label: const Text('我的战绩'),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -251,6 +245,7 @@ final class _HomePageState extends State<HomePage> {
       onChoose: _chooseOpponent,
       onContinue: _continueMatch,
       onCancel: _cancelMatch,
+      onOpenHistory: () => _openHistory(MatchHistoryGame.gomoku),
     );
   }
 
@@ -278,6 +273,7 @@ final class _HomePageState extends State<HomePage> {
       onChoose: _chooseRpsOpponent,
       onContinue: _continueRpsMatch,
       onCancel: _cancelRpsMatch,
+      onOpenHistory: () => _openHistory(MatchHistoryGame.rps),
     );
   }
 }
@@ -318,6 +314,7 @@ final class _GomokuCard extends StatelessWidget {
     required this.onChoose,
     required this.onContinue,
     required this.onCancel,
+    required this.onOpenHistory,
   });
 
   final GomokuStatus status;
@@ -326,6 +323,7 @@ final class _GomokuCard extends StatelessWidget {
   final VoidCallback onChoose;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
+  final VoidCallback onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -361,13 +359,17 @@ final class _GomokuCard extends StatelessWidget {
             ),
             SizedBox(height: GameboxTokens.spacing.page),
             switch (status) {
-              GomokuIdleStatus _ => _ActionButton(
-                semanticKey: const Key('choose-opponent'),
-                semanticLabel: 'choose-opponent',
-                onPressed: isMutating ? null : onChoose,
-                label: '选择对手',
-                pendingLabel: '正在创建对局',
-                isPending: isMutating,
+              GomokuIdleStatus _ => _PrimaryAndHistoryActions(
+                game: MatchHistoryGame.gomoku,
+                onOpenHistory: onOpenHistory,
+                primary: _ActionButton(
+                  semanticKey: const Key('choose-opponent'),
+                  semanticLabel: 'choose-opponent',
+                  onPressed: isMutating ? null : onChoose,
+                  label: '选择对手',
+                  pendingLabel: '正在创建对局',
+                  isPending: isMutating,
+                ),
               ),
               GomokuActiveStatus active => _ActiveMatchActions(
                 active: active,
@@ -375,6 +377,7 @@ final class _GomokuCard extends StatelessWidget {
                 isMutating: isMutating,
                 onContinue: onContinue,
                 onCancel: onCancel,
+                onOpenHistory: onOpenHistory,
               ),
             },
           ],
@@ -391,6 +394,7 @@ final class _ActiveMatchActions extends StatelessWidget {
     required this.isMutating,
     required this.onContinue,
     required this.onCancel,
+    required this.onOpenHistory,
   });
 
   final GomokuActiveStatus active;
@@ -398,6 +402,7 @@ final class _ActiveMatchActions extends StatelessWidget {
   final bool isMutating;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
+  final VoidCallback onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -409,13 +414,17 @@ final class _ActiveMatchActions extends StatelessWidget {
         Text('你的颜色：${match.color == GomokuColor.black ? '黑方' : '白方'}'),
         Text('当前步数：${match.revision}'),
         SizedBox(height: GameboxTokens.spacing.page),
-        _ActionButton(
-          semanticKey: const Key('continue-match'),
-          semanticLabel: 'continue-match',
-          onPressed: isMutating ? null : onContinue,
-          label: '继续对局',
-          pendingLabel: '正在启动对局',
-          isPending: isLaunching,
+        _PrimaryAndHistoryActions(
+          game: MatchHistoryGame.gomoku,
+          onOpenHistory: onOpenHistory,
+          primary: _ActionButton(
+            semanticKey: const Key('continue-match'),
+            semanticLabel: 'continue-match',
+            onPressed: isMutating ? null : onContinue,
+            label: '继续对局',
+            pendingLabel: '正在启动对局',
+            isPending: isLaunching,
+          ),
         ),
         if (match.revision == 0) ...[
           SizedBox(height: GameboxTokens.spacing.layout),
@@ -443,6 +452,7 @@ final class _RpsCard extends StatelessWidget {
     required this.onChoose,
     required this.onContinue,
     required this.onCancel,
+    required this.onOpenHistory,
   });
 
   final RpsStatus status;
@@ -451,6 +461,7 @@ final class _RpsCard extends StatelessWidget {
   final VoidCallback onChoose;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
+  final VoidCallback onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -475,13 +486,17 @@ final class _RpsCard extends StatelessWidget {
             ),
             SizedBox(height: GameboxTokens.spacing.page),
             switch (status) {
-              RpsIdleStatus _ => _ActionButton(
-                semanticKey: const Key('rps-choose-opponent'),
-                semanticLabel: 'rps-choose-opponent',
-                onPressed: isMutating ? null : onChoose,
-                label: '选择赛制和对手',
-                pendingLabel: '正在创建对局',
-                isPending: isMutating,
+              RpsIdleStatus _ => _PrimaryAndHistoryActions(
+                game: MatchHistoryGame.rps,
+                onOpenHistory: onOpenHistory,
+                primary: _ActionButton(
+                  semanticKey: const Key('rps-choose-opponent'),
+                  semanticLabel: 'rps-choose-opponent',
+                  onPressed: isMutating ? null : onChoose,
+                  label: '选择赛制和对手',
+                  pendingLabel: '正在创建对局',
+                  isPending: isMutating,
+                ),
               ),
               RpsActiveStatus(:final match) => Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -493,13 +508,17 @@ final class _RpsCard extends StatelessWidget {
                   ),
                   Text('当前轮次：第 ${match.revision ~/ 2 + 1} 轮'),
                   SizedBox(height: GameboxTokens.spacing.page),
-                  _ActionButton(
-                    semanticKey: const Key('rps-continue-match'),
-                    semanticLabel: 'rps-continue-match',
-                    onPressed: isMutating ? null : onContinue,
-                    label: '继续对局',
-                    pendingLabel: '正在启动对局',
-                    isPending: isLaunching,
+                  _PrimaryAndHistoryActions(
+                    game: MatchHistoryGame.rps,
+                    onOpenHistory: onOpenHistory,
+                    primary: _ActionButton(
+                      semanticKey: const Key('rps-continue-match'),
+                      semanticLabel: 'rps-continue-match',
+                      onPressed: isMutating ? null : onContinue,
+                      label: '继续对局',
+                      pendingLabel: '正在启动对局',
+                      isPending: isLaunching,
+                    ),
                   ),
                   if (match.revision == 0) ...[
                     SizedBox(height: GameboxTokens.spacing.layout),
@@ -514,6 +533,50 @@ final class _RpsCard extends StatelessWidget {
             },
           ],
         ),
+      ),
+    );
+  }
+}
+
+final class _PrimaryAndHistoryActions extends StatelessWidget {
+  const _PrimaryAndHistoryActions({
+    required this.game,
+    required this.primary,
+    required this.onOpenHistory,
+  });
+
+  final MatchHistoryGame game;
+  final Widget primary;
+  final VoidCallback onOpenHistory;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: primary),
+        SizedBox(width: GameboxTokens.spacing.layout),
+        _HistoryButton(game: game, onPressed: onOpenHistory),
+      ],
+    );
+  }
+}
+
+final class _HistoryButton extends StatelessWidget {
+  const _HistoryButton({required this.game, required this.onPressed});
+
+  final MatchHistoryGame game;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final identifier = 'open-${game.id}-history';
+    return Semantics(
+      key: Key(identifier),
+      identifier: identifier,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.history),
+        label: const Text('战绩'),
       ),
     );
   }
