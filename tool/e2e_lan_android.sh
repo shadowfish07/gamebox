@@ -171,12 +171,18 @@ parse_forward_port() {
 
 scan_artifacts() {
   local directory="$1"
+  local scan_status
   [[ -d "$directory" ]] || return 1
-  if LC_ALL=C rg -a -i -n \
-    'gamebox-lan://[^[:space:]]*\?(.*(key|roomKey|launchTicket|resumeToken|accessToken|refreshToken)=)|\b[A-Za-z0-9_-]{43}\b|"(roomKey|launchTicket|resumeToken|accessToken|refreshToken)"' \
+  if LC_ALL=C grep -E -a -i -n -r -- \
+    'gamebox-lan://[^[:space:]]*\?(.*(key|roomKey|launchTicket|resumeToken|accessToken|refreshToken)=)|(^|[^A-Za-z0-9_-])[A-Za-z0-9_-]{43}([^A-Za-z0-9_-]|$)|"(roomKey|launchTicket|resumeToken|accessToken|refreshToken)"' \
     "$directory" >/dev/null 2>&1; then
     return 1
+  else
+    scan_status=$?
   fi
+  ((scan_status == 1)) && return 0
+  printf 'Artifact credential scan failed with exit %s.\n' "$scan_status" >&2
+  return "$scan_status"
 }
 
 extract_json_stream() {
@@ -246,7 +252,9 @@ run_self_test() {
   printf '{"status":"passed","roomId":"11111111-1111-4111-8111-111111111111"}\n' >"$safe/summary.json"
   scan_artifacts "$safe"
   printf 'resumeToken=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' >"$unsafe/log.txt"
-  if scan_artifacts "$unsafe"; then return 1; fi
+  local unsafe_scan_status=0
+  scan_artifacts "$unsafe" || unsafe_scan_status=$?
+  [[ "$unsafe_scan_status" == 1 ]]
   printf ' {"value":"escaped \\" brace }","nested":[1,{"ok":true}]}transport-noise' \
     | extract_json_stream 128 "$TEMP_DIR/extracted.json"
   jq -e '.nested[1].ok == true' "$TEMP_DIR/extracted.json" >/dev/null
