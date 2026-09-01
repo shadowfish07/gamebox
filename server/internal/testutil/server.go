@@ -232,7 +232,7 @@ func (server *Server) CreateInvites(ctx context.Context, count int) (_ []string,
 	createdAt := server.Clock.Now().UTC().UnixMilli()
 	invites := make([]string, 0, count)
 	for range count {
-		plaintext, tokenErr := auth.RandomToken(32)
+		plaintext, tokenErr := auth.RandomInviteCode()
 		if tokenErr != nil {
 			return nil, errors.New("create invites failed")
 		}

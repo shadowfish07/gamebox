@@ -119,7 +119,7 @@ curl --fail http://127.0.0.1:8080/healthz
   --count 2 --db "$GAMEBOX_DB_PATH" --json)
 ```
 
-每个明文邀请码只显示一次。批量创建是原子操作，`--count` 必须介于 1 和 1000 之间。
+每个邀请码由 6 位大写字母或数字组成，明文只显示一次。批量创建是原子操作，`--count` 必须介于 1 和 1000 之间。
 使用完成后可执行 `kill "$gamebox_server_pid"; wait "$gamebox_server_pid"; trap - EXIT INT TERM` 停止本地服务并清理退出 trap。
 
 ### 3. 构建或运行 Android 应用

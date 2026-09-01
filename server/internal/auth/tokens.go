@@ -8,9 +8,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math/big"
 )
 
-const maximumRandomTokenBytes = 1024
+const (
+	maximumRandomTokenBytes = 1024
+	inviteCodeLength        = 6
+	inviteCodeAlphabet      = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+)
 
 const refreshTokenHashDomain = "gamebox/refresh-token-hash/v1"
 
@@ -36,6 +41,29 @@ func randomToken(byteCount int, entropy io.Reader) (string, error) {
 		return "", ErrTokenGeneration
 	}
 	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+// RandomInviteCode returns a six-character code made from upper-case ASCII
+// letters and digits. It is intentionally shorter than session credentials so
+// people can enter it by hand; invite codes remain one-time credentials.
+func RandomInviteCode() (string, error) {
+	return randomInviteCode(rand.Reader)
+}
+
+func randomInviteCode(entropy io.Reader) (string, error) {
+	if entropy == nil {
+		return "", ErrTokenGeneration
+	}
+	alphabetSize := big.NewInt(int64(len(inviteCodeAlphabet)))
+	code := make([]byte, inviteCodeLength)
+	for index := range code {
+		alphabetIndex, err := rand.Int(entropy, alphabetSize)
+		if err != nil {
+			return "", ErrTokenGeneration
+		}
+		code[index] = inviteCodeAlphabet[alphabetIndex.Int64()]
+	}
+	return string(code), nil
 }
 
 // HashToken returns a lower-case hexadecimal SHA-256 digest. Length prefixes

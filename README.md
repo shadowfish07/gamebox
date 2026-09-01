@@ -119,7 +119,7 @@ The exports from step 1 remain active in this shell, so the invite command uses 
   --count 2 --db "$GAMEBOX_DB_PATH" --json)
 ```
 
-Each plaintext invite is shown only once. A batch is atomic, and `--count` must be between 1 and 1000.
+Each invite is a six-character upper-case letter/digit code and is shown only once. A batch is atomic, and `--count` must be between 1 and 1000.
 Stop the local service when finished with `kill "$gamebox_server_pid"; wait "$gamebox_server_pid"; trap - EXIT INT TERM`.
 
 ### 3. Build or run the Android app

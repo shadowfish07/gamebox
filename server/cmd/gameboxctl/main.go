@@ -28,7 +28,6 @@ const (
 	exitUsage   = 2
 
 	maximumInviteCount = 1000
-	inviteEntropyBytes = 32
 	minimumPepperBytes = 32
 
 	rootUsage    = "usage: gameboxctl <invite create|match show> [options]"
@@ -40,13 +39,13 @@ const (
 )
 
 type commandDeps struct {
-	lookupEnv   func(string) (string, bool)
-	now         func() time.Time
-	randomToken func(int) (string, error)
+	lookupEnv        func(string) (string, bool)
+	now              func() time.Time
+	randomInviteCode func() (string, error)
 }
 
 func defaultCommandDeps() commandDeps {
-	return commandDeps{lookupEnv: os.LookupEnv, now: time.Now, randomToken: auth.RandomToken}
+	return commandDeps{lookupEnv: os.LookupEnv, now: time.Now, randomInviteCode: auth.RandomInviteCode}
 }
 
 func main() {
@@ -91,7 +90,7 @@ func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Write
 		writeLine(stderr, inviteUsage)
 		return exitUsage
 	}
-	if ctx == nil || deps.lookupEnv == nil || deps.now == nil || deps.randomToken == nil {
+	if ctx == nil || deps.lookupEnv == nil || deps.now == nil || deps.randomInviteCode == nil {
 		writeLine(stderr, inviteFailed)
 		return exitFailure
 	}
@@ -106,7 +105,7 @@ func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Write
 	seenPlaintexts := make(map[string]struct{}, options.count)
 	seenDigests := make(map[string]struct{}, options.count)
 	for range options.count {
-		plaintext, err := deps.randomToken(inviteEntropyBytes)
+		plaintext, err := deps.randomInviteCode()
 		if err != nil || plaintext == "" {
 			writeLine(stderr, inviteFailed)
 			return exitFailure

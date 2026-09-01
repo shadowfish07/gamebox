@@ -630,6 +630,19 @@ func TestRegisterServiceRejectsInvalidDependenciesAndPepper(t *testing.T) {
 }
 
 func TestRegisterTokenPrimitivesUseSafeUnambiguousRepresentations(t *testing.T) {
+	invite, err := randomInviteCode(bytes.NewReader([]byte{0, 1, 2, 25, 26, 35}))
+	if err != nil || invite != "ABCZ09" {
+		t.Fatalf("randomInviteCode = (%q, %v), want ABCZ09", invite, err)
+	}
+	generatedInvite, err := RandomInviteCode()
+	validInvite := err == nil && len(generatedInvite) == inviteCodeLength
+	for index := 0; validInvite && index < len(generatedInvite); index++ {
+		validInvite = strings.ContainsRune(inviteCodeAlphabet, rune(generatedInvite[index]))
+	}
+	if !validInvite {
+		t.Fatalf("RandomInviteCode returned invalid six-character code: generated=%q err=%v", generatedInvite, err)
+	}
+
 	token, err := RandomToken(32)
 	if err != nil {
 		t.Fatalf("RandomToken returned error: %v", err)
@@ -707,6 +720,11 @@ func (failingEntropyReader) Read([]byte) (int, error) {
 }
 
 func TestRegisterTokenGenerationFailureUsesFixedError(t *testing.T) {
+	invite, inviteErr := randomInviteCode(failingEntropyReader{})
+	if invite != "" || !errors.Is(inviteErr, ErrTokenGeneration) || inviteErr.Error() != ErrTokenGeneration.Error() {
+		t.Fatalf("randomInviteCode failure = (%q, %v), want no code and fixed ErrTokenGeneration", invite, inviteErr)
+	}
+
 	token, err := randomToken(32, failingEntropyReader{})
 	if token != "" || !errors.Is(err, ErrTokenGeneration) || err.Error() != ErrTokenGeneration.Error() {
 		t.Fatalf("randomToken failure = (%q, %v), want no token and fixed ErrTokenGeneration", token, err)

@@ -30,14 +30,14 @@ const (
 func TestInviteCreateWritesOnlyDistinctDigestsAndOneJSONDocument(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 	now := time.Date(2026, time.August, 20, 3, 4, 5, 678900000, time.FixedZone("fixture", 8*60*60))
-	plaintexts := []string{"invite-alpha", "invite-beta"}
+	plaintexts := []string{"ABC123", "XYZ789"}
 	next := 0
 	deps := commandDeps{
 		lookupEnv: pepperLookup(testPepper),
 		now:       func() time.Time { return now },
-		randomToken: func(byteCount int) (string, error) {
-			if byteCount != 32 || next >= len(plaintexts) {
-				t.Fatalf("RandomToken byteCount/call = %d/%d", byteCount, next)
+		randomInviteCode: func() (string, error) {
+			if next >= len(plaintexts) {
+				t.Fatalf("RandomInviteCode call = %d", next)
 			}
 			value := plaintexts[next]
 			next++
@@ -49,7 +49,7 @@ func TestInviteCreateWritesOnlyDistinctDigestsAndOneJSONDocument(t *testing.T) {
 	if code != exitOK || stderr.Len() != 0 {
 		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "{\"invites\":[\"invite-alpha\",\"invite-beta\"]}\n"; got != want {
+	if got, want := stdout.String(), "{\"invites\":[\"ABC123\",\"XYZ789\"]}\n"; got != want {
 		t.Fatalf("stdout=%q want=%q", got, want)
 	}
 	if next != 2 {
@@ -128,7 +128,7 @@ func TestInviteCreateRejectsBoundsAndStrictSyntaxBeforeOpeningDatabase(t *testin
 			}
 			var stdout, stderr bytes.Buffer
 			code := run(context.Background(), args, &stdout, &stderr, commandDeps{
-				lookupEnv: pepperLookup(testPepper), now: time.Now, randomToken: auth.RandomToken,
+				lookupEnv: pepperLookup(testPepper), now: time.Now, randomInviteCode: auth.RandomInviteCode,
 			})
 			if code != exitUsage || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "usage: gameboxctl ") {
 				t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
@@ -146,7 +146,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
 			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomToken: func(int) (string, error) { return "", errors.New("entropy-secret-detail") },
+			randomInviteCode: func() (string, error) { return "", errors.New("entropy-secret-detail") },
 		})
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" || strings.Contains(stderr.String(), "entropy-secret-detail") {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
@@ -161,7 +161,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
 			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomToken: func(int) (string, error) { return "same-invite", nil },
+			randomInviteCode: func() (string, error) { return "ABC123", nil },
 		})
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
@@ -177,7 +177,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 	t.Run("existing digest collision rolls back earlier insert", func(t *testing.T) {
 		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 		database := openDatabase(t, databasePath)
-		existingHash, err := auth.HashToken(testPepper, "existing-invite")
+		existingHash, err := auth.HashToken(testPepper, "OLD123")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,12 +187,12 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
-		generated := []string{"fresh-invite", "existing-invite"}
+		generated := []string{"NEW123", "OLD123"}
 		var calls int
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
 			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomToken: func(int) (string, error) {
+			randomInviteCode: func() (string, error) {
 				value := generated[calls]
 				calls++
 				return value, nil
@@ -207,7 +207,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("invite count=%d err=%v", count, err)
 		}
-		freshHash, err := auth.HashToken(testPepper, "fresh-invite")
+		freshHash, err := auth.HashToken(testPepper, "NEW123")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "1", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
-			lookupEnv: func(string) (string, bool) { return "", false }, now: time.Now, randomToken: auth.RandomToken,
+			lookupEnv: func(string) (string, bool) { return "", false }, now: time.Now, randomInviteCode: auth.RandomInviteCode,
 		})
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
