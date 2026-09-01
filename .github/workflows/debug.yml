@@ -9,6 +9,7 @@ on:
       - 'game_runtime/**'
       - 'tool/**'
       - '.github/workflows/debug.yml'
+      - '.github/workflows/debug-pr-comment.yml'
   pull_request:
     types:
       - opened
@@ -18,6 +19,7 @@ on:
       - 'game_runtime/**'
       - 'tool/**'
       - '.github/workflows/debug.yml'
+      - '.github/workflows/debug-pr-comment.yml'
   workflow_dispatch:
     inputs:
       api_base_url:
