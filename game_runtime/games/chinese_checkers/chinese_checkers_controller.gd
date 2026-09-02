@@ -255,11 +255,18 @@ func _on_event_received(envelope: Dictionary) -> void:
 	if _state == null:
 		return
 	var applied: Dictionary = _state.apply_event(envelope)
+	var accepted_path: Array = []
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
+	elif applied.get("status") == "applied" and envelope.get("type") == "chinese_checkers.move.accepted":
+		var payload: Variant = envelope.get("payload")
+		if payload is Dictionary and payload.get("path") is Array:
+			accepted_path = payload["path"].duplicate()
 	_clear_selection()
 	_refresh_ui()
+	if not accepted_path.is_empty():
+		$Board.play_move_animation(accepted_path)
 
 
 func _on_player_presence_changed(_user_id: String, _online: bool) -> void:

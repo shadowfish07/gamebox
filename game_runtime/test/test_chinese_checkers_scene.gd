@@ -12,6 +12,7 @@ static func cases() -> Array:
 	return [
 		{"name": "chinese checkers scene uses the direct lightweight board shell", "run": _uses_direct_lightweight_shell},
 		{"name": "chinese checkers scene submits a highlighted endpoint without confirmation", "run": _submits_direct_endpoint},
+		{"name": "chinese checkers scene animates the authoritative accepted path", "run": _animates_accepted_path},
 		{"name": "chinese checkers scene preserves and locks the board during reconnect", "run": _locks_during_reconnect},
 		{"name": "chinese checkers Back returns without resigning", "run": _back_is_non_destructive},
 		{"name": "chinese checkers scene presents an authoritative result", "run": _presents_authoritative_result},
@@ -50,6 +51,21 @@ static func _submits_direct_endpoint() -> bool:
 		and _check(board.stone_at(6) == 1 and board.stone_at(14) == 0, "pending UI changed the authoritative board") \
 		and _check(board.mouse_filter == Control.MOUSE_FILTER_IGNORE, "pending board still accepts input") \
 		and _check(not scene.has_node("MoveConfirmation"), "endpoint unexpectedly opened confirmation")
+	return _cleanup(scene, result)
+
+
+static func _animates_accepted_path() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_snapshot(0))
+	scene._on_hole_pressed(3)
+	scene._on_hole_pressed(16)
+	client.accept_event(_move(1, BLACK_ID, "black", [3, 16]))
+	var board = scene.get_node("Board")
+	var result := _check(board.stone_at(3) == 0 and board.stone_at(16) == 1, "accepted board was not applied") \
+		and _check(board.pending_path.is_empty(), "pending path remained after authority accepted the move") \
+		and _check(board.move_animation_path == [3, 16], "controller did not animate the accepted path")
 	return _cleanup(scene, result)
 
 
@@ -133,6 +149,14 @@ static func _snapshot(
 	}
 
 
+static func _move(revision: int, user_id: String, color: String, path: Array) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID,
+		"revision": revision, "type": "chinese_checkers.move.accepted", "actionId": ACTION_ID,
+		"payload": {"path": path.duplicate(), "color": color, "userId": user_id},
+	}
+
+
 static func _initial_board() -> Array:
 	var board: Array = []
 	board.resize(121)
@@ -212,3 +236,6 @@ class FakeMatchClient:
 		connection_state = "connected"
 		connection_state_changed.emit(connection_state)
 		snapshot_received.emit(envelope)
+
+	func accept_event(envelope: Dictionary) -> void:
+		event_received.emit(envelope)

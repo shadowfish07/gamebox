@@ -11,6 +11,7 @@ static func cases() -> Array:
 		{"name": "chinese checkers board maps all 121 star holes", "run": _maps_star_holes},
 		{"name": "chinese checkers board rotates the local camp to the bottom", "run": _rotates_local_camp},
 		{"name": "chinese checkers board keeps targets and pending path separate", "run": _keeps_interaction_layers},
+		{"name": "chinese checkers board animates an accepted path hop by hop", "run": _animates_accepted_path},
 		{"name": "chinese checkers board uses generated semantic game tokens", "run": _uses_game_tokens},
 	]
 
@@ -53,6 +54,37 @@ static func _keeps_interaction_layers() -> bool:
 	var invalid := board.present(cells, "black", 6, {14: [6, 15]}, [], true)
 	board.free()
 	return _check(not invalid, "mismatched target path accepted")
+
+
+static func _animates_accepted_path() -> bool:
+	var board = ChineseCheckersBoard.new()
+	var cells: Array = []
+	cells.resize(121)
+	cells.fill(0)
+	for index in [0, 1, 2, 3, 4, 5, 7, 8, 9, 79]:
+		cells[index] = 1
+	for index in [23, 24, 25, 26, 27, 28, 29, 30, 57, 68]:
+		cells[index] = 2
+	var root := Engine.get_main_loop().root as Window
+	root.add_child(board)
+	board.size = BOARD_RECT.size
+	if not _check(board.present(cells, "black", -1, {}, [], true), "accepted board rejected") \
+		or not _check(board.play_move_animation([56, 58, 79]), "accepted path animation rejected"):
+		board.free()
+		return false
+	var start := ChineseCheckersBoard.hole_to_pixel(56, board.board_rect(), "black")
+	var first_landing := ChineseCheckersBoard.hole_to_pixel(58, board.board_rect(), "black")
+	var first_apex: Vector2 = board.animation_piece_position(0.25)
+	var result := _check(board.move_animation_path == [56, 58, 79], "animation did not retain the authoritative path") \
+		and _check(board.stone_at(56) == 0 and board.stone_at(79) == 1, "animation changed the authoritative board") \
+		and _check(board.mouse_filter == Control.MOUSE_FILTER_IGNORE, "board accepted input during the move animation") \
+		and _check(is_equal_approx(first_apex.x, start.lerp(first_landing, 0.5).x), "piece skipped the first accepted segment") \
+		and _check(first_apex.y < start.lerp(first_landing, 0.5).y, "piece did not lift during its hop")
+	board._process(1.0)
+	result = result and _check(board.move_animation_path.is_empty(), "move animation did not finish") \
+		and _check(board.mouse_filter == Control.MOUSE_FILTER_STOP, "board interaction was not restored after animation")
+	board.free()
+	return result
 
 
 static func _uses_game_tokens() -> bool:
