@@ -158,11 +158,15 @@ static func _queues_consecutive_accepted_paths() -> bool:
 	client.accept_event(_move(2, WHITE_ID, "white", [114, 106]))
 	result = result \
 		and _check(board.move_animation_path == [3, 16], "second accepted path replaced the in-flight animation") \
-		and _check(board.stone_at(16) == 1 and board.stone_at(114) == 2, "queued event changed the visible in-flight board")
+		and _check(board.stone_at(16) == 1 and board.stone_at(114) == 2, "queued event changed the visible in-flight board") \
+		and _check((scene.get_node("PlayerStrip/Content/Turn") as Label).text == "等待中", "queued event advanced the turn chip before its board") \
+		and _check((scene.get_node("PlayerStrip/Content/Opponent") as PanelContainer).theme_type_variation == &"GameboxTurnPlayerActiveOpponent", "queued event advanced player emphasis before its board")
 	board._process(1.0)
 	result = result \
 		and _check(board.move_animation_path == [114, 106], "second accepted path did not start after the first") \
-		and _check(board.stone_at(114) == 0 and board.stone_at(106) == 2, "queued animation did not use its authoritative board")
+		and _check(board.stone_at(114) == 0 and board.stone_at(106) == 2, "queued animation did not use its authoritative board") \
+		and _check((scene.get_node("PlayerStrip/Content/Turn") as Label).text == "轮到你", "queued turn chip did not advance with its board") \
+		and _check((scene.get_node("PlayerStrip/Content/Me") as PanelContainer).theme_type_variation == &"GameboxTurnPlayerActiveLocal", "queued player emphasis did not advance with its board")
 	board._process(1.0)
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	result = result \

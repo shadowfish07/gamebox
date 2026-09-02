@@ -122,9 +122,9 @@ func _show_accepted(scene: Control, client: PreviewClient, winning: bool, queued
 			return
 		client.event_received.emit(next_accepted)
 	var board := scene.get_node("Board")
-	board.set_process(false)
-	board._process(0.1)
-	board.set_process(false)
+	if not _screenshot_path.is_empty():
+		board.set_process(false)
+		board._process(0.1)
 
 
 func _capture_screenshot() -> void:

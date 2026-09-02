@@ -50,6 +50,7 @@ var _presented_result_signature := ""
 var _last_presented_move_revision := -1
 var _defer_result_until_move_animation := false
 var _queued_move_animations: Array = []
+var _move_presentation := {}
 var _logged_state_signature := ""
 var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
@@ -253,6 +254,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_resign_submitted = false
 		_last_presented_move_revision = maxi(_last_presented_move_revision, _state.revision)
 		_queued_move_animations.clear()
+		_move_presentation.clear()
 		_defer_result_until_move_animation = false
 		_clear_selection()
 	_refresh_ui()
@@ -278,13 +280,18 @@ func _on_event_received(envelope: Dictionary) -> void:
 				accepted_path = payload["path"].duplicate()
 				_defer_result_until_move_animation = _state.status in TERMINAL_STATUSES
 				preserve_board_animation = not $Board.move_animation_path.is_empty()
-				if preserve_board_animation:
-					_queued_move_animations.append({
-						"board": _state.board,
-						"local_color": _local_color(),
-						"path": accepted_path,
-					})
 	_clear_selection()
+	if not accepted_path.is_empty():
+		var presentation := _current_move_presentation()
+		if preserve_board_animation:
+			_queued_move_animations.append({
+				"board": _state.board,
+				"local_color": _local_color(),
+				"path": accepted_path,
+				"presentation": presentation,
+			})
+		else:
+			_move_presentation = presentation
 	_refresh_ui(preserve_board_animation)
 	if not accepted_path.is_empty() and not preserve_board_animation \
 		and not $Board.play_move_animation(accepted_path):
@@ -295,9 +302,12 @@ func _on_event_received(envelope: Dictionary) -> void:
 func _on_move_animation_finished() -> void:
 	while not _queued_move_animations.is_empty():
 		var queued: Dictionary = _queued_move_animations.pop_front()
+		_move_presentation = queued["presentation"]
 		if $Board.present(queued["board"], queued["local_color"], -1, {}, [], false) \
 			and $Board.play_move_animation(queued["path"]):
+			_refresh_ui(true)
 			return
+	_move_presentation.clear()
 	if _state == null:
 		return
 	_defer_result_until_move_animation = false
@@ -326,7 +336,9 @@ func _on_return_to_lobby_requested(code: String) -> void:
 
 func _refresh_ui(preserve_board_animation: bool = false) -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
-	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
+	var presentation: Dictionary = _move_presentation if not _move_presentation.is_empty() \
+		else _current_move_presentation() if has_state else {}
+	var terminal := bool(presentation.get("terminal", false))
 	var pending_path: Array = []
 	if has_state and _state.pending_action.get("type") == "chinese_checkers.move.requested":
 		pending_path = _state.pending_action.get("path", []).duplicate()
@@ -337,10 +349,12 @@ func _refresh_ui(preserve_board_animation: bool = false) -> void:
 		if _target_paths.is_empty():
 			_clear_selection()
 	var display_board: Array = _state.board if has_state else _initial_board()
-	var local_color := _local_color() if has_state else "white"
+	var local_color := str(presentation.get("local_color", "white"))
+	preserve_board_animation = preserve_board_animation or (
+		not _move_presentation.is_empty() and not $Board.move_animation_path.is_empty())
 	if not preserve_board_animation:
 		$Board.present(display_board, local_color if not local_color.is_empty() else "white", _selected_hole, _target_paths, pending_path, _can_interact())
-	$TopNavigation.set_subtitle(_status_text() if has_state else _connection_text())
+	$TopNavigation.set_subtitle(str(presentation.get("status_text", "")) if has_state else _connection_text())
 	$TopNavigation.set_subtitle_visible(has_state and not terminal and not _force_return and _connection_state == "connected" and not _awaiting_snapshot)
 	$TopNavigation.set_action_visible(not terminal and not _force_return)
 	$TopNavigation.set_menu_item_disabled("resign", not _can_offer_resign())
@@ -348,15 +362,15 @@ func _refresh_ui(preserve_board_animation: bool = false) -> void:
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
 	$PlayerStrip.visible = has_state and not $ConnectionLabel.visible
 	if has_state:
-		var active_local: bool = not terminal and (not _state.pending_action.is_empty() or local_color == _state.next_color)
-		var active_opponent: bool = not terminal and _state.pending_action.is_empty() and local_color != _state.next_color
-		var local_status := "确认中" if not _state.pending_action.is_empty() else "正在行动" if active_local else "先手" if local_color == "black" else "后手"
-		var opponent_color := "white" if local_color == "black" else "black"
-		var opponent_status := "正在行动" if active_opponent else _opponent_presence_text()
+		var active_local := bool(presentation["active_local"])
+		var active_opponent := bool(presentation["active_opponent"])
+		var local_status := str(presentation["local_status"])
+		var opponent_color := str(presentation["opponent_color"])
+		var opponent_status := str(presentation["opponent_status"])
 		_present_player_card($PlayerStrip/Content/Me, local_color, local_status, &"GameboxTurnPlayerActiveLocal" if active_local else &"GameboxTurnPlayerInactive")
 		_present_player_card($PlayerStrip/Content/Opponent, opponent_color, opponent_status, &"GameboxTurnPlayerActiveOpponent" if active_opponent else &"GameboxTurnPlayerInactive")
-		$PlayerStrip/Content/Turn.text = _turn_chip_text()
-	$HintLabel.text = _hint_text() if has_state else "连接后即可开始"
+		$PlayerStrip/Content/Turn.text = str(presentation["turn_text"])
+	$HintLabel.text = str(presentation.get("hint_text", "连接后即可开始"))
 	if terminal:
 		$ResignDialog.close()
 		if _defer_result_until_move_animation:
@@ -376,6 +390,25 @@ func _refresh_ui(preserve_board_animation: bool = false) -> void:
 		$ResultScrim.visible = false
 		$ResultPill.visible = false
 	_log_runtime_state()
+
+
+func _current_move_presentation() -> Dictionary:
+	var terminal: bool = _state.status in TERMINAL_STATUSES
+	var local_color := _local_color()
+	var active_local: bool = not terminal and (not _state.pending_action.is_empty() or local_color == _state.next_color)
+	var active_opponent: bool = not terminal and _state.pending_action.is_empty() and local_color != _state.next_color
+	return {
+		"terminal": terminal,
+		"status_text": _status_text(),
+		"local_color": local_color,
+		"active_local": active_local,
+		"active_opponent": active_opponent,
+		"local_status": "确认中" if not _state.pending_action.is_empty() else "正在行动" if active_local else "先手" if local_color == "black" else "后手",
+		"opponent_color": "white" if local_color == "black" else "black",
+		"opponent_status": "正在行动" if active_opponent else _opponent_presence_text(),
+		"turn_text": _turn_chip_text(),
+		"hint_text": _hint_text(),
+	}
 
 
 func _present_result() -> void:
