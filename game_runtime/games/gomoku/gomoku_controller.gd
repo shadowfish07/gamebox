@@ -66,6 +66,7 @@ var _last_go_back_time_ms := -100000
 var _go_back_debounce_ms := GO_BACK_DEBOUNCE_MS
 var _reviewing_result := false
 var _presented_result_signature := ""
+var _last_sounded_move_revision := -1
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -363,6 +364,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_resign_submitted = false
 		_awaiting_snapshot = false
 		_last_move = INVALID_CELL
+		_last_sounded_move_revision = maxi(_last_sounded_move_revision, _state.revision)
 	_refresh_ui()
 
 
@@ -374,10 +376,15 @@ func _on_event_received(envelope: Dictionary) -> void:
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
-	elif envelope.get("type") == "gomoku.move.accepted":
+	elif envelope.get("type") == "gomoku.move.accepted" \
+		and applied.get("status") in ["applied", "ignored"]:
 		var payload: Dictionary = envelope.get("payload", {})
 		if typeof(payload.get("x")) == TYPE_INT and typeof(payload.get("y")) == TYPE_INT:
 			_last_move = Vector2i(payload["x"], payload["y"])
+		var revision: Variant = envelope.get("revision")
+		if typeof(revision) == TYPE_INT and revision > _last_sounded_move_revision:
+			_last_sounded_move_revision = revision
+			$MoveSound.play()
 	_refresh_ui()
 
 

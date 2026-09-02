@@ -42,6 +42,7 @@ static func cases() -> Array:
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
 		{"name": "gomoku ready marker waits for one drawn frame and cancels safely", "run": _waits_for_drawn_frame_marker},
 		{"name": "gomoku scene disposes client and callbacks once", "run": _disposes_once},
+		{"name": "gomoku scene plays confirmed move sound for either player", "run": _plays_confirmed_move_sound_for_either_player},
 	]
 
 
@@ -567,6 +568,28 @@ static func _wires_move_once() -> bool:
 		and _check(board.pending_cell == Vector2i(-1, -1), "accepted event did not clear pending marker") \
 		and _check(board.last_move_cell == Vector2i(7, 7), "accepted event did not mark last move")
 	return _cleanup(scene, result)
+
+
+static func _plays_confirmed_move_sound_for_either_player() -> bool:
+	for local_user_id in [BLACK_ID, WHITE_ID]:
+		var harness: Dictionary = await _scene_harness(local_user_id)
+		var scene: Control = harness["scene"]
+		var client: FakeMatchClient = harness["client"]
+		var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
+		if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
+			return _cleanup(scene)
+		client.accept_snapshot(_snapshot(0))
+		if not _check(not sound.playing, "authoritative snapshot replayed move sound"):
+			return _cleanup(scene)
+		client.accept_event(_move(1, BLACK_ID, "black", 7, 7))
+		if not _check(sound.playing, "confirmed move was silent for local user %s" % local_user_id):
+			return _cleanup(scene)
+		sound.stop()
+		client.event_received.emit(_move(1, BLACK_ID, "black", 7, 7))
+		if not _check(not sound.playing, "duplicate confirmed move replayed its sound"):
+			return _cleanup(scene)
+		_cleanup(scene, true)
+	return true
 
 
 static func _uses_mobile_move_confirmation_surfaces() -> bool:

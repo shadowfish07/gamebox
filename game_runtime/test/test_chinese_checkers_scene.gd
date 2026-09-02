@@ -15,6 +15,7 @@ static func cases() -> Array:
 		{"name": "chinese checkers scene preserves and locks the board during reconnect", "run": _locks_during_reconnect},
 		{"name": "chinese checkers Back returns without resigning", "run": _back_is_non_destructive},
 		{"name": "chinese checkers scene presents an authoritative result", "run": _presents_authoritative_result},
+		{"name": "chinese checkers scene plays confirmed move sound for either player", "run": _plays_confirmed_move_sound_for_either_player},
 	]
 
 
@@ -97,6 +98,28 @@ static func _presents_authoritative_result() -> bool:
 	return _cleanup(scene, result)
 
 
+static func _plays_confirmed_move_sound_for_either_player() -> bool:
+	for local_user_id in [BLACK_ID, WHITE_ID]:
+		var harness: Dictionary = await _scene_harness(local_user_id)
+		var scene: Control = harness["scene"]
+		var client: FakeMatchClient = harness["client"]
+		var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
+		if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
+			return _cleanup(scene)
+		client.accept_snapshot(_snapshot(0))
+		if not _check(not sound.playing, "authoritative snapshot replayed move sound"):
+			return _cleanup(scene)
+		client.accept_event(_move(1, BLACK_ID, "black", [6, 14]))
+		if not _check(sound.playing, "confirmed move was silent for local user %s" % local_user_id):
+			return _cleanup(scene)
+		sound.stop()
+		client.event_received.emit(_move(1, BLACK_ID, "black", [6, 14]))
+		if not _check(not sound.playing, "duplicate confirmed move replayed its sound"):
+			return _cleanup(scene)
+		_cleanup(scene, true)
+	return true
+
+
 static func _scene_harness(local_user_id: String) -> Dictionary:
 	var scene := ChineseCheckersScene.instantiate() as Control
 	var client := FakeMatchClient.new()
@@ -130,6 +153,14 @@ static func _snapshot(
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": next_color,
 			"winnerUserId": winner, "result": result,
 		},
+	}
+
+
+static func _move(revision: int, user_id: String, color: String, path: Array) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID,
+		"revision": revision, "type": "chinese_checkers.move.accepted", "actionId": ACTION_ID,
+		"payload": {"userId": user_id, "color": color, "path": path.duplicate()},
 	}
 
 
@@ -212,3 +243,10 @@ class FakeMatchClient:
 		connection_state = "connected"
 		connection_state_changed.emit(connection_state)
 		snapshot_received.emit(envelope)
+
+	func accept_event(envelope: Dictionary) -> void:
+		var applied: Dictionary = state.apply_event(envelope)
+		if not applied.get("ok", false):
+			push_error("fake event invalid")
+			return
+		event_received.emit(envelope)

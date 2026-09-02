@@ -9,7 +9,7 @@ source "$ROOT_DIR/tool/lib/check_output.sh"
 
 godot_imported_asset_is_allowed() {
   local asset_path="$1"
-  [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.ctex$ ]]
+  [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.(ctex|oggvorbisstr)$ ]]
 }
 
 # The packaged Gamebox design system is required by the APK asset gate below.
@@ -127,6 +127,8 @@ verify_asset_path_fixtures() {
     assets/.godot/imported/runtime-texture.bin
     assets/.godot/imported/nested/runtime-texture.ctex
     assets/.godot/imported/clientSecretValue.ctex
+    assets/.godot/imported/nested/click_005.ogg-deadbeef.oggvorbisstr
+    assets/.godot/imported/clientSecretValue.ogg-deadbeef.oggvorbisstr
     assets/s_e_c_r_e_t/config.json
     assets/s_e_c_r_e_t_backup/config.json
     assets/t-o.k_e_n/data.json
@@ -173,6 +175,7 @@ verify_asset_path_fixtures() {
     assets/s_e_c/r_e_t/runtime.gd
     assets/t-o/k_e_n/runtime.gd
     assets/.godot/imported/runtime-texture.ctex
+    assets/.godot/imported/click_005.ogg-94443a2c5bdaadffa9458e93d03768aa.oggvorbisstr
     assets/clientSecretaryValue.json
     assets/tokenizerBackup.txt
     assets/credentialedConfig.json
@@ -354,6 +357,8 @@ verify_debug_apk() (
 	assets/games/chinese_checkers/chinese_checkers_controller.gd \
 	assets/games/chinese_checkers/chinese_checkers_scene.tscn \
 	assets/games/chinese_checkers/chinese_checkers_state.gd \
+	assets/games/shared/assets/click_005.ogg \
+	assets/games/shared/assets/click_005.ogg.import \
     assets/games/gomoku/gomoku_board.gd \
     assets/games/gomoku/gomoku_controller.gd \
     assets/games/gomoku/gomoku_preferences.gd \
@@ -378,6 +383,10 @@ verify_debug_apk() (
       exit 1
     }
   done
+  if ! grep -Eq '^assets/\.godot/imported/click_005\.ogg-[0-9a-f]{32}\.oggvorbisstr$' <<<"$apk_entries"; then
+    printf 'Debug APK is missing the imported confirmed-move audio stream\n' >&2
+    exit 1
+  fi
 
   rejected_assets=""
   while IFS= read -r asset_path; do

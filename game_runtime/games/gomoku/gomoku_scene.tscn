@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://games/gomoku/gomoku_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_board.gd" id="2_board"]
@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="8_result"]
 [ext_resource type="Script" path="res://games/gomoku/gomoku_switch_visual.gd" id="9_switch"]
 [ext_resource type="Shader" path="res://design_system/components/gamebox_result_scrim.gdshader" id="10_result_scrim"]
+[ext_resource type="AudioStream" path="res://games/shared/assets/click_005.ogg" id="11_move_sound"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_result_scrim"]
 shader = ExtResource("10_result_scrim")
@@ -31,6 +32,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="MoveSound" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("11_move_sound")
 
 [node name="TopNavigation" parent="." instance=ExtResource("3_top_bar")]
 offset_left = 48.0
