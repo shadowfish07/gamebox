@@ -105,6 +105,8 @@ func _capture_screenshot() -> void:
 	for _frame in 3:
 		await RenderingServer.frame_post_draw
 		await process_frame
+	RenderingServer.force_draw()
+	RenderingServer.force_sync()
 	var error := get_root().get_texture().get_image().save_png(_screenshot_path)
 	if error != OK:
 		push_error("Chinese Checkers preview screenshot failed: %s" % error_string(error))

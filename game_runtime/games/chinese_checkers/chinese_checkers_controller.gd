@@ -314,11 +314,11 @@ func _refresh_ui() -> void:
 	if has_state:
 		var active_local: bool = not terminal and (not _state.pending_action.is_empty() or local_color == _state.next_color)
 		var active_opponent: bool = not terminal and _state.pending_action.is_empty() and local_color != _state.next_color
-		var local_activity := "\n确认中" if not _state.pending_action.is_empty() else "\n正在行动" if active_local else ""
-		$PlayerStrip/Content/Me.text = "我 · %s%s" % ["先手" if local_color == "black" else "后手", local_activity]
-		$PlayerStrip/Content/Me.theme_type_variation = &"GameboxTurnPlayerActiveLocal" if active_local else &"GameboxTurnPlayerInactive"
-		$PlayerStrip/Content/Opponent.text = "%s · 对手%s" % [_opponent_presence_text(), "\n正在行动" if active_opponent else ""]
-		$PlayerStrip/Content/Opponent.theme_type_variation = &"GameboxTurnPlayerActiveOpponent" if active_opponent else &"GameboxTurnPlayerInactive"
+		var local_status := "确认中" if not _state.pending_action.is_empty() else "正在行动" if active_local else "先手" if local_color == "black" else "后手"
+		var opponent_color := "white" if local_color == "black" else "black"
+		var opponent_status := "正在行动" if active_opponent else _opponent_presence_text()
+		_present_player_card($PlayerStrip/Content/Me, local_color, local_status, &"GameboxTurnPlayerActiveLocal" if active_local else &"GameboxTurnPlayerInactive")
+		_present_player_card($PlayerStrip/Content/Opponent, opponent_color, opponent_status, &"GameboxTurnPlayerActiveOpponent" if active_opponent else &"GameboxTurnPlayerInactive")
 		$PlayerStrip/Content/Turn.text = _turn_chip_text()
 	$HintLabel.text = _hint_text() if has_state else "连接后即可开始"
 	if terminal:
@@ -425,6 +425,27 @@ func _opponent_presence_text() -> String:
 		or not _client.has_method("is_player_online") or not _client.has_player_presence(opponent_id):
 		return "状态未知"
 	return "在线" if _client.is_player_online(opponent_id) else "离线"
+
+
+func _present_player_card(card: PanelContainer, color: String, status: String, variation: StringName) -> void:
+	card.theme_type_variation = variation
+	var identity := card.get_node("Content/Identity/Name") as Label
+	var supporting := card.get_node("Content/Status") as Label
+	var piece := card.get_node("Content/Identity/Piece") as Label
+	var identity_variation := &"GameboxTurnPlayerIdentity"
+	var supporting_variation := &"GameboxTurnPlayerSupporting"
+	if variation == &"GameboxTurnPlayerActiveLocal":
+		identity_variation = &"GameboxTurnPlayerActiveLocalIdentity"
+		supporting_variation = &"GameboxTurnPlayerActiveLocalSupporting"
+	elif variation == &"GameboxTurnPlayerActiveOpponent":
+		identity_variation = &"GameboxTurnPlayerActiveOpponentIdentity"
+		supporting_variation = &"GameboxTurnPlayerActiveOpponentSupporting"
+	identity.theme_type_variation = identity_variation
+	supporting.theme_type_variation = supporting_variation
+	supporting.text = status
+	piece.add_theme_color_override("font_color", GameboxTokens.GAME["black_piece"] if color == "black" else GameboxTokens.GAME["white_piece"])
+	piece.add_theme_color_override("font_outline_color", GameboxTokens.GAME["white_piece_outline"])
+	piece.add_theme_constant_override("outline_size", GameboxTokens.SPACING["base"])
 
 
 func _status_text() -> String:

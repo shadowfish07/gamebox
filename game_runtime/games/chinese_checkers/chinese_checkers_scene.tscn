@@ -54,30 +54,70 @@ layout_mode = 2
 alignment = 1
 theme_type_variation = &"GameboxTurnPlayerRow"
 
-[node name="Me" type="Label" parent="PlayerStrip/Content"]
+[node name="Opponent" type="PanelContainer" parent="PlayerStrip/Content"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "我 · 先手"
-vertical_alignment = 1
-autowrap_mode = 2
 theme_type_variation = &"GameboxTurnPlayerInactive"
 
+[node name="Content" type="VBoxContainer" parent="PlayerStrip/Content/Opponent"]
+layout_mode = 2
+alignment = 1
+
+[node name="Identity" type="HBoxContainer" parent="PlayerStrip/Content/Opponent/Content"]
+layout_mode = 2
+theme_type_variation = &"GameboxTurnPlayerRow"
+
+[node name="Piece" type="Label" parent="PlayerStrip/Content/Opponent/Content/Identity"]
+layout_mode = 2
+text = "●"
+theme_type_variation = &"GameboxTurnPlayerIdentity"
+
+[node name="Name" type="Label" parent="PlayerStrip/Content/Opponent/Content/Identity"]
+layout_mode = 2
+text = "对手"
+theme_type_variation = &"GameboxTurnPlayerIdentity"
+
+[node name="Status" type="Label" parent="PlayerStrip/Content/Opponent/Content"]
+layout_mode = 2
+text = "在线"
+theme_type_variation = &"GameboxTurnPlayerSupporting"
+
 [node name="Turn" type="Label" parent="PlayerStrip/Content"]
-custom_minimum_size = Vector2(200, 64)
 layout_mode = 2
 text = "轮到你"
 horizontal_alignment = 1
 vertical_alignment = 1
 theme_type_variation = &"GameboxTurnStatus"
 
-[node name="Opponent" type="Label" parent="PlayerStrip/Content"]
+[node name="Me" type="PanelContainer" parent="PlayerStrip/Content"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "后手 · 对手"
-horizontal_alignment = 2
-vertical_alignment = 1
-autowrap_mode = 2
 theme_type_variation = &"GameboxTurnPlayerInactive"
+
+[node name="Content" type="VBoxContainer" parent="PlayerStrip/Content/Me"]
+layout_mode = 2
+alignment = 1
+
+[node name="Identity" type="HBoxContainer" parent="PlayerStrip/Content/Me/Content"]
+layout_mode = 2
+alignment = 2
+theme_type_variation = &"GameboxTurnPlayerRow"
+
+[node name="Piece" type="Label" parent="PlayerStrip/Content/Me/Content/Identity"]
+layout_mode = 2
+text = "●"
+theme_type_variation = &"GameboxTurnPlayerIdentity"
+
+[node name="Name" type="Label" parent="PlayerStrip/Content/Me/Content/Identity"]
+layout_mode = 2
+text = "我"
+theme_type_variation = &"GameboxTurnPlayerIdentity"
+
+[node name="Status" type="Label" parent="PlayerStrip/Content/Me/Content"]
+layout_mode = 2
+text = "正在行动"
+horizontal_alignment = 2
+theme_type_variation = &"GameboxTurnPlayerSupporting"
 
 [node name="Board" type="Control" parent="."]
 offset_left = 60.0

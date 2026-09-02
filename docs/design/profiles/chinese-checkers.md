@@ -31,7 +31,7 @@ gameThemeRoles: [board, grid, blackPiece, whitePiece, whitePieceOutline, pressed
 ## Connection, Navigation, and Results
 
 - 首次连接、同步和重连使用顶部紧凑状态条；已确认的棋盘始终保留可见，直到新快照到达前禁止走棋与认输。
-- 顶部玩家条显示本地先后手、当前轮次与对手在线状态。当前行动方必须通过玩家卡底色、配对前景色和“正在行动”文案同时突出：本地行动使用 `primaryContainer` / `onPrimaryContainer`，对手行动使用 `tertiaryContainer` / `onTertiaryContainer`，非行动方使用中性低强调样式。回合切换不使用持续动画，也不把对手回合画成错误或危险状态。
+- 顶部玩家条固定使用“对手 — 回合状态 — 我”的顺序，玩家身份前显示黑白棋子标记。玩家条本身不增加外围色块或描边；只有当前行动方显示带轻描边的玩家卡底色、配对前景色和“正在行动”文案：本地行动使用 `primaryContainer` / `onPrimaryContainer`，对手行动使用 `tertiaryContainer` / `onTertiaryContainer`，非行动方以第二行显示“在线”或本地先后手。回合切换不使用持续动画，也不把对手回合画成错误或危险状态。
 - 本地提交后的“确认中”继续突出本地玩家，但必须以独立文案区别于可操作回合；终局双方都恢复中性样式。重连期间隐藏玩家条，不沿用过期的回合强调或在线状态。
 - 可见返回键与 Android Back 都只返回大厅，不认输、不取消对局。
 - 认输仅位于右上角溢出菜单“认输并结束对局”，必须经过共享危险确认对话框。

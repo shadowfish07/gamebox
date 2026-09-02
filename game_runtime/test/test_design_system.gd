@@ -29,13 +29,20 @@ static func _maps_turn_ownership_surfaces() -> bool:
 	for dark_mode in [false, true]:
 		var colors: Dictionary = GameboxTokens.DARK if dark_mode else GameboxTokens.LIGHT
 		var theme := GameboxTheme.create(dark_mode)
-		var local_style := theme.get_stylebox("normal", "GameboxTurnPlayerActiveLocal") as StyleBoxFlat
-		var opponent_style := theme.get_stylebox("normal", "GameboxTurnPlayerActiveOpponent") as StyleBoxFlat
-		if not _check(local_style != null and local_style.bg_color == colors["primary_container"], "local turn container drifted") \
-			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveLocal") == colors["on_primary_container"], "local turn foreground is not paired") \
+		var strip_style := theme.get_stylebox("panel", "GameboxTurnPlayerStrip")
+		var local_style := theme.get_stylebox("panel", "GameboxTurnPlayerActiveLocal") as StyleBoxFlat
+		var opponent_style := theme.get_stylebox("panel", "GameboxTurnPlayerActiveOpponent") as StyleBoxFlat
+		if not _check(strip_style is StyleBoxEmpty, "player row introduced an outer tonal card") \
+			or not _check(local_style != null and local_style.bg_color == colors["primary_container"], "local turn container drifted") \
+			or not _check(local_style.border_width_left > 0 and local_style.border_color == colors["primary_fixed_dim"], "local active card lacks the approved subtle border") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveLocalIdentity") == colors["on_primary_container"], "local turn foreground is not paired") \
 			or not _check(opponent_style != null and opponent_style.bg_color == colors["tertiary_container"], "opponent turn container drifted") \
-			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveOpponent") == colors["on_tertiary_container"], "opponent turn foreground is not paired") \
-			or not _check(theme.get_color("font_color", "GameboxTurnPlayerInactive") == colors["on_surface_variant"], "inactive player did not use neutral emphasis"):
+			or not _check(opponent_style.border_width_left > 0 and opponent_style.border_color == colors["tertiary_fixed_dim"], "opponent active card lacks the approved subtle border") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveOpponentIdentity") == colors["on_tertiary_container"], "opponent turn foreground is not paired") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerIdentity") == colors["on_surface"], "inactive player identity lost its hierarchy") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerSupporting") == colors["on_surface_variant"], "inactive player supporting text did not use neutral emphasis") \
+			or not _check(theme.get_font_size("font_size", "GameboxTurnPlayerIdentity") == 28, "player identity typography drifted from the approved prototype") \
+			or not _check(theme.get_font_size("font_size", "GameboxTurnPlayerSupporting") == 24, "player supporting typography drifted from the approved prototype"):
 			return false
 	return true
 
