@@ -3,7 +3,7 @@ extends SceneTree
 # Development-only renderer for Chinese Checkers UX inspection. This script
 # mounts the production scene and injects deterministic, non-networked state.
 const CHINESE_CHECKERS_SCENE := preload("res://games/chinese_checkers/chinese_checkers_scene.tscn")
-const GAMEBOX_THEME := preload("res://design_system/gamebox_theme.gd")
+const CHINESE_CHECKERS_THEME := preload("res://games/chinese_checkers/chinese_checkers_theme.gd")
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
 const WHITE_ID := "33333333-3333-4333-8333-333333333333"
@@ -84,7 +84,7 @@ func _mount() -> void:
 	scene.set_quit_callback(func() -> void: pass)
 	get_root().add_child(scene)
 	if _theme_name != "system":
-		scene.theme = GAMEBOX_THEME.create(_theme_name == "dark")
+		scene.theme = CHINESE_CHECKERS_THEME.create(_theme_name == "dark")
 	if _state_name == "pending":
 		_show_pending.call_deferred(scene)
 	elif _state_name in ["accepted", "queued", "winning"]:

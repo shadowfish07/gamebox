@@ -3,6 +3,7 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const ChineseCheckersState = preload("res://games/chinese_checkers/chinese_checkers_state.gd")
+const ChineseCheckersTheme = preload("res://games/chinese_checkers/chinese_checkers_theme.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
@@ -89,7 +90,7 @@ func set_frame_ready_gate(gate: Variant) -> bool:
 
 func _ready() -> void:
 	var dark_theme := GameboxTheme.system_prefers_dark()
-	theme = GameboxTheme.create(dark_theme)
+	theme = ChineseCheckersTheme.create(dark_theme)
 	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	$Board.hole_pressed.connect(_on_hole_pressed)
@@ -253,9 +254,11 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_awaiting_snapshot = false
 		_resign_submitted = false
 		_last_presented_move_revision = maxi(_last_presented_move_revision, _state.revision)
-		_queued_move_animations.clear()
-		_move_presentation.clear()
-		_defer_result_until_move_animation = false
+		if applied.get("status") == "applied":
+			_queued_move_animations.clear()
+			_move_presentation.clear()
+			_defer_result_until_move_animation = false
+			$Board.cancel_move_animation()
 		_clear_selection()
 	_refresh_ui()
 
@@ -367,8 +370,8 @@ func _refresh_ui(preserve_board_animation: bool = false) -> void:
 		var local_status := str(presentation["local_status"])
 		var opponent_color := str(presentation["opponent_color"])
 		var opponent_status := str(presentation["opponent_status"])
-		_present_player_card($PlayerStrip/Content/Me, local_color, local_status, &"GameboxTurnPlayerActiveLocal" if active_local else &"GameboxTurnPlayerInactive")
-		_present_player_card($PlayerStrip/Content/Opponent, opponent_color, opponent_status, &"GameboxTurnPlayerActiveOpponent" if active_opponent else &"GameboxTurnPlayerInactive")
+		_present_player_card($PlayerStrip/Content/Me, local_color, local_status, &"ChineseCheckersTurnPlayerActiveLocal" if active_local else &"ChineseCheckersTurnPlayerInactive")
+		_present_player_card($PlayerStrip/Content/Opponent, opponent_color, opponent_status, &"ChineseCheckersTurnPlayerActiveOpponent" if active_opponent else &"ChineseCheckersTurnPlayerInactive")
 		$PlayerStrip/Content/Turn.text = str(presentation["turn_text"])
 	$HintLabel.text = str(presentation.get("hint_text", "连接后即可开始"))
 	if terminal:
@@ -506,14 +509,14 @@ func _present_player_card(card: PanelContainer, color: String, status: String, v
 	var identity := card.get_node("Content/Identity/Name") as Label
 	var supporting := card.get_node("Content/Status") as Label
 	var piece := card.get_node("Content/Identity/Piece") as Label
-	var identity_variation := &"GameboxTurnPlayerIdentity"
-	var supporting_variation := &"GameboxTurnPlayerSupporting"
-	if variation == &"GameboxTurnPlayerActiveLocal":
-		identity_variation = &"GameboxTurnPlayerActiveLocalIdentity"
-		supporting_variation = &"GameboxTurnPlayerActiveLocalSupporting"
-	elif variation == &"GameboxTurnPlayerActiveOpponent":
-		identity_variation = &"GameboxTurnPlayerActiveOpponentIdentity"
-		supporting_variation = &"GameboxTurnPlayerActiveOpponentSupporting"
+	var identity_variation := &"ChineseCheckersTurnPlayerIdentity"
+	var supporting_variation := &"ChineseCheckersTurnPlayerSupporting"
+	if variation == &"ChineseCheckersTurnPlayerActiveLocal":
+		identity_variation = &"ChineseCheckersTurnPlayerActiveLocalIdentity"
+		supporting_variation = &"ChineseCheckersTurnPlayerActiveLocalSupporting"
+	elif variation == &"ChineseCheckersTurnPlayerActiveOpponent":
+		identity_variation = &"ChineseCheckersTurnPlayerActiveOpponentIdentity"
+		supporting_variation = &"ChineseCheckersTurnPlayerActiveOpponentSupporting"
 	identity.theme_type_variation = identity_variation
 	supporting.theme_type_variation = supporting_variation
 	supporting.text = status

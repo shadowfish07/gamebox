@@ -115,6 +115,13 @@ func set_interactable(value: bool) -> void:
 	_sync_input_state()
 
 
+func cancel_move_animation() -> bool:
+	if _move_animation_path.is_empty():
+		return false
+	_finish_move_animation()
+	return true
+
+
 func play_move_animation(path: Array) -> bool:
 	if not _move_animation_path.is_empty() or path.size() < 2 or not _valid_indices(path):
 		return false
