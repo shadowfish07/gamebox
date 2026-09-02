@@ -9,6 +9,7 @@ import 'package:gamebox/design_system/components/gamebox_async_panel.dart';
 import 'package:gamebox/design_system/components/gamebox_page_body.dart';
 import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
+import 'package:gamebox/design_system/generated/gamebox_tokens.g.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
@@ -102,6 +103,10 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.bySemanticsIdentifier('open-chinese-checkers-history'),
+      findsOneWidget,
+    );
+    expect(
       tester.getSemantics(find.byKey(const Key('game-chinese-checkers'))),
       isSemantics(
         identifier: 'game-chinese-checkers',
@@ -136,6 +141,10 @@ void main() {
     );
     expect(
       find.bySemanticsIdentifier('chinese-checkers-cancel-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('open-chinese-checkers-history'),
       findsOneWidget,
     );
 
@@ -469,6 +478,21 @@ void main() {
     expect(find.bySemanticsIdentifier('retry-home'), findsOneWidget);
     expect(find.byKey(const Key('open-match-history')), findsOneWidget);
     expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
+    final errorPanel = find.byType(GameboxAsyncPanel);
+    expect(
+      find.descendant(
+        of: errorPanel,
+        matching: find.byKey(const Key('retry-home')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: errorPanel,
+        matching: find.byKey(const Key('open-match-history')),
+      ),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<FilledButton>(
@@ -532,6 +556,44 @@ void main() {
     rpsController.dispose();
     fixture.dispose();
   });
+
+  testWidgets(
+    'Chinese checkers history remains reachable when its status request fails',
+    (tester) async {
+      final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+      final chineseCheckers = _Fixture(now)
+        ..api.statusError = const ApiError(
+          code: 'network_error',
+          message: '跳棋状态加载失败',
+        );
+      await tester.pumpWidget(
+        _app(
+          gomoku.controller,
+          aliceId,
+          historyApi: gomoku.historyApi,
+          chineseCheckersController: chineseCheckers.controller,
+        ),
+      );
+      await _flushWidget(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('open-chinese-checkers-history')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('跳棋状态加载失败'), findsOneWidget);
+      expect(
+        find.bySemanticsIdentifier('chinese-checkers-retry-home'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('open-chinese-checkers-history')));
+      await tester.pumpAndSettle();
+      expect(find.text('跳棋战绩'), findsOneWidget);
+      expect(gomoku.historyApi.games, [MatchHistoryGame.chineseCheckers]);
+
+      gomoku.dispose();
+      chineseCheckers.dispose();
+    },
+  );
 
   testWidgets(
     'game cards open their own history and visible back preserves Home',
@@ -598,6 +660,53 @@ void main() {
       fixture.dispose();
     },
   );
+
+  testWidgets('catalog uses one section gap between adjacent cards', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(412, 1600);
+    addTearDown(tester.view.reset);
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final chineseCheckers = _Fixture(now)
+      ..api.status = const GomokuIdleStatus();
+    final rpsController = RpsController(
+      repository: RpsRepository(
+        api: const _FakeRpsApi(isIdle: true),
+        gameLauncher: gomoku.launcher,
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        chineseCheckersController: chineseCheckers.controller,
+        rpsController: rpsController,
+      ),
+    );
+    await _flushWidget(tester);
+
+    final sectionGaps = find.descendant(
+      of: find.byType(GameboxPageBody),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SizedBox &&
+            widget.height == GameboxTokens.components.sectionSpacing,
+      ),
+    );
+    expect(sectionGaps, findsNWidgets(3));
+    expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
+    expect(find.byKey(const Key('game-chinese-checkers')), findsOneWidget);
+    expect(find.byKey(const Key('game-rps')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    rpsController.dispose();
+    gomoku.dispose();
+    chineseCheckers.dispose();
+  });
 
   testWidgets('system back returns to the same Home instance', (tester) async {
     final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();

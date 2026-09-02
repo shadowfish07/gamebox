@@ -145,21 +145,15 @@ final class _InitialError extends StatelessWidget {
       key: const Key('match-history-error'),
       identifier: 'match-history-error',
       container: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          GameboxAsyncPanel(
-            icon: Icons.cloud_off_outlined,
-            title: '暂时无法加载战绩',
-            message: message,
-          ),
-          SizedBox(height: GameboxTokens.spacing.page),
-          Semantics(
-            key: const Key('retry-match-history'),
-            identifier: 'retry-match-history',
-            child: FilledButton(onPressed: onRetry, child: const Text('重试')),
-          ),
-        ],
+      child: GameboxAsyncPanel(
+        icon: Icons.cloud_off_outlined,
+        title: '暂时无法加载战绩',
+        message: message,
+        actions: Semantics(
+          key: const Key('retry-match-history'),
+          identifier: 'retry-match-history',
+          child: FilledButton(onPressed: onRetry, child: const Text('重试')),
+        ),
       ),
     );
   }
@@ -315,6 +309,8 @@ final class _HistoryEntry extends StatelessWidget {
         '${material.formatShortDate(local)} '
         '${material.formatTimeOfDay(TimeOfDay.fromDateTime(local), alwaysUse24HourFormat: true)}';
     final leadingDetail = switch (game) {
+      MatchHistoryGame.chineseCheckers =>
+        entry.color == GomokuColor.black ? '先手' : '后手',
       MatchHistoryGame.gomoku => entry.color == GomokuColor.black ? '黑方' : '白方',
       MatchHistoryGame.rps => entry.rpsFormat!.label,
     };

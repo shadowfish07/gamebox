@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 )
@@ -186,6 +187,23 @@ func TestRpsHistoryReturnsFormatAndRevealedRoundCount(t *testing.T) {
 	if response.Code != http.StatusOK || body.Statistics.Wins != 1 || len(body.Matches) != 1 ||
 		body.Matches[0].Outcome != "win" || body.Matches[0].Format != rps.FormatBestOfThree || body.Matches[0].MoveCount != 3 {
 		t.Fatalf("RPS history=(%d,%+v), want win/best_of_three/3 rounds", response.Code, body)
+	}
+}
+
+func TestChineseCheckersHistoryReturnsTurnOrderAndAcceptedMoveCount(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "chinese-history-a", "Alice")
+	bob := fixture.register(t, "chinese-history-b", "Bob")
+	seedHTTPChineseCheckersHistoryMatch(
+		t, fixture.db, historyCursorMatchID,
+		alice.Session.User.ID, bob.Session.User.ID, alice.Session.User.ID,
+		historyCursorMillis, 2,
+	)
+
+	response := fixture.request(t, http.MethodGet, "/v1/games/chinese_checkers/history", "", alice.Session.AccessToken)
+	want := `{"statistics":{"validMatches":1,"wins":1,"losses":0,"draws":0,"winRate":1},"matches":[{"id":"11111111-1111-4111-8111-111111111111","outcome":"win","opponentNickname":"Bob","color":"black","finishedAt":1787623200000,"moveCount":2}],"nextCursor":null}` + "\n"
+	if response.Code != http.StatusOK || response.Body.String() != want {
+		t.Fatalf("Chinese Checkers history=(%d,%s), want 200/%s", response.Code, response.Body.String(), want)
 	}
 }
 
@@ -370,6 +388,31 @@ VALUES (?,'rps','finished',0,'rounds',?,?,?,?,?)`, matchID, winnerUserID, config
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
 VALUES (?,?,'rps.round.revealed',?,?,'{}',?)`, matchID, revision, fmt.Sprintf("action-%d", revision), currentUserID, finishedAt-int64(revealedRounds-revision)); err != nil {
 			t.Fatalf("insert RPS history event %s/%d: %v", matchID, revision, err)
+		}
+	}
+}
+
+func seedHTTPChineseCheckersHistoryMatch(
+	t *testing.T,
+	db *sql.DB,
+	matchID, currentUserID, opponentUserID, winnerUserID string,
+	finishedAt int64,
+	acceptedMoves int,
+) {
+	t.Helper()
+	if _, err := db.Exec(`
+INSERT INTO matches(id,game_id,status,revision,result,winner_user_id,created_at,updated_at,finished_at)
+VALUES (?,'chinese_checkers','finished',0,'goal',?,?,?,?)`, matchID, winnerUserID, finishedAt-1_000, finishedAt, finishedAt); err != nil {
+		t.Fatalf("insert Chinese Checkers history match %s: %v", matchID, err)
+	}
+	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,'black'),(?,?,1,'white')`, matchID, currentUserID, matchID, opponentUserID); err != nil {
+		t.Fatalf("insert Chinese Checkers history players %s: %v", matchID, err)
+	}
+	for revision := 1; revision <= acceptedMoves; revision++ {
+		if _, err := db.Exec(`
+INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
+VALUES (?,?,?,?,?,'{}',?)`, matchID, revision, chinesecheckers.MoveAccepted, fmt.Sprintf("action-%d", revision), currentUserID, finishedAt-int64(acceptedMoves-revision)); err != nil {
+			t.Fatalf("insert Chinese Checkers history event %s/%d: %v", matchID, revision, err)
 		}
 	}
 }
