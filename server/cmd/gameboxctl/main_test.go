@@ -31,7 +31,7 @@ const (
 func TestInviteCreateWritesOnlyDistinctDigestsAndOneJSONDocument(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 	now := time.Date(2026, time.August, 20, 3, 4, 5, 678900000, time.FixedZone("fixture", 8*60*60))
-	plaintexts := []string{"ABC123", "XYZ789"}
+	plaintexts := []string{"ABCD1234WXYZ", "WXYZ9876ABCD"}
 	next := 0
 	deps := commandDeps{
 		lookupEnv: pepperLookup(testPepper),
@@ -50,7 +50,7 @@ func TestInviteCreateWritesOnlyDistinctDigestsAndOneJSONDocument(t *testing.T) {
 	if code != exitOK || stderr.Len() != 0 {
 		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "{\"invites\":[\"ABC123\",\"XYZ789\"]}\n"; got != want {
+	if got, want := stdout.String(), "{\"invites\":[\"ABCD1234WXYZ\",\"WXYZ9876ABCD\"]}\n"; got != want {
 		t.Fatalf("stdout=%q want=%q", got, want)
 	}
 	if next != 2 {
@@ -157,38 +157,9 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		}
 	})
 
-	t.Run("digest collision rolls back whole batch", func(t *testing.T) {
+	t.Run("batch collision regenerates candidate", func(t *testing.T) {
 		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
-		var stdout, stderr bytes.Buffer
-		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
-			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomInviteCode: func() (string, error) { return "ABC123", nil },
-		})
-		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
-			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
-		}
-		database := openDatabase(t, databasePath)
-		defer database.Close()
-		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("invite count=%d err=%v", count, err)
-		}
-	})
-
-	t.Run("existing digest collision rolls back earlier insert", func(t *testing.T) {
-		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
-		database := openDatabase(t, databasePath)
-		existingHash, err := auth.HashToken(testPepper, "OLD123")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := database.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, existingHash, time.Now().UnixMilli()); err != nil {
-			t.Fatal(err)
-		}
-		if err := database.Close(); err != nil {
-			t.Fatal(err)
-		}
-		generated := []string{"NEW123", "OLD123"}
+		generated := []string{"ABCD1234WXYZ", "ABCD1234WXYZ", "WXYZ9876ABCD"}
 		var calls int
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
@@ -199,22 +170,78 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 				return value, nil
 			},
 		})
-		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
+		if code != exitOK || stdout.String() != "{\"invites\":[\"ABCD1234WXYZ\",\"WXYZ9876ABCD\"]}\n" || stderr.Len() != 0 {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+		}
+		if calls != 3 {
+			t.Fatalf("generation calls=%d want=3", calls)
+		}
+		database := openDatabase(t, databasePath)
+		defer database.Close()
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 2 {
+			t.Fatalf("invite count=%d err=%v", count, err)
+		}
+	})
+
+	t.Run("existing digest collision regenerates candidate", func(t *testing.T) {
+		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+		database := openDatabase(t, databasePath)
+		existingHash, err := auth.HashToken(testPepper, "OLD1234ABCDE")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, existingHash, time.Now().UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+		generated := []string{"NEW1234ABCDE", "OLD1234ABCDE", "REPL1234ABCD"}
+		var calls int
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
+			lookupEnv: pepperLookup(testPepper), now: time.Now,
+			randomInviteCode: func() (string, error) {
+				value := generated[calls]
+				calls++
+				return value, nil
+			},
+		})
+		if code != exitOK || stdout.String() != "{\"invites\":[\"NEW1234ABCDE\",\"REPL1234ABCD\"]}\n" || stderr.Len() != 0 {
+			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+		}
+		if calls != 3 {
+			t.Fatalf("generation calls=%d want=3", calls)
 		}
 		database = openDatabase(t, databasePath)
 		defer database.Close()
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 1 {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 3 {
 			t.Fatalf("invite count=%d err=%v", count, err)
 		}
-		freshHash, err := auth.HashToken(testPepper, "NEW123")
+		freshHash, err := auth.HashToken(testPepper, "NEW1234ABCDE")
 		if err != nil {
 			t.Fatal(err)
 		}
 		var freshCount int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes WHERE code_hash=?`, freshHash).Scan(&freshCount); err != nil || freshCount != 0 {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes WHERE code_hash=?`, freshHash).Scan(&freshCount); err != nil || freshCount != 1 {
 			t.Fatalf("fresh invite count=%d err=%v", freshCount, err)
+		}
+	})
+
+	t.Run("collision retry exhaustion fails without opening database", func(t *testing.T) {
+		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
+			lookupEnv: pepperLookup(testPepper), now: time.Now,
+			randomInviteCode: func() (string, error) { return "SAME1234CODE", nil },
+		})
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
+			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+		}
+		if _, err := os.Stat(databasePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("database touched after retry exhaustion: %v", err)
 		}
 	})
 

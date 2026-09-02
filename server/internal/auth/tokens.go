@@ -13,7 +13,7 @@ import (
 
 const (
 	maximumRandomTokenBytes = 1024
-	inviteCodeLength        = 6
+	inviteCodeLength        = 12
 	inviteCodeAlphabet      = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
@@ -43,9 +43,9 @@ func randomToken(byteCount int, entropy io.Reader) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
 }
 
-// RandomInviteCode returns a six-character code made from upper-case ASCII
-// letters and digits. It is intentionally shorter than session credentials so
-// people can enter it by hand; invite codes remain one-time credentials.
+// RandomInviteCode returns a twelve-character code made from upper-case ASCII
+// letters and digits. Its roughly 62 bits of entropy keep online guessing
+// impractical while remaining short enough to enter by hand.
 func RandomInviteCode() (string, error) {
 	return randomInviteCode(rand.Reader)
 }
@@ -64,6 +64,27 @@ func randomInviteCode(entropy io.Reader) (string, error) {
 		code[index] = inviteCodeAlphabet[alphabetIndex.Int64()]
 	}
 	return string(code), nil
+}
+
+// normalizeInviteCode makes only the current human-entered format
+// case-insensitive. Legacy invitation credentials remain byte-for-byte
+// compatible because their different lengths bypass normalization.
+func normalizeInviteCode(code string) string {
+	if len(code) != inviteCodeLength {
+		return code
+	}
+	normalized := []byte(code)
+	for index, character := range normalized {
+		switch {
+		case character >= 'A' && character <= 'Z':
+		case character >= 'a' && character <= 'z':
+			normalized[index] = character - ('a' - 'A')
+		case character >= '0' && character <= '9':
+		default:
+			return code
+		}
+	}
+	return string(normalized)
 }
 
 // HashToken returns a lower-case hexadecimal SHA-256 digest. Length prefixes

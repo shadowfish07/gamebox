@@ -112,6 +112,32 @@ func TestRegisterConsumesInviteOnceAndStoresTrimmedNickname(t *testing.T) {
 	}
 }
 
+func TestRegisterAndIssueNormalizesOnlyCurrentInviteFormat(t *testing.T) {
+	t.Run("current format is case insensitive", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "ABCD1234WXYZ")
+
+		session, err := fixture.service.RegisterAndIssue(context.Background(), "abcd1234wxyz", "Alice")
+		if err != nil || session.User.ID == "" {
+			t.Fatalf("RegisterAndIssue current invite = (%+v, %v)", session, err)
+		}
+	})
+
+	t.Run("legacy format remains case sensitive", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		legacy := "legacy-MixedCase-invite-credential"
+		fixture.addInvite(t, legacy)
+
+		if _, err := fixture.service.RegisterAndIssue(context.Background(), strings.ToUpper(legacy), "Alice"); !errors.Is(err, ErrInviteInvalid) {
+			t.Fatalf("upper-cased legacy invite error = %v, want ErrInviteInvalid", err)
+		}
+		session, err := fixture.service.RegisterAndIssue(context.Background(), legacy, "Alice")
+		if err != nil || session.User.ID == "" {
+			t.Fatalf("RegisterAndIssue legacy invite = (%+v, %v)", session, err)
+		}
+	})
+}
+
 func TestRegisterNicknameConflictDoesNotConsumeInvite(t *testing.T) {
 	fixture := newAuthFixture(t)
 	if _, err := fixture.db.Exec(`INSERT INTO users(id, nickname, normalized_nickname, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
@@ -630,9 +656,9 @@ func TestRegisterServiceRejectsInvalidDependenciesAndPepper(t *testing.T) {
 }
 
 func TestRegisterTokenPrimitivesUseSafeUnambiguousRepresentations(t *testing.T) {
-	invite, err := randomInviteCode(bytes.NewReader([]byte{0, 1, 2, 25, 26, 35}))
-	if err != nil || invite != "ABCZ09" {
-		t.Fatalf("randomInviteCode = (%q, %v), want ABCZ09", invite, err)
+	invite, err := randomInviteCode(bytes.NewReader([]byte{0, 1, 2, 25, 26, 35, 0, 1, 2, 25, 26, 35}))
+	if err != nil || invite != "ABCZ09ABCZ09" {
+		t.Fatalf("randomInviteCode = (%q, %v), want ABCZ09ABCZ09", invite, err)
 	}
 	generatedInvite, err := RandomInviteCode()
 	validInvite := err == nil && len(generatedInvite) == inviteCodeLength
@@ -640,7 +666,7 @@ func TestRegisterTokenPrimitivesUseSafeUnambiguousRepresentations(t *testing.T) 
 		validInvite = strings.ContainsRune(inviteCodeAlphabet, rune(generatedInvite[index]))
 	}
 	if !validInvite {
-		t.Fatalf("RandomInviteCode returned invalid six-character code: generated=%q err=%v", generatedInvite, err)
+		t.Fatalf("RandomInviteCode returned invalid twelve-character code: generated=%q err=%v", generatedInvite, err)
 	}
 
 	token, err := RandomToken(32)

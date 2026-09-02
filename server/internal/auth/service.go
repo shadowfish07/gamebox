@@ -101,7 +101,7 @@ func (service *Service) Register(ctx context.Context, inviteCode, rawNickname st
 	if normalizeErr != nil {
 		return users.User{}, ErrInvalidRequest
 	}
-	inviteHash, hashErr := HashToken(service.pepper, inviteCode)
+	inviteHash, hashErr := HashToken(service.pepper, normalizeInviteCode(inviteCode))
 	if hashErr != nil {
 		return users.User{}, ErrInvalidRequest
 	}
@@ -179,7 +179,7 @@ func (service *Service) RegisterAndIssue(ctx context.Context, inviteCode, rawNic
 	if normalizeErr != nil {
 		return Session{}, ErrInvalidRequest
 	}
-	inviteHash, hashErr := HashToken(service.pepper, inviteCode)
+	inviteHash, hashErr := HashToken(service.pepper, normalizeInviteCode(inviteCode))
 	if hashErr != nil {
 		return Session{}, ErrInvalidRequest
 	}
