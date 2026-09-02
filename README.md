@@ -296,4 +296,5 @@ Gamebox is under active development and currently targets Android. AI opponents,
 
 ## License
 
-Gamebox is available under the [MIT License](LICENSE).
+Gamebox is available under the [MIT License](LICENSE). See
+[Third-party notices](THIRD_PARTY_NOTICES.md) for separately sourced assets.
