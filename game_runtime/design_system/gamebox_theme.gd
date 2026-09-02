@@ -280,6 +280,7 @@ static func create(dark: bool) -> Theme:
 	theme.set_font("font", "GameboxTurnStatus", result_semibold_font)
 	theme.set_font_size("font_size", "GameboxTurnStatus", supporting_label_size)
 	theme.set_color("font_color", "GameboxTurnStatus", colors["on_surface_variant"])
+	theme.set_stylebox("normal", "GameboxTurnStatus", _turn_status_style())
 	theme.set_constant("separation", "GameboxSettingsContent", _scaled(GameboxTokens.SPACING["section"]))
 	theme.set_constant("separation", "GameboxMoveConfirmationContent", _scaled(GameboxTokens.SPACING["layout"]))
 	theme.set_constant("separation", "GameboxMoveConfirmationActions", _scaled(GameboxTokens.SPACING["layout"]))
@@ -347,6 +348,13 @@ static func _turn_strip_style() -> StyleBoxEmpty:
 	box.content_margin_right = _scaled(GameboxTokens.SPACING["layout"])
 	box.content_margin_top = _scaled(GameboxTokens.SPACING["base"])
 	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["base"])
+	return box
+
+
+static func _turn_status_style() -> StyleBoxEmpty:
+	var box := StyleBoxEmpty.new()
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["layout"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["layout"])
 	return box
 
 

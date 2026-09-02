@@ -30,9 +30,11 @@ static func _maps_turn_ownership_surfaces() -> bool:
 		var colors: Dictionary = GameboxTokens.DARK if dark_mode else GameboxTokens.LIGHT
 		var theme := GameboxTheme.create(dark_mode)
 		var strip_style := theme.get_stylebox("panel", "GameboxTurnPlayerStrip")
+		var turn_status_style := theme.get_stylebox("normal", "GameboxTurnStatus") as StyleBoxEmpty
 		var local_style := theme.get_stylebox("panel", "GameboxTurnPlayerActiveLocal") as StyleBoxFlat
 		var opponent_style := theme.get_stylebox("panel", "GameboxTurnPlayerActiveOpponent") as StyleBoxFlat
 		if not _check(strip_style is StyleBoxEmpty, "player row introduced an outer tonal card") \
+			or not _check(turn_status_style != null and turn_status_style.content_margin_left > 0 and turn_status_style.content_margin_left == turn_status_style.content_margin_right, "turn status lacks balanced horizontal breathing room") \
 			or not _check(local_style != null and local_style.bg_color == colors["primary_container"], "local turn container drifted") \
 			or not _check(local_style.border_width_left > 0 and local_style.border_color == colors["primary_fixed_dim"], "local active card lacks the approved subtle border") \
 			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveLocalIdentity") == colors["on_primary_container"], "local turn foreground is not paired") \
