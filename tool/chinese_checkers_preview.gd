@@ -84,6 +84,8 @@ func _mount() -> void:
 		scene.theme = GAMEBOX_THEME.create(_theme_name == "dark")
 	if _state_name == "pending":
 		_show_pending.call_deferred(scene)
+	elif _state_name == "accepted":
+		_show_accepted.call_deferred(scene, client)
 	if not _screenshot_path.is_empty():
 		_capture_screenshot.call_deferred()
 
@@ -93,6 +95,24 @@ func _show_pending(scene: Control) -> void:
 	await process_frame
 	scene._on_hole_pressed(6)
 	scene._on_hole_pressed(14)
+
+
+func _show_accepted(scene: Control, client: PreviewClient) -> void:
+	await process_frame
+	await process_frame
+	scene._on_hole_pressed(3)
+	scene._on_hole_pressed(16)
+	var accepted := _accepted_move()
+	var applied: Dictionary = client.state.apply_event(accepted)
+	if not applied.get("ok", false) or applied.get("status") != "applied":
+		push_error("Chinese Checkers preview failed to apply accepted move")
+		quit(1)
+		return
+	client.event_received.emit(accepted)
+	var board := scene.get_node("Board")
+	board.set_process(false)
+	board._process(0.1)
+	board.set_process(false)
 
 
 func _capture_screenshot() -> void:
@@ -144,6 +164,14 @@ func _terminal_snapshot() -> Dictionary:
 	return snapshot
 
 
+func _accepted_move() -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID,
+		"revision": 1, "type": "chinese_checkers.move.accepted", "actionId": ACTION_ID,
+		"payload": {"userId": BLACK_ID, "color": "black", "path": [3, 16]},
+	}
+
+
 func _parse_arguments(args: PackedStringArray) -> bool:
 	var index := 0
 	while index < args.size():
@@ -154,7 +182,7 @@ func _parse_arguments(args: PackedStringArray) -> bool:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["own", "own_white", "opponent", "pending", "terminal"]:
+				if _state_name not in ["own", "own_white", "opponent", "pending", "accepted", "terminal"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return false
