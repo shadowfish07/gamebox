@@ -9,15 +9,20 @@ class GameboxAsyncPanel extends StatelessWidget {
     required this.message,
     this.actionLabel,
     this.onAction,
+    this.actions,
     this.isLoading = false,
     super.key,
-  });
+  }) : assert(
+         actions == null || (actionLabel == null && onAction == null),
+         'Custom actions cannot be combined with actionLabel or onAction.',
+       );
 
   final IconData icon;
   final String title;
   final String message;
   final String? actionLabel;
   final VoidCallback? onAction;
+  final Widget? actions;
   final bool isLoading;
 
   @override
@@ -28,6 +33,7 @@ class GameboxAsyncPanel extends StatelessWidget {
         padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SizedBox.square(
               dimension: GameboxTokens.components.minimumTouchTarget,
@@ -57,12 +63,18 @@ class GameboxAsyncPanel extends StatelessWidget {
               style: theme.textTheme.bodyMedium,
             ),
             SizedBox(height: GameboxTokens.spacing.page),
-            SizedBox(
-              height: GameboxTokens.components.minimumTouchTarget,
-              child: !isLoading && actionLabel != null
-                  ? FilledButton(onPressed: onAction, child: Text(actionLabel!))
-                  : null,
-            ),
+            if (actions case final actions?)
+              actions
+            else
+              SizedBox(
+                height: GameboxTokens.components.minimumTouchTarget,
+                child: !isLoading && actionLabel != null
+                    ? FilledButton(
+                        onPressed: onAction,
+                        child: Text(actionLabel!),
+                      )
+                    : null,
+              ),
           ],
         ),
       ),
