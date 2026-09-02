@@ -15,6 +15,7 @@ static func cases() -> Array:
 		{"name": "chinese checkers scene emphasizes the active player", "run": _emphasizes_active_player},
 		{"name": "chinese checkers scene submits a highlighted endpoint without confirmation", "run": _submits_direct_endpoint},
 		{"name": "chinese checkers scene animates the authoritative accepted path", "run": _animates_accepted_path},
+		{"name": "chinese checkers scene presents the winning move before its result", "run": _presents_winning_move_before_result},
 		{"name": "chinese checkers scene preserves and locks the board during reconnect", "run": _locks_during_reconnect},
 		{"name": "chinese checkers Back returns without resigning", "run": _back_is_non_destructive},
 		{"name": "chinese checkers scene presents an authoritative result", "run": _presents_authoritative_result},
@@ -120,6 +121,28 @@ static func _animates_accepted_path() -> bool:
 		and _check(board.pending_path.is_empty(), "pending path remained after authority accepted the move") \
 		and _check(board.move_animation_path == [3, 16], "controller did not animate the accepted path") \
 		and _check(board.animation_piece_position().is_equal_approx(progressed_position), "duplicate event restarted the accepted-path animation")
+	return _cleanup(scene, result)
+
+
+static func _presents_winning_move_before_result() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_snapshot(20, "active", "black", null, null, _goal_ready_board()))
+	scene._on_hole_pressed(102)
+	scene._on_hole_pressed(111)
+	client.accept_event(_move(21, BLACK_ID, "black", [102, 111]))
+	var board = scene.get_node("Board")
+	var result := _check(board.move_animation_path == [102, 111], "winning path was not animated") \
+		and _check(not scene.get_node("ResultPanel").visible, "result panel covered the winning move") \
+		and _check(not scene.get_node("ResultScrim").visible, "result scrim covered the winning move")
+	board._process(1.0)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	result = result \
+		and _check(board.move_animation_path.is_empty(), "winning animation did not finish") \
+		and _check(scene.get_node("ResultPanel").visible, "result panel did not follow the winning move") \
+		and _check(scene.get_node("ResultScrim").visible, "result scrim did not follow the winning move") \
+		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "率先抵达", "goal result copy changed")
 	return _cleanup(scene, result)
 
 
@@ -257,6 +280,17 @@ static func _initial_board() -> Array:
 	for index in 10:
 		board[index] = 1
 	for index in range(111, 121):
+		board[index] = 2
+	return board
+
+
+static func _goal_ready_board() -> Array:
+	var board: Array = []
+	board.resize(121)
+	board.fill(0)
+	for index in [112, 113, 114, 115, 116, 117, 118, 119, 120, 102]:
+		board[index] = 1
+	for index in [23, 24, 25, 26, 27, 28, 29, 30, 31, 32]:
 		board[index] = 2
 	return board
 

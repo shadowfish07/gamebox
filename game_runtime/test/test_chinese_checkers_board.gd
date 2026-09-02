@@ -68,6 +68,8 @@ static func _animates_accepted_path() -> bool:
 	var root := Engine.get_main_loop().root as Window
 	root.add_child(board)
 	board.size = BOARD_RECT.size
+	var finished_calls: Array = []
+	board.move_animation_finished.connect(func() -> void: finished_calls.append(true))
 	if not _check(board.present(cells, "black", -1, {}, [], true), "accepted board rejected") \
 		or not _check(board.play_move_animation([56, 58, 79]), "accepted path animation rejected"):
 		board.free()
@@ -82,7 +84,8 @@ static func _animates_accepted_path() -> bool:
 		and _check(first_apex.y < start.lerp(first_landing, 0.5).y, "piece did not lift during its hop")
 	board._process(1.0)
 	result = result and _check(board.move_animation_path.is_empty(), "move animation did not finish") \
-		and _check(board.mouse_filter == Control.MOUSE_FILTER_STOP, "board interaction was not restored after animation")
+		and _check(board.mouse_filter == Control.MOUSE_FILTER_STOP, "board interaction was not restored after animation") \
+		and _check(finished_calls.size() == 1, "move animation did not emit exactly one completion signal")
 	board.free()
 	return result
 

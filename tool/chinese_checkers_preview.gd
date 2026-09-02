@@ -69,7 +69,9 @@ func _mount() -> void:
 	var scene: Control = CHINESE_CHECKERS_SCENE.instantiate()
 	var client := PreviewClient.new()
 	client.local_user_id = WHITE_ID if _state_name == "own_white" else BLACK_ID
-	client.snapshot = _terminal_snapshot() if _state_name == "terminal" else _snapshot("white" if _state_name in ["opponent", "own_white"] else "black")
+	client.snapshot = _terminal_snapshot() if _state_name == "terminal" \
+		else _goal_ready_snapshot() if _state_name == "winning" \
+		else _snapshot("white" if _state_name in ["opponent", "own_white"] else "black")
 	if not scene.configure_launch({
 		"game_id": "chinese_checkers", "match_id": MATCH_ID,
 		"launch_ticket": "preview-ticket", "ws_url": "ws://preview.local",
@@ -84,8 +86,8 @@ func _mount() -> void:
 		scene.theme = GAMEBOX_THEME.create(_theme_name == "dark")
 	if _state_name == "pending":
 		_show_pending.call_deferred(scene)
-	elif _state_name == "accepted":
-		_show_accepted.call_deferred(scene, client)
+	elif _state_name in ["accepted", "winning"]:
+		_show_accepted.call_deferred(scene, client, _state_name == "winning")
 	if not _screenshot_path.is_empty():
 		_capture_screenshot.call_deferred()
 
@@ -97,12 +99,13 @@ func _show_pending(scene: Control) -> void:
 	scene._on_hole_pressed(14)
 
 
-func _show_accepted(scene: Control, client: PreviewClient) -> void:
+func _show_accepted(scene: Control, client: PreviewClient, winning: bool) -> void:
 	await process_frame
 	await process_frame
-	scene._on_hole_pressed(3)
-	scene._on_hole_pressed(16)
-	var accepted := _accepted_move()
+	var path := [102, 111] if winning else [3, 16]
+	scene._on_hole_pressed(path[0])
+	scene._on_hole_pressed(path[1])
+	var accepted := _accepted_move(winning)
 	var applied: Dictionary = client.state.apply_event(accepted)
 	if not applied.get("ok", false) or applied.get("status") != "applied":
 		push_error("Chinese Checkers preview failed to apply accepted move")
@@ -164,11 +167,26 @@ func _terminal_snapshot() -> Dictionary:
 	return snapshot
 
 
-func _accepted_move() -> Dictionary:
+func _goal_ready_snapshot() -> Dictionary:
+	var board: Array = []
+	board.resize(121)
+	board.fill(0)
+	for index in [112, 113, 114, 115, 116, 117, 118, 119, 120, 102]:
+		board[index] = 1
+	for index in [23, 24, 25, 26, 27, 28, 29, 30, 31, 32]:
+		board[index] = 2
+	var snapshot := _snapshot("black")
+	snapshot["revision"] = 20
+	snapshot["payload"]["board"] = board
+	return snapshot
+
+
+func _accepted_move(winning: bool) -> Dictionary:
 	return {
 		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID,
-		"revision": 1, "type": "chinese_checkers.move.accepted", "actionId": ACTION_ID,
-		"payload": {"userId": BLACK_ID, "color": "black", "path": [3, 16]},
+		"revision": 21 if winning else 1,
+		"type": "chinese_checkers.move.accepted", "actionId": ACTION_ID,
+		"payload": {"userId": BLACK_ID, "color": "black", "path": [102, 111] if winning else [3, 16]},
 	}
 
 
@@ -182,7 +200,7 @@ func _parse_arguments(args: PackedStringArray) -> bool:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["own", "own_white", "opponent", "pending", "accepted", "terminal"]:
+				if _state_name not in ["own", "own_white", "opponent", "pending", "accepted", "winning", "terminal"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return false

@@ -2,6 +2,7 @@ class_name ChineseCheckersBoard
 extends Control
 
 signal hole_pressed(index: int)
+signal move_animation_finished
 
 const ChineseCheckersState = preload("res://games/chinese_checkers/chinese_checkers_state.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
@@ -348,12 +349,15 @@ func _sync_input_state() -> void:
 
 
 func _finish_move_animation() -> void:
+	var had_animation := not _move_animation_path.is_empty()
 	_move_animation_path.clear()
 	_move_animation_stone = EMPTY
 	_move_animation_elapsed = 0.0
 	_move_animation_duration = 0.0
 	set_process(false)
 	_sync_input_state()
+	if had_animation:
+		move_animation_finished.emit()
 
 
 func _animation_path_position(progress: float, lifted: bool) -> Vector2:

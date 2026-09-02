@@ -48,6 +48,7 @@ var _resign_submitted := false
 var _reviewing_result := false
 var _presented_result_signature := ""
 var _last_presented_move_revision := -1
+var _defer_result_until_move_animation := false
 var _logged_state_signature := ""
 var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
@@ -90,6 +91,7 @@ func _ready() -> void:
 	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	$Board.hole_pressed.connect(_on_hole_pressed)
+	$Board.move_animation_finished.connect(_on_move_animation_finished)
 	$TopNavigation.back_requested.connect(_on_back_pressed)
 	$TopNavigation.set_menu_items([{"id": "resign", "label": "认输并结束对局", "danger": true}])
 	$TopNavigation.menu_action_requested.connect(_on_menu_action_requested)
@@ -270,10 +272,19 @@ func _on_event_received(envelope: Dictionary) -> void:
 			var payload: Variant = envelope.get("payload")
 			if payload is Dictionary and payload.get("path") is Array:
 				accepted_path = payload["path"].duplicate()
+				_defer_result_until_move_animation = _state.status in TERMINAL_STATUSES
 	_clear_selection()
 	_refresh_ui()
-	if not accepted_path.is_empty():
-		$Board.play_move_animation(accepted_path)
+	if not accepted_path.is_empty() and not $Board.play_move_animation(accepted_path):
+		_defer_result_until_move_animation = false
+		_refresh_ui()
+
+
+func _on_move_animation_finished() -> void:
+	if not _defer_result_until_move_animation:
+		return
+	_defer_result_until_move_animation = false
+	_refresh_ui.call_deferred()
 
 
 func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
@@ -330,11 +341,16 @@ func _refresh_ui() -> void:
 	$HintLabel.text = _hint_text() if has_state else "连接后即可开始"
 	if terminal:
 		$ResignDialog.close()
-		var signature := "%d|%s|%s" % [_state.revision, _state.status, str(_state.result)]
-		if signature != _presented_result_signature:
-			_presented_result_signature = signature
-			_reviewing_result = false
-			_present_result()
+		if _defer_result_until_move_animation:
+			$ResultPanel.visible = false
+			$ResultScrim.visible = false
+			$ResultPill.visible = false
+		else:
+			var signature := "%d|%s|%s" % [_state.revision, _state.status, str(_state.result)]
+			if signature != _presented_result_signature:
+				_presented_result_signature = signature
+				_reviewing_result = false
+				_present_result()
 	else:
 		_presented_result_signature = ""
 		_reviewing_result = false
