@@ -14,6 +14,7 @@ import (
 const (
 	maximumRandomTokenBytes = 1024
 	inviteCodeLength        = 12
+	retiredInviteCodeLength = 6
 	inviteCodeAlphabet      = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
@@ -66,12 +67,15 @@ func randomInviteCode(entropy io.Reader) (string, error) {
 	return string(code), nil
 }
 
-// normalizeInviteCode makes only the current human-entered format
-// case-insensitive. Legacy invitation credentials remain byte-for-byte
-// compatible because their different lengths bypass normalization.
-func normalizeInviteCode(code string) string {
+// normalizeInviteCode makes the current generated format case-insensitive and
+// rejects the retired six-character upper-case format. Other legacy invitation
+// credentials remain byte-for-byte compatible.
+func normalizeInviteCode(code string) (string, bool) {
+	if len(code) == retiredInviteCodeLength && inviteCodeUsesUppercaseAlphabet(code) {
+		return "", false
+	}
 	if len(code) != inviteCodeLength {
-		return code
+		return code, true
 	}
 	normalized := []byte(code)
 	for index, character := range normalized {
@@ -81,10 +85,20 @@ func normalizeInviteCode(code string) string {
 			normalized[index] = character - ('a' - 'A')
 		case character >= '0' && character <= '9':
 		default:
-			return code
+			return code, true
 		}
 	}
-	return string(normalized)
+	return string(normalized), true
+}
+
+func inviteCodeUsesUppercaseAlphabet(code string) bool {
+	for _, character := range []byte(code) {
+		if character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // HashToken returns a lower-case hexadecimal SHA-256 digest. Length prefixes

@@ -136,6 +136,22 @@ func TestRegisterAndIssueNormalizesOnlyCurrentInviteFormat(t *testing.T) {
 			t.Fatalf("RegisterAndIssue legacy invite = (%+v, %v)", session, err)
 		}
 	})
+
+	t.Run("retired six-character format is rejected", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		hash := fixture.addInvite(t, "ABC123")
+
+		if _, err := fixture.service.RegisterAndIssue(context.Background(), "ABC123", "Alice"); !errors.Is(err, ErrInviteInvalid) {
+			t.Fatalf("retired invite error = %v, want ErrInviteInvalid", err)
+		}
+		var consumedBy, consumedAt sql.NullString
+		if err := fixture.db.QueryRow(`SELECT consumed_by,consumed_at FROM invite_codes WHERE code_hash=?`, hash).Scan(&consumedBy, &consumedAt); err != nil {
+			t.Fatal(err)
+		}
+		if consumedBy.Valid || consumedAt.Valid {
+			t.Fatalf("retired invite was consumed: consumed_by=%v consumed_at=%v", consumedBy, consumedAt)
+		}
+	})
 }
 
 func TestRegisterNicknameConflictDoesNotConsumeInvite(t *testing.T) {
