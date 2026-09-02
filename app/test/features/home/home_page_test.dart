@@ -9,6 +9,7 @@ import 'package:gamebox/design_system/components/gamebox_async_panel.dart';
 import 'package:gamebox/design_system/components/gamebox_page_body.dart';
 import 'package:gamebox/design_system/components/gamebox_pending_button.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
+import 'package:gamebox/design_system/generated/gamebox_tokens.g.dart';
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
@@ -477,6 +478,21 @@ void main() {
     expect(find.bySemanticsIdentifier('retry-home'), findsOneWidget);
     expect(find.byKey(const Key('open-match-history')), findsOneWidget);
     expect(find.bySemanticsIdentifier('open-match-history'), findsOneWidget);
+    final errorPanel = find.byType(GameboxAsyncPanel);
+    expect(
+      find.descendant(
+        of: errorPanel,
+        matching: find.byKey(const Key('retry-home')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: errorPanel,
+        matching: find.byKey(const Key('open-match-history')),
+      ),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<FilledButton>(
@@ -644,6 +660,53 @@ void main() {
       fixture.dispose();
     },
   );
+
+  testWidgets('catalog uses one section gap between adjacent cards', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(412, 1600);
+    addTearDown(tester.view.reset);
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final chineseCheckers = _Fixture(now)
+      ..api.status = const GomokuIdleStatus();
+    final rpsController = RpsController(
+      repository: RpsRepository(
+        api: const _FakeRpsApi(isIdle: true),
+        gameLauncher: gomoku.launcher,
+        apiBaseUri: Uri.parse('https://gamebox.test'),
+        now: () => now,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        chineseCheckersController: chineseCheckers.controller,
+        rpsController: rpsController,
+      ),
+    );
+    await _flushWidget(tester);
+
+    final sectionGaps = find.descendant(
+      of: find.byType(GameboxPageBody),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SizedBox &&
+            widget.height == GameboxTokens.components.sectionSpacing,
+      ),
+    );
+    expect(sectionGaps, findsNWidgets(3));
+    expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
+    expect(find.byKey(const Key('game-chinese-checkers')), findsOneWidget);
+    expect(find.byKey(const Key('game-rps')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    rpsController.dispose();
+    gomoku.dispose();
+    chineseCheckers.dispose();
+  });
 
   testWidgets('system back returns to the same Home instance', (tester) async {
     final fixture = _Fixture(now)..api.status = const GomokuIdleStatus();

@@ -70,6 +70,13 @@ void main() {
     expect(find.byType(GameboxAsyncPanel), findsOneWidget);
     expect(find.text('网络连接失败，请稍后重试'), findsOneWidget);
     expect(find.bySemanticsIdentifier('retry-match-history'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(GameboxAsyncPanel),
+        matching: find.byKey(const Key('retry-match-history')),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('retry-match-history')));
     await _flush(tester);

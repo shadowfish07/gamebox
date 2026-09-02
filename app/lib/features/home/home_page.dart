@@ -269,14 +269,10 @@ final class _HomePageState extends State<HomePage> {
           ),
           _buildGomoku(controller),
           if (widget.chineseCheckersController
-              case final HomeController chineseCheckersController) ...[
-            SizedBox(height: GameboxTokens.spacing.section),
+              case final HomeController chineseCheckersController)
             _buildChineseCheckers(chineseCheckersController),
-          ],
-          if (widget.rpsController case final RpsController rpsController) ...[
-            SizedBox(height: GameboxTokens.spacing.section),
+          if (widget.rpsController case final RpsController rpsController)
             _buildRps(rpsController),
-          ],
         ],
       ),
     );
@@ -410,16 +406,11 @@ final class _HomeError extends StatelessWidget {
     } else {
       actions = primary;
     }
-    return Column(
-      children: [
-        GameboxAsyncPanel(
-          icon: Icons.cloud_off_outlined,
-          title: '暂时无法加载',
-          message: message,
-        ),
-        SizedBox(height: GameboxTokens.spacing.page),
-        actions,
-      ],
+    return GameboxAsyncPanel(
+      icon: Icons.cloud_off_outlined,
+      title: '暂时无法加载',
+      message: message,
+      actions: actions,
     );
   }
 }
