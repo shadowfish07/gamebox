@@ -78,6 +78,8 @@ static func _animates_accepted_path() -> bool:
 	var first_landing := ChineseCheckersBoard.hole_to_pixel(58, board.board_rect(), "black")
 	var first_apex: Vector2 = board.animation_piece_position(0.25)
 	var result := _check(board.move_animation_path == [56, 58, 79], "animation did not retain the authoritative path") \
+		and _check(not board.play_move_animation([56, 58, 79]), "active animation accepted a replacement path") \
+		and _check(board.move_animation_path == [56, 58, 79], "rejected replacement changed the active path") \
 		and _check(board.stone_at(56) == 0 and board.stone_at(79) == 1, "animation changed the authoritative board") \
 		and _check(board.mouse_filter == Control.MOUSE_FILTER_IGNORE, "board accepted input during the move animation") \
 		and _check(is_equal_approx(first_apex.x, start.lerp(first_landing, 0.5).x), "piece skipped the first accepted segment") \

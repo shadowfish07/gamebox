@@ -15,6 +15,7 @@ static func cases() -> Array:
 		{"name": "chinese checkers scene emphasizes the active player", "run": _emphasizes_active_player},
 		{"name": "chinese checkers scene submits a highlighted endpoint without confirmation", "run": _submits_direct_endpoint},
 		{"name": "chinese checkers scene animates the authoritative accepted path", "run": _animates_accepted_path},
+		{"name": "chinese checkers scene queues consecutive accepted paths", "run": _queues_consecutive_accepted_paths},
 		{"name": "chinese checkers scene presents the winning move before its result", "run": _presents_winning_move_before_result},
 		{"name": "chinese checkers scene preserves and locks the board during reconnect", "run": _locks_during_reconnect},
 		{"name": "chinese checkers Back returns without resigning", "run": _back_is_non_destructive},
@@ -143,6 +144,30 @@ static func _presents_winning_move_before_result() -> bool:
 		and _check(scene.get_node("ResultPanel").visible, "result panel did not follow the winning move") \
 		and _check(scene.get_node("ResultScrim").visible, "result scrim did not follow the winning move") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "率先抵达", "goal result copy changed")
+	return _cleanup(scene, result)
+
+
+static func _queues_consecutive_accepted_paths() -> bool:
+	var harness: Dictionary = await _scene_harness(BLACK_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_snapshot(0))
+	client.accept_event(_move(1, BLACK_ID, "black", [3, 16]))
+	var board = scene.get_node("Board")
+	var result := _check(board.move_animation_path == [3, 16], "first accepted path did not start")
+	client.accept_event(_move(2, WHITE_ID, "white", [114, 106]))
+	result = result \
+		and _check(board.move_animation_path == [3, 16], "second accepted path replaced the in-flight animation") \
+		and _check(board.stone_at(16) == 1 and board.stone_at(114) == 2, "queued event changed the visible in-flight board")
+	board._process(1.0)
+	result = result \
+		and _check(board.move_animation_path == [114, 106], "second accepted path did not start after the first") \
+		and _check(board.stone_at(114) == 0 and board.stone_at(106) == 2, "queued animation did not use its authoritative board")
+	board._process(1.0)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	result = result \
+		and _check(board.move_animation_path.is_empty(), "consecutive animations did not finish") \
+		and _check(board.mouse_filter == Control.MOUSE_FILTER_STOP, "latest turn did not restore board interaction")
 	return _cleanup(scene, result)
 
 

@@ -8,6 +8,7 @@ const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
 const WHITE_ID := "33333333-3333-4333-8333-333333333333"
 const ACTION_ID := "44444444-4444-4444-8444-444444444444"
+const QUEUED_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 var _state_name := "own"
 var _viewport := Vector2i(720, 1600)
@@ -86,8 +87,8 @@ func _mount() -> void:
 		scene.theme = GAMEBOX_THEME.create(_theme_name == "dark")
 	if _state_name == "pending":
 		_show_pending.call_deferred(scene)
-	elif _state_name in ["accepted", "winning"]:
-		_show_accepted.call_deferred(scene, client, _state_name == "winning")
+	elif _state_name in ["accepted", "queued", "winning"]:
+		_show_accepted.call_deferred(scene, client, _state_name == "winning", _state_name == "queued")
 	if not _screenshot_path.is_empty():
 		_capture_screenshot.call_deferred()
 
@@ -99,7 +100,7 @@ func _show_pending(scene: Control) -> void:
 	scene._on_hole_pressed(14)
 
 
-func _show_accepted(scene: Control, client: PreviewClient, winning: bool) -> void:
+func _show_accepted(scene: Control, client: PreviewClient, winning: bool, queued: bool) -> void:
 	await process_frame
 	await process_frame
 	var path := [102, 111] if winning else [3, 16]
@@ -112,6 +113,14 @@ func _show_accepted(scene: Control, client: PreviewClient, winning: bool) -> voi
 		quit(1)
 		return
 	client.event_received.emit(accepted)
+	if queued:
+		var next_accepted := _queued_move()
+		applied = client.state.apply_event(next_accepted)
+		if not applied.get("ok", false) or applied.get("status") != "applied":
+			push_error("Chinese Checkers preview failed to queue accepted move")
+			quit(1)
+			return
+		client.event_received.emit(next_accepted)
 	var board := scene.get_node("Board")
 	board.set_process(false)
 	board._process(0.1)
@@ -190,6 +199,14 @@ func _accepted_move(winning: bool) -> Dictionary:
 	}
 
 
+func _queued_move() -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "chinese_checkers", "matchId": MATCH_ID,
+		"revision": 2, "type": "chinese_checkers.move.accepted", "actionId": QUEUED_ACTION_ID,
+		"payload": {"userId": WHITE_ID, "color": "white", "path": [114, 106]},
+	}
+
+
 func _parse_arguments(args: PackedStringArray) -> bool:
 	var index := 0
 	while index < args.size():
@@ -200,7 +217,7 @@ func _parse_arguments(args: PackedStringArray) -> bool:
 		match args[index]:
 			"--state":
 				_state_name = args[index + 1]
-				if _state_name not in ["own", "own_white", "opponent", "pending", "accepted", "winning", "terminal"]:
+				if _state_name not in ["own", "own_white", "opponent", "pending", "accepted", "queued", "winning", "terminal"]:
 					push_error("Unknown preview state: %s" % _state_name)
 					quit(2)
 					return false

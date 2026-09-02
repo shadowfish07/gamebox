@@ -49,6 +49,7 @@ var _reviewing_result := false
 var _presented_result_signature := ""
 var _last_presented_move_revision := -1
 var _defer_result_until_move_animation := false
+var _queued_move_animations: Array = []
 var _logged_state_signature := ""
 var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
@@ -251,6 +252,8 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_awaiting_snapshot = false
 		_resign_submitted = false
 		_last_presented_move_revision = maxi(_last_presented_move_revision, _state.revision)
+		_queued_move_animations.clear()
+		_defer_result_until_move_animation = false
 		_clear_selection()
 	_refresh_ui()
 
@@ -260,6 +263,7 @@ func _on_event_received(envelope: Dictionary) -> void:
 		return
 	var applied: Dictionary = _state.apply_event(envelope)
 	var accepted_path: Array = []
+	var preserve_board_animation := false
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
@@ -273,15 +277,28 @@ func _on_event_received(envelope: Dictionary) -> void:
 			if payload is Dictionary and payload.get("path") is Array:
 				accepted_path = payload["path"].duplicate()
 				_defer_result_until_move_animation = _state.status in TERMINAL_STATUSES
+				preserve_board_animation = not $Board.move_animation_path.is_empty()
+				if preserve_board_animation:
+					_queued_move_animations.append({
+						"board": _state.board,
+						"local_color": _local_color(),
+						"path": accepted_path,
+					})
 	_clear_selection()
-	_refresh_ui()
-	if not accepted_path.is_empty() and not $Board.play_move_animation(accepted_path):
+	_refresh_ui(preserve_board_animation)
+	if not accepted_path.is_empty() and not preserve_board_animation \
+		and not $Board.play_move_animation(accepted_path):
 		_defer_result_until_move_animation = false
 		_refresh_ui()
 
 
 func _on_move_animation_finished() -> void:
-	if not _defer_result_until_move_animation:
+	while not _queued_move_animations.is_empty():
+		var queued: Dictionary = _queued_move_animations.pop_front()
+		if $Board.present(queued["board"], queued["local_color"], -1, {}, [], false) \
+			and $Board.play_move_animation(queued["path"]):
+			return
+	if _state == null:
 		return
 	_defer_result_until_move_animation = false
 	_refresh_ui.call_deferred()
@@ -307,7 +324,7 @@ func _on_return_to_lobby_requested(code: String) -> void:
 	_refresh_ui()
 
 
-func _refresh_ui() -> void:
+func _refresh_ui(preserve_board_animation: bool = false) -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
 	var pending_path: Array = []
@@ -321,7 +338,8 @@ func _refresh_ui() -> void:
 			_clear_selection()
 	var display_board: Array = _state.board if has_state else _initial_board()
 	var local_color := _local_color() if has_state else "white"
-	$Board.present(display_board, local_color if not local_color.is_empty() else "white", _selected_hole, _target_paths, pending_path, _can_interact())
+	if not preserve_board_animation:
+		$Board.present(display_board, local_color if not local_color.is_empty() else "white", _selected_hole, _target_paths, pending_path, _can_interact())
 	$TopNavigation.set_subtitle(_status_text() if has_state else _connection_text())
 	$TopNavigation.set_subtitle_visible(has_state and not terminal and not _force_return and _connection_state == "connected" and not _awaiting_snapshot)
 	$TopNavigation.set_action_visible(not terminal and not _force_return)

@@ -116,7 +116,7 @@ func set_interactable(value: bool) -> void:
 
 
 func play_move_animation(path: Array) -> bool:
-	if path.size() < 2 or not _valid_indices(path):
+	if not _move_animation_path.is_empty() or path.size() < 2 or not _valid_indices(path):
 		return false
 	var origin: int = path[0]
 	var destination: int = path.back()
