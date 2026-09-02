@@ -28,9 +28,9 @@ const (
 	exitFailure = 1
 	exitUsage   = 2
 
-	maximumInviteCount = 1000
-	inviteEntropyBytes = 32
-	minimumPepperBytes = 32
+	maximumInviteCount              = 1000
+	maximumInviteGenerationAttempts = maximumInviteCount * 10
+	minimumPepperBytes              = 32
 
 	rootUsage    = "usage: gameboxctl <invite create|match show> [options]"
 	inviteUsage  = "usage: gameboxctl invite create --count N --db PATH --json"
@@ -41,13 +41,13 @@ const (
 )
 
 type commandDeps struct {
-	lookupEnv   func(string) (string, bool)
-	now         func() time.Time
-	randomToken func(int) (string, error)
+	lookupEnv        func(string) (string, bool)
+	now              func() time.Time
+	randomInviteCode func() (string, error)
 }
 
 func defaultCommandDeps() commandDeps {
-	return commandDeps{lookupEnv: os.LookupEnv, now: time.Now, randomToken: auth.RandomToken}
+	return commandDeps{lookupEnv: os.LookupEnv, now: time.Now, randomInviteCode: auth.RandomInviteCode}
 }
 
 func main() {
@@ -82,6 +82,11 @@ type inviteOptions struct {
 	db    string
 }
 
+type inviteCandidate struct {
+	plaintext string
+	digest    string
+}
+
 func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Writer, deps commandDeps) int {
 	if len(args) == 1 && isHelp(args[0]) {
 		writeLine(stdout, inviteUsage)
@@ -92,7 +97,7 @@ func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Write
 		writeLine(stderr, inviteUsage)
 		return exitUsage
 	}
-	if ctx == nil || deps.lookupEnv == nil || deps.now == nil || deps.randomToken == nil {
+	if ctx == nil || deps.lookupEnv == nil || deps.now == nil || deps.randomInviteCode == nil {
 		writeLine(stderr, inviteFailed)
 		return exitFailure
 	}
@@ -102,33 +107,17 @@ func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Write
 		return exitFailure
 	}
 
-	plaintexts := make([]string, 0, options.count)
-	digests := make([]string, 0, options.count)
+	candidates := make([]inviteCandidate, 0, options.count)
 	seenPlaintexts := make(map[string]struct{}, options.count)
 	seenDigests := make(map[string]struct{}, options.count)
-	for range options.count {
-		plaintext, err := deps.randomToken(inviteEntropyBytes)
-		if err != nil || plaintext == "" {
+	generationAttempts := 0
+	for len(candidates) < options.count {
+		candidate, generated := nextInviteCandidate(deps.randomInviteCode, pepper, seenPlaintexts, seenDigests, &generationAttempts)
+		if !generated {
 			writeLine(stderr, inviteFailed)
 			return exitFailure
 		}
-		if _, duplicate := seenPlaintexts[plaintext]; duplicate {
-			writeLine(stderr, inviteFailed)
-			return exitFailure
-		}
-		digest, err := auth.HashToken(pepper, plaintext)
-		if err != nil {
-			writeLine(stderr, inviteFailed)
-			return exitFailure
-		}
-		if _, duplicate := seenDigests[digest]; duplicate {
-			writeLine(stderr, inviteFailed)
-			return exitFailure
-		}
-		seenPlaintexts[plaintext] = struct{}{}
-		seenDigests[digest] = struct{}{}
-		plaintexts = append(plaintexts, plaintext)
-		digests = append(digests, digest)
+		candidates = append(candidates, candidate)
 	}
 
 	database, err := store.Open(ctx, options.db)
@@ -149,17 +138,37 @@ func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 	}()
 	createdAt := deps.now().UTC().UnixMilli()
-	for _, digest := range digests {
-		if _, err := transaction.ExecContext(ctx, `INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, digest, createdAt); err != nil {
+	for index := 0; index < len(candidates); {
+		result, insertErr := transaction.ExecContext(ctx, `INSERT OR IGNORE INTO invite_codes(code_hash,created_at) VALUES (?,?)`, candidates[index].digest, createdAt)
+		if insertErr != nil {
 			writeLine(stderr, inviteFailed)
 			return exitFailure
 		}
+		affected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			writeLine(stderr, inviteFailed)
+			return exitFailure
+		}
+		if affected == 1 {
+			index++
+			continue
+		}
+		replacement, generated := nextInviteCandidate(deps.randomInviteCode, pepper, seenPlaintexts, seenDigests, &generationAttempts)
+		if !generated {
+			writeLine(stderr, inviteFailed)
+			return exitFailure
+		}
+		candidates[index] = replacement
 	}
 	if err := transaction.Commit(); err != nil {
 		writeLine(stderr, inviteFailed)
 		return exitFailure
 	}
 	committed = true
+	plaintexts := make([]string, len(candidates))
+	for index, candidate := range candidates {
+		plaintexts[index] = candidate.plaintext
+	}
 	if err := json.NewEncoder(stdout).Encode(struct {
 		Invites []string `json:"invites"`
 	}{Invites: plaintexts}); err != nil {
@@ -167,6 +176,35 @@ func runInviteCreate(ctx context.Context, args []string, stdout, stderr io.Write
 		return exitFailure
 	}
 	return exitOK
+}
+
+func nextInviteCandidate(
+	generate func() (string, error),
+	pepper string,
+	seenPlaintexts, seenDigests map[string]struct{},
+	attempts *int,
+) (inviteCandidate, bool) {
+	for *attempts < maximumInviteGenerationAttempts {
+		*attempts = *attempts + 1
+		plaintext, err := generate()
+		if err != nil || plaintext == "" {
+			return inviteCandidate{}, false
+		}
+		if _, duplicate := seenPlaintexts[plaintext]; duplicate {
+			continue
+		}
+		digest, err := auth.HashToken(pepper, plaintext)
+		if err != nil {
+			return inviteCandidate{}, false
+		}
+		if _, duplicate := seenDigests[digest]; duplicate {
+			continue
+		}
+		seenPlaintexts[plaintext] = struct{}{}
+		seenDigests[digest] = struct{}{}
+		return inviteCandidate{plaintext: plaintext, digest: digest}, true
+	}
+	return inviteCandidate{}, false
 }
 
 func parseInviteOptions(args []string) (inviteOptions, bool) {
@@ -262,7 +300,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	board := make([]int, gomoku.BoardSize*gomoku.BoardSize)
+	board := make([]int, 0)
 	var boardSize int
 	var nextColor string
 	var format string
@@ -292,7 +330,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			writeLine(stderr, matchFailed)
 			return exitFailure
 		}
-		board = board[:0]
+		board = make([]int, 0, chinesecheckers.BoardCells)
 		for _, cell := range state.Board {
 			board = append(board, int(cell))
 		}
@@ -310,7 +348,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 				return exitFailure
 			}
 		}
-		board = board[:0]
+		board = make([]int, 0, gomoku.BoardSize*gomoku.BoardSize)
 		for _, cell := range state.Board {
 			board = append(board, int(cell))
 		}

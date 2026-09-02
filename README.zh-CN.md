@@ -119,7 +119,7 @@ curl --fail http://127.0.0.1:8080/healthz
   --count 2 --db "$GAMEBOX_DB_PATH" --json)
 ```
 
-每个明文邀请码只显示一次。批量创建是原子操作，`--count` 必须介于 1 和 1000 之间。
+每个邀请码由 12 位大写字母或数字组成，明文只显示一次；兑换当前格式的邀请码时不区分字母大小写。批量创建是原子操作，`--count` 必须介于 1 和 1000 之间。
 使用完成后可执行 `kill "$gamebox_server_pid"; wait "$gamebox_server_pid"; trap - EXIT INT TERM` 停止本地服务并清理退出 trap。
 
 ### 3. 构建或运行 Android 应用
@@ -235,6 +235,15 @@ curl --fail http://127.0.0.1:18080/healthz
 ```
 
 `deploy/macos/install-staging.sh` 可安装独立的预发服务。它使用独立的二进制文件、端口、数据库、密钥和 launch agent，但共享生产环境的 tunnel 配置。
+
+使用与目标服务、数据库和 Keychain 密钥匹配的环境配置生成一个邀请码：
+
+```bash
+zsh deploy/macos/create-invite.sh production
+zsh deploy/macos/create-invite.sh staging
+```
+
+可通过第二个参数指定 1 到 1000 的生成数量，例如 `zsh deploy/macos/create-invite.sh staging 2`。
 
 ## 安全
 

@@ -18,6 +18,7 @@ import (
 	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/store"
 )
 
@@ -31,14 +32,14 @@ const (
 func TestInviteCreateWritesOnlyDistinctDigestsAndOneJSONDocument(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 	now := time.Date(2026, time.August, 20, 3, 4, 5, 678900000, time.FixedZone("fixture", 8*60*60))
-	plaintexts := []string{"invite-alpha", "invite-beta"}
+	plaintexts := []string{"ABCD1234WXYZ", "WXYZ9876ABCD"}
 	next := 0
 	deps := commandDeps{
 		lookupEnv: pepperLookup(testPepper),
 		now:       func() time.Time { return now },
-		randomToken: func(byteCount int) (string, error) {
-			if byteCount != 32 || next >= len(plaintexts) {
-				t.Fatalf("RandomToken byteCount/call = %d/%d", byteCount, next)
+		randomInviteCode: func() (string, error) {
+			if next >= len(plaintexts) {
+				t.Fatalf("RandomInviteCode call = %d", next)
 			}
 			value := plaintexts[next]
 			next++
@@ -50,7 +51,7 @@ func TestInviteCreateWritesOnlyDistinctDigestsAndOneJSONDocument(t *testing.T) {
 	if code != exitOK || stderr.Len() != 0 {
 		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "{\"invites\":[\"invite-alpha\",\"invite-beta\"]}\n"; got != want {
+	if got, want := stdout.String(), "{\"invites\":[\"ABCD1234WXYZ\",\"WXYZ9876ABCD\"]}\n"; got != want {
 		t.Fatalf("stdout=%q want=%q", got, want)
 	}
 	if next != 2 {
@@ -129,7 +130,7 @@ func TestInviteCreateRejectsBoundsAndStrictSyntaxBeforeOpeningDatabase(t *testin
 			}
 			var stdout, stderr bytes.Buffer
 			code := run(context.Background(), args, &stdout, &stderr, commandDeps{
-				lookupEnv: pepperLookup(testPepper), now: time.Now, randomToken: auth.RandomToken,
+				lookupEnv: pepperLookup(testPepper), now: time.Now, randomInviteCode: auth.RandomInviteCode,
 			})
 			if code != exitUsage || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "usage: gameboxctl ") {
 				t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
@@ -147,7 +148,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
 			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomToken: func(int) (string, error) { return "", errors.New("entropy-secret-detail") },
+			randomInviteCode: func() (string, error) { return "", errors.New("entropy-secret-detail") },
 		})
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" || strings.Contains(stderr.String(), "entropy-secret-detail") {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
@@ -157,28 +158,37 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		}
 	})
 
-	t.Run("digest collision rolls back whole batch", func(t *testing.T) {
+	t.Run("batch collision regenerates candidate", func(t *testing.T) {
 		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+		generated := []string{"ABCD1234WXYZ", "ABCD1234WXYZ", "WXYZ9876ABCD"}
+		var calls int
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
 			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomToken: func(int) (string, error) { return "same-invite", nil },
+			randomInviteCode: func() (string, error) {
+				value := generated[calls]
+				calls++
+				return value, nil
+			},
 		})
-		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
+		if code != exitOK || stdout.String() != "{\"invites\":[\"ABCD1234WXYZ\",\"WXYZ9876ABCD\"]}\n" || stderr.Len() != 0 {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+		}
+		if calls != 3 {
+			t.Fatalf("generation calls=%d want=3", calls)
 		}
 		database := openDatabase(t, databasePath)
 		defer database.Close()
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 0 {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 2 {
 			t.Fatalf("invite count=%d err=%v", count, err)
 		}
 	})
 
-	t.Run("existing digest collision rolls back earlier insert", func(t *testing.T) {
+	t.Run("existing digest collision regenerates candidate", func(t *testing.T) {
 		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 		database := openDatabase(t, databasePath)
-		existingHash, err := auth.HashToken(testPepper, "existing-invite")
+		existingHash, err := auth.HashToken(testPepper, "OLD1234ABCDE")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,33 +198,51 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
-		generated := []string{"fresh-invite", "existing-invite"}
+		generated := []string{"NEW1234ABCDE", "OLD1234ABCDE", "REPL1234ABCD"}
 		var calls int
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
 			lookupEnv: pepperLookup(testPepper), now: time.Now,
-			randomToken: func(int) (string, error) {
+			randomInviteCode: func() (string, error) {
 				value := generated[calls]
 				calls++
 				return value, nil
 			},
 		})
-		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
+		if code != exitOK || stdout.String() != "{\"invites\":[\"NEW1234ABCDE\",\"REPL1234ABCD\"]}\n" || stderr.Len() != 0 {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+		}
+		if calls != 3 {
+			t.Fatalf("generation calls=%d want=3", calls)
 		}
 		database = openDatabase(t, databasePath)
 		defer database.Close()
 		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 1 {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes`).Scan(&count); err != nil || count != 3 {
 			t.Fatalf("invite count=%d err=%v", count, err)
 		}
-		freshHash, err := auth.HashToken(testPepper, "fresh-invite")
+		freshHash, err := auth.HashToken(testPepper, "NEW1234ABCDE")
 		if err != nil {
 			t.Fatal(err)
 		}
 		var freshCount int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes WHERE code_hash=?`, freshHash).Scan(&freshCount); err != nil || freshCount != 0 {
+		if err := database.QueryRow(`SELECT COUNT(*) FROM invite_codes WHERE code_hash=?`, freshHash).Scan(&freshCount); err != nil || freshCount != 1 {
 			t.Fatalf("fresh invite count=%d err=%v", freshCount, err)
+		}
+	})
+
+	t.Run("collision retry exhaustion fails without opening database", func(t *testing.T) {
+		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{"invite", "create", "--count", "2", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
+			lookupEnv: pepperLookup(testPepper), now: time.Now,
+			randomInviteCode: func() (string, error) { return "SAME1234CODE", nil },
+		})
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
+			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
+		}
+		if _, err := os.Stat(databasePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("database touched after retry exhaustion: %v", err)
 		}
 	})
 
@@ -222,7 +250,7 @@ func TestInviteCreateFailureDoesNotPrintOrPartiallyCommit(t *testing.T) {
 		databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"invite", "create", "--count", "1", "--db", databasePath, "--json"}, &stdout, &stderr, commandDeps{
-			lookupEnv: func(string) (string, bool) { return "", false }, now: time.Now, randomToken: auth.RandomToken,
+			lookupEnv: func(string) (string, bool) { return "", false }, now: time.Now, randomInviteCode: auth.RandomInviteCode,
 		})
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "error: invite creation failed\n" {
 			t.Fatalf("run=(%d,%q,%q)", code, stdout.String(), stderr.String())
@@ -308,6 +336,27 @@ func TestMatchShowReplaysInitialChineseCheckersBoard(t *testing.T) {
 		if cell != want {
 			t.Fatalf("board[%d]=%d want=%d", index, cell, want)
 		}
+	}
+}
+
+func TestMatchShowReturnsEmptyBoardForRPS(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+	seedRPSMatch(t, databasePath)
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
+	}
+	var response matchShowResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("decode stdout %q: %v", stdout.String(), err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"board":[]`)) {
+		t.Fatalf("RPS board is not encoded as an empty JSON array: %q", stdout.String())
+	}
+	if response.GameID != rps.GameID || response.BoardSize != 0 || len(response.Board) != 0 || response.Format != rps.FormatSingleRound || response.Round != 1 || len(response.Scores) != 0 {
+		t.Fatalf("RPS response metadata=%+v board=%d", response, len(response.Board))
 	}
 }
 
@@ -571,6 +620,33 @@ func seedChineseCheckersMatch(t *testing.T, path string) {
 		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{chinesecheckers.GameID, testBlackID, testMatchID}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{chinesecheckers.GameID, testWhiteID, testMatchID}},
+	}
+	for _, statement := range statements {
+		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+			database.Close()
+			t.Fatalf("seed database: %v", err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedRPSMatch(t *testing.T, path string) {
+	t.Helper()
+	database := openDatabase(t, path)
+	now := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC).UnixMilli()
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testBlackID, "Alice", "alice", now, now}},
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testWhiteID, "Bob", "bob", now, now}},
+		{`INSERT INTO matches(id,game_id,status,revision,game_config_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, []any{testMatchID, rps.GameID, "active", 0, `{"format":"single_round"}`, now, now}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testBlackID, 0, "black"}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{rps.GameID, testBlackID, testMatchID}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{rps.GameID, testWhiteID, testMatchID}},
 	}
 	for _, statement := range statements {
 		if _, err := database.Exec(statement.query, statement.args...); err != nil {

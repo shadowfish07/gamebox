@@ -112,6 +112,48 @@ func TestRegisterConsumesInviteOnceAndStoresTrimmedNickname(t *testing.T) {
 	}
 }
 
+func TestRegisterAndIssueNormalizesOnlyCurrentInviteFormat(t *testing.T) {
+	t.Run("current format is case insensitive", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		fixture.addInvite(t, "ABCD1234WXYZ")
+
+		session, err := fixture.service.RegisterAndIssue(context.Background(), "abcd1234wxyz", "Alice")
+		if err != nil || session.User.ID == "" {
+			t.Fatalf("RegisterAndIssue current invite = (%+v, %v)", session, err)
+		}
+	})
+
+	t.Run("legacy format remains case sensitive", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		legacy := "legacy-MixedCase-invite-credential"
+		fixture.addInvite(t, legacy)
+
+		if _, err := fixture.service.RegisterAndIssue(context.Background(), strings.ToUpper(legacy), "Alice"); !errors.Is(err, ErrInviteInvalid) {
+			t.Fatalf("upper-cased legacy invite error = %v, want ErrInviteInvalid", err)
+		}
+		session, err := fixture.service.RegisterAndIssue(context.Background(), legacy, "Alice")
+		if err != nil || session.User.ID == "" {
+			t.Fatalf("RegisterAndIssue legacy invite = (%+v, %v)", session, err)
+		}
+	})
+
+	t.Run("retired six-character format is rejected", func(t *testing.T) {
+		fixture := newAuthFixture(t)
+		hash := fixture.addInvite(t, "ABC123")
+
+		if _, err := fixture.service.RegisterAndIssue(context.Background(), "ABC123", "Alice"); !errors.Is(err, ErrInviteInvalid) {
+			t.Fatalf("retired invite error = %v, want ErrInviteInvalid", err)
+		}
+		var consumedBy, consumedAt sql.NullString
+		if err := fixture.db.QueryRow(`SELECT consumed_by,consumed_at FROM invite_codes WHERE code_hash=?`, hash).Scan(&consumedBy, &consumedAt); err != nil {
+			t.Fatal(err)
+		}
+		if consumedBy.Valid || consumedAt.Valid {
+			t.Fatalf("retired invite was consumed: consumed_by=%v consumed_at=%v", consumedBy, consumedAt)
+		}
+	})
+}
+
 func TestRegisterNicknameConflictDoesNotConsumeInvite(t *testing.T) {
 	fixture := newAuthFixture(t)
 	if _, err := fixture.db.Exec(`INSERT INTO users(id, nickname, normalized_nickname, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
@@ -630,6 +672,19 @@ func TestRegisterServiceRejectsInvalidDependenciesAndPepper(t *testing.T) {
 }
 
 func TestRegisterTokenPrimitivesUseSafeUnambiguousRepresentations(t *testing.T) {
+	invite, err := randomInviteCode(bytes.NewReader([]byte{0, 1, 2, 25, 26, 35, 0, 1, 2, 25, 26, 35}))
+	if err != nil || invite != "ABCZ09ABCZ09" {
+		t.Fatalf("randomInviteCode = (%q, %v), want ABCZ09ABCZ09", invite, err)
+	}
+	generatedInvite, err := RandomInviteCode()
+	validInvite := err == nil && len(generatedInvite) == inviteCodeLength
+	for index := 0; validInvite && index < len(generatedInvite); index++ {
+		validInvite = strings.ContainsRune(inviteCodeAlphabet, rune(generatedInvite[index]))
+	}
+	if !validInvite {
+		t.Fatalf("RandomInviteCode returned invalid twelve-character code: generated=%q err=%v", generatedInvite, err)
+	}
+
 	token, err := RandomToken(32)
 	if err != nil {
 		t.Fatalf("RandomToken returned error: %v", err)
@@ -707,6 +762,11 @@ func (failingEntropyReader) Read([]byte) (int, error) {
 }
 
 func TestRegisterTokenGenerationFailureUsesFixedError(t *testing.T) {
+	invite, inviteErr := randomInviteCode(failingEntropyReader{})
+	if invite != "" || !errors.Is(inviteErr, ErrTokenGeneration) || inviteErr.Error() != ErrTokenGeneration.Error() {
+		t.Fatalf("randomInviteCode failure = (%q, %v), want no code and fixed ErrTokenGeneration", invite, inviteErr)
+	}
+
 	token, err := randomToken(32, failingEntropyReader{})
 	if token != "" || !errors.Is(err, ErrTokenGeneration) || err.Error() != ErrTokenGeneration.Error() {
 		t.Fatalf("randomToken failure = (%q, %v), want no token and fixed ErrTokenGeneration", token, err)

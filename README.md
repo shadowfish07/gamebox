@@ -119,7 +119,7 @@ The exports from step 1 remain active in this shell, so the invite command uses 
   --count 2 --db "$GAMEBOX_DB_PATH" --json)
 ```
 
-Each plaintext invite is shown only once. A batch is atomic, and `--count` must be between 1 and 1000.
+Each invite is a twelve-character upper-case letter/digit code and is shown only once. Letter case is ignored when redeeming the current format. A batch is atomic, and `--count` must be between 1 and 1000.
 Stop the local service when finished with `kill "$gamebox_server_pid"; wait "$gamebox_server_pid"; trap - EXIT INT TERM`.
 
 ### 3. Build or run the Android app
@@ -265,6 +265,15 @@ curl --fail http://127.0.0.1:18080/healthz
 ```
 
 An isolated staging installation is available through `deploy/macos/install-staging.sh`. It uses its own binaries, port, database, secrets, and launch agents while sharing the production tunnel configuration.
+
+Generate one invite against an installed environment with the matching service, database, and Keychain secret:
+
+```bash
+zsh deploy/macos/create-invite.sh production
+zsh deploy/macos/create-invite.sh staging
+```
+
+Pass a count from 1 to 1000 as the optional second argument, for example `zsh deploy/macos/create-invite.sh staging 2`.
 
 ## Security
 
