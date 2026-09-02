@@ -32,8 +32,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Keep trusted rolling release writes serialized. Untrusted refs build in
-  # isolated groups and may cancel only their own stale runs.
+  # Keep trusted rolling release writes serialized. Non-publishing refs build
+  # in isolated groups and may cancel only their own stale runs.
   group: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'debug-apk-publish' || format('debug-apk-build-{0}', github.ref) }}
   cancel-in-progress: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
 
@@ -76,7 +76,34 @@ jobs:
       - name: Import Godot runtime assets
         run: godot --headless --path game_runtime --import
 
-      - name: Build untrusted debug APK with independent package name
+      - name: Configure stable signing for trusted pull request
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login == 'shadowfish07' &&
+          github.actor == 'shadowfish07' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required GitHub secret: ${name}" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > app/android/app/release-key.jks
+          {
+            echo "storeFile=release-key.jks"
+            echo "storePassword=${STORE_PASSWORD}"
+            echo "keyAlias=${KEY_ALIAS}"
+            echo "keyPassword=${KEY_PASSWORD}"
+          } > app/android/key.properties
+          echo "GAMEBOX_REQUIRE_RELEASE_SIGNING=true" >> "${GITHUB_ENV}"
+
+      - name: Build debug APK with independent package name
         working-directory: app
         env:
           GAMEBOX_DEBUG_ARTIFACT: "true"
@@ -120,9 +147,14 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+      - name: Remove signing material
+        if: always()
+        run: rm -f app/android/app/release-key.jks app/android/key.properties
+
   publish:
-    # Secrets and write access exist only for the trusted default ref. Manual
-    # dispatches from another ref remain build-only.
+    # Release write access exists only for the trusted default ref. Manual
+    # dispatches from another ref remain build-only; trusted PR signing is
+    # separately guarded in the read-only build job.
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     needs: build
     permissions:
