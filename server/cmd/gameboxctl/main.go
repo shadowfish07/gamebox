@@ -300,7 +300,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	board := make([]int, gomoku.BoardSize*gomoku.BoardSize)
+	board := make([]int, 0)
 	var boardSize int
 	var nextColor string
 	var format string
@@ -330,7 +330,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			writeLine(stderr, matchFailed)
 			return exitFailure
 		}
-		board = board[:0]
+		board = make([]int, 0, chinesecheckers.BoardCells)
 		for _, cell := range state.Board {
 			board = append(board, int(cell))
 		}
@@ -348,7 +348,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 				return exitFailure
 			}
 		}
-		board = board[:0]
+		board = make([]int, 0, gomoku.BoardSize*gomoku.BoardSize)
 		for _, cell := range state.Board {
 			board = append(board, int(cell))
 		}

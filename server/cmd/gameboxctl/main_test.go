@@ -18,6 +18,7 @@ import (
 	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/store"
 )
 
@@ -338,6 +339,27 @@ func TestMatchShowReplaysInitialChineseCheckersBoard(t *testing.T) {
 	}
 }
 
+func TestMatchShowReturnsEmptyBoardForRPS(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+	seedRPSMatch(t, databasePath)
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
+	}
+	var response matchShowResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("decode stdout %q: %v", stdout.String(), err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"board":[]`)) {
+		t.Fatalf("RPS board is not encoded as an empty JSON array: %q", stdout.String())
+	}
+	if response.GameID != rps.GameID || response.BoardSize != 0 || len(response.Board) != 0 || response.Format != rps.FormatSingleRound || response.Round != 1 || len(response.Scores) != 0 {
+		t.Fatalf("RPS response metadata=%+v board=%d", response, len(response.Board))
+	}
+}
+
 func TestMatchShowUnknownAndInvalidIDsHaveStableNonzeroExit(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 	seedMatch(t, databasePath)
@@ -598,6 +620,33 @@ func seedChineseCheckersMatch(t *testing.T, path string) {
 		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{chinesecheckers.GameID, testBlackID, testMatchID}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{chinesecheckers.GameID, testWhiteID, testMatchID}},
+	}
+	for _, statement := range statements {
+		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+			database.Close()
+			t.Fatalf("seed database: %v", err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedRPSMatch(t *testing.T, path string) {
+	t.Helper()
+	database := openDatabase(t, path)
+	now := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC).UnixMilli()
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testBlackID, "Alice", "alice", now, now}},
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testWhiteID, "Bob", "bob", now, now}},
+		{`INSERT INTO matches(id,game_id,status,revision,game_config_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, []any{testMatchID, rps.GameID, "active", 0, `{"format":"single_round"}`, now, now}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testBlackID, 0, "black"}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{rps.GameID, testBlackID, testMatchID}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{rps.GameID, testWhiteID, testMatchID}},
 	}
 	for _, statement := range statements {
 		if _, err := database.Exec(statement.query, statement.args...); err != nil {
