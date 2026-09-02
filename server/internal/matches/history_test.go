@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -148,6 +149,28 @@ func TestListHistoryCountsOnlyAcceptedMoves(t *testing.T) {
 	}
 	if len(page.Matches) != 1 || page.Matches[0].MoveCount != 2 {
 		t.Fatalf("matches = %+v, want one entry with two accepted moves", page.Matches)
+	}
+}
+
+func TestListChineseCheckersHistoryCountsGoalAndAcceptedMoves(t *testing.T) {
+	fixture := newFixture(t)
+	finished := time.UnixMilli(fixture.now.UTC().UnixMilli()).UTC()
+	seedGameHistoryMatch(t, fixture.db, chinesecheckers.GameID, historyFiveID, StatusFinished, ResultGoal, initiatorID, finished, true)
+	seedHistoryEvent(t, fixture.db, historyFiveID, 1, chinesecheckers.MoveAccepted)
+	seedHistoryEvent(t, fixture.db, historyFiveID, 2, chinesecheckers.MoveAccepted)
+
+	page, err := fixture.service(t, bytes.NewReader([]byte{0})).ListHistory(
+		context.Background(), chinesecheckers.GameID, initiatorID, HistoryPageRequest{Limit: 20},
+	)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if page.Statistics != (HistoryStatistics{ValidMatches: 1, Wins: 1, WinRate: 1}) || len(page.Matches) != 1 {
+		t.Fatalf("Chinese Checkers history = %+v, want one win", page)
+	}
+	entry := page.Matches[0]
+	if entry.Outcome != historyOutcomeWin || entry.Color != ColorBlack || entry.MoveCount != 2 || entry.Format != "" {
+		t.Fatalf("Chinese Checkers entry = %+v, want first-player win with two accepted moves", entry)
 	}
 }
 
@@ -406,6 +429,11 @@ func canonicalHistoryTime(fixture fixture) time.Time {
 
 func seedHistoryMatch(t *testing.T, db *sql.DB, id, status, result, winner string, finishedAt time.Time, includeOpponent bool) {
 	t.Helper()
+	seedGameHistoryMatch(t, db, gomoku.GameID, id, status, result, winner, finishedAt, includeOpponent)
+}
+
+func seedGameHistoryMatch(t *testing.T, db *sql.DB, gameID, id, status, result, winner string, finishedAt time.Time, includeOpponent bool) {
+	t.Helper()
 	var resultValue, winnerValue, finishedValue any
 	if result != "" {
 		resultValue = result
@@ -419,7 +447,7 @@ func seedHistoryMatch(t *testing.T, db *sql.DB, id, status, result, winner strin
 	created := int64(1_700_000_000_000)
 	if _, err := db.Exec(`
 INSERT INTO matches(id,game_id,status,revision,result,winner_user_id,created_at,updated_at,finished_at)
-VALUES (?,?,?,?,?,?,?,?,?)`, id, gomoku.GameID, status, 0, resultValue, winnerValue, created, created, finishedValue); err != nil {
+	VALUES (?,?,?,?,?,?,?,?,?)`, id, gameID, status, 0, resultValue, winnerValue, created, created, finishedValue); err != nil {
 		t.Fatalf("insert history match %s: %v", id, err)
 	}
 	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,?)`, id, initiatorID, ColorBlack); err != nil {

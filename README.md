@@ -17,11 +17,11 @@ Gamebox combines a Flutter app shell, embedded Godot games, and a Go service bac
 
 ## Features
 
-- **Two online games**: Gomoku and Rock Paper Scissors, each with a dedicated Godot interface
+- **Three online games**: Gomoku, Chinese Checkers, and Rock Paper Scissors, each with a dedicated Godot interface
 - **Server-authoritative matches**: moves, choices, revisions, results, and active game slots are validated by the Go service
 - **Invite-only accounts**: one-time registration codes, automatic sign-in, and rotating access sessions
 - **Resilient play**: reconnect, snapshot recovery, force-stop recovery, resignation, cancellation, and return-to-lobby flows
-- **Match history**: paginated Gomoku results, win/loss/draw statistics, and win rate
+- **Match history**: per-game paginated results and statistics for Gomoku, Chinese Checkers, and RPS
 - **Material 3 experience**: shared Flutter/Godot design tokens, light and dark themes, and responsive portrait layouts
 - **Safe Android updates**: signed APK verification, checksum validation, and side-by-side debug builds backed by staging
 - **Layered verification**: focused Flutter, Godot, Go, Android host, and deterministic two-device tests
@@ -245,7 +245,7 @@ Release builds require these GitHub Actions secrets:
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-The [debug workflow](.github/workflows/debug.yml) uploads untrusted branch and pull-request builds as short-lived workflow artifacts without signing secrets or release permissions. Trusted builds from the default branch publish the stable-signed package to the rolling `debug-latest` prerelease. Stable and debug packages have different application IDs, so both can be installed on one device.
+The [debug workflow](.github/workflows/debug.yml) uploads branch and pull-request builds as short-lived workflow artifacts with read-only repository permissions. Pull requests opened or reopened by `shadowfish07` from branches in this repository use the stable signing secrets, so those artifacts can replace previous debug installs; all other non-default refs use an ephemeral Android debug key. Trusted builds from the default branch publish the stable-signed package to the rolling `debug-latest` prerelease. Stable and debug packages have different application IDs, so both can be installed on one device.
 
 Because release assets keep immutable provenance names, resolve the newest APK from release metadata instead of guessing a filename:
 
@@ -296,4 +296,5 @@ Gamebox is under active development and currently targets Android. AI opponents,
 
 ## License
 
-Gamebox is available under the [MIT License](LICENSE).
+Gamebox is available under the [MIT License](LICENSE). See
+[Third-party notices](THIRD_PARTY_NOTICES.md) for separately sourced assets.

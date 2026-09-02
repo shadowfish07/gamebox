@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://games/chinese_checkers/chinese_checkers_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/chinese_checkers/chinese_checkers_board.gd" id="2_board"]
@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_snackbar.tscn" id="5_snackbar"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="6_confirmation"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="7_result"]
+[ext_resource type="AudioStream" path="res://games/shared/assets/click_005.ogg" id="8_move_sound"]
 
 [node name="ChineseCheckers" type="Control"]
 layout_mode = 3
@@ -25,6 +26,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="MoveSound" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("8_move_sound")
 
 [node name="TopNavigation" parent="." instance=ExtResource("3_top_bar")]
 offset_left = 48.0

@@ -7,6 +7,7 @@ import 'package:gamebox/core/auth/session.dart';
 import 'package:gamebox/core/auth/token_store.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
+import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
 import 'package:gamebox/features/history/match_history_models.dart';
 import 'package:gamebox/features/rps/rps_models.dart';
@@ -76,6 +77,21 @@ void main() {
 
     expect(page.matches.single.rpsFormat, RpsFormat.bestOfThree);
     expect(page.matches.single.moveCount, 3);
+  });
+
+  test('fetches Chinese checkers history through its game endpoint', () async {
+    final fixture = await _ApiFixture.create(now, (request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/v1/games/chinese_checkers/history');
+      return _json(_validEnvelope());
+    });
+
+    final page = await fixture.api.fetchPage(
+      game: MatchHistoryGame.chineseCheckers,
+    );
+
+    expect(page.matches.single.color, GomokuColor.black);
+    expect(page.matches.single.rpsFormat, isNull);
   });
 
   test(

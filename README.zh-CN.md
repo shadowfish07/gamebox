@@ -17,11 +17,11 @@ Gamebox 由 Flutter 应用外壳、嵌入式 Godot 游戏和基于 SQLite 的 Go
 
 ## 功能
 
-- **两款联机游戏**：五子棋与石头剪刀布，各自拥有独立的 Godot 界面
+- **三款联机游戏**：五子棋、中国跳棋与石头剪刀布，各自拥有独立的 Godot 界面
 - **服务器权威对局**：落子、出拳、修订号、结果和游戏占用槽均由 Go 服务验证
 - **邀请制账号**：一次性注册码、自动登录和可轮换的访问会话
 - **可恢复对局**：支持重连、快照恢复、强制停止恢复、认输、取消和返回大厅
-- **对局记录**：分页查看五子棋结果、胜负和局统计与胜率
+- **对局记录**：按游戏分页查看五子棋、中国跳棋和石头剪刀布的对局结果、统计与胜率
 - **Material 3 体验**：Flutter/Godot 共享设计令牌，支持浅色、深色主题和响应式竖屏布局
 - **安全的 Android 更新**：签名 APK 校验、校验和验证，以及使用预发环境的独立调试包
 - **分层验证**：Flutter、Godot、Go、Android 宿主和确定性双设备测试
@@ -215,7 +215,7 @@ bash tool/release.sh patch  # 也可使用 minor / major
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-[调试工作流](.github/workflows/debug.yml) 会将不受信的分支和 PR 构建保存为短期 workflow artifact，不接触签名密钥或 release 写权限。只有来自默认分支的受信构建会将稳定签名包发布到滚动的 `debug-latest` 预发布。稳定版和调试版使用不同的应用 ID，可同时安装。
+[调试工作流](.github/workflows/debug.yml) 会以只读仓库权限将分支和 PR 构建保存为短期 workflow artifact。由 `shadowfish07` 从本仓库分支创建或重新打开的 PR 会使用稳定签名密钥，因此这些 artifact 可以覆盖之前安装的调试版；其他非默认分支仍使用临时 Android debug key。只有来自默认分支的受信构建会将稳定签名包发布到滚动的 `debug-latest` 预发布。稳定版和调试版使用不同的应用 ID，可同时安装。
 
 由于 release 资产保留不可变的溯源文件名，应通过 release 元数据解析最新 APK，不要猜测文件名：
 

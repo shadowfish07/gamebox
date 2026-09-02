@@ -42,6 +42,7 @@ static func cases() -> Array:
 		{"name": "gomoku scene keeps fixed portrait board and touch targets", "run": _keeps_portrait_touch_layout},
 		{"name": "gomoku ready marker waits for one drawn frame and cancels safely", "run": _waits_for_drawn_frame_marker},
 		{"name": "gomoku scene disposes client and callbacks once", "run": _disposes_once},
+		{"name": "gomoku scene plays confirmed move sound for either player", "run": _plays_confirmed_move_sound_for_either_player},
 	]
 
 
@@ -567,6 +568,43 @@ static func _wires_move_once() -> bool:
 		and _check(board.pending_cell == Vector2i(-1, -1), "accepted event did not clear pending marker") \
 		and _check(board.last_move_cell == Vector2i(7, 7), "accepted event did not mark last move")
 	return _cleanup(scene, result)
+
+
+static func _plays_confirmed_move_sound_for_either_player() -> bool:
+	for local_user_id in [BLACK_ID, WHITE_ID]:
+		for move_color in ["black", "white"]:
+			var harness: Dictionary = await _scene_harness(local_user_id)
+			var scene: Control = harness["scene"]
+			var client: FakeMatchClient = harness["client"]
+			var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
+			if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
+				return _cleanup(scene)
+			var revision := 1
+			var move_user_id := BLACK_ID
+			var x := 7
+			var y := 7
+			if move_color == "white":
+				var board := _empty_board()
+				board[7 * 15 + 7] = 1
+				client.accept_snapshot(_snapshot(1, board, "active", "white"))
+				client.event_received.emit(_move(1, BLACK_ID, "black", 7, 7))
+				revision = 2
+				move_user_id = WHITE_ID
+				x = 8
+				y = 8
+			else:
+				client.accept_snapshot(_snapshot(0))
+			if not _check(not sound.playing, "snapshot or replayed move produced sound"):
+				return _cleanup(scene)
+			client.accept_event(_move(revision, move_user_id, move_color, x, y))
+			if not _check(sound.playing, "confirmed %s move was silent for local user %s" % [move_color, local_user_id]):
+				return _cleanup(scene)
+			sound.stop()
+			client.event_received.emit(_move(revision, move_user_id, move_color, x, y))
+			if not _check(not sound.playing, "duplicate %s move replayed its sound" % move_color):
+				return _cleanup(scene)
+			_cleanup(scene, true)
+	return true
 
 
 static func _uses_mobile_move_confirmation_surfaces() -> bool:

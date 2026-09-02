@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -150,6 +151,10 @@ type historyResponse struct {
 
 func (router *router) gomokuHistory(writer http.ResponseWriter, request *http.Request) {
 	router.gameHistory(writer, request, gomoku.GameID)
+}
+
+func (router *router) chineseCheckersHistory(writer http.ResponseWriter, request *http.Request) {
+	router.gameHistory(writer, request, chinesecheckers.GameID)
 }
 
 func (router *router) rpsHistory(writer http.ResponseWriter, request *http.Request) {

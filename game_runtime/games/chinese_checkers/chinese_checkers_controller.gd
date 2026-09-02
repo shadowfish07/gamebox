@@ -47,6 +47,7 @@ var _force_return := false
 var _resign_submitted := false
 var _reviewing_result := false
 var _presented_result_signature := ""
+var _last_presented_move_revision := -1
 var _logged_state_signature := ""
 var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
@@ -247,6 +248,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_error_text = ""
 		_awaiting_snapshot = false
 		_resign_submitted = false
+		_last_presented_move_revision = maxi(_last_presented_move_revision, _state.revision)
 		_clear_selection()
 	_refresh_ui()
 
@@ -259,10 +261,15 @@ func _on_event_received(envelope: Dictionary) -> void:
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
-	elif applied.get("status") == "applied" and envelope.get("type") == "chinese_checkers.move.accepted":
-		var payload: Variant = envelope.get("payload")
-		if payload is Dictionary and payload.get("path") is Array:
-			accepted_path = payload["path"].duplicate()
+	elif envelope.get("type") == "chinese_checkers.move.accepted" \
+		and applied.get("status") in ["applied", "ignored"]:
+		var revision: Variant = envelope.get("revision")
+		if typeof(revision) == TYPE_INT and revision > _last_presented_move_revision:
+			_last_presented_move_revision = revision
+			$MoveSound.play()
+			var payload: Variant = envelope.get("payload")
+			if payload is Dictionary and payload.get("path") is Array:
+				accepted_path = payload["path"].duplicate()
 	_clear_selection()
 	_refresh_ui()
 	if not accepted_path.is_empty():

@@ -48,6 +48,19 @@ void main() {
     expect(page.nextCursor, 'a+/= cursor?still-opaque');
   });
 
+  test('decodes Chinese checkers history without an RPS format', () {
+    final page = MatchHistoryPageData.fromEnvelope(
+      _validEnvelope(),
+      game: MatchHistoryGame.chineseCheckers,
+    );
+
+    expect(MatchHistoryGame.chineseCheckers.id, 'chinese_checkers');
+    expect(MatchHistoryGame.chineseCheckers.pageTitle, '跳棋战绩');
+    expect(MatchHistoryGame.chineseCheckers.countUnit, '手');
+    expect(page.matches.single.color, GomokuColor.black);
+    expect(page.matches.single.rpsFormat, isNull);
+  });
+
   test('rejects every non-exact history object layer', () {
     final valid = _validEnvelope();
     final cases = <String, Map<String, Object?>>{

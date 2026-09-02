@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 )
@@ -136,6 +137,11 @@ func (service *Service) ListHistory(ctx context.Context, gameID, userID string, 
 
 func matchHistoryGameSpec(gameID string) (historyGameSpec, bool) {
 	switch gameID {
+	case chinesecheckers.GameID:
+		return historyGameSpec{
+			decisiveResult:   ResultGoal,
+			countedEventType: chinesecheckers.MoveAccepted,
+		}, true
 	case gomoku.GameID:
 		return historyGameSpec{
 			decisiveResult:   ResultFive,

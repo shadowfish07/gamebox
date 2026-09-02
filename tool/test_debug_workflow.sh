@@ -29,9 +29,13 @@ require_line "$build_workflow" '  workflow_dispatch:' 'manual trigger'
 require_line "$build_workflow" '      api_base_url:' 'manual API URL input'
 require_line "$build_workflow" '  contents: read' 'read-only default permissions'
 require_line "$build_workflow" "'debug-apk-publish'" 'serialized trusted publication group'
-require_line "$build_workflow" "format('debug-apk-build-{0}', github.ref)" 'isolated untrusted build group'
-require_line "$build_workflow" '  build:' 'untrusted build job'
+require_line "$build_workflow" "format('debug-apk-build-{0}', github.ref)" 'isolated non-publishing build group'
+require_line "$build_workflow" '  build:' 'debug build job'
 require_line "$build_workflow" '          persist-credentials: false' 'credential-free checkout'
+require_line "$build_workflow" '      - name: Configure stable signing for trusted pull request' 'trusted pull request signing step'
+require_line "$build_workflow" "github.event.pull_request.user.login == 'shadowfish07'" 'trusted pull request author guard'
+require_line "$build_workflow" "github.actor == 'shadowfish07'" 'trusted pull request actor guard'
+require_line "$build_workflow" 'github.event.pull_request.head.repo.full_name == github.repository' 'same-repository pull request guard'
 require_line "$build_workflow" 'uses: actions/upload-artifact@v7' 'temporary artifact upload'
 require_line "$build_workflow" 'retention-days: 14' 'PR artifact retention'
 require_line "$build_workflow" '  publish:' 'trusted publish job'
@@ -45,8 +49,33 @@ if grep -F '      - synchronize' "$build_workflow" >/dev/null; then
 fi
 build_job="$(awk '/^  build:/{capture=1} /^  publish:/{capture=0} capture' "$build_workflow")"
 publish_job="$(awk '/^  publish:/{capture=1} capture' "$build_workflow")"
-if grep -Eq 'ANDROID_(KEYSTORE|STORE|KEY|PASSWORD)|secrets\.|GH_TOKEN|contents: write' <<<"$build_job"; then
-  printf 'Untrusted debug build job can access signing secrets or write credentials\n' >&2
+trusted_pr_signing_step="$(awk '/^      - name: Configure stable signing for trusted pull request/{capture=1} /^      - name: Build debug APK/{capture=0} capture' "$build_workflow")"
+if grep -Eq 'GH_TOKEN|contents: write' <<<"$build_job"; then
+  printf 'Debug build job can access write credentials\n' >&2
+  exit 1
+fi
+for expected in \
+  "github.event_name == 'pull_request'" \
+  "github.event.pull_request.user.login == 'shadowfish07'" \
+  "github.actor == 'shadowfish07'" \
+  'github.event.pull_request.head.repo.full_name == github.repository' \
+  'secrets.ANDROID_KEYSTORE_BASE64' \
+  'secrets.ANDROID_STORE_PASSWORD' \
+  'secrets.ANDROID_KEY_ALIAS' \
+  'secrets.ANDROID_KEY_PASSWORD' \
+  'GAMEBOX_REQUIRE_RELEASE_SIGNING=true'; do
+  if ! grep -F -- "$expected" <<<"$trusted_pr_signing_step" >/dev/null; then
+    printf 'Trusted pull request signing step is missing required guard or signing input: %s\n' "$expected" >&2
+    exit 1
+  fi
+done
+if [[ "$(grep -c 'secrets\.' <<<"$build_job")" -ne 4 ]]; then
+  printf 'Debug build job exposes unexpected repository secrets\n' >&2
+  exit 1
+fi
+if ! grep -F 'if: always()' <<<"$build_job" >/dev/null \
+    || ! grep -F 'rm -f app/android/app/release-key.jks app/android/key.properties' <<<"$build_job" >/dev/null; then
+  printf 'Debug build job does not always remove signing material\n' >&2
   exit 1
 fi
 if ! grep -F 'secrets.ANDROID_KEYSTORE_BASE64' <<<"$publish_job" >/dev/null \
@@ -56,6 +85,10 @@ if ! grep -F 'secrets.ANDROID_KEYSTORE_BASE64' <<<"$publish_job" >/dev/null \
 fi
 if grep -F 'update_debug_tag' "$build_workflow" >/dev/null; then
   printf 'Debug workflow still requires moving the rolling tag per branch\n' >&2
+  exit 1
+fi
+if grep -F 'pull_request_target' "$build_workflow" >/dev/null; then
+  printf 'Debug workflow must not expose signing secrets through pull_request_target\n' >&2
   exit 1
 fi
 
@@ -76,4 +109,4 @@ if grep -Eq 'actions/checkout|pull_request_target|secrets\.' "$comment_workflow"
   exit 1
 fi
 
-printf 'PASS debug workflow isolates PR builds and restores trusted artifact comments\n'
+printf 'PASS debug workflow restricts stable PR signing and restores trusted artifact comments\n'

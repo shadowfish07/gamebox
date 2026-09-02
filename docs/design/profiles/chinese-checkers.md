@@ -10,7 +10,7 @@ inputMethods: [touch, android-back]
 gameThemeRoles: [board, grid, blackPiece, whitePiece, whitePieceOutline, pressedMove, pendingMove]
 ```
 
-跳棋选用 Gamebox Material 3 的 **Lightweight Board** 配置。Godot 负责 121 孔六角星棋盘与对局交互，Flutter 只负责大厅中的对局创建、继续与取消入口。对局、走法、轮次与结果均以服务端权威状态为准。
+跳棋选用 Gamebox Material 3 的 **Lightweight Board** 配置。Godot 负责 121 孔六角星棋盘与对局交互，Flutter 负责大厅中的对局创建、继续、取消与个人战绩入口。对局、走法、轮次与结果均以服务端权威状态为准。
 
 ## Direct Endpoint Interaction
 
