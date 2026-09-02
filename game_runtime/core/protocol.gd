@@ -17,6 +17,10 @@ const TYPE_PLATFORM_SNAPSHOT_REQUESTED := "platform.snapshot.requested"
 const TYPE_PLATFORM_ERROR := "platform.error"
 const TYPE_PLATFORM_MATCH_CANCELLED := "platform.match.cancelled"
 const TYPE_PLATFORM_MATCH_ABANDONED := "platform.match.abandoned"
+const TYPE_CHINESE_CHECKERS_MOVE_REQUESTED := "chinese_checkers.move.requested"
+const TYPE_CHINESE_CHECKERS_MOVE_ACCEPTED := "chinese_checkers.move.accepted"
+const TYPE_CHINESE_CHECKERS_RESIGN_REQUESTED := "chinese_checkers.resign.requested"
+const TYPE_CHINESE_CHECKERS_RESIGNED := "chinese_checkers.resigned"
 const TYPE_GOMOKU_MOVE_REQUESTED := "gomoku.move.requested"
 const TYPE_GOMOKU_MOVE_ACCEPTED := "gomoku.move.accepted"
 const TYPE_GOMOKU_RESIGN_REQUESTED := "gomoku.resign.requested"
@@ -50,6 +54,10 @@ const _KNOWN_TYPES := {
 	TYPE_PLATFORM_ERROR: true,
 	TYPE_PLATFORM_MATCH_CANCELLED: true,
 	TYPE_PLATFORM_MATCH_ABANDONED: true,
+	TYPE_CHINESE_CHECKERS_MOVE_REQUESTED: true,
+	TYPE_CHINESE_CHECKERS_MOVE_ACCEPTED: true,
+	TYPE_CHINESE_CHECKERS_RESIGN_REQUESTED: true,
+	TYPE_CHINESE_CHECKERS_RESIGNED: true,
 	TYPE_GOMOKU_MOVE_REQUESTED: true,
 	TYPE_GOMOKU_MOVE_ACCEPTED: true,
 	TYPE_GOMOKU_RESIGN_REQUESTED: true,
@@ -426,6 +434,8 @@ static func _restore_scanned_strings(value: Variant) -> Dictionary:
 
 static func _is_client_action(message_type: String) -> bool:
 	return message_type in [
+		TYPE_CHINESE_CHECKERS_MOVE_REQUESTED,
+		TYPE_CHINESE_CHECKERS_RESIGN_REQUESTED,
 		TYPE_GOMOKU_MOVE_REQUESTED,
 		TYPE_GOMOKU_RESIGN_REQUESTED,
 		TYPE_RPS_CHOICE_REQUESTED,

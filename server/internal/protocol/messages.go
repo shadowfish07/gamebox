@@ -11,53 +11,62 @@ import (
 )
 
 const (
-	TypePlatformConnect           = "platform.connect"
-	TypePlatformConnected         = "platform.connected"
-	TypePlatformPing              = "platform.ping"
-	TypePlatformPong              = "platform.pong"
-	TypePlatformPresenceChanged   = "platform.presence.changed"
-	TypePlatformSnapshot          = "platform.snapshot"
-	TypePlatformSnapshotRequested = "platform.snapshot.requested"
-	TypePlatformError             = "platform.error"
-	TypePlatformMatchCancelled    = "platform.match.cancelled"
-	TypePlatformMatchAbandoned    = "platform.match.abandoned"
-	TypeGomokuMoveRequested       = "gomoku.move.requested"
-	TypeGomokuMoveAccepted        = "gomoku.move.accepted"
-	TypeGomokuResignRequested     = "gomoku.resign.requested"
-	TypeGomokuResigned            = "gomoku.resigned"
-	TypeRpsChoiceRequested        = "rps.choice.requested"
-	TypeRpsChoiceLocked           = "rps.choice.locked"
-	TypeRpsRoundRevealed          = "rps.round.revealed"
-	TypeRpsResignRequested        = "rps.resign.requested"
-	TypeRpsResigned               = "rps.resigned"
-	CapabilityPlayerPresence      = "player_presence_v1"
+	chineseCheckersBoardCells          = 121
+	TypePlatformConnect                = "platform.connect"
+	TypePlatformConnected              = "platform.connected"
+	TypePlatformPing                   = "platform.ping"
+	TypePlatformPong                   = "platform.pong"
+	TypePlatformPresenceChanged        = "platform.presence.changed"
+	TypePlatformSnapshot               = "platform.snapshot"
+	TypePlatformSnapshotRequested      = "platform.snapshot.requested"
+	TypePlatformError                  = "platform.error"
+	TypePlatformMatchCancelled         = "platform.match.cancelled"
+	TypePlatformMatchAbandoned         = "platform.match.abandoned"
+	TypeChineseCheckersMoveRequested   = "chinese_checkers.move.requested"
+	TypeChineseCheckersMoveAccepted    = "chinese_checkers.move.accepted"
+	TypeChineseCheckersResignRequested = "chinese_checkers.resign.requested"
+	TypeChineseCheckersResigned        = "chinese_checkers.resigned"
+	TypeGomokuMoveRequested            = "gomoku.move.requested"
+	TypeGomokuMoveAccepted             = "gomoku.move.accepted"
+	TypeGomokuResignRequested          = "gomoku.resign.requested"
+	TypeGomokuResigned                 = "gomoku.resigned"
+	TypeRpsChoiceRequested             = "rps.choice.requested"
+	TypeRpsChoiceLocked                = "rps.choice.locked"
+	TypeRpsRoundRevealed               = "rps.round.revealed"
+	TypeRpsResignRequested             = "rps.resign.requested"
+	TypeRpsResigned                    = "rps.resigned"
+	CapabilityPlayerPresence           = "player_presence_v1"
 )
 
 var knownTypes = map[string]struct{}{
-	TypePlatformConnect:           {},
-	TypePlatformConnected:         {},
-	TypePlatformPing:              {},
-	TypePlatformPong:              {},
-	TypePlatformPresenceChanged:   {},
-	TypePlatformSnapshot:          {},
-	TypePlatformSnapshotRequested: {},
-	TypePlatformError:             {},
-	TypePlatformMatchCancelled:    {},
-	TypePlatformMatchAbandoned:    {},
-	TypeGomokuMoveRequested:       {},
-	TypeGomokuMoveAccepted:        {},
-	TypeGomokuResignRequested:     {},
-	TypeGomokuResigned:            {},
-	TypeRpsChoiceRequested:        {},
-	TypeRpsChoiceLocked:           {},
-	TypeRpsRoundRevealed:          {},
-	TypeRpsResignRequested:        {},
-	TypeRpsResigned:               {},
+	TypePlatformConnect:                {},
+	TypePlatformConnected:              {},
+	TypePlatformPing:                   {},
+	TypePlatformPong:                   {},
+	TypePlatformPresenceChanged:        {},
+	TypePlatformSnapshot:               {},
+	TypePlatformSnapshotRequested:      {},
+	TypePlatformError:                  {},
+	TypePlatformMatchCancelled:         {},
+	TypePlatformMatchAbandoned:         {},
+	TypeChineseCheckersMoveRequested:   {},
+	TypeChineseCheckersMoveAccepted:    {},
+	TypeChineseCheckersResignRequested: {},
+	TypeChineseCheckersResigned:        {},
+	TypeGomokuMoveRequested:            {},
+	TypeGomokuMoveAccepted:             {},
+	TypeGomokuResignRequested:          {},
+	TypeGomokuResigned:                 {},
+	TypeRpsChoiceRequested:             {},
+	TypeRpsChoiceLocked:                {},
+	TypeRpsRoundRevealed:               {},
+	TypeRpsResignRequested:             {},
+	TypeRpsResigned:                    {},
 }
 
 func isClientAction(messageType string) bool {
 	switch messageType {
-	case TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
+	case TypeChineseCheckersMoveRequested, TypeChineseCheckersResignRequested, TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
 		return true
 	default:
 		return false
@@ -148,6 +157,24 @@ func validateClientMessage(envelope Envelope) error {
 			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
+	case TypeChineseCheckersMoveRequested:
+		if err := validateClientBinding(envelope, true); err != nil {
+			return err
+		}
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"path": {}})
+		if err != nil || len(fields) != 1 || validateChineseCheckersPath(fields["path"]) != nil {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		return nil
+	case TypeChineseCheckersResignRequested:
+		if err := validateClientBinding(envelope, true); err != nil {
+			return err
+		}
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{})
+		if err != nil || len(fields) != 0 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		return nil
 	case TypeGomokuResignRequested:
 		if err := validateClientBinding(envelope, true); err != nil {
 			return err
@@ -187,18 +214,53 @@ func validateClientMessage(envelope Envelope) error {
 func validateClientBinding(envelope Envelope, action bool) error {
 	expectedGame := ""
 	switch envelope.Type {
+	case TypeChineseCheckersMoveRequested, TypeChineseCheckersResignRequested:
+		expectedGame = "chinese_checkers"
 	case TypeGomokuMoveRequested, TypeGomokuResignRequested:
 		expectedGame = "gomoku"
 	case TypeRpsChoiceRequested, TypeRpsResignRequested:
 		expectedGame = "rps"
 	}
-	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "gomoku" && envelope.GameID != "rps" || !canonicalUUID(envelope.MatchID) {
+	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "chinese_checkers" && envelope.GameID != "gomoku" && envelope.GameID != "rps" || !canonicalUUID(envelope.MatchID) {
 		return protocolFailure(codeInvalidEnvelope)
 	}
 	if action && !canonicalUUID(envelope.ActionID) {
 		return protocolFailure(codeInvalidEnvelope)
 	}
 	return nil
+}
+
+func validateChineseCheckersPath(raw json.RawMessage) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('[') {
+		return errors.New("invalid path")
+	}
+	seen := make(map[int64]struct{}, 8)
+	count := 0
+	for decoder.More() {
+		if count >= chineseCheckersBoardCells {
+			return errors.New("invalid path")
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return errors.New("invalid path")
+		}
+		index, err := strictInteger(value)
+		if err != nil || index < 0 || index >= chineseCheckersBoardCells {
+			return errors.New("invalid path")
+		}
+		if _, duplicate := seen[index]; duplicate {
+			return errors.New("invalid path")
+		}
+		seen[index] = struct{}{}
+		count++
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim(']') || count < 2 {
+		return errors.New("invalid path")
+	}
+	return requireEnd(decoder)
 }
 
 func canonicalUUID(value string) bool {

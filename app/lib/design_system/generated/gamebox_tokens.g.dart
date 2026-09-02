@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 
 abstract final class GameboxTokens {
-  static const version = '2.2.0';
+  static const version = '2.3.0';
   static const brandSeed = Color(0xFF006B60);
 
   static const lightColorScheme = ColorScheme(
@@ -241,10 +241,17 @@ abstract final class GameboxTokens {
   static const gameColors = GameboxGameColors(
     blackPiece: Color(0xFF151A24),
     board: Color(0xFFD9B277),
+    boardCenterAlpha: 0.03,
+    boardGridAlpha: 0.34,
+    boardHoleAlpha: 0.5,
+    boardSideCampAlpha: 0.08,
+    boardTargetCampAlpha: 0.13,
+    boardTargetFillAlpha: 0.2,
     grid: Color(0xFF8D6E46),
     lastMove: Color(0xFFF04438),
     pendingMove: Color(0xFF0072B2),
     pendingOverlayAlpha: 0.56,
+    pieceShadowAlpha: 0.24,
     pressedMove: Color(0xFF7A5AF8),
     resultLossContainerDark: Color(0xFF514500),
     resultLossContainerLight: Color(0xFFF6E49C),
@@ -424,10 +431,17 @@ final class GameboxGameColors {
   const GameboxGameColors({
     required this.blackPiece,
     required this.board,
+    required this.boardCenterAlpha,
+    required this.boardGridAlpha,
+    required this.boardHoleAlpha,
+    required this.boardSideCampAlpha,
+    required this.boardTargetCampAlpha,
+    required this.boardTargetFillAlpha,
     required this.grid,
     required this.lastMove,
     required this.pendingMove,
     required this.pendingOverlayAlpha,
+    required this.pieceShadowAlpha,
     required this.pressedMove,
     required this.resultLossContainerDark,
     required this.resultLossContainerLight,
@@ -440,10 +454,17 @@ final class GameboxGameColors {
 
   final Color blackPiece;
   final Color board;
+  final double boardCenterAlpha;
+  final double boardGridAlpha;
+  final double boardHoleAlpha;
+  final double boardSideCampAlpha;
+  final double boardTargetCampAlpha;
+  final double boardTargetFillAlpha;
   final Color grid;
   final Color lastMove;
   final Color pendingMove;
   final double pendingOverlayAlpha;
+  final double pieceShadowAlpha;
   final Color pressedMove;
   final Color resultLossContainerDark;
   final Color resultLossContainerLight;

@@ -24,7 +24,7 @@ const TERMINAL_HANDSHAKE_REASONS := ["resume_expired", "ticket_invalid", "invali
 const KNOWN_ERROR_CODES := [
 	"ticket_invalid", "resume_expired", "stale_revision", "action_conflict",
 	"not_your_turn", "cell_occupied", "invalid_request", "match_not_found", "internal_error",
-	"choice_locked",
+	"choice_locked", "invalid_move",
 ]
 
 var connection_state := STATE_CLOSED
@@ -77,7 +77,7 @@ func start(
 	if connection_state != STATE_CLOSED or not _dependencies_configured() \
 		or not _valid_ws_url(ws_url) or not _canonical_uuid(match_id) \
 		or launch_ticket.is_empty() or launch_ticket.length() > 256 or launch_ticket.to_utf8_buffer().size() > 256 \
-		or game_state == null or game_id not in ["gomoku", "rps"]:
+		or game_state == null or game_id not in ["chinese_checkers", "gomoku", "rps"]:
 		return false
 	_ws_url = ws_url
 	_match_id = match_id
@@ -146,12 +146,40 @@ func request_resign() -> String:
 	var action_id := _new_action_id()
 	if action_id.is_empty() or not _game_state.mark_pending_resign(action_id, local_user_id):
 		return ""
+	var resign_type := Protocol.TYPE_GOMOKU_RESIGN_REQUESTED
+	if _game_id == "rps":
+		resign_type = Protocol.TYPE_RPS_RESIGN_REQUESTED
+	elif _game_id == "chinese_checkers":
+		resign_type = Protocol.TYPE_CHINESE_CHECKERS_RESIGN_REQUESTED
 	var encoded: Dictionary = Protocol.encode_action(
-		Protocol.TYPE_RPS_RESIGN_REQUESTED if _game_id == "rps" else Protocol.TYPE_GOMOKU_RESIGN_REQUESTED,
+		resign_type,
 		_match_id,
 		_game_state.revision,
 		action_id,
 		{},
+		_game_id,
+	)
+	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
+		_game_state.clear_pending(action_id)
+		_attempt_failed("send_failed")
+		return ""
+	return action_id
+
+
+func request_chinese_checkers_move(path: Array) -> String:
+	if _game_id != "chinese_checkers" or connection_state != STATE_CONNECTED \
+		or _awaiting_initial_snapshot or _snapshot_requested \
+		or not _game_state.can_request_path(path, local_user_id):
+		return ""
+	var action_id := _new_action_id()
+	if action_id.is_empty() or not _game_state.mark_pending_path(action_id, path, local_user_id):
+		return ""
+	var encoded: Dictionary = Protocol.encode_action(
+		Protocol.TYPE_CHINESE_CHECKERS_MOVE_REQUESTED,
+		_match_id,
+		_game_state.revision,
+		action_id,
+		{"path": path.duplicate()},
 		_game_id,
 	)
 	if not encoded.get("ok", false) or not _transport.send_text(encoded.get("text", "")):
@@ -293,6 +321,7 @@ func _handle_text(text: String) -> bool:
 			handled = _handle_presence_changed(envelope)
 		Protocol.TYPE_PLATFORM_ERROR:
 			handled = _handle_error(envelope)
+		Protocol.TYPE_CHINESE_CHECKERS_MOVE_ACCEPTED, Protocol.TYPE_CHINESE_CHECKERS_RESIGNED, \
 		Protocol.TYPE_GOMOKU_MOVE_ACCEPTED, Protocol.TYPE_GOMOKU_RESIGNED, \
 		Protocol.TYPE_RPS_CHOICE_LOCKED, Protocol.TYPE_RPS_ROUND_REVEALED, Protocol.TYPE_RPS_RESIGNED, \
 		Protocol.TYPE_PLATFORM_MATCH_CANCELLED, Protocol.TYPE_PLATFORM_MATCH_ABANDONED:

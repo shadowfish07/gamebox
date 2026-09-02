@@ -1,9 +1,24 @@
 import '../../core/api/strict_json.dart';
 import '../gomoku/gomoku_models.dart';
+import '../rps/rps_models.dart';
 
 const _maximumSafeInteger = 9007199254740991;
 
 enum MatchOutcome { win, loss, draw, abandoned }
+
+enum MatchHistoryGame {
+  gomoku('gomoku', '五子棋', '手'),
+  rps('rps', '石头剪刀布', '局');
+
+  const MatchHistoryGame(this.id, this.title, this.countUnit);
+
+  final String id;
+  final String title;
+  final String countUnit;
+
+  String get pageTitle => '$title战绩';
+  String get emptyMessage => '完成一局$title后，战绩会显示在这里。';
+}
 
 final class MatchHistoryStatistics {
   const MatchHistoryStatistics({
@@ -86,17 +101,23 @@ final class MatchHistoryEntry {
     required this.color,
     required this.finishedAt,
     required this.moveCount,
+    this.rpsFormat,
   });
 
-  factory MatchHistoryEntry.fromJson(Map<String, Object?> json) {
-    if (!hasExactJsonKeys(json, const {
+  factory MatchHistoryEntry.fromJson(
+    Map<String, Object?> json, {
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
+  }) {
+    final baseKeys = <String>{
       'id',
       'outcome',
       'opponentNickname',
       'color',
       'finishedAt',
       'moveCount',
-    })) {
+    };
+    if (game == MatchHistoryGame.rps) baseKeys.add('format');
+    if (!hasExactJsonKeys(json, baseKeys)) {
       throw const FormatException('Invalid match history entry');
     }
     return MatchHistoryEntry(
@@ -116,6 +137,9 @@ final class MatchHistoryEntry {
       },
       finishedAt: _timestamp(json['finishedAt']),
       moveCount: _nonnegativeSafeInt(json['moveCount']),
+      rpsFormat: game == MatchHistoryGame.rps
+          ? RpsFormat.parse(json['format'])
+          : null,
     );
   }
 
@@ -125,6 +149,7 @@ final class MatchHistoryEntry {
   final GomokuColor color;
   final DateTime finishedAt;
   final int moveCount;
+  final RpsFormat? rpsFormat;
 }
 
 final class MatchHistoryPageData {
@@ -134,7 +159,10 @@ final class MatchHistoryPageData {
     required this.nextCursor,
   });
 
-  factory MatchHistoryPageData.fromEnvelope(Map<String, Object?> envelope) {
+  factory MatchHistoryPageData.fromEnvelope(
+    Map<String, Object?> envelope, {
+    MatchHistoryGame game = MatchHistoryGame.gomoku,
+  }) {
     if (!hasExactJsonKeys(envelope, const {
       'statistics',
       'matches',
@@ -148,7 +176,7 @@ final class MatchHistoryPageData {
       throw const FormatException('Invalid match history response');
     }
     final matches = rows
-        .map((row) => MatchHistoryEntry.fromJson(_object(row)))
+        .map((row) => MatchHistoryEntry.fromJson(_object(row), game: game))
         .toList(growable: false);
     if (matches.map((match) => match.id).toSet().length != matches.length) {
       throw const FormatException('Duplicate match history entry');

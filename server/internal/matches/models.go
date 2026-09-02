@@ -15,6 +15,7 @@ const (
 	StatusAbandoned = "abandoned"
 
 	ResultFive        = "five"
+	ResultGoal        = "goal"
 	ResultResignation = "resignation"
 	ResultDraw        = "draw"
 	ResultRounds      = "rounds"

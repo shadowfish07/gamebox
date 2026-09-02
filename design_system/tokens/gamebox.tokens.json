@@ -1,6 +1,6 @@
 {
   "$schema": "../schema/tokens.schema.json",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "brand": {
     "seed": "#006B60",
     "schemeSource": "flutter-3.47.1-dart-3.13.1-tonal-spot-contrast-0.0"
@@ -117,7 +117,14 @@
     "resultLossContainerDark": "#514500",
     "pressedMove": "#7A5AF8",
     "pendingMove": "#0072B2",
-    "pendingOverlayAlpha": 0.56
+    "pendingOverlayAlpha": 0.56,
+    "boardCenterAlpha": 0.03,
+    "boardGridAlpha": 0.34,
+    "boardHoleAlpha": 0.5,
+    "boardSideCampAlpha": 0.08,
+    "boardTargetCampAlpha": 0.13,
+    "boardTargetFillAlpha": 0.2,
+    "pieceShadowAlpha": 0.24
   },
   "typography": {
     "displayLarge": {

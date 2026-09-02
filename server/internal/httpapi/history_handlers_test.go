@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 )
 
@@ -159,6 +160,32 @@ func TestGomokuHistoryReturnsEmptyArrayForNoMatches(t *testing.T) {
 	want := `{"statistics":{"validMatches":0,"wins":0,"losses":0,"draws":0,"winRate":0},"matches":[],"nextCursor":null}` + "\n"
 	if response.Code != http.StatusOK || response.Body.String() != want {
 		t.Fatalf("empty history=(%d,%s), want 200/%s", response.Code, response.Body.String(), want)
+	}
+}
+
+func TestRpsHistoryReturnsFormatAndRevealedRoundCount(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "rps-history-a", "Alice")
+	bob := fixture.register(t, "rps-history-b", "Bob")
+	seedHTTPRpsHistoryMatch(
+		t, fixture.db, historyCursorMatchID,
+		alice.Session.User.ID, bob.Session.User.ID, alice.Session.User.ID,
+		rps.FormatBestOfThree, historyCursorMillis, 3,
+	)
+
+	response := fixture.request(t, http.MethodGet, "/v1/games/rps/history", "", alice.Session.AccessToken)
+	var body struct {
+		Statistics historyStatisticsResponse `json:"statistics"`
+		Matches    []struct {
+			Outcome   string `json:"outcome"`
+			Format    string `json:"format"`
+			MoveCount int64  `json:"moveCount"`
+		} `json:"matches"`
+	}
+	decodeResponse(t, response, &body)
+	if response.Code != http.StatusOK || body.Statistics.Wins != 1 || len(body.Matches) != 1 ||
+		body.Matches[0].Outcome != "win" || body.Matches[0].Format != rps.FormatBestOfThree || body.Matches[0].MoveCount != 3 {
+		t.Fatalf("RPS history=(%d,%+v), want win/best_of_three/3 rounds", response.Code, body)
 	}
 }
 
@@ -317,6 +344,32 @@ VALUES (?,'gomoku','finished',0,?,?,?,?,?)`, matchID, result, winnerUserID, fini
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
 VALUES (?,?,'gomoku.move.accepted',?,?,'{}',?)`, matchID, revision, fmt.Sprintf("action-%d", revision), currentUserID, finishedAt-int64(acceptedMoves-revision)); err != nil {
 			t.Fatalf("insert history event %s/%d: %v", matchID, revision, err)
+		}
+	}
+}
+
+func seedHTTPRpsHistoryMatch(
+	t *testing.T,
+	db *sql.DB,
+	matchID, currentUserID, opponentUserID, winnerUserID, format string,
+	finishedAt int64,
+	revealedRounds int,
+) {
+	t.Helper()
+	config := `{"format":"` + format + `"}`
+	if _, err := db.Exec(`
+INSERT INTO matches(id,game_id,status,revision,result,winner_user_id,game_config_json,created_at,updated_at,finished_at)
+VALUES (?,'rps','finished',0,'rounds',?,?,?,?,?)`, matchID, winnerUserID, config, finishedAt-1_000, finishedAt, finishedAt); err != nil {
+		t.Fatalf("insert RPS history match %s: %v", matchID, err)
+	}
+	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,'black'),(?,?,1,'white')`, matchID, currentUserID, matchID, opponentUserID); err != nil {
+		t.Fatalf("insert RPS history players %s: %v", matchID, err)
+	}
+	for revision := 1; revision <= revealedRounds; revision++ {
+		if _, err := db.Exec(`
+INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
+VALUES (?,?,'rps.round.revealed',?,?,'{}',?)`, matchID, revision, fmt.Sprintf("action-%d", revision), currentUserID, finishedAt-int64(revealedRounds-revision)); err != nil {
+			t.Fatalf("insert RPS history event %s/%d: %v", matchID, revision, err)
 		}
 	}
 }

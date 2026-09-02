@@ -8,10 +8,15 @@ final class GomokuRepository {
   GomokuRepository({
     required this._api,
     required this._gameLauncher,
+    String gameId = gomokuGameId,
     Uri? apiBaseUri,
     DateTime Function()? now,
-  }) : _apiBaseUri = apiBaseUri ?? Uri.parse(apiBaseUrl),
+  }) : _gameId = gameId,
+       _apiBaseUri = apiBaseUri ?? Uri.parse(apiBaseUrl),
        _now = now ?? DateTime.now {
+    if (gameId != gomokuGameId && gameId != chineseCheckersGameId) {
+      throw ArgumentError.value(gameId, 'gameId', 'unsupported board game');
+    }
     if (!_isHttpOrigin(_apiBaseUri)) {
       throw ArgumentError('API base URL must be an HTTP(S) origin');
     }
@@ -19,6 +24,7 @@ final class GomokuRepository {
 
   final HomeApi _api;
   final GameLauncher _gameLauncher;
+  final String _gameId;
   final Uri _apiBaseUri;
   final DateTime Function() _now;
 
@@ -30,6 +36,9 @@ final class GomokuRepository {
 
   Future<String> createAndOpen(String opponentId) async {
     final created = await _api.createMatch(opponentId);
+    if (created.gameId != _gameId) {
+      throw const GomokuLaunchConfigurationException();
+    }
     await openMatch(created.id);
     return created.id;
   }
@@ -37,13 +46,13 @@ final class GomokuRepository {
   Future<void> openMatch(String matchId) async {
     final ticket = await _api.createLaunchTicket(matchId);
     if (ticket.matchId != matchId ||
-        ticket.gameId != gomokuGameId ||
+        ticket.gameId != _gameId ||
         !ticket.expiresAt.isAfter(_now().toUtc())) {
       throw const GomokuLaunchConfigurationException();
     }
     await _gameLauncher.launch(
       GameLaunchRequest(
-        gameId: gomokuGameId,
+        gameId: _gameId,
         matchId: matchId,
         launchTicket: ticket.launchTicket,
         wsUrl: _webSocketUri(_apiBaseUri).toString(),

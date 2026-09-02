@@ -16,6 +16,7 @@ import (
 	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/games"
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -191,23 +192,29 @@ type matchPlayerResponse struct {
 }
 
 type matchShowResponse struct {
-	ID           string                                     `json:"id"`
-	GameID       string                                     `json:"gameId"`
-	Status       string                                     `json:"status"`
-	Revision     int64                                      `json:"revision"`
-	Result       *string                                    `json:"result"`
-	WinnerUserID *string                                    `json:"winnerUserId"`
-	Players      []matchPlayerResponse                      `json:"players"`
-	BoardSize    int                                        `json:"boardSize"`
-	Board        [gomoku.BoardSize * gomoku.BoardSize]uint8 `json:"board"`
-	Format       string                                     `json:"format,omitempty"`
-	Round        int                                        `json:"round,omitempty"`
-	Scores       map[string]int                             `json:"scores,omitempty"`
+	ID           string                `json:"id"`
+	GameID       string                `json:"gameId"`
+	Status       string                `json:"status"`
+	Revision     int64                 `json:"revision"`
+	Result       *string               `json:"result"`
+	WinnerUserID *string               `json:"winnerUserId"`
+	Players      []matchPlayerResponse `json:"players"`
+	BoardSize    int                   `json:"boardSize"`
+	Board        []int                 `json:"board"`
+	NextColor    string                `json:"nextColor,omitempty"`
+	Format       string                `json:"format,omitempty"`
+	Round        int                   `json:"round,omitempty"`
+	Scores       map[string]int        `json:"scores,omitempty"`
 }
 
 type gomokuStateView struct {
 	Board     [gomoku.BoardSize * gomoku.BoardSize]uint8 `json:"board"`
 	BoardSize int                                        `json:"boardSize"`
+}
+
+type chineseCheckersStateView struct {
+	Board     [chinesecheckers.BoardCells]uint8 `json:"board"`
+	NextColor string                            `json:"nextColor"`
 }
 
 type rpsStateView struct {
@@ -254,12 +261,42 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeLine(stderr, matchFailed)
 		return exitFailure
 	}
-	var board [gomoku.BoardSize * gomoku.BoardSize]uint8
+	board := make([]int, gomoku.BoardSize*gomoku.BoardSize)
 	var boardSize int
+	var nextColor string
 	var format string
 	var round int
 	var scores map[string]int
 	switch snapshot.Match.GameID {
+	case chinesecheckers.GameID:
+		var state chineseCheckersStateView
+		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.NextColor != "black" && state.NextColor != "white" {
+			writeLine(stderr, matchFailed)
+			return exitFailure
+		}
+		blackCount, whiteCount := 0, 0
+		for _, cell := range state.Board {
+			switch chinesecheckers.Color(cell) {
+			case chinesecheckers.Black:
+				blackCount++
+			case chinesecheckers.White:
+				whiteCount++
+			case chinesecheckers.Empty:
+			default:
+				writeLine(stderr, matchFailed)
+				return exitFailure
+			}
+		}
+		if blackCount != 10 || whiteCount != 10 {
+			writeLine(stderr, matchFailed)
+			return exitFailure
+		}
+		board = board[:0]
+		for _, cell := range state.Board {
+			board = append(board, int(cell))
+		}
+		boardSize = chinesecheckers.BoardCells
+		nextColor = state.NextColor
 	case gomoku.GameID:
 		var state gomokuStateView
 		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != gomoku.BoardSize {
@@ -272,7 +309,11 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 				return exitFailure
 			}
 		}
-		board, boardSize = state.Board, state.BoardSize
+		board = board[:0]
+		for _, cell := range state.Board {
+			board = append(board, int(cell))
+		}
+		boardSize = state.BoardSize
 	case rps.GameID:
 		var state rpsStateView
 		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.Round < 1 ||
@@ -299,7 +340,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		ID: snapshot.Match.ID, GameID: snapshot.Match.GameID, Status: snapshot.Match.Status,
 		Revision: snapshot.Match.Revision, Result: cloneString(snapshot.Match.Result),
 		WinnerUserID: cloneString(snapshot.Match.WinnerUserID), Players: players,
-		BoardSize: boardSize, Board: board, Format: format, Round: round, Scores: scores,
+		BoardSize: boardSize, Board: board, NextColor: nextColor, Format: format, Round: round, Scores: scores,
 	}
 	if err := json.NewEncoder(stdout).Encode(response); err != nil {
 		writeLine(stderr, matchFailed)

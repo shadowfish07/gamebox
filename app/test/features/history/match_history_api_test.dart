@@ -9,6 +9,7 @@ import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
 import 'package:gamebox/features/history/match_history_models.dart';
+import 'package:gamebox/features/rps/rps_models.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -51,6 +52,31 @@ void main() {
       expect(page.nextCursor, cursor);
     },
   );
+
+  test('fetches and decodes RPS history through its game endpoint', () async {
+    final fixture = await _ApiFixture.create(now, (request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/v1/games/rps/history');
+      return _json({
+        'statistics': {
+          'validMatches': 1,
+          'wins': 1,
+          'losses': 0,
+          'draws': 0,
+          'winRate': 1,
+        },
+        'matches': [
+          {..._match(), 'format': 'best_of_three', 'moveCount': 3},
+        ],
+        'nextCursor': null,
+      });
+    });
+
+    final page = await fixture.api.fetchPage(game: MatchHistoryGame.rps);
+
+    expect(page.matches.single.rpsFormat, RpsFormat.bestOfThree);
+    expect(page.matches.single.moveCount, 3);
+  });
 
   test(
     'retries the authenticated GET once after the session refreshes',

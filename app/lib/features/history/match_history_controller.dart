@@ -5,9 +5,13 @@ import 'match_history_api.dart';
 import 'match_history_models.dart';
 
 final class MatchHistoryController extends ChangeNotifier {
-  MatchHistoryController({required this.api});
+  MatchHistoryController({
+    required this.api,
+    this.game = MatchHistoryGame.gomoku,
+  });
 
   final MatchHistoryApi api;
+  final MatchHistoryGame game;
 
   List<MatchHistoryEntry> _matches = const [];
   MatchHistoryStatistics? _statistics;
@@ -34,7 +38,7 @@ final class MatchHistoryController extends ChangeNotifier {
     _initialError = null;
     notifyListeners();
     try {
-      final page = await api.fetchPage();
+      final page = await api.fetchPage(game: game);
       if (_disposed) return;
       _matches = List<MatchHistoryEntry>.unmodifiable(page.matches);
       _statistics = page.statistics;
@@ -64,7 +68,7 @@ final class MatchHistoryController extends ChangeNotifier {
     _loadMoreError = null;
     notifyListeners();
     try {
-      final page = await api.fetchPage(cursor: cursor);
+      final page = await api.fetchPage(game: game, cursor: cursor);
       if (_disposed) return;
       final seen = _matches.map((entry) => entry.id).toSet();
       _matches = List<MatchHistoryEntry>.unmodifiable([

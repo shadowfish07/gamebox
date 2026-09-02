@@ -189,7 +189,17 @@ const _gameColorRoles = {
   'pressedMove',
   'pendingMove',
 };
-const _gameRoles = {..._gameColorRoles, 'pendingOverlayAlpha'};
+const _gameAlphaRoles = {
+  'pendingOverlayAlpha',
+  'boardCenterAlpha',
+  'boardGridAlpha',
+  'boardHoleAlpha',
+  'boardSideCampAlpha',
+  'boardTargetCampAlpha',
+  'boardTargetFillAlpha',
+  'pieceShadowAlpha',
+};
+const _gameRoles = {..._gameColorRoles, ..._gameAlphaRoles};
 const _typeRoles = {
   'displayLarge',
   'displayMedium',
@@ -337,20 +347,18 @@ Map<String, Object> _gameMap(Object? value) {
   const path = 'game';
   final object = _object(value, path);
   _expectKeys(path, object, _gameRoles);
-  final alpha = _positiveNumber(
-    object['pendingOverlayAlpha'],
-    'game.pendingOverlayAlpha',
-  );
-  if (alpha > 1) {
-    throw const DesignTokenFormatException(
-      'game.pendingOverlayAlpha',
-      'must not exceed 1.',
-    );
+  final alphas = <String, num>{};
+  for (final role in _gameAlphaRoles) {
+    final alpha = _positiveNumber(object[role], 'game.$role');
+    if (alpha > 1) {
+      throw DesignTokenFormatException('game.$role', 'must not exceed 1.');
+    }
+    alphas[role] = alpha;
   }
   return {
     for (final role in _gameColorRoles)
       role: _color(object[role], 'game.$role'),
-    'pendingOverlayAlpha': alpha,
+    ...alphas,
   };
 }
 

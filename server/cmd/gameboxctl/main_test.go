@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"me.zqydev/gamebox/server/internal/auth"
+	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/store"
 )
@@ -264,7 +265,7 @@ func TestMatchShowReplaysSnapshotWithPlayersAndDoesNotMutateRows(t *testing.T) {
 		t.Fatalf("players=%+v want=%+v", response.Players, wantPlayers)
 	}
 	for index, cell := range response.Board {
-		want := uint8(0)
+		want := 0
 		if index == 0 {
 			want = 1
 		}
@@ -275,6 +276,38 @@ func TestMatchShowReplaysSnapshotWithPlayersAndDoesNotMutateRows(t *testing.T) {
 	after := readMutableRows(t, databasePath)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("match show mutated application rows: before=%v after=%v", before, after)
+	}
+}
+
+func TestMatchShowReplaysInitialChineseCheckersBoard(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+	seedChineseCheckersMatch(t, databasePath)
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
+	}
+	var response matchShowResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("decode stdout %q: %v", stdout.String(), err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"board":[`)) {
+		t.Fatalf("board is not encoded as a JSON array: %q", stdout.String())
+	}
+	if response.ID != testMatchID || response.GameID != chinesecheckers.GameID || response.Status != "active" || response.Revision != 0 || response.BoardSize != chinesecheckers.BoardCells || len(response.Board) != chinesecheckers.BoardCells || response.NextColor != "black" {
+		t.Fatalf("response metadata=%+v board=%d", response, len(response.Board))
+	}
+	for index, cell := range response.Board {
+		want := int(chinesecheckers.Empty)
+		if index <= 9 {
+			want = int(chinesecheckers.Black)
+		} else if index >= 111 {
+			want = int(chinesecheckers.White)
+		}
+		if cell != want {
+			t.Fatalf("board[%d]=%d want=%d", index, cell, want)
+		}
 	}
 }
 
@@ -376,7 +409,7 @@ func TestMatchShowReadsLatestLiveWALWithoutMutatingSourceFiles(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 		t.Fatalf("decode live WAL response: %v", err)
 	}
-	if response.Revision != 2 || response.Board[0] != uint8(gomoku.Black) || response.Board[1] != uint8(gomoku.White) {
+	if response.Revision != 2 || response.Board[0] != int(gomoku.Black) || response.Board[1] != int(gomoku.White) {
 		t.Fatalf("live WAL response revision/board=(%d,%d,%d)", response.Revision, response.Board[0], response.Board[1])
 	}
 	if after := snapshotDirectory(t, directory); !reflect.DeepEqual(after, before) {
@@ -511,6 +544,33 @@ func seedMatch(t *testing.T, path string) {
 			testMatchID, 1, gomoku.MoveAccepted, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", testBlackID,
 			`{"x":0,"y":0,"color":"black","userId":"` + testBlackID + `"}`, now,
 		}},
+	}
+	for _, statement := range statements {
+		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+			database.Close()
+			t.Fatalf("seed database: %v", err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedChineseCheckersMatch(t *testing.T, path string) {
+	t.Helper()
+	database := openDatabase(t, path)
+	now := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC).UnixMilli()
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testBlackID, "Alice", "alice", now, now}},
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testWhiteID, "Bob", "bob", now, now}},
+		{`INSERT INTO matches(id,game_id,status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?)`, []any{testMatchID, chinesecheckers.GameID, "active", 0, now, now}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testBlackID, 0, "black"}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{chinesecheckers.GameID, testBlackID, testMatchID}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{chinesecheckers.GameID, testWhiteID, testMatchID}},
 	}
 	for _, statement := range statements {
 		if _, err := database.Exec(statement.query, statement.args...); err != nil {

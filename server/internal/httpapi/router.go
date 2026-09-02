@@ -71,12 +71,16 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/auth/refresh", router.refresh)
 	mux.Handle("GET /v1/me", router.authenticated(http.HandlerFunc(router.me)))
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
+	mux.Handle("GET /v1/games/chinese_checkers/status", router.authenticated(http.HandlerFunc(router.chineseCheckersStatus)))
+	mux.Handle("GET /v1/games/chinese_checkers/opponents", router.authenticated(http.HandlerFunc(router.chineseCheckersOpponents)))
+	mux.Handle("POST /v1/games/chinese_checkers/matches", router.authenticated(http.HandlerFunc(router.createChineseCheckersMatch)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
 	mux.Handle("GET /v1/games/gomoku/history", router.authenticated(http.HandlerFunc(router.gomokuHistory)))
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
 	mux.Handle("GET /v1/games/rps/status", router.authenticated(http.HandlerFunc(router.rpsStatus)))
 	mux.Handle("GET /v1/games/rps/opponents", router.authenticated(http.HandlerFunc(router.rpsOpponents)))
+	mux.Handle("GET /v1/games/rps/history", router.authenticated(http.HandlerFunc(router.rpsHistory)))
 	mux.Handle("POST /v1/games/rps/matches", router.authenticated(http.HandlerFunc(router.createRpsMatch)))
 	mux.Handle("DELETE /v1/matches/{matchId}", router.authenticated(http.HandlerFunc(router.cancelMatch)))
 	mux.Handle("POST /v1/matches/{matchId}/launch-ticket", router.authenticated(http.HandlerFunc(router.createLaunchTicket)))
@@ -87,12 +91,16 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/auth/refresh", http.MethodPost)
 	registerMethodFallback(mux, "/v1/me", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/chinese_checkers/status", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/chinese_checkers/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/chinese_checkers/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/games/rps/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/rps/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/rps/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/rps/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/matches/{matchId}", http.MethodDelete)
 	registerMethodFallback(mux, "/v1/matches/{matchId}/launch-ticket", http.MethodPost)
@@ -297,7 +305,7 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
+	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
 	}
 	const launchPrefix = "/v1/matches/"
