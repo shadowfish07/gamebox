@@ -17,7 +17,7 @@ Gamebox combines a Flutter app shell, embedded Godot games, and a Go service bac
 
 ## Features
 
-- **Two online games**: Gomoku and Rock Paper Scissors, each with a dedicated Godot interface
+- **Three online games**: Gomoku, Chinese Checkers, and Rock Paper Scissors, each with a dedicated Godot interface
 - **Server-authoritative matches**: moves, choices, revisions, results, and active game slots are validated by the Go service
 - **Invite-only accounts**: one-time registration codes, automatic sign-in, and rotating access sessions
 - **Resilient play**: reconnect, snapshot recovery, force-stop recovery, resignation, cancellation, and return-to-lobby flows
