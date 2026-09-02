@@ -8,9 +8,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math/big"
 )
 
-const maximumRandomTokenBytes = 1024
+const (
+	maximumRandomTokenBytes = 1024
+	inviteCodeLength        = 12
+	retiredInviteCodeLength = 6
+	inviteCodeAlphabet      = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+)
 
 const refreshTokenHashDomain = "gamebox/refresh-token-hash/v1"
 
@@ -36,6 +42,63 @@ func randomToken(byteCount int, entropy io.Reader) (string, error) {
 		return "", ErrTokenGeneration
 	}
 	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+// RandomInviteCode returns a twelve-character code made from upper-case ASCII
+// letters and digits. Its roughly 62 bits of entropy keep online guessing
+// impractical while remaining short enough to enter by hand.
+func RandomInviteCode() (string, error) {
+	return randomInviteCode(rand.Reader)
+}
+
+func randomInviteCode(entropy io.Reader) (string, error) {
+	if entropy == nil {
+		return "", ErrTokenGeneration
+	}
+	alphabetSize := big.NewInt(int64(len(inviteCodeAlphabet)))
+	code := make([]byte, inviteCodeLength)
+	for index := range code {
+		alphabetIndex, err := rand.Int(entropy, alphabetSize)
+		if err != nil {
+			return "", ErrTokenGeneration
+		}
+		code[index] = inviteCodeAlphabet[alphabetIndex.Int64()]
+	}
+	return string(code), nil
+}
+
+// normalizeInviteCode makes the current generated format case-insensitive and
+// rejects the retired six-character upper-case format. Other legacy invitation
+// credentials remain byte-for-byte compatible.
+func normalizeInviteCode(code string) (string, bool) {
+	if len(code) == retiredInviteCodeLength && inviteCodeUsesUppercaseAlphabet(code) {
+		return "", false
+	}
+	if len(code) != inviteCodeLength {
+		return code, true
+	}
+	normalized := []byte(code)
+	for index, character := range normalized {
+		switch {
+		case character >= 'A' && character <= 'Z':
+		case character >= 'a' && character <= 'z':
+			normalized[index] = character - ('a' - 'A')
+		case character >= '0' && character <= '9':
+		default:
+			return code, true
+		}
+	}
+	return string(normalized), true
+}
+
+func inviteCodeUsesUppercaseAlphabet(code string) bool {
+	for _, character := range []byte(code) {
+		if character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // HashToken returns a lower-case hexadecimal SHA-256 digest. Length prefixes

@@ -25,11 +25,12 @@ import (
 )
 
 const (
-	testJWTSecret      = "gamebox-e2e-jwt-secret-at-least-thirty-two-bytes"
-	testTokenPepper    = "gamebox-e2e-token-pepper-at-least-thirty-two-bytes"
-	testWorkerInterval = 15 * time.Second
-	testPresencePoll   = 2 * time.Millisecond
-	testMaximumInvites = 1000
+	testJWTSecret                       = "gamebox-e2e-jwt-secret-at-least-thirty-two-bytes"
+	testTokenPepper                     = "gamebox-e2e-token-pepper-at-least-thirty-two-bytes"
+	testWorkerInterval                  = 15 * time.Second
+	testPresencePoll                    = 2 * time.Millisecond
+	testMaximumInvites                  = 1000
+	testMaximumInviteGenerationAttempts = testMaximumInvites * 10
 )
 
 type ServerConfig struct {
@@ -231,8 +232,9 @@ func (server *Server) CreateInvites(ctx context.Context, count int) (_ []string,
 	}()
 	createdAt := server.Clock.Now().UTC().UnixMilli()
 	invites := make([]string, 0, count)
-	for range count {
-		plaintext, tokenErr := auth.RandomToken(32)
+	seenDigests := make(map[string]struct{}, count)
+	for attempts := 0; len(invites) < count && attempts < testMaximumInviteGenerationAttempts; attempts++ {
+		plaintext, tokenErr := auth.RandomInviteCode()
 		if tokenErr != nil {
 			return nil, errors.New("create invites failed")
 		}
@@ -240,10 +242,25 @@ func (server *Server) CreateInvites(ctx context.Context, count int) (_ []string,
 		if hashErr != nil {
 			return nil, errors.New("create invites failed")
 		}
-		if _, insertErr := transaction.ExecContext(ctx, `INSERT INTO invite_codes(code_hash,created_at) VALUES (?,?)`, digest, createdAt); insertErr != nil {
+		if _, duplicate := seenDigests[digest]; duplicate {
+			continue
+		}
+		result, insertErr := transaction.ExecContext(ctx, `INSERT OR IGNORE INTO invite_codes(code_hash,created_at) VALUES (?,?)`, digest, createdAt)
+		if insertErr != nil {
 			return nil, errors.New("create invites failed")
 		}
+		affected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return nil, errors.New("create invites failed")
+		}
+		seenDigests[digest] = struct{}{}
+		if affected == 0 {
+			continue
+		}
 		invites = append(invites, plaintext)
+	}
+	if len(invites) != count {
+		return nil, errors.New("create invites failed")
 	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return nil, errors.New("create invites failed")
