@@ -572,23 +572,38 @@ static func _wires_move_once() -> bool:
 
 static func _plays_confirmed_move_sound_for_either_player() -> bool:
 	for local_user_id in [BLACK_ID, WHITE_ID]:
-		var harness: Dictionary = await _scene_harness(local_user_id)
-		var scene: Control = harness["scene"]
-		var client: FakeMatchClient = harness["client"]
-		var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
-		if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
-			return _cleanup(scene)
-		client.accept_snapshot(_snapshot(0))
-		if not _check(not sound.playing, "authoritative snapshot replayed move sound"):
-			return _cleanup(scene)
-		client.accept_event(_move(1, BLACK_ID, "black", 7, 7))
-		if not _check(sound.playing, "confirmed move was silent for local user %s" % local_user_id):
-			return _cleanup(scene)
-		sound.stop()
-		client.event_received.emit(_move(1, BLACK_ID, "black", 7, 7))
-		if not _check(not sound.playing, "duplicate confirmed move replayed its sound"):
-			return _cleanup(scene)
-		_cleanup(scene, true)
+		for move_color in ["black", "white"]:
+			var harness: Dictionary = await _scene_harness(local_user_id)
+			var scene: Control = harness["scene"]
+			var client: FakeMatchClient = harness["client"]
+			var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
+			if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
+				return _cleanup(scene)
+			var revision := 1
+			var move_user_id := BLACK_ID
+			var x := 7
+			var y := 7
+			if move_color == "white":
+				var board := _empty_board()
+				board[7 * 15 + 7] = 1
+				client.accept_snapshot(_snapshot(1, board, "active", "white"))
+				client.event_received.emit(_move(1, BLACK_ID, "black", 7, 7))
+				revision = 2
+				move_user_id = WHITE_ID
+				x = 8
+				y = 8
+			else:
+				client.accept_snapshot(_snapshot(0))
+			if not _check(not sound.playing, "snapshot or replayed move produced sound"):
+				return _cleanup(scene)
+			client.accept_event(_move(revision, move_user_id, move_color, x, y))
+			if not _check(sound.playing, "confirmed %s move was silent for local user %s" % [move_color, local_user_id]):
+				return _cleanup(scene)
+			sound.stop()
+			client.event_received.emit(_move(revision, move_user_id, move_color, x, y))
+			if not _check(not sound.playing, "duplicate %s move replayed its sound" % move_color):
+				return _cleanup(scene)
+			_cleanup(scene, true)
 	return true
 
 

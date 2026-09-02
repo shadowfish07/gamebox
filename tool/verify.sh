@@ -12,6 +12,14 @@ godot_imported_asset_is_allowed() {
   [[ "$asset_path" =~ ^assets/\.godot/imported/[A-Za-z0-9][A-Za-z0-9._-]*\.(ctex|oggvorbisstr)$ ]]
 }
 
+godot_imported_asset_apk_entry() {
+  local import_metadata="$1"
+  local imported_resource_path
+  imported_resource_path="$(sed -n 's/^path="res:\/\/\(.*\)"$/\1/p' "$import_metadata")"
+  [[ -n "$imported_resource_path" && "$imported_resource_path" != *$'\n'* ]] || return 1
+  printf 'assets/%s\n' "$imported_resource_path"
+}
+
 # The packaged Gamebox design system is required by the APK asset gate below.
 # Its generated token file legitimately ends in "_tokens.gd", which the
 # secret-name scanner would otherwise flag; these exact paths are the reviewed,
@@ -383,7 +391,13 @@ verify_debug_apk() (
       exit 1
     }
   done
-  if ! grep -Eq '^assets/\.godot/imported/click_005\.ogg-[0-9a-f]{32}\.oggvorbisstr$' <<<"$apk_entries"; then
+  move_sound_import="$ROOT_DIR/game_runtime/games/shared/assets/click_005.ogg.import"
+  if ! move_sound_apk_entry="$(godot_imported_asset_apk_entry "$move_sound_import")" \
+    || ! godot_imported_asset_is_allowed "$move_sound_apk_entry"; then
+    printf 'Confirmed-move audio import metadata has an invalid target path\n' >&2
+    exit 1
+  fi
+  if ! grep -Fxq "$move_sound_apk_entry" <<<"$apk_entries"; then
     printf 'Debug APK is missing the imported confirmed-move audio stream\n' >&2
     exit 1
   fi
