@@ -2,6 +2,7 @@ class_name ChineseCheckersBoard
 extends Control
 
 signal hole_pressed(index: int)
+signal move_animation_finished
 
 const ChineseCheckersState = preload("res://games/chinese_checkers/chinese_checkers_state.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
@@ -14,6 +15,7 @@ const INVALID_HOLE := -1
 const LOCAL_PADDING := 28.0
 const VERTICAL_STEP := 0.8660254037844386
 const DRAG_CANCEL_DISTANCE := 14.0
+const MOVE_LIFT_FACTOR := 0.46
 
 const BOARD_COLOR := GameboxTokens.GAME["board"]
 const GRID_COLOR := GameboxTokens.GAME["grid"]
@@ -40,6 +42,9 @@ var target_holes: Array:
 var pending_path: Array:
 	get: return _pending_path.duplicate()
 	set(_value): pass
+var move_animation_path: Array:
+	get: return _move_animation_path.duplicate()
+	set(_value): pass
 
 var _cells: Array = []
 var _local_color := "white"
@@ -52,11 +57,16 @@ var _active_touch := -1
 var _pressed_hole := INVALID_HOLE
 var _touch_start := Vector2.ZERO
 var _touch_cancelled := false
+var _move_animation_path: Array = []
+var _move_animation_stone := EMPTY
+var _move_animation_elapsed := 0.0
+var _move_animation_duration := 0.0
 
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
+	set_process(false)
 	_cells.resize(BOARD_CELLS)
 	_cells.fill(EMPTY)
 
@@ -92,6 +102,9 @@ func present(
 	_target_paths = normalized_paths
 	_target_holes = normalized_targets
 	_pending_path = pending.duplicate()
+	if not _move_animation_path.is_empty() and (
+			not pending.is_empty() or cells[_move_animation_path.back()] != _move_animation_stone):
+		_finish_move_animation()
 	set_interactable(interactable)
 	queue_redraw()
 	return true
@@ -99,10 +112,56 @@ func present(
 
 func set_interactable(value: bool) -> void:
 	_interactable = value
-	mouse_filter = Control.MOUSE_FILTER_STOP if value else Control.MOUSE_FILTER_IGNORE
-	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if value else Control.CURSOR_ARROW
-	if not value:
-		_reset_touch()
+	_sync_input_state()
+
+
+func cancel_move_animation() -> bool:
+	if _move_animation_path.is_empty():
+		return false
+	_finish_move_animation()
+	return true
+
+
+func play_move_animation(path: Array) -> bool:
+	if not _move_animation_path.is_empty() or path.size() < 2 or not _valid_indices(path):
+		return false
+	var origin: int = path[0]
+	var destination: int = path.back()
+	var stone: int = _cells[destination]
+	if _cells[origin] != EMPTY or stone not in [BLACK, WHITE]:
+		return false
+	_move_animation_path = path.duplicate()
+	_move_animation_stone = stone
+	_move_animation_elapsed = 0.0
+	var duration_ms := clampi(
+		(path.size() - 1) * int(GameboxTokens.MOTION["fast"]),
+		int(GameboxTokens.MOTION["standard"]),
+		int(GameboxTokens.MOTION["page_enter"]),
+	)
+	_move_animation_duration = float(duration_ms) / 1000.0
+	set_process(true)
+	_sync_input_state()
+	queue_redraw()
+	return true
+
+
+func animation_piece_position(progress: float = -1.0) -> Vector2:
+	if _move_animation_path.is_empty():
+		return Vector2(INF, INF)
+	var resolved_progress := progress
+	if resolved_progress < 0.0:
+		resolved_progress = _move_animation_elapsed / _move_animation_duration
+	return _animation_path_position(clampf(resolved_progress, 0.0, 1.0), true)
+
+
+func _process(delta: float) -> void:
+	if _move_animation_path.is_empty():
+		set_process(false)
+		return
+	_move_animation_elapsed += maxf(0.0, delta)
+	if _move_animation_elapsed >= _move_animation_duration:
+		_finish_move_animation()
+	queue_redraw()
 
 
 func stone_at(index: int) -> int:
@@ -224,7 +283,7 @@ func _draw() -> void:
 
 	for index in BOARD_CELLS:
 		var stone: int = _cells[index]
-		if stone == EMPTY:
+		if stone == EMPTY or not _move_animation_path.is_empty() and index == _move_animation_path.back():
 			continue
 		var center := hole_to_pixel(index, rect, _local_color)
 		if index == _selected_hole:
@@ -239,6 +298,15 @@ func _draw() -> void:
 		var center := hole_to_pixel(destination, rect, _local_color)
 		_draw_piece(center, piece_radius, _cells[_pending_path[0]], 0.42)
 		draw_arc(center, piece_radius * 1.18, 0.0, TAU, 36, PENDING_COLOR, 5.0, true)
+	if not _move_animation_path.is_empty():
+		var progress := clampf(_move_animation_elapsed / _move_animation_duration, 0.0, 1.0)
+		var shadow_center := _animation_path_position(progress, false)
+		var center := _animation_path_position(progress, true)
+		var lift_ratio := clampf((shadow_center.y - center.y) / maxf(spacing * MOVE_LIFT_FACTOR, 1.0), 0.0, 1.0)
+		var shadow_color := BLACK_PIECE_COLOR
+		shadow_color.a = PIECE_SHADOW_ALPHA * lerpf(1.0, 0.55, lift_ratio)
+		draw_circle(shadow_center + Vector2(0.0, maxf(4.0, spacing * 0.06)), piece_radius * lerpf(0.88, 0.7, lift_ratio), shadow_color, true, -1.0, true)
+		_draw_piece(center, piece_radius * lerpf(1.0, 1.06, lift_ratio), _move_animation_stone, 1.0)
 	if _pressed_hole >= 0:
 		draw_arc(hole_to_pixel(_pressed_hole, rect, _local_color), piece_radius * 0.82, 0.0, TAU, 32, SELECTED_COLOR, 4.0, true)
 
@@ -277,6 +345,42 @@ func _reset_touch() -> void:
 	_touch_start = Vector2.ZERO
 	_touch_cancelled = false
 	queue_redraw()
+
+
+func _sync_input_state() -> void:
+	var effective := _interactable and _move_animation_path.is_empty()
+	mouse_filter = Control.MOUSE_FILTER_STOP if effective else Control.MOUSE_FILTER_IGNORE
+	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if effective else Control.CURSOR_ARROW
+	if not effective:
+		_reset_touch()
+
+
+func _finish_move_animation() -> void:
+	var had_animation := not _move_animation_path.is_empty()
+	_move_animation_path.clear()
+	_move_animation_stone = EMPTY
+	_move_animation_elapsed = 0.0
+	_move_animation_duration = 0.0
+	set_process(false)
+	_sync_input_state()
+	if had_animation:
+		move_animation_finished.emit()
+
+
+func _animation_path_position(progress: float, lifted: bool) -> Vector2:
+	var segment_count := _move_animation_path.size() - 1
+	var scaled_progress := progress * segment_count
+	var segment := mini(floori(scaled_progress), segment_count - 1)
+	var segment_progress := 1.0 if progress >= 1.0 else scaled_progress - segment
+	var eased_progress := segment_progress * segment_progress * (3.0 - 2.0 * segment_progress)
+	var rect := board_rect()
+	var start := hole_to_pixel(_move_animation_path[segment], rect, _local_color)
+	var finish := hole_to_pixel(_move_animation_path[segment + 1], rect, _local_color)
+	var position := start.lerp(finish, eased_progress)
+	if lifted:
+		var spacing := hole_to_pixel(56, rect, _local_color).distance_to(hole_to_pixel(57, rect, _local_color))
+		position.y -= sin(segment_progress * PI) * spacing * MOVE_LIFT_FACTOR
+	return position
 
 
 static func _valid_pending(cells: Array, pending: Array) -> bool:

@@ -3,6 +3,7 @@ extends Control
 const LaunchConfig = preload("res://core/launch_config.gd")
 const MatchClient = preload("res://core/match_client.gd")
 const ChineseCheckersState = preload("res://games/chinese_checkers/chinese_checkers_state.gd")
+const ChineseCheckersTheme = preload("res://games/chinese_checkers/chinese_checkers_theme.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
@@ -47,7 +48,10 @@ var _force_return := false
 var _resign_submitted := false
 var _reviewing_result := false
 var _presented_result_signature := ""
-var _last_sounded_move_revision := -1
+var _last_presented_move_revision := -1
+var _defer_result_until_move_animation := false
+var _queued_move_animations: Array = []
+var _move_presentation := {}
 var _logged_state_signature := ""
 var _ready_marker_generation := 0
 var _ready_marker_callback := Callable()
@@ -86,10 +90,11 @@ func set_frame_ready_gate(gate: Variant) -> bool:
 
 func _ready() -> void:
 	var dark_theme := GameboxTheme.system_prefers_dark()
-	theme = GameboxTheme.create(dark_theme)
+	theme = ChineseCheckersTheme.create(dark_theme)
 	var colors: Dictionary = GameboxTokens.DARK if dark_theme else GameboxTokens.LIGHT
 	$ResultScrim.color = Color(colors["scrim"], GameboxTokens.COMPONENT["dialog_scrim_opacity"])
 	$Board.hole_pressed.connect(_on_hole_pressed)
+	$Board.move_animation_finished.connect(_on_move_animation_finished)
 	$TopNavigation.back_requested.connect(_on_back_pressed)
 	$TopNavigation.set_menu_items([{"id": "resign", "label": "认输并结束对局", "danger": true}])
 	$TopNavigation.menu_action_requested.connect(_on_menu_action_requested)
@@ -248,7 +253,12 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_error_text = ""
 		_awaiting_snapshot = false
 		_resign_submitted = false
-		_last_sounded_move_revision = maxi(_last_sounded_move_revision, _state.revision)
+		_last_presented_move_revision = maxi(_last_presented_move_revision, _state.revision)
+		if applied.get("status") == "applied":
+			_queued_move_animations.clear()
+			_move_presentation.clear()
+			_defer_result_until_move_animation = false
+			$Board.cancel_move_animation()
 		_clear_selection()
 	_refresh_ui()
 
@@ -257,17 +267,54 @@ func _on_event_received(envelope: Dictionary) -> void:
 	if _state == null:
 		return
 	var applied: Dictionary = _state.apply_event(envelope)
+	var accepted_path: Array = []
+	var preserve_board_animation := false
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
 	elif envelope.get("type") == "chinese_checkers.move.accepted" \
 		and applied.get("status") in ["applied", "ignored"]:
 		var revision: Variant = envelope.get("revision")
-		if typeof(revision) == TYPE_INT and revision > _last_sounded_move_revision:
-			_last_sounded_move_revision = revision
+		if typeof(revision) == TYPE_INT and revision > _last_presented_move_revision:
+			_last_presented_move_revision = revision
 			$MoveSound.play()
+			var payload: Variant = envelope.get("payload")
+			if payload is Dictionary and payload.get("path") is Array:
+				accepted_path = payload["path"].duplicate()
+				_defer_result_until_move_animation = _state.status in TERMINAL_STATUSES
+				preserve_board_animation = not $Board.move_animation_path.is_empty()
 	_clear_selection()
-	_refresh_ui()
+	if not accepted_path.is_empty():
+		var presentation := _current_move_presentation()
+		if preserve_board_animation:
+			_queued_move_animations.append({
+				"board": _state.board,
+				"local_color": _local_color(),
+				"path": accepted_path,
+				"presentation": presentation,
+			})
+		else:
+			_move_presentation = presentation
+	_refresh_ui(preserve_board_animation)
+	if not accepted_path.is_empty() and not preserve_board_animation \
+		and not $Board.play_move_animation(accepted_path):
+		_defer_result_until_move_animation = false
+		_refresh_ui()
+
+
+func _on_move_animation_finished() -> void:
+	while not _queued_move_animations.is_empty():
+		var queued: Dictionary = _queued_move_animations.pop_front()
+		_move_presentation = queued["presentation"]
+		if $Board.present(queued["board"], queued["local_color"], -1, {}, [], false) \
+			and $Board.play_move_animation(queued["path"]):
+			_refresh_ui(true)
+			return
+	_move_presentation.clear()
+	if _state == null:
+		return
+	_defer_result_until_move_animation = false
+	_refresh_ui.call_deferred()
 
 
 func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
@@ -290,9 +337,11 @@ func _on_return_to_lobby_requested(code: String) -> void:
 	_refresh_ui()
 
 
-func _refresh_ui() -> void:
+func _refresh_ui(preserve_board_animation: bool = false) -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
-	var terminal: bool = has_state and _state.status in TERMINAL_STATUSES
+	var presentation: Dictionary = _move_presentation if not _move_presentation.is_empty() \
+		else _current_move_presentation() if has_state else {}
+	var terminal := bool(presentation.get("terminal", false))
 	var pending_path: Array = []
 	if has_state and _state.pending_action.get("type") == "chinese_checkers.move.requested":
 		pending_path = _state.pending_action.get("path", []).duplicate()
@@ -303,9 +352,12 @@ func _refresh_ui() -> void:
 		if _target_paths.is_empty():
 			_clear_selection()
 	var display_board: Array = _state.board if has_state else _initial_board()
-	var local_color := _local_color() if has_state else "white"
-	$Board.present(display_board, local_color if not local_color.is_empty() else "white", _selected_hole, _target_paths, pending_path, _can_interact())
-	$TopNavigation.set_subtitle(_status_text() if has_state else _connection_text())
+	var local_color := str(presentation.get("local_color", "white"))
+	preserve_board_animation = preserve_board_animation or (
+		not _move_presentation.is_empty() and not $Board.move_animation_path.is_empty())
+	if not preserve_board_animation:
+		$Board.present(display_board, local_color if not local_color.is_empty() else "white", _selected_hole, _target_paths, pending_path, _can_interact())
+	$TopNavigation.set_subtitle(str(presentation.get("status_text", "")) if has_state else _connection_text())
 	$TopNavigation.set_subtitle_visible(has_state and not terminal and not _force_return and _connection_state == "connected" and not _awaiting_snapshot)
 	$TopNavigation.set_action_visible(not terminal and not _force_return)
 	$TopNavigation.set_menu_item_disabled("resign", not _can_offer_resign())
@@ -313,17 +365,27 @@ func _refresh_ui() -> void:
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
 	$PlayerStrip.visible = has_state and not $ConnectionLabel.visible
 	if has_state:
-		$PlayerStrip/Content/Me.text = "我 · %s" % ("先手" if local_color == "black" else "后手")
-		$PlayerStrip/Content/Opponent.text = "%s · 对手" % _opponent_presence_text()
-		$PlayerStrip/Content/Turn.text = _turn_chip_text()
-	$HintLabel.text = _hint_text() if has_state else "连接后即可开始"
+		var active_local := bool(presentation["active_local"])
+		var active_opponent := bool(presentation["active_opponent"])
+		var local_status := str(presentation["local_status"])
+		var opponent_color := str(presentation["opponent_color"])
+		var opponent_status := str(presentation["opponent_status"])
+		_present_player_card($PlayerStrip/Content/Me, local_color, local_status, &"ChineseCheckersTurnPlayerActiveLocal" if active_local else &"ChineseCheckersTurnPlayerInactive")
+		_present_player_card($PlayerStrip/Content/Opponent, opponent_color, opponent_status, &"ChineseCheckersTurnPlayerActiveOpponent" if active_opponent else &"ChineseCheckersTurnPlayerInactive")
+		$PlayerStrip/Content/Turn.text = str(presentation["turn_text"])
+	$HintLabel.text = str(presentation.get("hint_text", "连接后即可开始"))
 	if terminal:
 		$ResignDialog.close()
-		var signature := "%d|%s|%s" % [_state.revision, _state.status, str(_state.result)]
-		if signature != _presented_result_signature:
-			_presented_result_signature = signature
-			_reviewing_result = false
-			_present_result()
+		if _defer_result_until_move_animation:
+			$ResultPanel.visible = false
+			$ResultScrim.visible = false
+			$ResultPill.visible = false
+		else:
+			var signature := "%d|%s|%s" % [_state.revision, _state.status, str(_state.result)]
+			if signature != _presented_result_signature:
+				_presented_result_signature = signature
+				_reviewing_result = false
+				_present_result()
 	else:
 		_presented_result_signature = ""
 		_reviewing_result = false
@@ -331,6 +393,25 @@ func _refresh_ui() -> void:
 		$ResultScrim.visible = false
 		$ResultPill.visible = false
 	_log_runtime_state()
+
+
+func _current_move_presentation() -> Dictionary:
+	var terminal: bool = _state.status in TERMINAL_STATUSES
+	var local_color := _local_color()
+	var active_local: bool = not terminal and (not _state.pending_action.is_empty() or local_color == _state.next_color)
+	var active_opponent: bool = not terminal and _state.pending_action.is_empty() and local_color != _state.next_color
+	return {
+		"terminal": terminal,
+		"status_text": _status_text(),
+		"local_color": local_color,
+		"active_local": active_local,
+		"active_opponent": active_opponent,
+		"local_status": "确认中" if not _state.pending_action.is_empty() else "正在行动" if active_local else "先手" if local_color == "black" else "后手",
+		"opponent_color": "white" if local_color == "black" else "black",
+		"opponent_status": "正在行动" if active_opponent else _opponent_presence_text(),
+		"turn_text": _turn_chip_text(),
+		"hint_text": _hint_text(),
+	}
 
 
 func _present_result() -> void:
@@ -423,6 +504,27 @@ func _opponent_presence_text() -> String:
 	return "在线" if _client.is_player_online(opponent_id) else "离线"
 
 
+func _present_player_card(card: PanelContainer, color: String, status: String, variation: StringName) -> void:
+	card.theme_type_variation = variation
+	var identity := card.get_node("Content/Identity/Name") as Label
+	var supporting := card.get_node("Content/Status") as Label
+	var piece := card.get_node("Content/Identity/Piece") as Label
+	var identity_variation := &"ChineseCheckersTurnPlayerIdentity"
+	var supporting_variation := &"ChineseCheckersTurnPlayerSupporting"
+	if variation == &"ChineseCheckersTurnPlayerActiveLocal":
+		identity_variation = &"ChineseCheckersTurnPlayerActiveLocalIdentity"
+		supporting_variation = &"ChineseCheckersTurnPlayerActiveLocalSupporting"
+	elif variation == &"ChineseCheckersTurnPlayerActiveOpponent":
+		identity_variation = &"ChineseCheckersTurnPlayerActiveOpponentIdentity"
+		supporting_variation = &"ChineseCheckersTurnPlayerActiveOpponentSupporting"
+	identity.theme_type_variation = identity_variation
+	supporting.theme_type_variation = supporting_variation
+	supporting.text = status
+	piece.add_theme_color_override("font_color", GameboxTokens.GAME["black_piece"] if color == "black" else GameboxTokens.GAME["white_piece"])
+	piece.add_theme_color_override("font_outline_color", GameboxTokens.GAME["white_piece_outline"])
+	piece.add_theme_constant_override("outline_size", GameboxTokens.SPACING["base"])
+
+
 func _status_text() -> String:
 	if not _state.pending_action.is_empty():
 		return "等待服务器确认"
@@ -436,7 +538,7 @@ func _turn_chip_text() -> String:
 		return "对局结束"
 	if not _state.pending_action.is_empty():
 		return "确认中"
-	return "你的回合" if _local_color() == _state.next_color else "对手回合"
+	return "轮到你" if _local_color() == _state.next_color else "等待中"
 
 
 func _hint_text() -> String:
