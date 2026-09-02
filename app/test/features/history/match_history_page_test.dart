@@ -112,6 +112,47 @@ void main() {
     },
   );
 
+  testWidgets('Chinese checkers page shows turn order and move count', (
+    tester,
+  ) async {
+    final api = _FakeMatchHistoryApi()
+      ..responses.add(
+        (_) async => MatchHistoryPageData(
+          statistics: _statistics(1),
+          matches: [
+            _entry(
+              '11111111-1111-4111-8111-111111111111',
+              outcome: MatchOutcome.win,
+              nickname: '跳棋玩家',
+              color: GomokuColor.black,
+              hour: 20,
+              moveCount: 27,
+            ),
+            _entry(
+              '22222222-2222-4222-8222-222222222222',
+              outcome: MatchOutcome.loss,
+              nickname: '另一位跳棋玩家',
+              color: GomokuColor.white,
+              hour: 19,
+              moveCount: 28,
+            ),
+          ],
+          nextCursor: null,
+        ),
+      );
+
+    await _pumpPage(tester, api, game: MatchHistoryGame.chineseCheckers);
+    await _flush(tester);
+
+    expect(find.text('跳棋战绩'), findsOneWidget);
+    expect(find.text('先手'), findsOneWidget);
+    expect(find.text('后手'), findsOneWidget);
+    expect(find.text('27 手'), findsOneWidget);
+    expect(find.text('28 手'), findsOneWidget);
+    expect(find.text('黑方'), findsNothing);
+    expect(api.games, [MatchHistoryGame.chineseCheckers]);
+  });
+
   testWidgets(
     'data rows expose compact result status and metadata without tap',
     (tester) async {

@@ -102,6 +102,10 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.bySemanticsIdentifier('open-chinese-checkers-history'),
+      findsOneWidget,
+    );
+    expect(
       tester.getSemantics(find.byKey(const Key('game-chinese-checkers'))),
       isSemantics(
         identifier: 'game-chinese-checkers',
@@ -136,6 +140,10 @@ void main() {
     );
     expect(
       find.bySemanticsIdentifier('chinese-checkers-cancel-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('open-chinese-checkers-history'),
       findsOneWidget,
     );
 
@@ -532,6 +540,44 @@ void main() {
     rpsController.dispose();
     fixture.dispose();
   });
+
+  testWidgets(
+    'Chinese checkers history remains reachable when its status request fails',
+    (tester) async {
+      final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+      final chineseCheckers = _Fixture(now)
+        ..api.statusError = const ApiError(
+          code: 'network_error',
+          message: '跳棋状态加载失败',
+        );
+      await tester.pumpWidget(
+        _app(
+          gomoku.controller,
+          aliceId,
+          historyApi: gomoku.historyApi,
+          chineseCheckersController: chineseCheckers.controller,
+        ),
+      );
+      await _flushWidget(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('open-chinese-checkers-history')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('跳棋状态加载失败'), findsOneWidget);
+      expect(
+        find.bySemanticsIdentifier('chinese-checkers-retry-home'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('open-chinese-checkers-history')));
+      await tester.pumpAndSettle();
+      expect(find.text('跳棋战绩'), findsOneWidget);
+      expect(gomoku.historyApi.games, [MatchHistoryGame.chineseCheckers]);
+
+      gomoku.dispose();
+      chineseCheckers.dispose();
+    },
+  );
 
   testWidgets(
     'game cards open their own history and visible back preserves Home',

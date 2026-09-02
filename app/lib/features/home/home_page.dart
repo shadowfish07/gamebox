@@ -358,6 +358,8 @@ final class _HomePageState extends State<HomePage> {
         message: controller.lastError!.message,
         onRetry: controller.refresh,
         retryIdentifier: 'chinese-checkers-retry-home',
+        historyGame: MatchHistoryGame.chineseCheckers,
+        onOpenHistory: () => _openHistory(MatchHistoryGame.chineseCheckers),
       );
     }
     final status = controller.status;
@@ -369,6 +371,7 @@ final class _HomePageState extends State<HomePage> {
       onChoose: _chooseChineseCheckersOpponent,
       onContinue: _continueChineseCheckersMatch,
       onCancel: _cancelChineseCheckersMatch,
+      onOpenHistory: () => _openHistory(MatchHistoryGame.chineseCheckers),
     );
   }
 }
@@ -585,6 +588,7 @@ final class _ChineseCheckersCard extends StatelessWidget {
     required this.onChoose,
     required this.onContinue,
     required this.onCancel,
+    required this.onOpenHistory,
   });
 
   final GomokuStatus status;
@@ -593,6 +597,7 @@ final class _ChineseCheckersCard extends StatelessWidget {
   final VoidCallback onChoose;
   final VoidCallback onContinue;
   final VoidCallback onCancel;
+  final VoidCallback onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -630,13 +635,17 @@ final class _ChineseCheckersCard extends StatelessWidget {
             ),
             SizedBox(height: GameboxTokens.spacing.page),
             switch (status) {
-              GomokuIdleStatus _ => _ActionButton(
-                semanticKey: const Key('chinese-checkers-choose-opponent'),
-                semanticLabel: 'chinese-checkers-choose-opponent',
-                onPressed: isMutating ? null : onChoose,
-                label: '选择对手',
-                pendingLabel: '正在创建对局',
-                isPending: isMutating,
+              GomokuIdleStatus _ => _PrimaryAndHistoryActions(
+                game: MatchHistoryGame.chineseCheckers,
+                onOpenHistory: onOpenHistory,
+                primary: _ActionButton(
+                  semanticKey: const Key('chinese-checkers-choose-opponent'),
+                  semanticLabel: 'chinese-checkers-choose-opponent',
+                  onPressed: isMutating ? null : onChoose,
+                  label: '选择对手',
+                  pendingLabel: '正在创建对局',
+                  isPending: isMutating,
+                ),
               ),
               GomokuActiveStatus active => _ActiveMatchActions(
                 active: active,
@@ -647,6 +656,8 @@ final class _ChineseCheckersCard extends StatelessWidget {
                 isMutating: isMutating,
                 onContinue: onContinue,
                 onCancel: onCancel,
+                historyGame: MatchHistoryGame.chineseCheckers,
+                onOpenHistory: onOpenHistory,
               ),
             },
           ],
@@ -804,7 +815,7 @@ final class _HistoryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final identifier = game == MatchHistoryGame.gomoku
         ? 'open-match-history'
-        : 'open-${game.id}-history';
+        : 'open-${game.id.replaceAll('_', '-')}-history';
     return Semantics(
       key: Key(identifier),
       identifier: identifier,

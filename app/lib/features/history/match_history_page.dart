@@ -315,6 +315,8 @@ final class _HistoryEntry extends StatelessWidget {
         '${material.formatShortDate(local)} '
         '${material.formatTimeOfDay(TimeOfDay.fromDateTime(local), alwaysUse24HourFormat: true)}';
     final leadingDetail = switch (game) {
+      MatchHistoryGame.chineseCheckers =>
+        entry.color == GomokuColor.black ? '先手' : '后手',
       MatchHistoryGame.gomoku => entry.color == GomokuColor.black ? '黑方' : '白方',
       MatchHistoryGame.rps => entry.rpsFormat!.label,
     };
