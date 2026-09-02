@@ -7,6 +7,7 @@ const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 static func cases() -> Array:
 	return [
 		{"name": "design system maps light and dark semantic tokens", "run": _maps_semantic_tokens},
+		{"name": "design system maps turn ownership surfaces", "run": _maps_turn_ownership_surfaces},
 		{"name": "design system defines public control states and types", "run": _defines_control_states},
 		{"name": "design system keeps board colors out of the shared theme", "run": _keeps_game_colors_private},
 		{"name": "design system dark preference always returns a boolean", "run": _returns_dark_preference},
@@ -22,6 +23,21 @@ static func _maps_semantic_tokens() -> bool:
 		and _check(dark.get_color("font_color", "Button") == GameboxTokens.DARK["on_primary"], "dark button foreground drifted") \
 		and _check(light.get_font_size("font_size", "Label") == 28, "label type scale drifted") \
 		and _check(light.get_font_size("font_size", "Button") == 28, "button type scale drifted")
+
+
+static func _maps_turn_ownership_surfaces() -> bool:
+	for dark_mode in [false, true]:
+		var colors: Dictionary = GameboxTokens.DARK if dark_mode else GameboxTokens.LIGHT
+		var theme := GameboxTheme.create(dark_mode)
+		var local_style := theme.get_stylebox("normal", "GameboxTurnPlayerActiveLocal") as StyleBoxFlat
+		var opponent_style := theme.get_stylebox("normal", "GameboxTurnPlayerActiveOpponent") as StyleBoxFlat
+		if not _check(local_style != null and local_style.bg_color == colors["primary_container"], "local turn container drifted") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveLocal") == colors["on_primary_container"], "local turn foreground is not paired") \
+			or not _check(opponent_style != null and opponent_style.bg_color == colors["tertiary_container"], "opponent turn container drifted") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerActiveOpponent") == colors["on_tertiary_container"], "opponent turn foreground is not paired") \
+			or not _check(theme.get_color("font_color", "GameboxTurnPlayerInactive") == colors["on_surface_variant"], "inactive player did not use neutral emphasis"):
+			return false
+	return true
 
 
 static func _defines_control_states() -> bool:

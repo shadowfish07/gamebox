@@ -11,6 +11,7 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 static func cases() -> Array:
 	return [
 		{"name": "chinese checkers scene uses the direct lightweight board shell", "run": _uses_direct_lightweight_shell},
+		{"name": "chinese checkers scene emphasizes the active player", "run": _emphasizes_active_player},
 		{"name": "chinese checkers scene submits a highlighted endpoint without confirmation", "run": _submits_direct_endpoint},
 		{"name": "chinese checkers scene animates the authoritative accepted path", "run": _animates_accepted_path},
 		{"name": "chinese checkers scene preserves and locks the board during reconnect", "run": _locks_during_reconnect},
@@ -35,6 +36,40 @@ static func _uses_direct_lightweight_shell() -> bool:
 	return _cleanup(scene, result)
 
 
+static func _emphasizes_active_player() -> bool:
+	var local_harness: Dictionary = await _scene_harness(BLACK_ID)
+	var local_scene: Control = local_harness["scene"]
+	var local_client: FakeMatchClient = local_harness["client"]
+	local_client.accept_snapshot(_snapshot(0, "active", "black"))
+	var me := local_scene.get_node("PlayerStrip/Content/Me") as Label
+	var opponent := local_scene.get_node("PlayerStrip/Content/Opponent") as Label
+	var turn := local_scene.get_node("PlayerStrip/Content/Turn") as Label
+	var result := _check(me.theme_type_variation == &"GameboxTurnPlayerActiveLocal", "local turn did not emphasize the local player") \
+		and _check(me.text == "我 · 先手\n正在行动", "local active-player copy lost identity or seat") \
+		and _check(opponent.theme_type_variation == &"GameboxTurnPlayerInactive", "local turn emphasized both players") \
+		and _check(opponent.text == "在线 · 对手", "inactive opponent copy changed") \
+		and _check(turn.theme_type_variation == &"GameboxTurnStatus", "turn status lacks its semantic style") \
+		and _check(turn.text == "轮到你", "local turn status copy changed")
+	local_client.accept_snapshot(_snapshot(1, "active", "white"))
+	result = result \
+		and _check(me.theme_type_variation == &"GameboxTurnPlayerInactive", "opponent turn retained local-player emphasis") \
+		and _check(me.text == "我 · 先手", "inactive local copy lost its seat") \
+		and _check(opponent.theme_type_variation == &"GameboxTurnPlayerActiveOpponent", "opponent turn did not emphasize the opponent") \
+		and _check(opponent.text == "在线 · 对手\n正在行动", "active opponent copy lost identity or presence") \
+		and _check(turn.text == "等待中", "opponent turn status copy changed")
+	_cleanup(local_scene)
+
+	var white_harness: Dictionary = await _scene_harness(WHITE_ID)
+	var white_scene: Control = white_harness["scene"]
+	var white_client: FakeMatchClient = white_harness["client"]
+	white_client.accept_snapshot(_snapshot(1, "active", "white"))
+	result = result \
+		and _check((white_scene.get_node("PlayerStrip/Content/Me") as Label).theme_type_variation == &"GameboxTurnPlayerActiveLocal", "white local turn emphasized by piece color instead of identity") \
+		and _check((white_scene.get_node("PlayerStrip/Content/Me") as Label).text == "我 · 后手\n正在行动", "white local active-player copy lost its seat") \
+		and _check((white_scene.get_node("PlayerStrip/Content/Opponent") as Label).theme_type_variation == &"GameboxTurnPlayerInactive", "white local turn emphasized the opponent")
+	return _cleanup(white_scene, result)
+
+
 static func _submits_direct_endpoint() -> bool:
 	var harness: Dictionary = await _scene_harness(BLACK_ID)
 	var scene: Control = harness["scene"]
@@ -50,6 +85,9 @@ static func _submits_direct_endpoint() -> bool:
 		and _check(board.pending_path == [6, 14], "submitted path is not shown as pending") \
 		and _check(board.stone_at(6) == 1 and board.stone_at(14) == 0, "pending UI changed the authoritative board") \
 		and _check(board.mouse_filter == Control.MOUSE_FILTER_IGNORE, "pending board still accepts input") \
+		and _check((scene.get_node("PlayerStrip/Content/Me") as Label).theme_type_variation == &"GameboxTurnPlayerActiveLocal", "pending move lost local-player emphasis") \
+		and _check((scene.get_node("PlayerStrip/Content/Me") as Label).text.ends_with("\n确认中"), "pending move merged into an ordinary active turn") \
+		and _check((scene.get_node("PlayerStrip/Content/Turn") as Label).text == "确认中", "pending turn status changed") \
 		and _check(not scene.has_node("MoveConfirmation"), "endpoint unexpectedly opened confirmation")
 	return _cleanup(scene, result)
 
@@ -108,6 +146,8 @@ static func _presents_authoritative_result() -> bool:
 	var result := _check(scene.get_node("ResultPanel").visible, "terminal result panel is hidden") \
 		and _check((scene.get_node("ResultPanel/Content/Result") as Label).text == "对手已认输", "authoritative result copy changed") \
 		and _check((scene.get_node("PlayerStrip/Content/Turn") as Label).text == "对局结束", "terminal turn chip retained an active-turn label") \
+		and _check((scene.get_node("PlayerStrip/Content/Me") as Label).theme_type_variation == &"GameboxTurnPlayerInactive", "terminal state retained local-player emphasis") \
+		and _check((scene.get_node("PlayerStrip/Content/Opponent") as Label).theme_type_variation == &"GameboxTurnPlayerInactive", "terminal state retained opponent emphasis") \
 		and _check((scene.get_node("HintLabel") as Label).text == "对局已结束，结果已由服务器确认", "terminal hint retained active-play copy") \
 		and _check(scene.get_node("Board").mouse_filter == Control.MOUSE_FILTER_IGNORE, "terminal board accepts input")
 	return _cleanup(scene, result)

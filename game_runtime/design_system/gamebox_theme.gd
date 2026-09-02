@@ -10,6 +10,7 @@ static func create(dark: bool) -> Theme:
 	var theme := Theme.new()
 	var body_size := _scaled(GameboxTokens.TYPOGRAPHY["body_medium"]["font_size"])
 	var label_size := _scaled(GameboxTokens.TYPOGRAPHY["label_large"]["font_size"])
+	var supporting_label_size := _scaled(GameboxTokens.TYPOGRAPHY["label_medium"]["font_size"])
 	var title_size := _scaled(GameboxTokens.TYPOGRAPHY["headline_small"]["font_size"])
 	var minimum_touch_target := _scaled(GameboxTokens.COMPONENT["minimum_touch_target"])
 	var card_radius: float = GameboxTokens.SHAPE["card"]
@@ -110,6 +111,12 @@ static func create(dark: bool) -> Theme:
 	theme.set_type_variation("GameboxDialogCancelButton", "Button")
 	theme.set_type_variation("GameboxDialogConfirmButton", "Button")
 	theme.set_type_variation("GameboxSecondaryButton", "Button")
+	theme.set_type_variation("GameboxTurnPlayerStrip", "PanelContainer")
+	theme.set_type_variation("GameboxTurnPlayerRow", "HBoxContainer")
+	theme.set_type_variation("GameboxTurnPlayerInactive", "Label")
+	theme.set_type_variation("GameboxTurnPlayerActiveLocal", "Label")
+	theme.set_type_variation("GameboxTurnPlayerActiveOpponent", "Label")
+	theme.set_type_variation("GameboxTurnStatus", "Label")
 	theme.set_type_variation("GameboxSettingsSheet", "PanelContainer")
 	theme.set_type_variation("GameboxMoveConfirmationBar", "PanelContainer")
 	theme.set_type_variation("GameboxSettingsContent", "VBoxContainer")
@@ -247,6 +254,20 @@ static func create(dark: bool) -> Theme:
 	theme.set_stylebox("normal", "GameboxSecondaryButton", _style_box(colors["secondary_container"], GameboxTokens.SHAPE["full"]))
 	theme.set_stylebox("hover", "GameboxSecondaryButton", _style_box(colors["secondary_fixed_dim"], GameboxTokens.SHAPE["full"]))
 	theme.set_stylebox("pressed", "GameboxSecondaryButton", _style_box(colors["secondary_container"], GameboxTokens.SHAPE["full"]))
+	theme.set_stylebox("panel", "GameboxTurnPlayerStrip", _turn_strip_style(colors["surface_container"], colors["outline_variant"]))
+	theme.set_constant("separation", "GameboxTurnPlayerRow", _scaled(GameboxTokens.SPACING["layout"]))
+	for player_type in ["GameboxTurnPlayerInactive", "GameboxTurnPlayerActiveLocal", "GameboxTurnPlayerActiveOpponent"]:
+		theme.set_font("font", player_type, result_semibold_font)
+		theme.set_font_size("font_size", player_type, body_size)
+	theme.set_color("font_color", "GameboxTurnPlayerInactive", colors["on_surface_variant"])
+	theme.set_stylebox("normal", "GameboxTurnPlayerInactive", _turn_player_inactive_style())
+	theme.set_color("font_color", "GameboxTurnPlayerActiveLocal", colors["on_primary_container"])
+	theme.set_stylebox("normal", "GameboxTurnPlayerActiveLocal", _turn_player_style(colors["primary_container"], colors["primary"]))
+	theme.set_color("font_color", "GameboxTurnPlayerActiveOpponent", colors["on_tertiary_container"])
+	theme.set_stylebox("normal", "GameboxTurnPlayerActiveOpponent", _turn_player_style(colors["tertiary_container"], colors["tertiary"]))
+	theme.set_font("font", "GameboxTurnStatus", result_semibold_font)
+	theme.set_font_size("font_size", "GameboxTurnStatus", supporting_label_size)
+	theme.set_color("font_color", "GameboxTurnStatus", colors["on_surface_variant"])
 	theme.set_constant("separation", "GameboxSettingsContent", _scaled(GameboxTokens.SPACING["section"]))
 	theme.set_constant("separation", "GameboxMoveConfirmationContent", _scaled(GameboxTokens.SPACING["layout"]))
 	theme.set_constant("separation", "GameboxMoveConfirmationActions", _scaled(GameboxTokens.SPACING["layout"]))
@@ -305,6 +326,33 @@ static func _connection_banner_style(fill: Color, radius: float) -> StyleBoxFlat
 	var box := _style_box(fill, radius)
 	box.content_margin_top = 0.0
 	box.content_margin_bottom = 0.0
+	return box
+
+
+static func _turn_strip_style(fill: Color, border: Color) -> StyleBoxFlat:
+	var box := _style_box(fill, GameboxTokens.SHAPE["card"], border)
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["layout"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["layout"])
+	box.content_margin_top = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["base"])
+	return box
+
+
+static func _turn_player_style(fill: Color, border: Color) -> StyleBoxFlat:
+	var box := _style_box(fill, GameboxTokens.SHAPE["input"], border)
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_top = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["base"])
+	return box
+
+
+static func _turn_player_inactive_style() -> StyleBoxEmpty:
+	var box := StyleBoxEmpty.new()
+	box.content_margin_left = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_right = _scaled(GameboxTokens.SPACING["compact"])
+	box.content_margin_top = _scaled(GameboxTokens.SPACING["base"])
+	box.content_margin_bottom = _scaled(GameboxTokens.SPACING["base"])
 	return box
 
 

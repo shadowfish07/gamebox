@@ -312,8 +312,13 @@ func _refresh_ui() -> void:
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
 	$PlayerStrip.visible = has_state and not $ConnectionLabel.visible
 	if has_state:
-		$PlayerStrip/Content/Me.text = "我 · %s" % ("先手" if local_color == "black" else "后手")
-		$PlayerStrip/Content/Opponent.text = "%s · 对手" % _opponent_presence_text()
+		var active_local: bool = not terminal and (not _state.pending_action.is_empty() or local_color == _state.next_color)
+		var active_opponent: bool = not terminal and _state.pending_action.is_empty() and local_color != _state.next_color
+		var local_activity := "\n确认中" if not _state.pending_action.is_empty() else "\n正在行动" if active_local else ""
+		$PlayerStrip/Content/Me.text = "我 · %s%s" % ["先手" if local_color == "black" else "后手", local_activity]
+		$PlayerStrip/Content/Me.theme_type_variation = &"GameboxTurnPlayerActiveLocal" if active_local else &"GameboxTurnPlayerInactive"
+		$PlayerStrip/Content/Opponent.text = "%s · 对手%s" % [_opponent_presence_text(), "\n正在行动" if active_opponent else ""]
+		$PlayerStrip/Content/Opponent.theme_type_variation = &"GameboxTurnPlayerActiveOpponent" if active_opponent else &"GameboxTurnPlayerInactive"
 		$PlayerStrip/Content/Turn.text = _turn_chip_text()
 	$HintLabel.text = _hint_text() if has_state else "连接后即可开始"
 	if terminal:
@@ -435,7 +440,7 @@ func _turn_chip_text() -> String:
 		return "对局结束"
 	if not _state.pending_action.is_empty():
 		return "确认中"
-	return "你的回合" if _local_color() == _state.next_color else "对手回合"
+	return "轮到你" if _local_color() == _state.next_color else "等待中"
 
 
 func _hint_text() -> String:
