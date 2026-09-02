@@ -1,6 +1,7 @@
 import java.util.Properties
 import javax.inject.Inject
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.tasks.Exec
 
 plugins {
     id("com.android.application")
@@ -71,7 +72,43 @@ require(!requireReleaseSigning || signingPropertiesFile.isFile) {
     "GAMEBOX_REQUIRE_RELEASE_SIGNING requires android/key.properties"
 }
 val gameRuntimeSource = rootProject.file("../../game_runtime")
+val godotExecutable = providers.environmentVariable("GODOT_BIN").orElse(
+    providers.provider {
+        val macOsBundleExecutable = file("/Applications/Godot.app/Contents/MacOS/Godot")
+        if (macOsBundleExecutable.isFile) macOsBundleExecutable.absolutePath else "godot"
+    },
+)
+val importGameRuntimeAssets = tasks.register<Exec>("importGameRuntimeAssets") {
+    description = "Imports generated Godot resources required by the embedded runtime"
+    workingDir(gameRuntimeSource)
+    inputs.files(
+        fileTree(gameRuntimeSource) {
+            include(
+                "project.godot",
+                "main.gd",
+                "main.gd.uid",
+                "main.tscn",
+                "core/**",
+                "design_system/**",
+                "games/**",
+            )
+            exclude(".godot/**", "test/**")
+        },
+    ).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property("godotExecutable", godotExecutable)
+    outputs.dir(gameRuntimeSource.resolve(".godot/imported"))
+    doFirst {
+        commandLine(
+            godotExecutable.get(),
+            "--headless",
+            "--path",
+            gameRuntimeSource.absolutePath,
+            "--import",
+        )
+    }
+}
 val stageGameRuntimeAssets = tasks.register<StageGameRuntimeAssets>("stageGameRuntimeAssets") {
+    dependsOn(importGameRuntimeAssets)
     sourceDirectory.set(gameRuntimeSource)
     outputDirectory.set(layout.buildDirectory.dir("generated/gameboxRuntimeAssets"))
 }
