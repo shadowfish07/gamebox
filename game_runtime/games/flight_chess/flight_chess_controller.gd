@@ -3,10 +3,11 @@ extends Control
 
 const FlightChessTheme = preload("res://games/flight_chess/flight_chess_theme.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
+const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const MIN_VIEWPORT := Vector2(960.0, 540.0)
-const MIN_RAIL_WIDTH := 200.0
-const MAX_RAIL_WIDTH := 380.0
+const MIN_RAIL_WIDTH := 192.0
+const MAX_RAIL_WIDTH := 360.0
 const DICE_SEQUENCE := [6, 4, 2, 5, 3, 1]
 
 var dice_value: int:
@@ -23,10 +24,13 @@ var _turn_text := "先掷骰子"
 var _hint_text := "掷出 6 后，再选择一架飞机起飞"
 var _preview_state := "ready"
 var _preview_dark: Variant = null
+var _preview_safe_insets := Vector4.ZERO
+var _has_preview_safe_insets := false
 var _quit_callback := Callable()
 
 
 func _ready() -> void:
+	_apply_mobile_orientation()
 	var dark := bool(_preview_dark) if _preview_dark is bool else GameboxTheme.system_prefers_dark()
 	theme = FlightChessTheme.create(dark)
 	$LeftRail/Content/BackButton.pressed.connect(_on_back_pressed)
@@ -50,19 +54,29 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_on_back_pressed()
 
 
-static func layout_for_size(viewport: Vector2) -> Dictionary:
+static func layout_for_size(viewport: Vector2, safe_rect: Rect2 = Rect2()) -> Dictionary:
 	if viewport.x < MIN_VIEWPORT.x or viewport.y < MIN_VIEWPORT.y or viewport.x <= viewport.y:
 		return {}
-	var margin := clampf(viewport.y * 0.035, 24.0, 40.0)
-	var gap := clampf(viewport.y * 0.024, 16.0, 28.0)
-	var available := viewport - Vector2(margin * 2.0, margin * 2.0)
+	var viewport_rect := Rect2(Vector2.ZERO, viewport)
+	var safe_bounds := safe_rect.intersection(viewport_rect) if safe_rect.has_area() else viewport_rect
+	if not safe_bounds.has_area():
+		return {}
+	var page_margin := float(GameboxTokens.SPACING["page"]) * GameboxTheme.LOGICAL_SCALE
+	var max_margin := float(GameboxTokens.SPACING["section"]) * GameboxTheme.LOGICAL_SCALE
+	var margin := clampf(safe_bounds.size.y * 0.03, page_margin, max_margin)
+	var min_gap := float(GameboxTokens.SPACING["layout"]) * GameboxTheme.LOGICAL_SCALE
+	var max_gap := float(GameboxTokens.SPACING["compact"]) * GameboxTheme.LOGICAL_SCALE
+	var gap := clampf(safe_bounds.size.y * 0.02, min_gap, max_gap)
+	var available := safe_bounds.size - Vector2(margin * 2.0, margin * 2.0)
 	var board_side := minf(available.y, available.x - MIN_RAIL_WIDTH * 2.0 - gap * 2.0)
 	if board_side <= 0.0:
 		return {}
 	var rail_width := clampf((available.x - board_side - gap * 2.0) * 0.5, MIN_RAIL_WIDTH, MAX_RAIL_WIDTH)
 	var total_width := board_side + rail_width * 2.0 + gap * 2.0
-	var origin_x := (viewport.x - total_width) * 0.5
-	var origin_y := (viewport.y - board_side) * 0.5
+	if total_width > available.x:
+		return {}
+	var origin_x := safe_bounds.position.x + (safe_bounds.size.x - total_width) * 0.5
+	var origin_y := safe_bounds.position.y + (safe_bounds.size.y - board_side) * 0.5
 	return {
 		"left": Rect2(origin_x, origin_y, rail_width, board_side),
 		"board": Rect2(origin_x + rail_width + gap, origin_y, board_side, board_side),
@@ -70,8 +84,23 @@ static func layout_for_size(viewport: Vector2) -> Dictionary:
 	}
 
 
+static func preferred_mobile_orientation() -> int:
+	return DisplayServer.SCREEN_SENSOR_LANDSCAPE
+
+
+static func layout_is_compact(layout: Dictionary) -> bool:
+	if not layout.has("board") or not layout.has("right"):
+		return true
+	return (layout["board"] as Rect2).size.y < 650.0 or (layout["right"] as Rect2).size.x < 230.0
+
+
+func _apply_mobile_orientation() -> void:
+	if OS.has_feature("android") and DisplayServer.has_feature(DisplayServer.FEATURE_ORIENTATION):
+		DisplayServer.screen_set_orientation(preferred_mobile_orientation())
+
+
 func set_preview_state(state: String) -> bool:
-	if state not in ["ready", "rolled", "selected"]:
+	if state not in ["ready", "rolled", "pressed", "selected", "stacked"]:
 		return false
 	_preview_state = state
 	if is_node_ready():
@@ -84,6 +113,16 @@ func set_preview_dark(dark: bool) -> void:
 	_preview_dark = dark
 	if is_node_ready():
 		theme = FlightChessTheme.create(dark)
+
+
+func set_preview_safe_insets(insets: Vector4) -> bool:
+	if insets.x < 0.0 or insets.y < 0.0 or insets.z < 0.0 or insets.w < 0.0:
+		return false
+	_preview_safe_insets = insets
+	_has_preview_safe_insets = true
+	if is_node_ready():
+		_apply_layout()
+	return true
 
 
 func set_quit_callback(callback: Callable) -> bool:
@@ -100,17 +139,34 @@ func piece_state(color: String, index: int) -> Dictionary:
 
 
 func _apply_layout() -> void:
-	var layout := layout_for_size(size)
+	var layout := layout_for_size(size, _safe_rect())
 	if layout.is_empty():
 		return
 	_apply_rect($LeftRail, layout["left"])
 	_apply_rect($Board, layout["board"])
 	_apply_rect($RightRail, layout["right"])
-	var compact := size.y < 650.0 or (layout["right"] as Rect2).size.x < 230.0
+	var compact := layout_is_compact(layout)
 	$RightRail/Content/HintLabel.visible = not compact
+	$LeftRail/Content/Eyebrow.visible = not compact
 	$RightRail/Content/TurnLabel.theme_type_variation = &"FlightChessTurnCompact" if compact else &"FlightChessTurn"
 	$RightRail/Content/RuleLabel.theme_type_variation = &"FlightChessRuleCompact" if compact else &"FlightChessRule"
-	$RightRail/Content/DiceCard/Content/Dice.custom_minimum_size = Vector2(120.0, 120.0) if compact else Vector2(160.0, 160.0)
+	$RightRail/Content/DiceCard.custom_minimum_size.y = 144.0 if compact else 216.0
+	$RightRail/Content/DiceCard/Content/Dice.custom_minimum_size = Vector2(112.0, 112.0) if compact else Vector2(168.0, 168.0)
+
+
+func _safe_rect() -> Rect2:
+	if _has_preview_safe_insets:
+		return Rect2(
+			Vector2(_preview_safe_insets.x, _preview_safe_insets.y),
+			size - Vector2(_preview_safe_insets.x + _preview_safe_insets.z, _preview_safe_insets.y + _preview_safe_insets.w),
+		)
+	if OS.has_feature("android"):
+		var display_safe := DisplayServer.get_display_safe_area()
+		var window_size := Vector2(DisplayServer.window_get_size())
+		if display_safe.has_area() and window_size.x > 0.0 and window_size.y > 0.0:
+			var viewport_scale := size / window_size
+			return Rect2(Vector2(display_safe.position) * viewport_scale, Vector2(display_safe.size) * viewport_scale)
+	return Rect2(Vector2.ZERO, size)
 
 
 func _apply_rect(control: Control, rect: Rect2) -> void:
@@ -141,10 +197,25 @@ func _reset_demo() -> void:
 func _apply_preview_state() -> void:
 	match _preview_state:
 		"rolled": _show_rolled_six()
+		"pressed": _show_rolled_six()
 		"selected":
 			_show_rolled_six()
 			_selected_index = 0
+		"stacked":
+			(_pieces["red"] as Array)[2] = {"zone": "main", "index": 30}
+			(_pieces["red"] as Array)[3] = {"zone": "main", "index": 30}
+			_dice_value = 4
+			_selectable_indices = [2, 3]
+			_status_text = "掷出 4"
+			_turn_text = "选择叠放飞机"
+			_hint_text = "同格飞机以叠层和数量标记显示"
 	_sync_ui()
+	if _preview_state == "pressed":
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = true
+		event.position = $Board.piece_center("red", 0)
+		$Board._gui_input(event)
 
 
 func _on_roll_pressed() -> void:

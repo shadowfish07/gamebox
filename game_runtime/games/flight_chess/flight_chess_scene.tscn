@@ -136,9 +136,13 @@ text = "掷出 6 后，再选择一架飞机起飞"
 horizontal_alignment = 1
 autowrap_mode = 2
 
-[node name="DiceCard" type="PanelContainer" parent="RightRail/Content"]
+[node name="ActionSpacer" type="Control" parent="RightRail/Content"]
 layout_mode = 2
 size_flags_vertical = 3
+
+[node name="DiceCard" type="PanelContainer" parent="RightRail/Content"]
+custom_minimum_size = Vector2(0, 144)
+layout_mode = 2
 theme_type_variation = &"FlightChessDiceCard"
 
 [node name="Content" type="CenterContainer" parent="RightRail/Content/DiceCard"]

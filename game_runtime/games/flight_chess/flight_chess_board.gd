@@ -99,17 +99,24 @@ var selected_piece_index: int:
 var selectable_piece_indices: Array:
 	get: return _selectable_piece_indices.duplicate()
 	set(_value): pass
+var pressed_piece_index: int:
+	get: return _pressed_piece_index
+	set(_value): pass
 
 var _pieces := {}
 var _selectable_color := ""
 var _selectable_piece_indices: Array = []
 var _selected_piece_index := -1
+var _pressed_piece_index := -1
+var _pressed_pointer_id := -2
 var _interactable := false
+var _selection_phase := 0.0
 
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
+	set_process(false)
 
 
 static func topology() -> Dictionary:
@@ -123,6 +130,12 @@ static func topology() -> Dictionary:
 		"finish_entries": FINISH_ENTRIES.duplicate(),
 		"shortcuts": SHORTCUTS.duplicate(),
 	}
+
+
+static func route_color(index: int) -> String:
+	if index < 0 or index >= MAIN_PATH.size():
+		return ""
+	return ROUTE_COLOR_CYCLE[index % ROUTE_COLOR_CYCLE.size()]
 
 
 func present(
@@ -160,8 +173,11 @@ func present(
 	_selectable_color = selectable_color
 	_selectable_piece_indices = normalized_indices
 	_selected_piece_index = selected_index
+	_pressed_piece_index = -1
+	_pressed_pointer_id = -2
 	_interactable = interactable and not _selectable_piece_indices.is_empty()
 	mouse_filter = Control.MOUSE_FILTER_STOP if _interactable else Control.MOUSE_FILTER_IGNORE
+	set_process(_interactable)
 	queue_redraw()
 	return true
 
@@ -174,31 +190,66 @@ func board_rect() -> Rect2:
 func piece_center(color: String, index: int) -> Vector2:
 	if not _pieces.has(color) or index < 0 or index >= (_pieces[color] as Array).size():
 		return Vector2(INF, INF)
-	return _logical_to_pixel(_logical_piece_center(color, (_pieces[color] as Array)[index]))
+	var piece: Dictionary = (_pieces[color] as Array)[index]
+	return _logical_to_pixel(_logical_piece_center(color, piece))
+
+
+func piece_stack_size(color: String, index: int) -> int:
+	if not _pieces.has(color) or index < 0 or index >= (_pieces[color] as Array).size():
+		return 0
+	return _stack_members(color, (_pieces[color] as Array)[index]).size()
 
 
 func piece_at_pixel(pixel: Vector2) -> Dictionary:
-	if not pixel.is_finite() or _selectable_color.is_empty():
+	if not pixel.is_finite() or _selectable_color.is_empty() or not board_rect().has_point(pixel):
 		return EMPTY_HIT
-	var radius := board_rect().size.x / BOARD_UNITS * 28.0
+	var nearest_index := -1
+	var nearest_distance := INF
+	var radius := maxf(float(GameboxTokens.COMPONENT["minimum_touch_target"]), board_rect().size.x / BOARD_UNITS * 32.0)
 	for index in _selectable_piece_indices:
-		if pixel.distance_squared_to(piece_center(_selectable_color, index)) <= radius * radius:
-			return {"color": _selectable_color, "index": index}
-	return EMPTY_HIT
+		var distance := pixel.distance_squared_to(piece_center(_selectable_color, index))
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_index = index
+	return {"color": _selectable_color, "index": nearest_index} if nearest_index >= 0 and nearest_distance <= radius * radius else EMPTY_HIT
 
 
 func _gui_input(event: InputEvent) -> void:
 	if not _interactable:
 		return
-	var release_position := Vector2(INF, INF)
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-		release_position = event.position
-	elif event is InputEventScreenTouch and not event.pressed and not event.canceled:
-		release_position = event.position
-	if not release_position.is_finite():
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_begin_press(event.position, -1)
+		else:
+			_finish_press(event.position, -1, false)
+	elif event is InputEventScreenTouch:
+		if event.pressed:
+			_begin_press(event.position, event.index)
+		elif event.index == _pressed_pointer_id:
+			_finish_press(event.position, event.index, event.canceled)
+
+
+func _begin_press(position: Vector2, pointer_id: int) -> void:
+	if _pressed_pointer_id != -2:
 		return
-	var hit := piece_at_pixel(release_position)
-	if not hit.is_empty():
+	var hit := piece_at_pixel(position)
+	if hit.is_empty():
+		return
+	_pressed_pointer_id = pointer_id
+	_pressed_piece_index = hit["index"]
+	queue_redraw()
+	accept_event()
+
+
+func _finish_press(position: Vector2, pointer_id: int, canceled: bool) -> void:
+	if pointer_id != _pressed_pointer_id:
+		return
+	var pressed_index := _pressed_piece_index
+	_pressed_pointer_id = -2
+	_pressed_piece_index = -1
+	queue_redraw()
+	var hit := piece_at_pixel(position)
+	if not canceled and not hit.is_empty() and hit["index"] == pressed_index:
 		piece_pressed.emit(hit["color"], hit["index"])
 	accept_event()
 
@@ -206,6 +257,12 @@ func _gui_input(event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED or what == NOTIFICATION_THEME_CHANGED:
 		queue_redraw()
+
+
+func _process(delta: float) -> void:
+	var cycle_seconds := float(GameboxTokens.MOTION["slow"]) * 4.0 / 1000.0
+	_selection_phase = fmod(_selection_phase + delta / cycle_seconds * TAU, TAU)
+	queue_redraw()
 
 
 func _draw() -> void:
@@ -248,7 +305,7 @@ func _draw_hangar(color: String) -> void:
 
 func _draw_main_route() -> void:
 	for index in MAIN_PATH.size():
-		_draw_route_tile(MAIN_PATH[index], PLAYER_COLORS[ROUTE_COLOR_CYCLE[index % 4]])
+		_draw_route_tile(MAIN_PATH[index], PLAYER_COLORS[route_color(index)])
 
 
 func _draw_home_stretch(color: String) -> void:
@@ -315,17 +372,50 @@ func _draw_color_pieces(color: String) -> void:
 		return
 	var color_pieces: Array = _pieces[color]
 	for index in color_pieces.size():
-		var center := piece_center(color, index)
-		var selectable := color == _selectable_color and _selectable_piece_indices.has(index)
-		var selected := selectable and index == _selected_piece_index
+		var piece: Dictionary = color_pieces[index]
+		var members := _stack_members(color, piece)
+		if index != members[0]:
+			continue
+		var center := _logical_to_pixel(_logical_piece_center(color, piece))
+		var selectable := false
+		for member in members:
+			selectable = selectable or (color == _selectable_color and _selectable_piece_indices.has(member))
+		var selected := selectable and members.has(_selected_piece_index)
+		var pressed := selectable and members.has(_pressed_piece_index)
 		var radius := 18.0 * _scale()
 		if selectable:
-			draw_circle(center, radius * 1.42, Color(PLAYER_COLORS[color], GameboxTokens.GAME["board_target_fill_alpha"]))
-			draw_arc(center, radius * 1.28, 0.0, TAU, 32, PLAYER_COLORS[color], maxf(2.0, 3.5 * _scale()), true)
+			var pulse := 1.0 + sin(_selection_phase) * 0.06
+			draw_circle(center, radius * 1.42 * pulse, Color(PLAYER_COLORS[color], GameboxTokens.GAME["board_target_fill_alpha"]))
+			draw_arc(center, radius * 1.28 * pulse, 0.0, TAU, 32, PLAYER_COLORS[color], maxf(2.0, 3.5 * _scale()), true)
 		if selected:
 			draw_circle(center + Vector2(0.0, 4.0 * _scale()), radius * 1.12, Color(BOARD_INK, GameboxTokens.GAME["board_target_fill_alpha"]))
 			radius *= 1.08
+		if pressed:
+			radius *= 0.92
+		_draw_stack_layers(center, radius, members.size(), color)
 		_draw_piece(center, radius, color)
+		if members.size() > 1 and index == members[0]:
+			_draw_stack_badge(center, members.size(), color)
+
+
+func _draw_stack_layers(center: Vector2, radius: float, count: int, color: String) -> void:
+	for layer in range(mini(count - 1, 2), 0, -1):
+		var layer_center := center + Vector2(4.0, 4.0) * _scale() * layer
+		draw_circle(layer_center, radius, PLAYER_DARK[color])
+		draw_circle(layer_center, radius * 0.88, PLAYER_COLORS[color])
+
+
+func _draw_stack_badge(center: Vector2, count: int, color: String) -> void:
+	var scale := _scale()
+	var badge_center := center + Vector2(18.0, -18.0) * scale
+	var radius := maxf(8.0, 10.0 * scale)
+	draw_circle(badge_center, radius, PLAYER_DARK[color])
+	draw_arc(badge_center, radius, 0.0, TAU, 20, SLOT_COLOR, maxf(1.0, 1.5 * scale), true)
+	var font := get_theme_default_font()
+	var font_size := maxi(12, roundi(12.0 * scale))
+	var label := str(count)
+	var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size)
+	draw_string(font, badge_center + Vector2(-text_size.x * 0.5, text_size.y * 0.35), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, SLOT_COLOR)
 
 
 func _draw_piece(center: Vector2, radius: float, color: String) -> void:
@@ -359,6 +449,16 @@ func _logical_piece_center(color: String, piece: Dictionary) -> Vector2:
 		"home": return HOME_STRETCHES[color][index]
 		"finished": return FINISH_POINTS[color]
 	return Vector2(INF, INF)
+
+
+func _stack_members(color: String, piece: Dictionary) -> Array:
+	var result: Array = []
+	var color_pieces: Array = _pieces[color]
+	for index in color_pieces.size():
+		var candidate: Dictionary = color_pieces[index]
+		if candidate["zone"] == piece["zone"] and candidate["index"] == piece["index"]:
+			result.append(index)
+	return result
 
 
 static func _valid_piece(piece: Variant) -> bool:

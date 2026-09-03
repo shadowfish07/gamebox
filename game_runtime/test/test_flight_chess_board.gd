@@ -8,6 +8,9 @@ static func cases() -> Array:
 		{"name": "flight chess board exposes the classic 52-space topology", "run": _exposes_classic_topology},
 		{"name": "flight chess board remains square inside landscape bounds", "run": _remains_square},
 		{"name": "flight chess board maps selectable planes to stable hit targets", "run": _maps_selectable_planes},
+		{"name": "flight chess board resolves imprecise phone taps to the nearest legal plane", "run": _snaps_imprecise_taps},
+		{"name": "flight chess board exposes stacked planes as one counted group", "run": _groups_stacked_planes},
+		{"name": "flight chess board shows a pressed plane before committing touch", "run": _shows_pressed_touch_state},
 	]
 
 
@@ -20,6 +23,14 @@ static func _exposes_classic_topology() -> bool:
 	return _check(main_path.size() == 52, "main route is not 52 spaces") \
 		and _check(unique_points.size() == 52, "main route contains duplicate spaces") \
 		and _check(topology["path_starts"] == {"yellow": 0, "green": 13, "red": 26, "blue": 39}, "path starts drifted") \
+		and _check(FlightChessBoard.route_color(49) == "yellow", "yellow finish entry is not on a yellow route tile") \
+		and _check(FlightChessBoard.route_color(10) == "green", "green finish entry is not on a green route tile") \
+		and _check(FlightChessBoard.route_color(23) == "red", "red finish entry is not on a red route tile") \
+		and _check(FlightChessBoard.route_color(36) == "blue", "blue finish entry is not on a blue route tile") \
+		and _check(FlightChessBoard.route_color(17) == "yellow", "yellow shortcut trigger is not on a yellow route tile") \
+		and _check(FlightChessBoard.route_color(30) == "green", "green shortcut trigger is not on a green route tile") \
+		and _check(FlightChessBoard.route_color(43) == "red", "red shortcut trigger is not on a red route tile") \
+		and _check(FlightChessBoard.route_color(4) == "blue", "blue shortcut trigger is not on a blue route tile") \
 		and _check(topology["finish_entries"] == {"yellow": 49, "green": 10, "red": 23, "blue": 36}, "finish entries drifted") \
 		and _check(topology["shortcuts"] == {
 			"yellow": Vector2i(17, 29), "green": Vector2i(30, 42),
@@ -63,6 +74,80 @@ static func _maps_selectable_planes() -> bool:
 		and _check(hit == {"color": "red", "index": 0}, "plane hit target did not round trip") \
 		and _check(board.piece_at_pixel(Vector2(-1.0, -1.0)).is_empty(), "outside point selected a plane") \
 		and _check(not board.present(pieces, "red", [0, 4], -1, true), "invalid plane index was accepted")
+	board.free()
+	return result
+
+
+static func _snaps_imprecise_taps() -> bool:
+	var board = FlightChessBoard.new()
+	board.size = Vector2(540.0, 540.0)
+	var pieces := {
+		"red": [
+			{"zone": "hangar", "index": 0}, {"zone": "hangar", "index": 1},
+			{"zone": "hangar", "index": 2}, {"zone": "main", "index": 30},
+		],
+	}
+	if not _check(board.present(pieces, "red", [0, 1, 2, 3], -1, true), "valid phone presentation was rejected"):
+		board.free()
+		return false
+	var intended_center := board.piece_center("red", 0)
+	var imprecise_tap := intended_center + Vector2(-24.0, -18.0)
+	var hit: Dictionary = board.piece_at_pixel(imprecise_tap)
+	var result := _check(hit == {"color": "red", "index": 0}, "imprecise tap did not select the nearest plane") \
+		and _check(board.piece_at_pixel(board.board_rect().get_center()).is_empty(), "distant board tap selected an unintended plane") \
+		and _check(board.piece_at_pixel(board.board_rect().position - Vector2.ONE).is_empty(), "tap outside the playfield selected a plane")
+	board.free()
+	return result
+
+
+static func _groups_stacked_planes() -> bool:
+	var board = FlightChessBoard.new()
+	board.size = Vector2(640.0, 640.0)
+	var pieces := {
+		"red": [
+			{"zone": "main", "index": 30}, {"zone": "main", "index": 30},
+			{"zone": "hangar", "index": 2}, {"zone": "hangar", "index": 3},
+		],
+	}
+	if not _check(board.present(pieces, "red", [0, 1], -1, true), "stacked presentation was rejected"):
+		board.free()
+		return false
+	var first := board.piece_center("red", 0)
+	var second := board.piece_center("red", 1)
+	var route_center := board.board_rect().position + FlightChessBoard.MAIN_PATH[30] / FlightChessBoard.BOARD_UNITS * board.board_rect().size
+	var result := _check(first.is_equal_approx(second), "stacked group did not share one stable visual center") \
+		and _check(first.distance_to(route_center) < 1.0, "stacked group drifted away from its route space") \
+		and _check(board.piece_stack_size("red", 0) == 2 and board.piece_stack_size("red", 1) == 2, "stack count is not exposed to the renderer") \
+		and _check(board.piece_at_pixel(first) == {"color": "red", "index": 0}, "stacked group lost its stable touch target")
+	board.free()
+	return result
+
+
+static func _shows_pressed_touch_state() -> bool:
+	var board = FlightChessBoard.new()
+	board.size = Vector2(640.0, 640.0)
+	(Engine.get_main_loop() as SceneTree).root.add_child(board)
+	var pieces := {"red": [{"zone": "hangar", "index": 0}]}
+	if not _check(board.present(pieces, "red", [0], -1, true), "pressed-state presentation was rejected"):
+		board.free()
+		return false
+	var commits: Array = []
+	board.piece_pressed.connect(func(color: String, index: int) -> void: commits.append([color, index]))
+	var down := InputEventMouseButton.new()
+	down.button_index = MOUSE_BUTTON_LEFT
+	down.pressed = true
+	down.position = board.piece_center("red", 0)
+	board._gui_input(down)
+	var result := _check(board.pressed_piece_index == 0, "touch-down did not expose pressed feedback") \
+		and _check(commits.is_empty(), "touch-down committed the move before release")
+	var up := InputEventMouseButton.new()
+	up.button_index = MOUSE_BUTTON_LEFT
+	up.pressed = false
+	up.position = down.position
+	board._gui_input(up)
+	result = result \
+		and _check(board.pressed_piece_index == -1, "touch release retained pressed feedback") \
+		and _check(commits == [["red", 0]], "touch release did not commit exactly once")
 	board.free()
 	return result
 
