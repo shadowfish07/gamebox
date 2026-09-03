@@ -188,6 +188,16 @@ const _gameColorRoles = {
   'resultLossContainerDark',
   'pressedMove',
   'pendingMove',
+  'flightBoardPaper',
+  'flightBoardInk',
+  'flightYellow',
+  'flightYellowDark',
+  'flightGreen',
+  'flightGreenDark',
+  'flightRed',
+  'flightRedDark',
+  'flightBlue',
+  'flightBlueDark',
 };
 const _gameAlphaRoles = {
   'pendingOverlayAlpha',

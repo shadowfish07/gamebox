@@ -27,6 +27,10 @@ bash tool/verify_design_system.sh
 - Adding a compatible role or changing a locked token value increments at least the minor version and regenerates both mappings.
 - Fixing generator implementation without changing generated output or its public interface increments the patch version.
 
+### 2.4.0 flight-chess palette
+
+Additive `game.flight*` color roles define the fixed paper board, route ink, and paired bright/dark plane colors for the landscape Flight Chess playfield. Public HUD surfaces still consume `sys` and `comp` roles; the new values are limited to game-owned board art and player identity accents. Existing consumers require no migration.
+
 ### 2.3.0 board-state opacity roles
 
 Additive `game.board*Alpha` and `game.pieceShadowAlpha` roles keep dense board geometry, camp regions, legal endpoints, and lifted-piece feedback generated and consistent across games. Existing consumers require no migration.

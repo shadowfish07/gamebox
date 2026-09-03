@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 
 abstract final class GameboxTokens {
-  static const version = '2.3.0';
+  static const version = '2.4.0';
   static const brandSeed = Color(0xFF006B60);
 
   static const lightColorScheme = ColorScheme(
@@ -247,6 +247,16 @@ abstract final class GameboxTokens {
     boardSideCampAlpha: 0.08,
     boardTargetCampAlpha: 0.13,
     boardTargetFillAlpha: 0.2,
+    flightBlue: Color(0xFF3189D5),
+    flightBlueDark: Color(0xFF155487),
+    flightBoardInk: Color(0xFF332F28),
+    flightBoardPaper: Color(0xFFFFF9E9),
+    flightGreen: Color(0xFF38A968),
+    flightGreenDark: Color(0xFF17663B),
+    flightRed: Color(0xFFE95755),
+    flightRedDark: Color(0xFF8C292A),
+    flightYellow: Color(0xFFF4D33B),
+    flightYellowDark: Color(0xFF8A6D00),
     grid: Color(0xFF8D6E46),
     lastMove: Color(0xFFF04438),
     pendingMove: Color(0xFF0072B2),
@@ -437,6 +447,16 @@ final class GameboxGameColors {
     required this.boardSideCampAlpha,
     required this.boardTargetCampAlpha,
     required this.boardTargetFillAlpha,
+    required this.flightBlue,
+    required this.flightBlueDark,
+    required this.flightBoardInk,
+    required this.flightBoardPaper,
+    required this.flightGreen,
+    required this.flightGreenDark,
+    required this.flightRed,
+    required this.flightRedDark,
+    required this.flightYellow,
+    required this.flightYellowDark,
     required this.grid,
     required this.lastMove,
     required this.pendingMove,
@@ -460,6 +480,16 @@ final class GameboxGameColors {
   final double boardSideCampAlpha;
   final double boardTargetCampAlpha;
   final double boardTargetFillAlpha;
+  final Color flightBlue;
+  final Color flightBlueDark;
+  final Color flightBoardInk;
+  final Color flightBoardPaper;
+  final Color flightGreen;
+  final Color flightGreenDark;
+  final Color flightRed;
+  final Color flightRedDark;
+  final Color flightYellow;
+  final Color flightYellowDark;
   final Color grid;
   final Color lastMove;
   final Color pendingMove;

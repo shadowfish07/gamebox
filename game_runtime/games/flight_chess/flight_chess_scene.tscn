@@ -1,0 +1,163 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://games/flight_chess/flight_chess_controller.gd" id="1_controller"]
+[ext_resource type="Script" path="res://games/flight_chess/flight_chess_board.gd" id="2_board"]
+[ext_resource type="Script" path="res://games/flight_chess/flight_chess_dice.gd" id="3_dice"]
+[ext_resource type="PackedScene" path="res://design_system/components/gamebox_back_button.tscn" id="4_back"]
+
+[node name="FlightChess" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_controller")
+
+[node name="Background" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_type_variation = &"FlightChessBackground"
+
+[node name="LeftRail" type="PanelContainer" parent="."]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 224.0
+offset_bottom = 516.0
+theme_type_variation = &"FlightChessRail"
+
+[node name="Content" type="VBoxContainer" parent="LeftRail"]
+layout_mode = 2
+
+[node name="BackButton" parent="LeftRail/Content" instance=ExtResource("4_back")]
+layout_mode = 2
+text = "← 返回"
+
+[node name="Eyebrow" type="Label" parent="LeftRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessEyebrow"
+text = "GAMEBOX · 双人经典"
+
+[node name="Title" type="Label" parent="LeftRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessGameTitle"
+text = "飞行棋"
+
+[node name="OpponentCard" type="PanelContainer" parent="LeftRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessOpponentCard"
+
+[node name="Content" type="VBoxContainer" parent="LeftRail/Content/OpponentCard"]
+layout_mode = 2
+
+[node name="Role" type="Label" parent="LeftRail/Content/OpponentCard/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessPlayerMeta"
+text = "对手 · 黄方"
+
+[node name="Name" type="Label" parent="LeftRail/Content/OpponentCard/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessPlayerName"
+text = "纸飞机"
+
+[node name="Meta" type="Label" parent="LeftRail/Content/OpponentCard/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessPlayerMeta"
+text = "2 架在途 · 2 架待机"
+autowrap_mode = 2
+
+[node name="Spacer" type="Control" parent="LeftRail/Content"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LocalCard" type="PanelContainer" parent="LeftRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessLocalCard"
+
+[node name="Content" type="VBoxContainer" parent="LeftRail/Content/LocalCard"]
+layout_mode = 2
+
+[node name="Role" type="Label" parent="LeftRail/Content/LocalCard/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessPlayerMeta"
+text = "你 · 红方"
+
+[node name="Name" type="Label" parent="LeftRail/Content/LocalCard/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessPlayerName"
+text = "飞行员"
+
+[node name="Meta" type="Label" parent="LeftRail/Content/LocalCard/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessPlayerMeta"
+text = "1 架在途 · 3 架待机"
+autowrap_mode = 2
+
+[node name="Board" type="Control" parent="."]
+offset_left = 240.0
+offset_top = 24.0
+offset_right = 720.0
+offset_bottom = 504.0
+script = ExtResource("2_board")
+
+[node name="RightRail" type="PanelContainer" parent="."]
+offset_left = 736.0
+offset_top = 24.0
+offset_right = 936.0
+offset_bottom = 516.0
+theme_type_variation = &"FlightChessRail"
+
+[node name="Content" type="VBoxContainer" parent="RightRail"]
+layout_mode = 2
+
+[node name="StatusLabel" type="Label" parent="RightRail/Content"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_type_variation = &"FlightChessStatus"
+text = "你的回合"
+horizontal_alignment = 1
+
+[node name="TurnLabel" type="Label" parent="RightRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessTurn"
+text = "先掷骰子"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="HintLabel" type="Label" parent="RightRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessHint"
+text = "掷出 6 后，再选择一架飞机起飞"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="DiceCard" type="PanelContainer" parent="RightRail/Content"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_type_variation = &"FlightChessDiceCard"
+
+[node name="Content" type="CenterContainer" parent="RightRail/Content/DiceCard"]
+layout_mode = 2
+
+[node name="Dice" type="Control" parent="RightRail/Content/DiceCard/Content"]
+custom_minimum_size = Vector2(120, 120)
+layout_mode = 2
+theme_type_variation = &"FlightChessDice"
+script = ExtResource("3_dice")
+
+[node name="RuleLabel" type="Label" parent="RightRail/Content"]
+layout_mode = 2
+theme_type_variation = &"FlightChessRule"
+text = "掷 6 起飞 · 掷 6 再投"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="RollButton" type="Button" parent="RightRail/Content"]
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+text = "掷骰子"
