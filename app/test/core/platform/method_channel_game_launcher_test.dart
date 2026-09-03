@@ -162,6 +162,48 @@ void main() {
     expect(calls.single.arguments, isNull);
   });
 
+  test(
+    'flight chess preview invokes its bounded method without arguments',
+    () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+
+      await MethodChannelGameLauncher().launchHostSmoke(
+        previewGame: 'flight_chess',
+      );
+
+      expect(calls, hasLength(1));
+      expect(calls.single.method, 'launchFlightChessPreview');
+      expect(calls.single.arguments, isNull);
+    },
+  );
+
+  test(
+    'rejects unapproved host previews before invoking the channel',
+    () async {
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls += 1;
+        return null;
+      });
+
+      await expectLater(
+        MethodChannelGameLauncher().launchHostSmoke(previewGame: 'gomoku'),
+        throwsA(
+          isA<GameLaunchException>().having(
+            (error) => error.code,
+            'code',
+            'invalid_preview_game',
+          ),
+        ),
+      );
+      expect(calls, 0);
+    },
+  );
+
   test('maps a missing platform handler to a safe launch exception', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
       throw MissingPluginException();

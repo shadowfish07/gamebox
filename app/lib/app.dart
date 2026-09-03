@@ -8,6 +8,7 @@ import 'core/api/api_client.dart';
 import 'core/auth/token_store.dart';
 import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
+import 'design_system/generated/gamebox_tokens.g.dart';
 import 'design_system/gamebox_theme.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
@@ -258,7 +259,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       RegExp(r'^[A-Za-z0-9_-]{8,64}$')
           .hasMatch(widget.instrumentationCanaryNonce);
 
-  Future<void> _launchHostSmoke() async {
+  Future<void> _launchHostSmoke({String? previewGame}) async {
     if (_isLaunchingHostSmoke) {
       return;
     }
@@ -267,7 +268,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _hostSmokeError = false;
     });
     try {
-      await widget.gameLauncher.launchHostSmoke();
+      await widget.gameLauncher.launchHostSmoke(previewGame: previewGame);
     } on GameLaunchException {
       if (mounted) {
         setState(() => _hostSmokeError = true);
@@ -406,11 +407,30 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
               label: 'host-smoke.launch',
               button: true,
               enabled: !_isLaunchingHostSmoke,
-              onTap: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+              onTap: _isLaunchingHostSmoke ? null : () => _launchHostSmoke(),
               excludeSemantics: true,
               child: FilledButton(
-                onPressed: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+                onPressed: _isLaunchingHostSmoke
+                    ? null
+                    : () => _launchHostSmoke(),
                 child: const Text('启动宿主烟测'),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.compact),
+            Semantics(
+              key: const Key('host-smoke.flight-chess-preview'),
+              label: 'host-smoke.flight-chess-preview',
+              button: true,
+              enabled: !_isLaunchingHostSmoke,
+              onTap: _isLaunchingHostSmoke
+                  ? null
+                  : () => _launchHostSmoke(previewGame: 'flight_chess'),
+              excludeSemantics: true,
+              child: OutlinedButton(
+                onPressed: _isLaunchingHostSmoke
+                    ? null
+                    : () => _launchHostSmoke(previewGame: 'flight_chess'),
+                child: const Text('预览飞行棋横屏'),
               ),
             ),
             if (_canLaunchInstrumentationCanary) ...[

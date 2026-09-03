@@ -8,6 +8,7 @@ const GameRegistry = preload("res://core/game_registry.gd")
 static func cases() -> Array:
 	return [
 		{"name": "host smoke accepts bounded decimal delay", "run": _accepts_bounded_smoke_delay},
+		{"name": "host smoke mounts the production flight chess preview", "run": _mounts_flight_chess_host_preview},
 		{"name": "host smoke rejects invalid delays", "run": _rejects_invalid_smoke_delays},
 		{"name": "main helper starts one full-viewport gomoku scene", "run": _starts_gomoku_in_main_scene},
 		{"name": "opaque smoke-looking ticket remains a normal launch", "run": _keeps_smoke_looking_ticket_in_normal_launch},
@@ -29,12 +30,38 @@ static func _accepts_bounded_smoke_delay() -> bool:
 		and _check(result.get("auto_exit_ms", 0) == 800, "expected unchanged smoke delay")
 
 
+static func _mounts_flight_chess_host_preview() -> bool:
+	var host = await _attached_main_scene()
+	var args := PackedStringArray(["--host-smoke", "--preview-game", "flight_chess"])
+	var parsed: Dictionary = host._parse_host_smoke_args(args)
+	host._start_with_args(args)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var preview := host.get_node_or_null("FlightChess") as Control
+	var result := _check(parsed.get("ok", false), "expected the bounded flight chess preview to parse") \
+		and _check(parsed.get("preview_game", "") == "flight_chess", "preview parser changed the approved game id") \
+		and _check(preview != null, "host smoke did not mount the production flight chess scene") \
+		and _check(not (host.get_node("ReadyLabel") as Label).visible, "host smoke placeholder covered the flight chess preview")
+	host.queue_free()
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	return result
+
+
 static func _rejects_invalid_smoke_delays() -> bool:
 	for value in ["0", "-1", "8ms", "999999999999999999999", "60001"]:
 		var host = MainScript.new()
 		var result: Dictionary = host._parse_host_smoke_args(PackedStringArray(["--host-smoke", "--auto-exit-ms", value]))
 		host.free()
 		if not _check(not result.get("ok", true), "expected invalid smoke delay %s to fail" % value):
+			return false
+	for args in [
+		PackedStringArray(["--host-smoke", "--preview-game", "gomoku"]),
+		PackedStringArray(["--host-smoke", "--preview-game", "flight_chess", "--preview-game", "flight_chess"]),
+	]:
+		var host = MainScript.new()
+		var result: Dictionary = host._parse_host_smoke_args(args)
+		host.free()
+		if not _check(not result.get("ok", true), "expected unapproved host preview arguments to fail"):
 			return false
 	return true
 

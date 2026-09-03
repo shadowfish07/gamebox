@@ -49,5 +49,8 @@ class GameLaunchArgs private constructor(private val params: Array<String>) {
 
         fun hostSmoke(): GameLaunchArgs =
             GameLaunchArgs(arrayOf("--", "--host-smoke", "--auto-exit-ms", "800"))
+
+        fun flightChessPreview(): GameLaunchArgs =
+            GameLaunchArgs(arrayOf("--", "--host-smoke", "--preview-game", "flight_chess"))
     }
 }

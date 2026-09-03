@@ -2,6 +2,7 @@ class_name FlightChessSceneController
 extends Control
 
 const FlightChessTheme = preload("res://games/flight_chess/flight_chess_theme.gd")
+const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd")
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
@@ -197,6 +198,10 @@ func _apply_layout() -> void:
 	_apply_rect($LeftRail, layout["left"])
 	_apply_rect($Board, layout["board"])
 	_apply_rect($RightRail, layout["right"])
+	var rail_padding := float(GameboxTokens.SPACING["layout"]) * GameboxTheme.LOGICAL_SCALE
+	var right_text_width := maxf(1.0, (layout["right"] as Rect2).size.x - rail_padding * 2.0)
+	for label in [$RightRail/Content/TurnLabel, $RightRail/Content/HintLabel, $RightRail/Content/RuleLabel]:
+		(label as Label).custom_maximum_size.x = right_text_width
 	var compact := layout_is_compact(layout)
 	$RightRail/Content/HintLabel.visible = not compact
 	$LeftRail/Content/Eyebrow.visible = not compact

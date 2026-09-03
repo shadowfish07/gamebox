@@ -86,6 +86,28 @@ class PrivateCommandLineArgsTest {
     }
 
     @Test
+    fun acceptsOnlyTheTwoBoundedHostSmokeShapes() {
+        val approvedArgs = listOf(
+            GameLaunchArgs.hostSmoke().commandLineParams,
+            GameLaunchArgs.flightChessPreview().commandLineParams,
+        )
+
+        approvedArgs.forEach { expected ->
+            val source = expected.clone()
+            val intent = Intent().putExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS, source)
+            val environment = FakePrivateTicketEnvironment()
+            val privateArgs = PrivateCommandLineArgs(environment)
+
+            privateArgs.consumeFrom(intent)
+            source.fill("mutated")
+
+            assertArrayEquals(expected, privateArgs.combineWith(emptyList()).toTypedArray())
+            assertNull(environment.value)
+            assertNull(intent.getStringArrayExtra(GodotActivity.EXTRA_COMMAND_LINE_PARAMS))
+        }
+    }
+
+    @Test
     fun fixedNormalShapeHandlesAValueThatEqualsTheTicketKey() {
         val source = arrayOf(
             "--",
@@ -125,6 +147,8 @@ class PrivateCommandLineArgsTest {
     fun malformedDuplicateAndReservedTicketInputsFailClosed() {
         val malformedInputs = listOf(
             arrayOf("--", "--launch-ticket", "malformed-secret"),
+            arrayOf("--", "--host-smoke", "--preview-game", "gomoku"),
+            arrayOf("--", "--host-smoke", "--preview-game", "flight_chess", "--extra"),
             arrayOf(
                 "--",
                 "--game-id",

@@ -444,7 +444,7 @@ final class _FakeLauncher implements GameLauncher {
   Future<void> launch(GameLaunchRequest request) async {}
 
   @override
-  Future<void> launchHostSmoke() async {}
+  Future<void> launchHostSmoke({String? previewGame}) async {}
 }
 
 final class _FakeHomeApi implements HomeApi {

@@ -64,12 +64,28 @@ static func _keeps_standard_actions_visible() -> bool:
 	var right_rail := scene.get_node("RightRail") as PanelContainer
 	var dice_card := scene.get_node("RightRail/Content/DiceCard") as PanelContainer
 	var roll_button := scene.get_node("RightRail/Content/RollButton") as Button
+	var hint := scene.get_node("RightRail/Content/HintLabel") as Label
 	var intended_layout: Dictionary = FlightChessController.layout_for_size(Vector2(1920.0, 1080.0))
 	var result := _check(right_rail.get_global_rect().is_equal_approx(intended_layout["right"]), "standard phone rail retained a stale portrait height") \
 		and _check(dice_card.visible and roll_button.visible, "standard phone hid the primary controls") \
 		and _check(right_rail.get_global_rect().encloses(dice_card.get_global_rect()), "standard phone clips the dice") \
 		and _check(right_rail.get_global_rect().encloses(roll_button.get_global_rect()), "standard phone clips the roll action") \
 		and _check(roll_button.size.y >= 96.0, "standard phone roll target is smaller than 48dp")
+	scene._on_roll_pressed()
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	result = result \
+		and _check(hint.get_line_count() >= 2, "standard phone does not wrap the long selection hint") \
+		and _check(right_rail.get_global_rect().encloses(hint.get_global_rect()), "standard phone hint escapes the right rail")
+	scene._on_piece_pressed("red", 0)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var turn_label := scene.get_node("RightRail/Content/TurnLabel") as Label
+	result = result \
+		and _check(turn_label.text == "可以再掷一次" and turn_label.size.y >= turn_label.get_line_height(), "completed launch hides the extra-roll message") \
+		and _check(hint.text.contains("奖励") and hint.size.y >= hint.get_line_height(), "completed launch hides its rule hint") \
+		and _check(right_rail.get_global_rect().encloses(turn_label.get_global_rect()), "completed launch message escapes the right rail") \
+		and _check(right_rail.get_global_rect().encloses(hint.get_global_rect()), "completed launch hint escapes the right rail")
 	scene.free()
 	return result
 

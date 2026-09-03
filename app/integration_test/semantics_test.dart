@@ -386,5 +386,5 @@ final class _FakeLauncher implements GameLauncher {
   }
 
   @override
-  Future<void> launchHostSmoke() async {}
+  Future<void> launchHostSmoke({String? previewGame}) async {}
 }

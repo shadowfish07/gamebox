@@ -2,6 +2,7 @@ class_name FlightChessDice
 extends Control
 
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
+const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd")
 
 var value: int:
 	get: return _value

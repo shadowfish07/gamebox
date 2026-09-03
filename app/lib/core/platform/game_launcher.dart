@@ -3,7 +3,7 @@ import 'game_launch_request.dart';
 abstract interface class GameLauncher {
   Future<void> launch(GameLaunchRequest request);
 
-  Future<void> launchHostSmoke();
+  Future<void> launchHostSmoke({String? previewGame});
 }
 
 final class GameLaunchException implements Exception {

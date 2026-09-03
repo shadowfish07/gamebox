@@ -127,14 +127,14 @@ layout_mode = 2
 theme_type_variation = &"FlightChessTurn"
 text = "先掷骰子"
 horizontal_alignment = 1
-autowrap_mode = 2
+autowrap_mode = 3
 
 [node name="HintLabel" type="Label" parent="RightRail/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessHint"
 text = "掷出 6 后，再选择一架飞机起飞"
 horizontal_alignment = 1
-autowrap_mode = 2
+autowrap_mode = 3
 
 [node name="ActionSpacer" type="Control" parent="RightRail/Content"]
 layout_mode = 2
@@ -159,7 +159,7 @@ layout_mode = 2
 theme_type_variation = &"FlightChessRule"
 text = "掷 6 起飞 · 掷 6 再投"
 horizontal_alignment = 1
-autowrap_mode = 2
+autowrap_mode = 3
 
 [node name="RollButton" type="Button" parent="RightRail/Content"]
 custom_minimum_size = Vector2(0, 96)
