@@ -6,6 +6,7 @@ const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const MIN_VIEWPORT := Vector2(960.0, 540.0)
+const LANDSCAPE_CONTENT_SCALE := Vector2i(1920, 1080)
 const MIN_RAIL_WIDTH := 192.0
 const MAX_RAIL_WIDTH := 360.0
 const DICE_SEQUENCE := [6, 4, 2, 5, 3, 1]
@@ -27,6 +28,35 @@ var _preview_dark: Variant = null
 var _preview_safe_insets := Vector4.ZERO
 var _has_preview_safe_insets := false
 var _quit_callback := Callable()
+var _previous_window_profile := {}
+var _layout_ready := false
+
+
+func _enter_tree() -> void:
+	var window := get_window()
+	if window == null:
+		return
+	_previous_window_profile = {
+		"size": window.content_scale_size,
+		"mode": window.content_scale_mode,
+		"aspect": window.content_scale_aspect,
+	}
+	apply_window_profile(window)
+
+
+func _exit_tree() -> void:
+	if _previous_window_profile.is_empty():
+		return
+	var window := get_window()
+	if window == null:
+		return
+	if window.content_scale_size == LANDSCAPE_CONTENT_SCALE \
+		and window.content_scale_mode == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS \
+		and window.content_scale_aspect == Window.CONTENT_SCALE_ASPECT_EXPAND:
+		window.content_scale_size = _previous_window_profile["size"]
+		window.content_scale_mode = _previous_window_profile["mode"]
+		window.content_scale_aspect = _previous_window_profile["aspect"]
+	_previous_window_profile.clear()
 
 
 func _ready() -> void:
@@ -38,11 +68,11 @@ func _ready() -> void:
 	$Board.piece_pressed.connect(_on_piece_pressed)
 	_reset_demo()
 	_apply_preview_state()
-	_apply_layout()
+	_finish_initial_layout.call_deferred()
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_RESIZED and is_node_ready():
+	if what == NOTIFICATION_RESIZED and is_node_ready() and _layout_ready:
 		_apply_layout()
 	elif what == Node.NOTIFICATION_WM_GO_BACK_REQUEST:
 		_on_back_pressed()
@@ -88,6 +118,23 @@ static func preferred_mobile_orientation() -> int:
 	return DisplayServer.SCREEN_SENSOR_LANDSCAPE
 
 
+static func preferred_content_scale_size() -> Vector2i:
+	return LANDSCAPE_CONTENT_SCALE
+
+
+static func apply_window_profile(window: Window) -> void:
+	window.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+	window.content_scale_size = LANDSCAPE_CONTENT_SCALE
+
+
+static func physical_insets_to_logical(insets: Vector4, physical_size: Vector2, logical_size: Vector2) -> Vector4:
+	if physical_size.x <= 0.0 or physical_size.y <= 0.0 or logical_size.x <= 0.0 or logical_size.y <= 0.0:
+		return Vector4(-1.0, -1.0, -1.0, -1.0)
+	var scale := logical_size / physical_size
+	return Vector4(insets.x * scale.x, insets.y * scale.y, insets.z * scale.x, insets.w * scale.y)
+
+
 static func layout_is_compact(layout: Dictionary) -> bool:
 	if not layout.has("board") or not layout.has("right"):
 		return true
@@ -97,6 +144,11 @@ static func layout_is_compact(layout: Dictionary) -> bool:
 func _apply_mobile_orientation() -> void:
 	if OS.has_feature("android") and DisplayServer.has_feature(DisplayServer.FEATURE_ORIENTATION):
 		DisplayServer.screen_set_orientation(preferred_mobile_orientation())
+
+
+func _finish_initial_layout() -> void:
+	_layout_ready = true
+	_apply_layout()
 
 
 func set_preview_state(state: String) -> bool:
@@ -164,8 +216,17 @@ func _safe_rect() -> Rect2:
 		var display_safe := DisplayServer.get_display_safe_area()
 		var window_size := Vector2(DisplayServer.window_get_size())
 		if display_safe.has_area() and window_size.x > 0.0 and window_size.y > 0.0:
-			var viewport_scale := size / window_size
-			return Rect2(Vector2(display_safe.position) * viewport_scale, Vector2(display_safe.size) * viewport_scale)
+			var insets := Vector4(
+				float(display_safe.position.x),
+				float(display_safe.position.y),
+				window_size.x - float(display_safe.end.x),
+				window_size.y - float(display_safe.end.y),
+			)
+			var logical_insets := physical_insets_to_logical(insets, window_size, size)
+			return Rect2(
+				Vector2(logical_insets.x, logical_insets.y),
+				size - Vector2(logical_insets.x + logical_insets.z, logical_insets.y + logical_insets.w),
+			)
 	return Rect2(Vector2.ZERO, size)
 
 

@@ -7,7 +7,9 @@ const FlightChessController = preload("res://games/flight_chess/flight_chess_con
 static func cases() -> Array:
 	return [
 		{"name": "flight chess scene declares sensor landscape for mobile", "run": _declares_mobile_landscape},
+		{"name": "flight chess scene uses a landscape virtual pixel base", "run": _uses_landscape_content_scale},
 		{"name": "flight chess scene keeps the board dominant at landscape phone sizes", "run": _keeps_board_dominant},
+		{"name": "flight chess scene keeps standard phone actions on screen", "run": _keeps_standard_actions_visible},
 		{"name": "flight chess scene stays inside landscape phone safe areas", "run": _respects_phone_safe_areas},
 		{"name": "flight chess scene rolls before enabling manual plane selection", "run": _rolls_before_selection},
 	]
@@ -20,8 +22,24 @@ static func _declares_mobile_landscape() -> bool:
 	)
 
 
+static func _uses_landscape_content_scale() -> bool:
+	var result := _check(
+		FlightChessController.preferred_content_scale_size() == Vector2i(1920, 1080),
+		"flight chess retained the portrait virtual pixel base",
+	)
+	result = result and _check(
+		FlightChessController.physical_insets_to_logical(
+			Vector4(80.0, 48.0, 40.0, 48.0),
+			Vector2(1280.0, 720.0),
+			Vector2(1920.0, 1080.0),
+		).is_equal_approx(Vector4(120.0, 72.0, 60.0, 72.0)),
+		"preview safe-area pixels were not converted into virtual pixels",
+	)
+	return result
+
+
 static func _keeps_board_dominant() -> bool:
-	for viewport in [Vector2(960.0, 540.0), Vector2(1280.0, 720.0), Vector2(2340.0, 1080.0)]:
+	for viewport in [Vector2(1920.0, 1080.0), Vector2(2160.0, 1080.0), Vector2(2400.0, 1080.0)]:
 		var layout: Dictionary = FlightChessController.layout_for_size(viewport)
 		if not _check(not layout.is_empty(), "landscape layout was rejected at %s" % viewport):
 			return false
@@ -34,6 +52,26 @@ static func _keeps_board_dominant() -> bool:
 			or not _check(left.position.x >= 24.0 and right.end.x <= viewport.x - 24.0, "safe edge margin drifted at %s" % viewport):
 			return false
 	return true
+
+
+static func _keeps_standard_actions_visible() -> bool:
+	var scene = FlightChessScene.instantiate()
+	(scene as Control).set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	(scene as Control).size = Vector2(1920.0, 1080.0)
+	(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var right_rail := scene.get_node("RightRail") as PanelContainer
+	var dice_card := scene.get_node("RightRail/Content/DiceCard") as PanelContainer
+	var roll_button := scene.get_node("RightRail/Content/RollButton") as Button
+	var intended_layout: Dictionary = FlightChessController.layout_for_size(Vector2(1920.0, 1080.0))
+	var result := _check(right_rail.get_global_rect().is_equal_approx(intended_layout["right"]), "standard phone rail retained a stale portrait height") \
+		and _check(dice_card.visible and roll_button.visible, "standard phone hid the primary controls") \
+		and _check(right_rail.get_global_rect().encloses(dice_card.get_global_rect()), "standard phone clips the dice") \
+		and _check(right_rail.get_global_rect().encloses(roll_button.get_global_rect()), "standard phone clips the roll action") \
+		and _check(roll_button.size.y >= 96.0, "standard phone roll target is smaller than 48dp")
+	scene.free()
+	return result
 
 
 static func _respects_phone_safe_areas() -> bool:
@@ -86,10 +124,13 @@ static func _rolls_before_selection() -> bool:
 	var roll_button := scene.get_node("RightRail/Content/RollButton") as Button
 	var right_rail := scene.get_node("RightRail") as PanelContainer
 	var dice_card := scene.get_node("RightRail/Content/DiceCard") as PanelContainer
+	var eyebrow := scene.get_node("LeftRail/Content/Eyebrow") as Label
+	var hint := scene.get_node("RightRail/Content/HintLabel") as Label
 	var result := _check(board.selectable_piece_indices.is_empty(), "planes were selectable before the die roll") \
 		and _check(roll_button.custom_minimum_size.y >= 96.0, "roll target is smaller than 48dp") \
 		and _check(right_rail.get_global_rect().encloses(roll_button.get_global_rect()), "narrow landscape clips the roll action") \
 		and _check(dice_card.size.y <= 152.0, "compact phone lets the dice card become an empty vertical slab") \
+		and _check(not eyebrow.visible and not hint.visible, "compact phone retained secondary copy") \
 		and _check(roll_button.get_global_rect().end.y >= right_rail.get_global_rect().end.y - 20.0, "primary action is not docked for the right thumb")
 	scene._on_roll_pressed()
 	result = result \

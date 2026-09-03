@@ -1,6 +1,7 @@
 extends SceneTree
 
 const FLIGHT_CHESS_SCENE := preload("res://games/flight_chess/flight_chess_scene.tscn")
+const FLIGHT_CHESS_CONTROLLER := preload("res://games/flight_chess/flight_chess_controller.gd")
 
 var _state_name := "ready"
 var _viewport := Vector2i(1280, 720)
@@ -13,6 +14,7 @@ func _init() -> void:
 	if not _parse_arguments(OS.get_cmdline_user_args()):
 		return
 	DisplayServer.window_set_size(_viewport)
+	FLIGHT_CHESS_CONTROLLER.apply_window_profile(get_root())
 	call_deferred("_mount")
 
 
@@ -20,7 +22,12 @@ func _mount() -> void:
 	var scene: Control = FLIGHT_CHESS_SCENE.instantiate()
 	scene.set_preview_state(_state_name)
 	scene.set_preview_dark(_theme_name == "dark")
-	scene.set_preview_safe_insets(_safe_insets)
+	var logical_insets := FLIGHT_CHESS_CONTROLLER.physical_insets_to_logical(
+		_safe_insets,
+		Vector2(_viewport),
+		get_root().get_visible_rect().size,
+	)
+	scene.set_preview_safe_insets(logical_insets)
 	scene.set_quit_callback(func() -> void: quit())
 	get_root().add_child(scene)
 	if not _screenshot_path.is_empty():
@@ -36,6 +43,21 @@ func _capture_screenshot() -> void:
 		await process_frame
 	RenderingServer.force_draw()
 	RenderingServer.force_sync()
+	var scene := get_root().get_node("FlightChess") as Control
+	var right_rail := scene.get_node("RightRail") as Control
+	var dice_card := scene.get_node("RightRail/Content/DiceCard") as Control
+	var roll_button := scene.get_node("RightRail/Content/RollButton") as Control
+	var scene_rect := Rect2(Vector2.ZERO, scene.size)
+	if not scene_rect.encloses(right_rail.get_global_rect()) \
+		or not right_rail.get_global_rect().encloses(dice_card.get_global_rect()) \
+		or not right_rail.get_global_rect().encloses(roll_button.get_global_rect()):
+		push_error("Flight Chess preview clips its primary controls")
+		quit(1)
+		return
+	print(
+		"GAMEBOX_FLIGHT_CHESS_PREVIEW physical=%s logical=%s right=%s dice=%s roll=%s"
+		% [_viewport, scene.size, right_rail.get_global_rect(), dice_card.get_global_rect(), roll_button.get_global_rect()]
+	)
 	var error := get_root().get_texture().get_image().save_png(_screenshot_path)
 	if error != OK:
 		push_error("Flight Chess preview screenshot failed: %s" % error_string(error))
