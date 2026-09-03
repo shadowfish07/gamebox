@@ -48,7 +48,12 @@ gamebox_run_step "shell syntax" bash -n \
   tool/release.sh tool/test_release.sh tool/test_debug_workflow.sh
 verify_macos_deploy_syntax() {
   local deploy_script
-  for deploy_script in deploy/macos/install.sh deploy/macos/install-staging.sh; do
+  for deploy_script in \
+    deploy/macos/install.sh \
+    deploy/macos/install-system-services.sh \
+    deploy/macos/install-staging.sh \
+    deploy/macos/run-server.sh \
+    deploy/macos/create-invite.sh; do
     zsh -n "$deploy_script"
   done
 }

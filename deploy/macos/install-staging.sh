@@ -24,6 +24,7 @@ readonly server_label="me.zqydev.gamebox.staging.server"
 readonly health_label="me.zqydev.gamebox.staging.health"
 readonly backup_label="me.zqydev.gamebox.staging.backup"
 readonly tunnel_label="me.zqydev.gamebox.tunnel" # owned by install.sh
+readonly tunnel_system_domain="system"
 readonly public_health_url="${GAMEBOX_PUBLIC_HEALTH_URL:-https://staging-gamebox.zqydev.me/healthz}"
 readonly local_health_url="${GAMEBOX_LOCAL_HEALTH_URL:-http://127.0.0.1:18081/healthz}"
 
@@ -152,10 +153,25 @@ fi
 /usr/bin/sed "s|__GAMEBOX_TUNNEL_CREDENTIALS__|${tunnel_credentials}|" \
   "${script_dir}/cloudflared-config.yml" > "${tunnel_config}"
 /bin/chmod 600 "${tunnel_config}"
-if /bin/launchctl print "${domain}/${tunnel_label}" >/dev/null 2>&1; then
+if tunnel_state="$(/bin/launchctl print "${tunnel_system_domain}/${tunnel_label}" 2>/dev/null)"; then
+  tunnel_pid="$(print -r -- "${tunnel_state}" | /usr/bin/awk '/^[[:space:]]*pid = / {print $3; exit}')"
+  if [[ "${tunnel_pid}" != <-> ]]; then
+    print -u2 -- "Production tunnel system service has no running process"
+    exit 1
+  fi
+  tunnel_uid="$(/bin/ps -o uid= -p "${tunnel_pid}" 2>/dev/null | /usr/bin/tr -d ' ')"
+  tunnel_command="$(/bin/ps -o command= -p "${tunnel_pid}" 2>/dev/null)"
+  if [[ "${tunnel_state}" != *"program = /opt/homebrew/bin/cloudflared"* ]] \
+    || [[ "${tunnel_uid}" != "$(/usr/bin/id -u)" ]] \
+    || [[ "${tunnel_command}" != "/opt/homebrew/bin/cloudflared"* ]]; then
+    print -u2 -- "Production tunnel system service has an unexpected process"
+    exit 1
+  fi
+  /bin/kill -TERM "${tunnel_pid}"
+elif /bin/launchctl print "${domain}/${tunnel_label}" >/dev/null 2>&1; then
   /bin/launchctl kickstart -k "${domain}/${tunnel_label}"
 else
-  print -u2 -- "WARN: Cloudflare Tunnel agent (${tunnel_label}) is not loaded; run deploy/macos/install.sh first or bootstrap it manually."
+  print -u2 -- "WARN: Cloudflare Tunnel service (${tunnel_label}) is not loaded; run deploy/macos/install.sh first."
 fi
 
 /bin/launchctl kickstart -k "${domain}/${health_label}"

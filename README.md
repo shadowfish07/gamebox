@@ -257,14 +257,14 @@ curl --fail --location --output gamebox-debug-latest.apk "$debug_apk_url"
 
 ## Deployment
 
-The supported backend deployment target is macOS. The installer places binaries under `~/.local/libexec/gamebox`, stores secrets in the login Keychain, keeps data under `~/Library/Application Support/Gamebox/server`, and installs launch agents for the service, health checks, Cloudflare Tunnel, and daily verified backups.
+The supported backend deployment target is macOS. The installer places binaries under `~/.local/libexec/gamebox`, keeps data under `~/Library/Application Support/Gamebox/server`, and installs system launch daemons for the service, health checks, Cloudflare Tunnel, and daily verified backups. The first migration requests administrator authentication once so it can install `/Library/LaunchDaemons` entries and preserve the production secrets in the System Keychain. Routine deployments keep the same one-command workflow and do not require administrator authentication unless the system service definitions change.
 
 ```bash
 zsh deploy/macos/install.sh
 curl --fail http://127.0.0.1:18080/healthz
 ```
 
-An isolated staging installation is available through `deploy/macos/install-staging.sh`. It uses its own binaries, port, database, secrets, and launch agents while sharing the production tunnel configuration.
+Run the installer as the service user, not through `sudo`; it obtains privilege only for the one-time system-service step. An isolated staging installation is available through `deploy/macos/install-staging.sh`. It uses its own binaries, port, database, login-Keychain secrets, and launch agents while sharing the production tunnel configuration.
 
 Generate one invite against an installed environment with the matching service, database, and Keychain secret:
 

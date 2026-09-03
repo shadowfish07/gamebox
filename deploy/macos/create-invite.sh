@@ -13,6 +13,9 @@ select_environment() {
       typeset -g database_path="${HOME}/Library/Application Support/Gamebox/server/gamebox.db"
       typeset -g pepper_service="me.zqydev.gamebox.token-pepper"
       typeset -g server_label="me.zqydev.gamebox.server"
+      typeset -g preferred_domain="system"
+      typeset -g legacy_domain="gui/$(/usr/bin/id -u)"
+      typeset -g keychain_path="/Library/Keychains/System.keychain"
       typeset -g local_health_url="http://127.0.0.1:18080/healthz"
       ;;
     staging)
@@ -20,6 +23,9 @@ select_environment() {
       typeset -g database_path="${HOME}/Library/Application Support/Gamebox/server-staging/gamebox.db"
       typeset -g pepper_service="me.zqydev.gamebox.staging.token-pepper"
       typeset -g server_label="me.zqydev.gamebox.staging.server"
+      typeset -g preferred_domain="gui/$(/usr/bin/id -u)"
+      typeset -g legacy_domain=""
+      typeset -g keychain_path=""
       typeset -g local_health_url="http://127.0.0.1:18081/healthz"
       ;;
     *)
@@ -40,7 +46,7 @@ validate_count() {
 }
 
 check_runtime() {
-  local domain="gui/$(/usr/bin/id -u)"
+  local candidate
   local service_state
   local health_body
 
@@ -52,13 +58,26 @@ check_runtime() {
     print -u2 -- "the selected environment database does not exist"
     return 1
   fi
-  service_state="$(/bin/launchctl print "${domain}/${server_label}" 2>/dev/null)" || {
+  typeset -g active_domain=""
+  for candidate in "${preferred_domain}" "${legacy_domain}"; do
+    if [[ -n "${candidate}" ]] \
+      && service_state="$(/bin/launchctl print "${candidate}/${server_label}" 2>/dev/null)"; then
+      active_domain="${candidate}"
+      break
+    fi
+  done
+  if [[ -z "${active_domain}" ]]; then
     print -u2 -- "the selected environment service is not loaded"
     return 1
-  }
+  fi
   if [[ "${service_state}" != *"program = ${server_program}"* ]] \
     || [[ "${service_state}" != *"GAMEBOX_DB_PATH => ${database_path}"* ]]; then
     print -u2 -- "the selected service is not using the expected executable or database"
+    return 1
+  fi
+  if [[ "${active_domain}" == system ]] \
+    && [[ "${service_state}" != *"GAMEBOX_KEYCHAIN => ${keychain_path}"* ]]; then
+    print -u2 -- "the production service is not using the system Keychain"
     return 1
   fi
   health_body="$(/usr/bin/curl --fail --silent --show-error --max-time 5 "${local_health_url}")" || {
@@ -72,8 +91,12 @@ check_runtime() {
 }
 
 read_keychain_pepper() {
+  typeset -a keychain_args=()
+  if [[ "${active_domain}" == system ]]; then
+    keychain_args=("${keychain_path}")
+  fi
   /usr/bin/security find-generic-password \
-    -a "$(/usr/bin/id -un)" -s "${pepper_service}" -w
+    -a "$(/usr/bin/id -un)" -s "${pepper_service}" -w "${keychain_args[@]}"
 }
 
 invoke_gameboxctl() {
