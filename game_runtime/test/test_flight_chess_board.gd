@@ -7,6 +7,7 @@ static func cases() -> Array:
 	return [
 		{"name": "flight chess board exposes the classic 52-space topology", "run": _exposes_classic_topology},
 		{"name": "flight chess board keeps its four route quadrants rotationally symmetric", "run": _keeps_route_quadrants_symmetric},
+		{"name": "flight chess board aligns straight route cells edge to edge", "run": _aligns_straight_route_cells},
 		{"name": "flight chess board keeps home lanes visually separate from the shared route", "run": _separates_home_lanes_from_route},
 		{"name": "flight chess board keeps launch pads fully inside the playfield", "run": _keeps_launch_pads_inside},
 		{"name": "flight chess board remains square inside landscape bounds", "run": _remains_square},
@@ -66,6 +67,30 @@ static func _keeps_route_quadrants_symmetric() -> bool:
 			):
 				return false
 	return true
+
+
+static func _aligns_straight_route_cells() -> bool:
+	var base_pairs := [Vector2i(1, 2), Vector2i(5, 6), Vector2i(8, 9), Vector2i(11, 12)]
+	for quadrant in 4:
+		for pair in base_pairs:
+			var first := _polygon_rect(FlightChessBoard.route_cell_polygon(quadrant * 13 + pair.x))
+			var second := _polygon_rect(FlightChessBoard.route_cell_polygon(quadrant * 13 + pair.y))
+			var delta := (second.get_center() - first.get_center()).abs()
+			var aligned := false
+			if delta.x > delta.y:
+				aligned = is_zero_approx(delta.y) and is_equal_approx(delta.x, (first.size.x + second.size.x) * 0.5)
+			else:
+				aligned = is_zero_approx(delta.x) and is_equal_approx(delta.y, (first.size.y + second.size.y) * 0.5)
+			if not _check(aligned, "straight route cells are not edge aligned in quadrant %d" % quadrant):
+				return false
+	return true
+
+
+static func _polygon_rect(polygon: PackedVector2Array) -> Rect2:
+	var result := Rect2(polygon[0], Vector2.ZERO)
+	for point in polygon:
+		result = result.expand(point)
+	return result
 
 
 static func _keeps_launch_pads_inside() -> bool:
