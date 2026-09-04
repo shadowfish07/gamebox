@@ -816,7 +816,6 @@ func _schedule_ready_marker() -> void:
 		_ready_marker_callback = Callable()
 		if not _disposed and not _returning and is_inside_tree():
 			print("GAMEBOX_GODOT_READY game=flight_chess match=%s" % _match_id)
-			_log_automation_targets()
 	RenderingServer.frame_post_draw.connect(_ready_marker_callback, CONNECT_ONE_SHOT)
 
 
@@ -877,6 +876,8 @@ func _log_runtime_state() -> void:
 		phase_value,
 	])
 	print("GAMEBOX_FLIGHT_CHESS_PENDING match=%s revision=%d pending=%s" % [_match_id, revision_value, str(pending_value)])
+	if revision_value >= 0 and _connection_state == "connected":
+		_log_automation_targets()
 
 
 static func _empty_visual_pieces() -> Dictionary:
