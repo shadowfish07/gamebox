@@ -17,6 +17,7 @@ import (
 
 	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/store"
@@ -360,6 +361,34 @@ func TestMatchShowReturnsEmptyBoardForRPS(t *testing.T) {
 	}
 }
 
+func TestMatchShowReturnsFlightChessAuthorityState(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
+	seedFlightChessMatch(t, databasePath)
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", databasePath, "--json"}, &stdout, &stderr, defaultCommandDeps())
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("run exit=%d stderr=%q", code, stderr.String())
+	}
+	var response matchShowResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("decode stdout %q: %v", stdout.String(), err)
+	}
+	if response.GameID != flightchess.GameID || response.Revision != 0 || response.Phase != flightchess.PhaseAwaitingRoll || response.NextColor != flightchess.Black || response.Dice != 0 || response.ConsecutiveSixes != 0 || len(response.SixMovedPieceIndices) != 0 || len(response.Board) != 0 {
+		t.Fatalf("Flight Chess response metadata=%+v", response)
+	}
+	for _, color := range []string{flightchess.Black, flightchess.White} {
+		if len(response.Pieces[color]) != flightchess.PieceCount {
+			t.Fatalf("%s pieces=%+v", color, response.Pieces[color])
+		}
+		for index, piece := range response.Pieces[color] {
+			if piece.Zone != flightchess.ZoneHangar || piece.Index != index {
+				t.Fatalf("%s piece %d=%+v", color, index, piece)
+			}
+		}
+	}
+}
+
 func TestMatchShowUnknownAndInvalidIDsHaveStableNonzeroExit(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "gamebox.sqlite")
 	seedMatch(t, databasePath)
@@ -647,6 +676,33 @@ func seedRPSMatch(t *testing.T, path string) {
 		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{rps.GameID, testBlackID, testMatchID}},
 		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{rps.GameID, testWhiteID, testMatchID}},
+	}
+	for _, statement := range statements {
+		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+			database.Close()
+			t.Fatalf("seed database: %v", err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedFlightChessMatch(t *testing.T, path string) {
+	t.Helper()
+	database := openDatabase(t, path)
+	now := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC).UnixMilli()
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testBlackID, "Alice", "alice", now, now}},
+		{`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES (?,?,?,?,?)`, []any{testWhiteID, "Bob", "bob", now, now}},
+		{`INSERT INTO matches(id,game_id,status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?)`, []any{testMatchID, flightchess.GameID, "active", 0, now, now}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testBlackID, 0, "black"}},
+		{`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,?,?)`, []any{testMatchID, testWhiteID, 1, "white"}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{flightchess.GameID, testBlackID, testMatchID}},
+		{`INSERT INTO active_game_slots(game_id,user_id,match_id) VALUES (?,?,?)`, []any{flightchess.GameID, testWhiteID, testMatchID}},
 	}
 	for _, statement := range statements {
 		if _, err := database.Exec(statement.query, statement.args...); err != nil {

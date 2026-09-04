@@ -152,6 +152,41 @@ void main() {
     chineseCheckers.dispose();
   });
 
+  testWidgets('Flight Chess card exposes lobby history and launch actions', (
+    tester,
+  ) async {
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final flightChess = _Fixture(now)..api.status = _active(revision: 0);
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        flightChessController: flightChess.controller,
+      ),
+    );
+    await _flushWidget(tester);
+
+    expect(find.byKey(const Key('game-flight-chess')), findsOneWidget);
+    expect(find.text('飞行棋'), findsOneWidget);
+    expect(find.text('2 人 · 掷骰竞速'), findsOneWidget);
+    expect(find.text('你的阵营：红方 · 先手'), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('flight-chess-continue-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('flight-chess-cancel-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('open-flight-chess-history'),
+      findsOneWidget,
+    );
+
+    gomoku.dispose();
+    flightChess.dispose();
+  });
+
   testWidgets('active card shows opponent color revision and hides creation', (
     tester,
   ) async {
@@ -860,6 +895,7 @@ Widget _app(
   MatchHistoryApi? historyApi,
   RpsController? rpsController,
   HomeController? chineseCheckersController,
+  HomeController? flightChessController,
 }) => MaterialApp(
   theme: GameboxTheme.light(),
   darkTheme: GameboxTheme.dark(),
@@ -871,6 +907,7 @@ Widget _app(
     historyApi: historyApi ?? _FakeMatchHistoryApi(),
     rpsController: rpsController,
     chineseCheckersController: chineseCheckersController,
+    flightChessController: flightChessController,
   ),
 );
 

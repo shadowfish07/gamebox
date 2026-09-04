@@ -16,8 +16,8 @@ Every message is one JSON object with this versioned envelope:
 | `actionId` | Required by client game actions. A server action result may echo it. |
 | `payload` | Required non-null JSON object owned by the message type or game. |
 
-Client game actions are `gomoku.move.requested` and
-`gomoku.resign.requested`. Control messages `platform.connect`,
+Client game actions are the game-specific `*.requested` messages listed below.
+Control messages `platform.connect`,
 `platform.pong`, and `platform.snapshot.requested` do not carry either revision
 field or an action ID. `platform.pong` and `platform.snapshot.requested` remain
 match-bound.
@@ -31,12 +31,26 @@ fields they cannot decode.
 Version 1 accepts only the following directions and types:
 
 - Client to server: `platform.connect`, `platform.pong`,
-  `platform.snapshot.requested`, `gomoku.move.requested`, and
-  `gomoku.resign.requested`.
+  `platform.snapshot.requested`, `chinese_checkers.move.requested`,
+  `chinese_checkers.resign.requested`, `flight_chess.roll.requested`,
+  `flight_chess.move.requested`, `flight_chess.resign.requested`,
+  `gomoku.move.requested`, `gomoku.resign.requested`,
+  `rps.choice.requested`, and `rps.resign.requested`.
 - Server to client: `platform.connected`, `platform.ping`,
-  `platform.presence.changed`, `platform.snapshot`, `platform.error`, `gomoku.move.accepted`,
-  `gomoku.resigned`, `platform.match.cancelled`, and
+  `platform.presence.changed`, `platform.snapshot`, `platform.error`,
+  the matching game-specific accepted/resigned messages,
+  `rps.round.revealed`, `platform.match.cancelled`, and
   `platform.match.abandoned`.
+
+Flight Chess uses an empty payload for `flight_chess.roll.requested`; the
+server generates and persists the die result. `flight_chess.move.requested`
+contains one integer `pieceIndex` in `[0,3]`, and resign also uses an empty
+payload. An accepted roll includes `color`, `userId`, `value`,
+`movablePieceIndices`, and `penalizedPieceIndices`. An accepted move includes
+the acting color and user, selected piece and roll, `from`/`to` positions,
+movement `effect`, and `capturedPieceIndices`. The client applies only accepted
+events in contiguous revision order; a gap requests a fresh authoritative
+snapshot.
 
 Apart from the three revisionless client control messages above and an unbound
 handshake `platform.error`, match-bound server messages carry `revision`.
@@ -119,7 +133,7 @@ UTF-8 byte-size check, and every successful encoding is passed through the same
 strict decoder before it is returned. A complete message of exactly 65,536
 bytes is accepted; 65,537 bytes is rejected.
 
-The four message fixtures freeze a snapshot, a requested Gomoku move, its
+The four compatibility fixtures freeze a snapshot, a requested Gomoku move, its
 accepted server event, and a match-bound error. `snapshot.json` contains a 15
 by 15 board with exactly 225 integer cells. The compatibility fixture under
 `fixtures/compat/` is consumed by both runtimes to keep JSON string escape,

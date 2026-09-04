@@ -16,6 +16,7 @@ import (
 
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -158,6 +159,20 @@ type chineseCheckersSnapshotPayload struct {
 	NextColor    string                            `json:"nextColor"`
 	WinnerUserID *string                           `json:"winnerUserId"`
 	Result       *string                           `json:"result"`
+}
+
+type flightChessSnapshotPayload struct {
+	Status               string                         `json:"status"`
+	Phase                string                         `json:"phase"`
+	BlackUserID          *string                        `json:"blackUserId"`
+	WhiteUserID          *string                        `json:"whiteUserId"`
+	NextColor            string                         `json:"nextColor"`
+	Dice                 int                            `json:"dice"`
+	ConsecutiveSixes     int                            `json:"consecutiveSixes"`
+	SixMovedPieceIndices []int                          `json:"sixMovedPieceIndices"`
+	Pieces               map[string][]flightchess.Piece `json:"pieces"`
+	WinnerUserID         *string                        `json:"winnerUserId"`
+	Result               *string                        `json:"result"`
 }
 
 type rpsPlayerSnapshot struct {
@@ -338,7 +353,7 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if marshalErr != nil || !viewerFound || !connection.enqueueInitial(connected, snapshotMessage, snapshot.Match.Revision) {
 		return
 	}
-	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
+	for attempts := 0; attempts <= maximumMatchEventsFor(snapshot.Match.GameID); attempts++ {
 		ready, stale := hub.markReady(connection, snapshot.Match.Revision, snapshotMessages)
 		if ready {
 			connection.readLoop()
@@ -641,7 +656,7 @@ func (hub *Hub) playerPresences(snapshot Snapshot) []playerPresencePayload {
 // Publish performs only ordered best-effort fan-out. The event is already
 // committed and the Hub never invokes game rules or persistence from here.
 func (hub *Hub) Publish(matchID string, event Event) {
-	if hub == nil || matchID == "" || event.MatchID != matchID || event.Revision <= 0 || event.Revision > maximumMatchEvents {
+	if hub == nil || matchID == "" || event.MatchID != matchID || event.Revision <= 0 {
 		return
 	}
 	var slow []*hubConnection
@@ -652,6 +667,10 @@ func (hub *Hub) Publish(matchID string, event Event) {
 	}
 	match := hub.matches[matchID]
 	if match == nil {
+		hub.mu.Unlock()
+		return
+	}
+	if event.Revision > int64(maximumMatchEventsFor(match.gameID)) {
 		hub.mu.Unlock()
 		return
 	}
@@ -881,7 +900,9 @@ func (connection *hubConnection) readLoop() {
 				continue
 			}
 			connection.sendLatestSnapshot()
-		case protocol.TypeChineseCheckersMoveRequested, protocol.TypeChineseCheckersResignRequested, protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
+		case protocol.TypeChineseCheckersMoveRequested, protocol.TypeChineseCheckersResignRequested,
+			protocol.TypeFlightChessRollRequested, protocol.TypeFlightChessMoveRequested, protocol.TypeFlightChessResignRequested,
+			protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
 			connection.applyAction(envelope)
 		default:
 			connection.enqueueError("invalid_request", envelope.ActionID)
@@ -967,7 +988,7 @@ func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
 }
 
 func (connection *hubConnection) sendLatestSnapshot() {
-	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
+	for attempts := 0; attempts <= maximumMatchEventsFor(connection.gameID); attempts++ {
 		operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
 		snapshot, err := connection.hub.service.Snapshot(operationContext, connection.matchID)
 		cancel()
@@ -989,7 +1010,7 @@ func (connection *hubConnection) sendLatestSnapshot() {
 }
 
 func (connection *hubConnection) sendStaleResponse(actionID string) {
-	for attempts := 0; attempts <= maximumMatchEvents; attempts++ {
+	for attempts := 0; attempts <= maximumMatchEventsFor(connection.gameID); attempts++ {
 		operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
 		snapshot, err := connection.hub.service.Snapshot(operationContext, connection.matchID)
 		cancel()
@@ -1058,6 +1079,21 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 	}
 	if snapshot.Match.GameID == chinesecheckers.GameID {
 		var payload chineseCheckersSnapshotPayload
+		if json.Unmarshal(snapshot.Game.State, &payload) != nil || len(snapshot.Players) != 2 {
+			return nil, ErrInternal
+		}
+		blackID, whiteID, err := snapshotPlayerIDs(snapshot.Players)
+		if err != nil {
+			return nil, err
+		}
+		payload.BlackUserID, payload.WhiteUserID = &blackID, &whiteID
+		payload.Status = snapshot.Match.Status
+		payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
+		payload.Result = cloneStringPointer(snapshot.Match.Result)
+		return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+	}
+	if snapshot.Match.GameID == flightchess.GameID {
+		var payload flightChessSnapshotPayload
 		if json.Unmarshal(snapshot.Game.State, &payload) != nil || len(snapshot.Players) != 2 {
 			return nil, ErrInternal
 		}
@@ -1218,6 +1254,10 @@ func safeActionErrorCode(err error) string {
 	case errors.Is(err, chinesecheckers.ErrNotYourTurn):
 		return "not_your_turn"
 	case errors.Is(err, chinesecheckers.ErrInvalidPath):
+		return "invalid_move"
+	case errors.Is(err, flightchess.ErrNotYourTurn):
+		return "not_your_turn"
+	case errors.Is(err, flightchess.ErrInvalidMove), errors.Is(err, flightchess.ErrInvalidPhase):
 		return "invalid_move"
 	case errors.Is(err, rps.ErrChoiceLocked):
 		return "choice_locked"

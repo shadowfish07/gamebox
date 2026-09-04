@@ -3,6 +3,7 @@ extends RefCounted
 const MatchClient = preload("res://core/match_client.gd")
 const GomokuState = preload("res://games/gomoku/gomoku_state.gd")
 const ChineseCheckersState = preload("res://games/chinese_checkers/chinese_checkers_state.gd")
+const FlightChessState = preload("res://games/flight_chess/flight_chess_state.gd")
 const Protocol = preload("res://core/protocol.gd")
 
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
@@ -253,6 +254,7 @@ static func cases() -> Array:
 		{"name": "match client signals every transition into snapshot recovery once", "run": _signals_snapshot_recovery_once},
 		{"name": "match client sends UUIDv4 actions without optimistic stones", "run": _sends_actions_authoritatively},
 		{"name": "match client sends Chinese Checkers paths without optimistic moves", "run": _sends_chinese_checkers_paths_authoritatively},
+		{"name": "match client sends Flight Chess rolls and moves authoritatively", "run": _sends_flight_chess_actions_authoritatively},
 		{"name": "match client sends a fresh resignation action after the first move", "run": _sends_resignation},
 		{"name": "match client rolls back pending when send fails", "run": _rolls_back_failed_send},
 		{"name": "match client never replays ambiguous pending actions", "run": _never_replays_pending},
@@ -633,6 +635,36 @@ static func _sends_chinese_checkers_paths_authoritatively() -> bool:
 		and _check(fixture.state.pending_action.is_empty(), "accepted path did not clear pending")
 
 
+static func _sends_flight_chess_actions_authoritatively() -> bool:
+	var fixture := _connected_flight_chess_fixture()
+	var roll_action_id: String = fixture.client.request_flight_chess_roll()
+	if not _check(not roll_action_id.is_empty(), "Flight Chess roll was not sent") \
+		or not _check(fixture.state.dice == 0 and not fixture.state.pending_action.is_empty(), "roll changed the die optimistically"):
+		return false
+	var roll_action := _last_sent(fixture.transport)
+	if not _check(roll_action.get("gameId") == "flight_chess", "Flight Chess roll game binding changed") \
+		or not _check(roll_action.get("type") == "flight_chess.roll.requested", "wrong Flight Chess roll type") \
+		or not _check(roll_action.get("payload") == {}, "Flight Chess roll payload must be empty"):
+		return false
+	fixture.transport.queue(_flight_chess_roll(1, roll_action_id))
+	fixture.client.poll()
+	if not _check(fixture.state.dice == 6 and fixture.state.movable_piece_indices() == [0, 1, 2, 3], "accepted roll did not unlock planes"):
+		return false
+	var before: Dictionary = fixture.state.pieces
+	var move_action_id: String = fixture.client.request_flight_chess_move(2)
+	if not _check(not move_action_id.is_empty(), "Flight Chess move was not sent") \
+		or not _check(fixture.state.pieces == before, "plane moved optimistically"):
+		return false
+	var move_action := _last_sent(fixture.transport)
+	if not _check(move_action.get("type") == "flight_chess.move.requested", "wrong Flight Chess move type") \
+		or not _check(move_action.get("payload") == {"pieceIndex": 2}, "wrong Flight Chess move payload"):
+		return false
+	fixture.transport.queue(_flight_chess_move(2, move_action_id, 2))
+	fixture.client.poll()
+	return _check(fixture.state.pieces["black"][2] == {"zone": "launch", "index": 0}, "accepted move did not launch the plane") \
+		and _check(fixture.state.pending_action.is_empty(), "accepted Flight Chess move did not clear pending")
+
+
 static func _tracks_player_presence() -> bool:
 	var fixture := _connected_fixture()
 	if not (_check(fixture.client.has_player_presence(BLACK_ID), "local player presence missing from handshake") \
@@ -785,6 +817,21 @@ static func _connected_chinese_checkers_fixture() -> Dictionary:
 	return {"client": client, "transport": transport, "scheduler": scheduler, "random": random, "state": state}
 
 
+static func _connected_flight_chess_fixture() -> Dictionary:
+	var transport := FakeTransport.new()
+	var scheduler := FakeScheduler.new()
+	var random := FakeRandom.new()
+	var state = FlightChessState.new(MATCH_ID)
+	var client = MatchClient.new(transport, scheduler, random)
+	client.start("ws://127.0.0.1:8080/v1/ws", MATCH_ID, "launch-secret", state, "flight_chess")
+	transport.open()
+	client.poll()
+	transport.queue(_flight_chess_connected(0, "resume-secret"))
+	transport.queue(_flight_chess_snapshot(0))
+	client.poll()
+	return {"client": client, "transport": transport, "scheduler": scheduler, "random": random, "state": state}
+
+
 static func _last_sent(transport: FakeTransport) -> Dictionary:
 	if transport.sent.is_empty():
 		return {}
@@ -821,6 +868,12 @@ static func _chinese_checkers_connected(revision: int, resume_token: String) -> 
 	return envelope
 
 
+static func _flight_chess_connected(revision: int, resume_token: String) -> Dictionary:
+	var envelope := _connected(revision, resume_token)
+	envelope["gameId"] = "flight_chess"
+	return envelope
+
+
 static func _chinese_checkers_snapshot(revision: int) -> Dictionary:
 	var board: Array = []
 	board.resize(121)
@@ -835,6 +888,45 @@ static func _chinese_checkers_snapshot(revision: int) -> Dictionary:
 			"status": "active", "board": board,
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
 			"winnerUserId": null, "result": null,
+		},
+	}
+
+
+static func _flight_chess_snapshot(revision: int) -> Dictionary:
+	var pieces := {"black": [], "white": []}
+	for color in pieces:
+		for index in 4:
+			pieces[color].append({"zone": "hangar", "index": index})
+	return {
+		"protocolVersion": 1, "gameId": "flight_chess", "matchId": MATCH_ID, "revision": revision,
+		"type": "platform.snapshot", "payload": {
+			"status": "active", "phase": "awaiting_roll",
+			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
+			"dice": 0, "consecutiveSixes": 0, "sixMovedPieceIndices": [], "pieces": pieces,
+			"winnerUserId": null, "result": null,
+		},
+	}
+
+
+static func _flight_chess_roll(revision: int, action_id: String) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "flight_chess", "matchId": MATCH_ID, "revision": revision,
+		"type": "flight_chess.roll.accepted", "actionId": action_id,
+		"payload": {
+			"color": "black", "userId": BLACK_ID, "value": 6,
+			"movablePieceIndices": [0, 1, 2, 3], "penalizedPieceIndices": [],
+		},
+	}
+
+
+static func _flight_chess_move(revision: int, action_id: String, piece_index: int) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "flight_chess", "matchId": MATCH_ID, "revision": revision,
+		"type": "flight_chess.move.accepted", "actionId": action_id,
+		"payload": {
+			"color": "black", "userId": BLACK_ID, "pieceIndex": piece_index, "roll": 6,
+			"from": {"zone": "hangar", "index": piece_index},
+			"to": {"zone": "launch", "index": 0}, "effect": "none", "capturedPieceIndices": [],
 		},
 	}
 

@@ -23,5 +23,6 @@ final class GameDescriptor {
 const List<GameDescriptor> gameCatalog = <GameDescriptor>[
   GameDescriptor(id: 'gomoku', title: '五子棋', playerCount: 2),
   GameDescriptor(id: 'chinese_checkers', title: '跳棋', playerCount: 2),
+  GameDescriptor(id: 'flight_chess', title: '飞行棋', playerCount: 2),
   GameDescriptor(id: 'rps', title: '石头剪刀布', playerCount: 2),
 ];

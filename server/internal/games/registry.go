@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 )
@@ -30,7 +31,7 @@ type Registry struct {
 
 // NewRegistry returns the production registry.
 func NewRegistry() *Registry {
-	registry, err := NewRegistryFrom(chinesecheckers.NewRules(), gomoku.NewRules(), rps.NewRules())
+	registry, err := NewRegistryFrom(chinesecheckers.NewRules(), flightchess.NewRules(), gomoku.NewRules(), rps.NewRules())
 	if err != nil {
 		panic("games: invalid built-in registry")
 	}

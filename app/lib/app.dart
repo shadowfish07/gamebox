@@ -32,6 +32,7 @@ class GameboxApp extends StatefulWidget {
     this.matchHistoryApi,
     this.rpsController,
     this.chineseCheckersController,
+    this.flightChessController,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
@@ -47,6 +48,7 @@ class GameboxApp extends StatefulWidget {
   final MatchHistoryApi? matchHistoryApi;
   final RpsController? rpsController;
   final HomeController? chineseCheckersController;
+  final HomeController? flightChessController;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -62,10 +64,12 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   ApiClient? _ownedApiClient;
   HomeController? _homeController;
   HomeController? _chineseCheckersController;
+  HomeController? _flightChessController;
   RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
   var _ownsChineseCheckersController = false;
+  var _ownsFlightChessController = false;
   var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
 
@@ -129,6 +133,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsChineseCheckersController = false;
       } else if (_homeControllerAuthenticated) {
         _chineseCheckersController?.pauseForeground();
+      }
+      if (_ownsFlightChessController) {
+        _flightChessController?.dispose();
+        _flightChessController = null;
+        _ownsFlightChessController = false;
+      } else if (_homeControllerAuthenticated) {
+        _flightChessController?.pauseForeground();
       }
       _homeControllerAuthenticated = false;
       return;
@@ -195,11 +206,37 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsChineseCheckersController = true;
       }
     }
+    if (_flightChessController == null &&
+        (widget.flightChessController != null ||
+            widget.homeController == null)) {
+      final injected = widget.flightChessController;
+      if (injected != null) {
+        _flightChessController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _flightChessController = HomeController(
+          repository: GomokuRepository(
+            api: HttpHomeApi(
+              apiClient,
+              sessionController,
+              gameId: flightChessGameId,
+            ),
+            gameLauncher: widget.gameLauncher,
+            gameId: flightChessGameId,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsFlightChessController = true;
+      }
+    }
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
+    _flightChessController?.resumeForeground();
   }
 
   @override
@@ -210,6 +247,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _homeController?.pauseForeground();
       _rpsController?.pauseForeground();
       _chineseCheckersController?.pauseForeground();
+      _flightChessController?.pauseForeground();
     }
   }
 
@@ -224,6 +262,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
+    _flightChessController?.resumeForeground();
   }
 
   @override
@@ -246,9 +285,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsChineseCheckersController) {
       _chineseCheckersController?.dispose();
     }
+    if (_ownsFlightChessController) {
+      _flightChessController?.dispose();
+    }
     _homeController = null;
     _rpsController = null;
     _chineseCheckersController = null;
+    _flightChessController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     widget.updateController?.dispose();
@@ -392,6 +435,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       historyApi: historyApi,
       rpsController: _rpsController,
       chineseCheckersController: _chineseCheckersController,
+      flightChessController: _flightChessController,
       updateController: widget.updateController,
     );
   }

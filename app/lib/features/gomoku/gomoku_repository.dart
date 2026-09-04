@@ -14,7 +14,9 @@ final class GomokuRepository {
   }) : _gameId = gameId,
        _apiBaseUri = apiBaseUri ?? Uri.parse(apiBaseUrl),
        _now = now ?? DateTime.now {
-    if (gameId != gomokuGameId && gameId != chineseCheckersGameId) {
+    if (gameId != gomokuGameId &&
+        gameId != chineseCheckersGameId &&
+        gameId != flightChessGameId) {
       throw ArgumentError.value(gameId, 'gameId', 'unsupported board game');
     }
     if (!_isHttpOrigin(_apiBaseUri)) {

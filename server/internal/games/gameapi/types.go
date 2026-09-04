@@ -5,6 +5,7 @@ package gameapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 )
 
 var (
@@ -46,6 +47,13 @@ type Rules interface {
 	PlayerLimit() int
 	Rebuild(events []Event) (Snapshot, error)
 	Apply(snapshot Snapshot, actorID string, action Action) (Event, Snapshot, error)
+}
+
+// RandomizedRules is an optional server-only action boundary for games whose
+// accepted event contains fresh randomness. The platform serializes reader
+// access, and Rebuild must remain deterministic from the persisted event.
+type RandomizedRules interface {
+	ApplyRandom(snapshot Snapshot, actorID string, action Action, randomSource io.Reader) (Event, Snapshot, error)
 }
 
 // Configurator binds immutable, persisted match configuration to a rules

@@ -2,6 +2,11 @@ extends RefCounted
 
 const FlightChessScene = preload("res://games/flight_chess/flight_chess_scene.tscn")
 const FlightChessController = preload("res://games/flight_chess/flight_chess_controller.gd")
+const MATCH_ID := "11111111-1111-4111-8111-111111111111"
+const BLACK_ID := "22222222-2222-4222-8222-222222222222"
+const WHITE_ID := "33333333-3333-4333-8333-333333333333"
+const ROLL_ACTION_ID := "44444444-4444-4444-8444-444444444444"
+const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 
 static func cases() -> Array:
@@ -12,6 +17,8 @@ static func cases() -> Array:
 		{"name": "flight chess scene keeps standard phone actions on screen", "run": _keeps_standard_actions_visible},
 		{"name": "flight chess scene stays inside landscape phone safe areas", "run": _respects_phone_safe_areas},
 		{"name": "flight chess scene rolls before enabling manual plane selection", "run": _rolls_before_selection},
+		{"name": "flight chess scene waits for authoritative roll and move events", "run": _waits_for_authoritative_actions},
+		{"name": "flight chess Back returns without resigning", "run": _back_is_non_destructive},
 	]
 
 
@@ -174,7 +181,179 @@ static func _rolls_before_selection() -> bool:
 	return result
 
 
+static func _waits_for_authoritative_actions() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_network_snapshot(0))
+	var roll_button := scene.get_node("RightRail/Content/RollButton") as Button
+	var board = scene.get_node("Board")
+	if not _check(not roll_button.disabled, "authoritative roll phase did not enable the roll action"):
+		return _network_cleanup(scene)
+	scene._on_roll_pressed()
+	if not _check(client.roll_requests == 1, "roll action was not submitted") \
+		or not _check(scene.dice_value == 0 and board.selectable_piece_indices.is_empty(), "roll changed the board optimistically"):
+		return _network_cleanup(scene)
+	client.accept_event(_network_roll(1))
+	if not _check(scene.dice_value == 6 and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
+		return _network_cleanup(scene)
+	scene._on_piece_pressed("red", 1)
+	if not _check(client.move_requests == [1], "selected plane was not submitted") \
+		or not _check(scene.piece_state("red", 1)["zone"] == "hangar", "plane moved before server confirmation"):
+		return _network_cleanup(scene)
+	client.accept_event(_network_move(2, 1))
+	return _network_cleanup(
+		scene,
+		_check(scene.piece_state("red", 1)["zone"] == "launch", "accepted plane did not launch") \
+			and _check(not roll_button.disabled, "accepted six did not enable the extra roll"),
+	)
+
+
+static func _back_is_non_destructive() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_network_snapshot(0))
+	scene._on_back_pressed()
+	return _network_cleanup(
+		scene,
+		_check(client.resign_requests == 0, "Back submitted resignation") \
+			and _check(client.dispose_calls == 1, "Back did not dispose the client") \
+			and _check(harness["quit_calls"].size() == 1, "Back did not return to the lobby"),
+	)
+
+
+static func _network_scene_harness() -> Dictionary:
+	var scene := FlightChessScene.instantiate() as Control
+	var client := FakeMatchClient.new()
+	var quit_calls: Array = []
+	scene.configure_launch({
+		"game_id": "flight_chess", "match_id": MATCH_ID,
+		"launch_ticket": "opaque-test-ticket", "ws_url": "ws://127.0.0.1:8080/v1/ws",
+	})
+	scene.set_match_client_factory(func() -> Variant: return client)
+	scene.set_quit_callback(func() -> void: quit_calls.append(true))
+	(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	return {"scene": scene, "client": client, "quit_calls": quit_calls}
+
+
+static func _network_snapshot(revision: int) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "flight_chess", "matchId": MATCH_ID,
+		"revision": revision, "type": "platform.snapshot",
+		"payload": {
+			"status": "active", "phase": "awaiting_roll",
+			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
+			"dice": 0, "consecutiveSixes": 0, "sixMovedPieceIndices": [],
+			"pieces": _network_pieces(), "winnerUserId": null, "result": null,
+		},
+	}
+
+
+static func _network_roll(revision: int) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "flight_chess", "matchId": MATCH_ID,
+		"revision": revision, "type": "flight_chess.roll.accepted", "actionId": ROLL_ACTION_ID,
+		"payload": {
+			"color": "black", "userId": BLACK_ID, "value": 6,
+			"movablePieceIndices": [0, 1, 2, 3], "penalizedPieceIndices": [],
+		},
+	}
+
+
+static func _network_move(revision: int, piece_index: int) -> Dictionary:
+	return {
+		"protocolVersion": 1, "gameId": "flight_chess", "matchId": MATCH_ID,
+		"revision": revision, "type": "flight_chess.move.accepted", "actionId": MOVE_ACTION_ID,
+		"payload": {
+			"color": "black", "userId": BLACK_ID, "pieceIndex": piece_index, "roll": 6,
+			"from": {"zone": "hangar", "index": piece_index},
+			"to": {"zone": "launch", "index": 0}, "effect": "none", "capturedPieceIndices": [],
+		},
+	}
+
+
+static func _network_pieces() -> Dictionary:
+	var pieces := {"black": [], "white": []}
+	for color in pieces:
+		for index in 4:
+			pieces[color].append({"zone": "hangar", "index": index})
+	return pieces
+
+
+static func _network_cleanup(scene: Control, result: bool = false) -> bool:
+	if is_instance_valid(scene):
+		scene.free()
+	return result
+
+
 static func _check(condition: bool, message: String) -> bool:
 	if not condition:
 		push_error(message)
 	return condition
+
+
+class FakeMatchClient:
+	extends RefCounted
+
+	signal connection_state_changed(next_state: String)
+	signal snapshot_sync_started
+	signal snapshot_received(envelope: Dictionary)
+	signal event_received(envelope: Dictionary)
+	signal player_presence_changed(user_id: String, online: bool)
+	signal match_error(code: String)
+	signal return_to_lobby_requested(code: String)
+
+	var connection_state := "closed"
+	var local_user_id := BLACK_ID
+	var state: Variant
+	var roll_requests := 0
+	var move_requests: Array = []
+	var resign_requests := 0
+	var dispose_calls := 0
+
+	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant, game_id: String) -> bool:
+		state = game_state
+		connection_state = "connecting"
+		return game_id == "flight_chess"
+
+	func poll() -> void:
+		pass
+
+	func request_flight_chess_roll() -> String:
+		if not state.mark_pending_roll(ROLL_ACTION_ID, local_user_id):
+			return ""
+		roll_requests += 1
+		return ROLL_ACTION_ID
+
+	func request_flight_chess_move(piece_index: int) -> String:
+		if not state.mark_pending_move(MOVE_ACTION_ID, piece_index, local_user_id):
+			return ""
+		move_requests.append(piece_index)
+		return MOVE_ACTION_ID
+
+	func request_resign() -> String:
+		resign_requests += 1
+		return MOVE_ACTION_ID if state.mark_pending_resign(MOVE_ACTION_ID, local_user_id) else ""
+
+	func has_player_presence(_user_id: String) -> bool:
+		return true
+
+	func is_player_online(_user_id: String) -> bool:
+		return true
+
+	func dispose() -> void:
+		dispose_calls += 1
+
+	func accept_snapshot(envelope: Dictionary) -> void:
+		connection_state = "connected"
+		connection_state_changed.emit(connection_state)
+		snapshot_received.emit(envelope)
+
+	func accept_event(envelope: Dictionary) -> void:
+		var applied: Dictionary = state.apply_event(envelope)
+		if not applied.get("ok", false):
+			push_error("fake Flight Chess event invalid")
+			return
+		event_received.emit(envelope)

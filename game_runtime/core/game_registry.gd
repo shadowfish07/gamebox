@@ -3,6 +3,7 @@ extends RefCounted
 
 const SCENES := {
 	"chinese_checkers": preload("res://games/chinese_checkers/chinese_checkers_scene.tscn"),
+	"flight_chess": preload("res://games/flight_chess/flight_chess_scene.tscn"),
 	"gomoku": preload("res://games/gomoku/gomoku_scene.tscn"),
 	"rps": preload("res://games/rps/rps_scene.tscn"),
 }

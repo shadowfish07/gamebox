@@ -1,7 +1,7 @@
 class_name LaunchConfig
 extends RefCounted
 
-const GAME_IDS := ["chinese_checkers", "gomoku", "rps"]
+const GAME_IDS := ["chinese_checkers", "flight_chess", "gomoku", "rps"]
 const REQUIRED_KEYS := ["--game-id", "--match-id", "--launch-ticket", "--ws-url"]
 const SAFE_ERROR_MESSAGE := "Invalid launch configuration."
 

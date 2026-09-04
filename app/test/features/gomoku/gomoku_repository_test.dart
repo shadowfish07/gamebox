@@ -94,6 +94,29 @@ void main() {
     },
   );
 
+  test('board-game repository launches Flight Chess with its own id', () async {
+    final api = _FakeHomeApi()
+      ..onTicket = (_) async => GomokuLaunchTicket(
+        matchId: matchId,
+        gameId: flightChessGameId,
+        launchTicket: 'launch-ticket',
+        expiresAt: now.add(const Duration(minutes: 1)),
+      );
+    final launcher = _FakeGameLauncher(<String>[]);
+    final repository = GomokuRepository(
+      api: api,
+      gameLauncher: launcher,
+      gameId: flightChessGameId,
+      apiBaseUri: Uri.parse('https://games.example.test'),
+      now: () => now,
+    );
+
+    await repository.openMatch(matchId);
+
+    expect(launcher.request?.gameId, flightChessGameId);
+    expect(launcher.request?.wsUrl, 'wss://games.example.test/v1/ws');
+  });
+
   test(
     'createAndOpen obtains the match id then calls the same launch flow',
     () async {

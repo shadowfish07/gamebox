@@ -13,6 +13,7 @@ const TEST_SUITES := [
 	preload("res://test/test_gomoku_board.gd"),
 	preload("res://test/test_chinese_checkers_board.gd"),
 	preload("res://test/test_flight_chess_board.gd"),
+	preload("res://test/test_flight_chess_state.gd"),
 	preload("res://test/test_chinese_checkers_scene.gd"),
 	preload("res://test/test_flight_chess_scene.gd"),
 	preload("res://test/test_gomoku_scene.gd"),

@@ -29,6 +29,7 @@ import (
 	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -295,7 +296,7 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 
 	gamesResponse := fixture.request(t, http.MethodGet, "/v1/games", "", alice.Session.AccessToken)
-	if gamesResponse.Code != http.StatusOK || gamesResponse.Body.String() != "{\"games\":[{\"id\":\"chinese_checkers\",\"title\":\"跳棋\",\"playerCount\":2},{\"id\":\"gomoku\",\"title\":\"五子棋\",\"playerCount\":2},{\"id\":\"rps\",\"title\":\"石头剪刀布\",\"playerCount\":2}]}\n" {
+	if gamesResponse.Code != http.StatusOK || gamesResponse.Body.String() != "{\"games\":[{\"id\":\"chinese_checkers\",\"title\":\"跳棋\",\"playerCount\":2},{\"id\":\"flight_chess\",\"title\":\"飞行棋\",\"playerCount\":2},{\"id\":\"gomoku\",\"title\":\"五子棋\",\"playerCount\":2},{\"id\":\"rps\",\"title\":\"石头剪刀布\",\"playerCount\":2}]}\n" {
 		t.Fatalf("games=(%d,%q)", gamesResponse.Code, gamesResponse.Body.String())
 	}
 
@@ -1898,10 +1899,47 @@ func TestChineseCheckersLobbyRoutesBindTheExactGame(t *testing.T) {
 	}
 }
 
+func TestFlightChessLobbyRoutesBindTheExactGame(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "flight-chess-route-a", "Alice")
+	bob := fixture.register(t, "flight-chess-route-b", "Bob")
+
+	opponents := fixture.request(t, http.MethodGet, "/v1/games/flight_chess/opponents", "", alice.Session.AccessToken)
+	if opponents.Code != http.StatusOK || !strings.Contains(opponents.Body.String(), bob.Session.User.ID) {
+		t.Fatalf("opponents=(%d,%q)", opponents.Code, opponents.Body.String())
+	}
+	idle := fixture.request(t, http.MethodGet, "/v1/games/flight_chess/status", "", alice.Session.AccessToken)
+	if idle.Code != http.StatusOK || idle.Body.String() != "{\"state\":\"idle\"}\n" {
+		t.Fatalf("idle=(%d,%q)", idle.Code, idle.Body.String())
+	}
+	created := fixture.request(t, http.MethodPost, "/v1/games/flight_chess/matches", `{"opponentId":`+quote(bob.Session.User.ID)+`}`, alice.Session.AccessToken)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create=(%d,%q)", created.Code, created.Body.String())
+	}
+	var body struct {
+		Match struct {
+			ID     string `json:"id"`
+			GameID string `json:"gameId"`
+		} `json:"match"`
+	}
+	decodeResponse(t, created, &body)
+	if body.Match.GameID != flightchess.GameID {
+		t.Fatalf("created game=%q", body.Match.GameID)
+	}
+	active := fixture.request(t, http.MethodGet, "/v1/games/flight_chess/status", "", bob.Session.AccessToken)
+	if active.Code != http.StatusOK || !strings.Contains(active.Body.String(), body.Match.ID) || !strings.Contains(active.Body.String(), `"color":"white"`) {
+		t.Fatalf("active=(%d,%q)", active.Code, active.Body.String())
+	}
+	ticket := fixture.request(t, http.MethodPost, "/v1/matches/"+body.Match.ID+"/launch-ticket", `{}`, bob.Session.AccessToken)
+	if ticket.Code != http.StatusCreated || !strings.Contains(ticket.Body.String(), `"gameId":"flight_chess"`) {
+		t.Fatalf("ticket=(%d,%q)", ticket.Code, ticket.Body.String())
+	}
+}
+
 func TestGetRoutesAdvertiseAndHonorHEAD(t *testing.T) {
 	fixture := newAPIFixture(t)
 	alice := fixture.register(t, "head-a", "Alice")
-	for _, path := range []string{"/healthz", "/v1/me", "/v1/games", "/v1/games/chinese_checkers/status", "/v1/games/chinese_checkers/opponents", "/v1/games/gomoku/status", "/v1/games/gomoku/opponents"} {
+	for _, path := range []string{"/healthz", "/v1/me", "/v1/games", "/v1/games/chinese_checkers/status", "/v1/games/chinese_checkers/opponents", "/v1/games/flight_chess/status", "/v1/games/flight_chess/opponents", "/v1/games/gomoku/status", "/v1/games/gomoku/opponents"} {
 		request := httptest.NewRequest(http.MethodOptions, path, nil)
 		response := httptest.NewRecorder()
 		fixture.handler.ServeHTTP(response, request)

@@ -28,6 +28,7 @@ final class HomePage extends StatefulWidget {
     required this.historyApi,
     this.rpsController,
     this.chineseCheckersController,
+    this.flightChessController,
     this.updateController,
   });
 
@@ -37,6 +38,7 @@ final class HomePage extends StatefulWidget {
   final MatchHistoryApi historyApi;
   final RpsController? rpsController;
   final HomeController? chineseCheckersController;
+  final HomeController? flightChessController;
   final UpdateController? updateController;
 
   @override
@@ -53,6 +55,8 @@ final class _HomePageState extends State<HomePage> {
     widget.rpsController?.start();
     widget.chineseCheckersController?.addListener(_changed);
     widget.chineseCheckersController?.start();
+    widget.flightChessController?.addListener(_changed);
+    widget.flightChessController?.start();
   }
 
   @override
@@ -74,6 +78,11 @@ final class _HomePageState extends State<HomePage> {
       widget.chineseCheckersController?.addListener(_changed);
       widget.chineseCheckersController?.start();
     }
+    if (oldWidget.flightChessController != widget.flightChessController) {
+      oldWidget.flightChessController?.removeListener(_changed);
+      widget.flightChessController?.addListener(_changed);
+      widget.flightChessController?.start();
+    }
   }
 
   void _changed() {
@@ -85,6 +94,7 @@ final class _HomePageState extends State<HomePage> {
     widget.controller.removeListener(_changed);
     widget.rpsController?.removeListener(_changed);
     widget.chineseCheckersController?.removeListener(_changed);
+    widget.flightChessController?.removeListener(_changed);
     super.dispose();
   }
 
@@ -155,6 +165,28 @@ final class _HomePageState extends State<HomePage> {
 
   Future<void> _continueChineseCheckersMatch() async {
     final error = await widget.chineseCheckersController?.openActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _chooseFlightChessOpponent() async {
+    final controller = widget.flightChessController;
+    if (controller == null) return;
+    final error = await Navigator.of(context).push<ApiError?>(
+      MaterialPageRoute<ApiError?>(
+        builder: (_) => OpponentPage(
+          controller: controller,
+          currentUserId: widget.currentUserId,
+          pageTitle: '选择飞行棋对手',
+          semanticPrefix: 'flight-chess-',
+          gameTitle: '飞行棋',
+        ),
+      ),
+    );
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _continueFlightChessMatch() async {
+    final error = await widget.flightChessController?.openActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -233,6 +265,29 @@ final class _HomePageState extends State<HomePage> {
     if (mounted && error != null) _showError(error);
   }
 
+  Future<void> _cancelFlightChessMatch() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('取消这局尚未开始的飞行棋对局？'),
+        content: const Text('取消后，双方将返回空闲状态。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('保留对局'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('取消对局'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final error = await widget.flightChessController?.cancelActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
   void _showError(ApiError error) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -271,6 +326,9 @@ final class _HomePageState extends State<HomePage> {
           if (widget.chineseCheckersController
               case final HomeController chineseCheckersController)
             _buildChineseCheckers(chineseCheckersController),
+          if (widget.flightChessController
+              case final HomeController flightChessController)
+            _buildFlightChess(flightChessController),
           if (widget.rpsController case final RpsController rpsController)
             _buildRps(rpsController),
         ],
@@ -368,6 +426,37 @@ final class _HomePageState extends State<HomePage> {
       onContinue: _continueChineseCheckersMatch,
       onCancel: _cancelChineseCheckersMatch,
       onOpenHistory: () => _openHistory(MatchHistoryGame.chineseCheckers),
+    );
+  }
+
+  Widget _buildFlightChess(HomeController controller) {
+    if (controller.status == null && controller.isLoading) {
+      return const GameboxAsyncPanel(
+        icon: Icons.flight_takeoff_outlined,
+        title: '正在加载飞行棋',
+        message: '请稍候，正在获取最新对局状态。',
+        isLoading: true,
+      );
+    }
+    if (controller.status == null && controller.lastError != null) {
+      return _HomeError(
+        message: controller.lastError!.message,
+        onRetry: controller.refresh,
+        retryIdentifier: 'flight-chess-retry-home',
+        historyGame: MatchHistoryGame.flightChess,
+        onOpenHistory: () => _openHistory(MatchHistoryGame.flightChess),
+      );
+    }
+    final status = controller.status;
+    if (status == null) return const SizedBox.shrink();
+    return _FlightChessCard(
+      status: status,
+      isLaunching: controller.isLaunching,
+      isMutating: controller.isMutating,
+      onChoose: _chooseFlightChessOpponent,
+      onContinue: _continueFlightChessMatch,
+      onCancel: _cancelFlightChessMatch,
+      onOpenHistory: () => _openHistory(MatchHistoryGame.flightChess),
     );
   }
 }
@@ -648,6 +737,93 @@ final class _ChineseCheckersCard extends StatelessWidget {
                 onContinue: onContinue,
                 onCancel: onCancel,
                 historyGame: MatchHistoryGame.chineseCheckers,
+                onOpenHistory: onOpenHistory,
+              ),
+            },
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _FlightChessCard extends StatelessWidget {
+  const _FlightChessCard({
+    required this.status,
+    required this.isLaunching,
+    required this.isMutating,
+    required this.onChoose,
+    required this.onContinue,
+    required this.onCancel,
+    required this.onOpenHistory,
+  });
+
+  final GomokuStatus status;
+  final bool isLaunching;
+  final bool isMutating;
+  final VoidCallback onChoose;
+  final VoidCallback onContinue;
+  final VoidCallback onCancel;
+  final VoidCallback onOpenHistory;
+
+  @override
+  Widget build(BuildContext context) {
+    final descriptor = gameCatalog.firstWhere(
+      (game) => game.id == flightChessGameId,
+    );
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MergeSemantics(
+              key: const Key('game-flight-chess'),
+              child: Semantics(
+                identifier: 'game-flight-chess',
+                header: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      descriptor.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    Text('${descriptor.playerCount} 人 · 掷骰竞速'),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              status is GomokuIdleStatus ? '可开始新对局' : '对局进行中',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
+            switch (status) {
+              GomokuIdleStatus _ => _PrimaryAndHistoryActions(
+                game: MatchHistoryGame.flightChess,
+                onOpenHistory: onOpenHistory,
+                primary: _ActionButton(
+                  semanticKey: const Key('flight-chess-choose-opponent'),
+                  semanticLabel: 'flight-chess-choose-opponent',
+                  onPressed: isMutating ? null : onChoose,
+                  label: '选择对手',
+                  pendingLabel: '正在创建对局',
+                  isPending: isMutating,
+                ),
+              ),
+              GomokuActiveStatus active => _ActiveMatchActions(
+                active: active,
+                sideLabel:
+                    '你的阵营：${active.match.color == GomokuColor.black ? '红方 · 先手' : '黄方 · 后手'}',
+                semanticPrefix: 'flight-chess-',
+                isLaunching: isLaunching,
+                isMutating: isMutating,
+                onContinue: onContinue,
+                onCancel: onCancel,
+                historyGame: MatchHistoryGame.flightChess,
                 onOpenHistory: onOpenHistory,
               ),
             },

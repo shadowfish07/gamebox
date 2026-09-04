@@ -61,6 +61,18 @@ void main() {
     expect(page.matches.single.rpsFormat, isNull);
   });
 
+  test('decodes Flight Chess history with its game-specific labels', () {
+    final page = MatchHistoryPageData.fromEnvelope(
+      _validEnvelope(),
+      game: MatchHistoryGame.flightChess,
+    );
+
+    expect(MatchHistoryGame.flightChess.id, 'flight_chess');
+    expect(MatchHistoryGame.flightChess.pageTitle, '飞行棋战绩');
+    expect(MatchHistoryGame.flightChess.countUnit, '次');
+    expect(page.matches.single.rpsFormat, isNull);
+  });
+
   test('rejects every non-exact history object layer', () {
     final valid = _validEnvelope();
     final cases = <String, Map<String, Object?>>{
