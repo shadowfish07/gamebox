@@ -3325,6 +3325,10 @@ flight_revision=1
 flight_roll_attempts=1
 while [[ "$(jq -r '.phase' <<<"$flight_snapshot")" != awaiting_move ]]; do
 	((flight_roll_attempts < 40)) || fail "Flight Chess did not produce a launch roll within 40 authoritative rolls"
+	for serial in "$SERIAL_A" "$SERIAL_B"; do
+		wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
+			|| fail "$serial did not render Flight Chess roll revision $flight_revision before the next turn"
+	done
 	flight_color="$(jq -er '.nextColor' <<<"$flight_snapshot")"
 	if [[ "$flight_color" == black ]]; then
 		flight_serial="$FLIGHT_BLACK_SERIAL"
