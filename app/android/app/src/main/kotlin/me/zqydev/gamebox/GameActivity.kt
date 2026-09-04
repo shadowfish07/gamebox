@@ -20,9 +20,9 @@ class GameActivity : GodotActivity() {
     override fun getCommandLine(): MutableList<String> =
         privateCommandLineArgs.combineWith(super.getCommandLine())
 
-    override fun onNewIntent(intent: Intent) {
-        privateCommandLineArgs.discardFrom(intent)
-        super.onNewIntent(intent)
+    override fun onNewIntent(newIntent: Intent) {
+        privateCommandLineArgs.discardFrom(newIntent)
+        super.onNewIntent(newIntent)
     }
 
     override fun onNewGodotInstanceRequested(args: Array<String>): Int {
