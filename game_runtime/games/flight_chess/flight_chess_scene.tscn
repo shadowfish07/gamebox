@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_board.gd" id="2_board"]
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_dice.gd" id="3_dice"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_back_button.tscn" id="4_back"]
+[ext_resource type="Script" path="res://games/flight_chess/flight_chess_backdrop.gd" id="5_backdrop"]
 
 [node name="FlightChess" type="Control"]
 layout_mode = 3
@@ -23,6 +24,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 theme_type_variation = &"FlightChessBackground"
+script = ExtResource("5_backdrop")
 
 [node name="LeftRail" type="PanelContainer" parent="."]
 offset_left = 24.0
@@ -35,7 +37,9 @@ theme_type_variation = &"FlightChessRail"
 layout_mode = 2
 
 [node name="BackButton" parent="LeftRail/Content" instance=ExtResource("4_back")]
+custom_minimum_size = Vector2(176, 96)
 layout_mode = 2
+size_flags_horizontal = 0
 text = "← 返回"
 
 [node name="Eyebrow" type="Label" parent="LeftRail/Content"]

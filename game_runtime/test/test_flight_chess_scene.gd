@@ -49,7 +49,9 @@ static func _keeps_board_dominant() -> bool:
 		if not _check(is_equal_approx(board.size.x, board.size.y), "board stretched at %s" % viewport) \
 			or not _check(board.size.x > left.size.x and board.size.x > right.size.x, "board stopped being dominant at %s" % viewport) \
 			or not _check(left.end.x < board.position.x and board.end.x < right.position.x, "rail overlaps the board at %s" % viewport) \
-			or not _check(left.position.x >= 24.0 and right.end.x <= viewport.x - 24.0, "safe edge margin drifted at %s" % viewport):
+			or not _check(left.position.x >= 24.0 and left.position.x <= 40.0, "left rail is not anchored to the usable edge at %s" % viewport) \
+			or not _check(right.end.x <= viewport.x - 24.0 and right.end.x >= viewport.x - 40.0, "right rail is not anchored to the usable edge at %s" % viewport) \
+			or not _check(board.get_center().is_equal_approx(viewport * 0.5), "board is not centered in the usable viewport at %s" % viewport):
 			return false
 	return true
 
@@ -62,11 +64,15 @@ static func _keeps_standard_actions_visible() -> bool:
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	var right_rail := scene.get_node("RightRail") as PanelContainer
+	var left_rail := scene.get_node("LeftRail") as PanelContainer
+	var back_button := scene.get_node("LeftRail/Content/BackButton") as Button
 	var dice_card := scene.get_node("RightRail/Content/DiceCard") as PanelContainer
 	var roll_button := scene.get_node("RightRail/Content/RollButton") as Button
 	var hint := scene.get_node("RightRail/Content/HintLabel") as Label
 	var intended_layout: Dictionary = FlightChessController.layout_for_size(Vector2(1920.0, 1080.0))
 	var result := _check(right_rail.get_global_rect().is_equal_approx(intended_layout["right"]), "standard phone rail retained a stale portrait height") \
+		and _check(left_rail.get_global_rect().encloses(back_button.get_global_rect()), "standard phone clips the visible back action") \
+		and _check(back_button.size.x >= 96.0 and back_button.size.y >= 96.0, "visible back action is smaller than 48dp") \
 		and _check(dice_card.visible and roll_button.visible, "standard phone hid the primary controls") \
 		and _check(right_rail.get_global_rect().encloses(dice_card.get_global_rect()), "standard phone clips the dice") \
 		and _check(right_rail.get_global_rect().encloses(roll_button.get_global_rect()), "standard phone clips the roll action") \
@@ -109,8 +115,9 @@ static func _respects_phone_safe_areas() -> bool:
 	)
 	var result := _check(is_equal_approx(board.size.x, board.size.y), "safe-area board stretched") \
 		and _check(left.end.x < board.position.x and board.end.x < right.position.x, "safe-area rails overlap the board") \
-		and _check(right.end.x <= safe_rect.end.x - 32.0, "right rail lost the 16dp page inset") \
-		and _check(left.position.x >= safe_rect.position.x + 32.0, "left rail lost the 16dp page inset") \
+		and _check(is_equal_approx(right.end.x, safe_rect.end.x - 32.0), "right rail is not anchored to the 16dp page inset") \
+		and _check(is_equal_approx(left.position.x, safe_rect.position.x + 32.0), "left rail is not anchored to the 16dp page inset") \
+		and _check(board.get_center().is_equal_approx(safe_rect.get_center()), "safe-area board is not centered") \
 		and _check(FlightChessController.layout_is_compact(short_safe_layout), "short safe-area phone did not switch to compact controls")
 	var scene = FlightChessScene.instantiate()
 	(scene as Control).set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -159,6 +166,8 @@ static func _rolls_before_selection() -> bool:
 		and _check(scene.dice_value == 0, "resolved selection retained the die") \
 		and _check(not roll_button.disabled, "rolling six did not grant another roll")
 	result = result \
+		and _check(scene.set_preview_state("selected"), "selected preview state was rejected") \
+		and _check(board.selected_piece_index == 0, "selected preview does not exercise the real board selection binding") \
 		and _check(scene.set_preview_state("pressed"), "pressed preview state was rejected") \
 		and _check(board.pressed_piece_index == 0, "pressed preview does not exercise the real board press binding")
 	scene.free()

@@ -58,15 +58,34 @@ func _draw() -> void:
 
 func _draw_idle_mark(rect: Rect2) -> void:
 	var center := rect.get_center()
-	var distance := rect.size.x * 0.18
-	var radius := rect.size.x * 0.075
-	var colors := [
-		FlightChessBoard.PLAYER_COLORS["yellow"], FlightChessBoard.PLAYER_COLORS["green"],
-		FlightChessBoard.PLAYER_COLORS["blue"], FlightChessBoard.PLAYER_COLORS["red"],
+	var color := get_theme_color("pip_color", "FlightChessDice")
+	var radius := rect.size.x * 0.24
+	draw_circle(center, radius, Color(color, GameboxTokens.GAME["board_side_camp_alpha"]))
+	draw_arc(center, radius, -0.22, PI * 1.08, 28, Color(color, GameboxTokens.GAME["pending_overlay_alpha"]), maxf(2.0, rect.size.x * 0.025), true)
+	draw_arc(center, radius, PI - 0.22, PI * 2.08, 28, Color(color, GameboxTokens.GAME["board_grid_alpha"]), maxf(2.0, rect.size.x * 0.018), true)
+	var direction := Vector2.RIGHT.rotated(-0.22)
+	var tip := center + direction * radius
+	var perpendicular := Vector2(-direction.y, direction.x)
+	draw_colored_polygon(PackedVector2Array([
+		tip,
+		tip - direction * rect.size.x * 0.09 + perpendicular * rect.size.x * 0.05,
+		tip - direction * rect.size.x * 0.09 - perpendicular * rect.size.x * 0.05,
+	]), color)
+	_draw_plane_mark(center, rect.size.x * 0.17, color)
+
+
+func _draw_plane_mark(center: Vector2, radius: float, color: Color) -> void:
+	var source := [
+		Vector2(0.92, 0.0), Vector2(0.2, -0.16), Vector2(-0.14, -0.78),
+		Vector2(-0.36, -0.78), Vector2(-0.22, -0.13), Vector2(-0.74, -0.34),
+		Vector2(-0.88, -0.18), Vector2(-0.42, 0.0), Vector2(-0.88, 0.18),
+		Vector2(-0.74, 0.34), Vector2(-0.22, 0.13), Vector2(-0.36, 0.78),
+		Vector2(-0.14, 0.78), Vector2(0.2, 0.16),
 	]
-	var offsets := [Vector2(-distance, -distance), Vector2(distance, -distance), Vector2(-distance, distance), Vector2(distance, distance)]
-	for index in 4:
-		draw_circle(center + offsets[index], radius, colors[index])
+	var points := PackedVector2Array()
+	for point in source:
+		points.append(center + point * radius)
+	draw_colored_polygon(points, color)
 
 
 func _draw_pips(rect: Rect2) -> void:

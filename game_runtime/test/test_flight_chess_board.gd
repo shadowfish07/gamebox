@@ -6,6 +6,9 @@ const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd
 static func cases() -> Array:
 	return [
 		{"name": "flight chess board exposes the classic 52-space topology", "run": _exposes_classic_topology},
+		{"name": "flight chess board keeps its four route quadrants rotationally symmetric", "run": _keeps_route_quadrants_symmetric},
+		{"name": "flight chess board keeps home lanes visually separate from the shared route", "run": _separates_home_lanes_from_route},
+		{"name": "flight chess board keeps launch pads fully inside the playfield", "run": _keeps_launch_pads_inside},
 		{"name": "flight chess board remains square inside landscape bounds", "run": _remains_square},
 		{"name": "flight chess board maps selectable planes to stable hit targets", "run": _maps_selectable_planes},
 		{"name": "flight chess board resolves imprecise phone taps to the nearest legal plane", "run": _snaps_imprecise_taps},
@@ -37,6 +40,46 @@ static func _exposes_classic_topology() -> bool:
 			"red": Vector2i(43, 3), "blue": Vector2i(4, 16),
 		}, "shortcut graph drifted") \
 		and _check((topology["home_stretches"] as Dictionary).values().all(func(points: Array) -> bool: return points.size() == 6), "a home stretch is not six spaces")
+
+
+static func _separates_home_lanes_from_route() -> bool:
+	for color in FlightChessBoard.HOME_STRETCHES:
+		for home_point in FlightChessBoard.HOME_STRETCHES[color]:
+			for route_point in FlightChessBoard.MAIN_PATH:
+				if not _check(
+					(home_point as Vector2).distance_to(route_point) >= FlightChessBoard.MIN_LANE_CLEARANCE,
+					"%s home lane overlaps the shared route at %s" % [color, home_point],
+				):
+					return false
+	return true
+
+
+static func _keeps_route_quadrants_symmetric() -> bool:
+	for quadrant in range(1, 4):
+		for index in 13:
+			var expected: Vector2 = FlightChessBoard.MAIN_PATH[index]
+			for _turn in quadrant:
+				expected = Vector2(FlightChessBoard.BOARD_UNITS - expected.y, expected.x)
+			if not _check(
+				(FlightChessBoard.MAIN_PATH[quadrant * 13 + index] as Vector2).is_equal_approx(expected),
+				"shared route lost rotational symmetry in quadrant %d" % quadrant,
+			):
+				return false
+	return true
+
+
+static func _keeps_launch_pads_inside() -> bool:
+	for color in FlightChessBoard.LAUNCH_POINTS:
+		var point: Vector2 = FlightChessBoard.LAUNCH_POINTS[color]
+		if not _check(
+			point.x >= FlightChessBoard.LAUNCH_EDGE_CLEARANCE
+				and point.y >= FlightChessBoard.LAUNCH_EDGE_CLEARANCE
+				and point.x <= FlightChessBoard.BOARD_UNITS - FlightChessBoard.LAUNCH_EDGE_CLEARANCE
+				and point.y <= FlightChessBoard.BOARD_UNITS - FlightChessBoard.LAUNCH_EDGE_CLEARANCE,
+			"%s launch pad is clipped by the board edge" % color,
+		):
+			return false
+	return true
 
 
 static func _remains_square() -> bool:

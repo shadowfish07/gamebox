@@ -35,10 +35,10 @@ static func create(dark: bool) -> Theme:
 		theme.set_type_variation(pair[0], pair[1])
 
 	theme.set_stylebox("panel", "FlightChessBackground", _flat_style(colors["surface"]))
-	theme.set_stylebox("panel", "FlightChessRail", _panel_style(colors["surface_container"], colors["outline_variant"], 18, 8))
-	theme.set_stylebox("panel", "FlightChessOpponentCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["yellow"], 0.16), FlightChessBoard.PLAYER_DARK["yellow"], 14, 16))
-	theme.set_stylebox("panel", "FlightChessLocalCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["red"], 0.14), FlightChessBoard.PLAYER_DARK["red"], 14, 16))
-	theme.set_stylebox("panel", "FlightChessDiceCard", _panel_style(colors["surface_container_high"], colors["outline_variant"], 18, 8))
+	theme.set_stylebox("panel", "FlightChessRail", StyleBoxEmpty.new())
+	theme.set_stylebox("panel", "FlightChessOpponentCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["yellow"], 0.18), FlightChessBoard.PLAYER_DARK["yellow"], 16, 16, colors["shadow"]))
+	theme.set_stylebox("panel", "FlightChessLocalCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["red"], 0.17), FlightChessBoard.PLAYER_DARK["red"], 16, 16, colors["shadow"]))
+	theme.set_stylebox("panel", "FlightChessDiceCard", _panel_style(colors["surface_container_high"], colors["outline_variant"], 22, 8, colors["shadow"]))
 
 	theme.set_font("font", "FlightChessGameTitle", bold)
 	theme.set_font_size("font_size", "FlightChessGameTitle", _scaled(GameboxTokens.TYPOGRAPHY["headline_medium"]["font_size"]))
@@ -85,7 +85,7 @@ static func _flat_style(fill: Color) -> StyleBoxFlat:
 	return style
 
 
-static func _panel_style(fill: Color, border: Color, radius: int, padding: int) -> StyleBoxFlat:
+static func _panel_style(fill: Color, border: Color, radius: int, padding: int, shadow: Variant = null) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.border_color = border
@@ -95,6 +95,10 @@ static func _panel_style(fill: Color, border: Color, radius: int, padding: int) 
 	style.content_margin_top = _scaled(padding)
 	style.content_margin_right = _scaled(padding)
 	style.content_margin_bottom = _scaled(padding)
+	if shadow is Color:
+		style.shadow_color = Color(shadow, GameboxTokens.COMPONENT["result_shadow_opacity"])
+		style.shadow_size = _scaled(5)
+		style.shadow_offset = Vector2(0.0, _scaled(3))
 	return style
 
 

@@ -106,12 +106,12 @@ static func layout_for_size(viewport: Vector2, safe_rect: Rect2 = Rect2()) -> Di
 	var total_width := board_side + rail_width * 2.0 + gap * 2.0
 	if total_width > available.x:
 		return {}
-	var origin_x := safe_bounds.position.x + (safe_bounds.size.x - total_width) * 0.5
 	var origin_y := safe_bounds.position.y + (safe_bounds.size.y - board_side) * 0.5
+	var board_x := safe_bounds.get_center().x - board_side * 0.5
 	return {
-		"left": Rect2(origin_x, origin_y, rail_width, board_side),
-		"board": Rect2(origin_x + rail_width + gap, origin_y, board_side, board_side),
-		"right": Rect2(origin_x + rail_width + gap * 2.0 + board_side, origin_y, rail_width, board_side),
+		"left": Rect2(safe_bounds.position.x + margin, origin_y, rail_width, board_side),
+		"board": Rect2(board_x, origin_y, board_side, board_side),
+		"right": Rect2(safe_bounds.end.x - margin - rail_width, origin_y, rail_width, board_side),
 	}
 
 
@@ -207,7 +207,7 @@ func _apply_layout() -> void:
 	$LeftRail/Content/Eyebrow.visible = not compact
 	$RightRail/Content/TurnLabel.theme_type_variation = &"FlightChessTurnCompact" if compact else &"FlightChessTurn"
 	$RightRail/Content/RuleLabel.theme_type_variation = &"FlightChessRuleCompact" if compact else &"FlightChessRule"
-	$RightRail/Content/DiceCard.custom_minimum_size.y = 144.0 if compact else 216.0
+	$RightRail/Content/DiceCard.custom_minimum_size.y = 136.0 if compact else 200.0
 	$RightRail/Content/DiceCard/Content/Dice.custom_minimum_size = Vector2(112.0, 112.0) if compact else Vector2(168.0, 168.0)
 
 

@@ -7,6 +7,8 @@ const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const BOARD_UNITS := 600.0
 const LOCAL_PADDING := 10.0
+const MIN_LANE_CLEARANCE := 40.0
+const LAUNCH_EDGE_CLEARANCE := 28.0
 const EMPTY_HIT := {}
 const PLAYER_ORDER := ["yellow", "green", "red", "blue"]
 const ROUTE_COLOR_CYCLE := ["blue", "yellow", "green", "red"]
@@ -28,26 +30,26 @@ const BOARD_INK := GameboxTokens.GAME["flight_board_ink"]
 const SLOT_COLOR := GameboxTokens.GAME["white_piece"]
 
 const MAIN_PATH := [
-	Vector2(91, 212), Vector2(122, 198), Vector2(151, 198), Vector2(183, 212),
-	Vector2(209, 184), Vector2(195, 150), Vector2(196, 120), Vector2(209, 86),
-	Vector2(241, 74), Vector2(270, 74), Vector2(300, 75), Vector2(330, 75),
-	Vector2(358, 74), Vector2(390, 86), Vector2(404, 119), Vector2(404, 150),
-	Vector2(390, 184), Vector2(416, 212), Vector2(448, 198), Vector2(477, 198),
-	Vector2(508, 212), Vector2(519, 244), Vector2(518, 276), Vector2(520, 307),
-	Vector2(519, 336), Vector2(519, 366), Vector2(508, 399), Vector2(477, 413),
-	Vector2(447, 413), Vector2(416, 400), Vector2(391, 428), Vector2(405, 461),
-	Vector2(404, 491), Vector2(390, 526), Vector2(358, 536), Vector2(328, 537),
-	Vector2(299, 537), Vector2(270, 537), Vector2(239, 536), Vector2(210, 526),
-	Vector2(195, 491), Vector2(196, 460), Vector2(210, 427), Vector2(182, 398),
-	Vector2(151, 413), Vector2(122, 413), Vector2(90, 399), Vector2(81, 366),
-	Vector2(79, 335), Vector2(80, 305), Vector2(80, 275), Vector2(82, 245),
+	Vector2(84, 210), Vector2(118, 194), Vector2(150, 194), Vector2(182, 210),
+	Vector2(210, 182), Vector2(194, 150), Vector2(194, 118), Vector2(210, 84),
+	Vector2(242, 70), Vector2(271, 70), Vector2(300, 70), Vector2(329, 70),
+	Vector2(358, 70), Vector2(390, 84), Vector2(406, 118), Vector2(406, 150),
+	Vector2(390, 182), Vector2(418, 210), Vector2(450, 194), Vector2(482, 194),
+	Vector2(516, 210), Vector2(530, 242), Vector2(530, 271), Vector2(530, 300),
+	Vector2(530, 329), Vector2(530, 358), Vector2(516, 390), Vector2(482, 406),
+	Vector2(450, 406), Vector2(418, 390), Vector2(390, 418), Vector2(406, 450),
+	Vector2(406, 482), Vector2(390, 516), Vector2(358, 530), Vector2(329, 530),
+	Vector2(300, 530), Vector2(271, 530), Vector2(242, 530), Vector2(210, 516),
+	Vector2(194, 482), Vector2(194, 450), Vector2(210, 418), Vector2(182, 390),
+	Vector2(150, 406), Vector2(118, 406), Vector2(84, 390), Vector2(70, 358),
+	Vector2(70, 329), Vector2(70, 300), Vector2(70, 271), Vector2(70, 242),
 ]
 
 const HOME_STRETCHES := {
-	"yellow": [Vector2(93, 305), Vector2(129, 305), Vector2(161, 305), Vector2(195, 305), Vector2(229, 305), Vector2(269, 305)],
-	"green": [Vector2(300, 94), Vector2(300, 127), Vector2(300, 162), Vector2(300, 197), Vector2(300, 231), Vector2(300, 271)],
-	"red": [Vector2(506, 305), Vector2(470, 305), Vector2(437, 305), Vector2(403, 305), Vector2(369, 305), Vector2(329, 305)],
-	"blue": [Vector2(299, 505), Vector2(299, 471), Vector2(300, 438), Vector2(299, 404), Vector2(300, 370), Vector2(299, 331)],
+	"yellow": [Vector2(114, 300), Vector2(146, 300), Vector2(178, 300), Vector2(210, 300), Vector2(242, 300), Vector2(270, 300)],
+	"green": [Vector2(300, 114), Vector2(300, 146), Vector2(300, 178), Vector2(300, 210), Vector2(300, 242), Vector2(300, 270)],
+	"red": [Vector2(486, 300), Vector2(454, 300), Vector2(422, 300), Vector2(390, 300), Vector2(358, 300), Vector2(330, 300)],
+	"blue": [Vector2(300, 486), Vector2(300, 454), Vector2(300, 422), Vector2(300, 390), Vector2(300, 358), Vector2(300, 330)],
 }
 
 const HANGAR_RECTS := {
@@ -65,17 +67,17 @@ const HANGAR_SLOTS := {
 }
 
 const LAUNCH_POINTS := {
-	"yellow": Vector2(15, 170),
-	"green": Vector2(429, 17),
-	"red": Vector2(582, 430),
-	"blue": Vector2(168, 582),
+	"yellow": Vector2(32, 174),
+	"green": Vector2(426, 32),
+	"red": Vector2(568, 426),
+	"blue": Vector2(174, 568),
 }
 
 const FINISH_POINTS := {
-	"yellow": Vector2(275, 305),
-	"green": Vector2(299, 281),
-	"red": Vector2(323, 305),
-	"blue": Vector2(299, 329),
+	"yellow": Vector2(288, 300),
+	"green": Vector2(300, 288),
+	"red": Vector2(312, 300),
+	"blue": Vector2(300, 312),
 }
 
 const PATH_STARTS := {"yellow": 0, "green": 13, "red": 26, "blue": 39}
@@ -87,10 +89,10 @@ const SHORTCUTS := {
 	"blue": Vector2i(4, 16),
 }
 const SHORTCUT_LINES := {
-	"yellow": [Vector2(416, 232), Vector2(416, 380)],
-	"green": [Vector2(370, 400), Vector2(230, 400)],
-	"red": [Vector2(182, 378), Vector2(182, 232)],
-	"blue": [Vector2(229, 212), Vector2(370, 212)],
+	"yellow": [Vector2(418, 236), Vector2(418, 364)],
+	"green": [Vector2(364, 418), Vector2(236, 418)],
+	"red": [Vector2(182, 364), Vector2(182, 236)],
+	"blue": [Vector2(236, 182), Vector2(364, 182)],
 }
 
 var selected_piece_index: int:
@@ -272,12 +274,15 @@ func _draw() -> void:
 	_draw_board_surface(rect)
 	for color in PLAYER_ORDER:
 		_draw_hangar(color)
+	_draw_route_guide()
 	for color in PLAYER_ORDER:
 		_draw_shortcut(color)
 	_draw_main_route()
 	for color in PLAYER_ORDER:
-		_draw_home_stretch(color)
+		_draw_home_lane_backdrop(color)
 	_draw_finish_center()
+	for color in PLAYER_ORDER:
+		_draw_home_lane_slots(color)
 	for color in PLAYER_ORDER:
 		_draw_launch_pad(color)
 	for color in PLAYER_ORDER:
@@ -285,41 +290,107 @@ func _draw() -> void:
 
 
 func _draw_board_surface(rect: Rect2) -> void:
-	draw_rect(rect, BOARD_PAPER, true)
 	var scale := rect.size.x / BOARD_UNITS
-	for index in 84:
-		var logical := Vector2(fmod(float(index * 83 + 31), 590.0) + 5.0, fmod(float(index * 47 + 19), 590.0) + 5.0)
-		draw_circle(_logical_to_pixel(logical), maxf(0.7, scale * 0.8), Color(BOARD_INK, GameboxTokens.GAME["board_side_camp_alpha"]))
-	draw_rect(rect, BOARD_INK, false, maxf(2.0, scale * 4.0), true)
+	_draw_rounded_rect(
+		Rect2(rect.position + Vector2(0.0, 3.0) * scale, rect.size),
+		Color(BOARD_INK, GameboxTokens.GAME["piece_shadow_alpha"]),
+		13.0 * scale,
+		BOARD_INK,
+		0.0,
+	)
+	_draw_rounded_rect(rect, BOARD_PAPER, 13.0 * scale, BOARD_INK, maxf(2.0, scale * 3.0))
+	var center := _logical_to_pixel(Vector2(300, 300))
+	draw_circle(center, 111.0 * scale, Color(BOARD_INK, GameboxTokens.GAME["board_center_alpha"]))
+	draw_arc(center, 111.0 * scale, 0.0, TAU, 64, Color(BOARD_INK, GameboxTokens.GAME["board_side_camp_alpha"]), maxf(1.0, scale), true)
 
 
 func _draw_hangar(color: String) -> void:
 	var logical_rect: Rect2 = HANGAR_RECTS[color]
 	var pixel_rect := _logical_rect_to_pixel(logical_rect)
-	_draw_rounded_rect(pixel_rect, PLAYER_COLORS[color], 7.0 * _scale(), PLAYER_DARK[color], 2.5 * _scale())
+	var scale := _scale()
+	_draw_rounded_rect(
+		Rect2(pixel_rect.position + Vector2(0.0, 2.5) * scale, pixel_rect.size),
+		Color(BOARD_INK, GameboxTokens.GAME["piece_shadow_alpha"]),
+		11.0 * scale,
+		BOARD_INK,
+		0.0,
+	)
+	_draw_rounded_rect(pixel_rect, PLAYER_COLORS[color], 11.0 * scale, PLAYER_DARK[color], 2.0 * scale)
+	var wash_rect := pixel_rect.grow(-8.0 * scale)
+	_draw_rounded_rect(wash_rect, Color(SLOT_COLOR, GameboxTokens.GAME["board_side_camp_alpha"]), 7.0 * scale, Color(SLOT_COLOR, GameboxTokens.GAME["piece_shadow_alpha"]), maxf(1.0, scale))
 	for logical_center in HANGAR_SLOTS[color]:
 		var center := _logical_to_pixel(logical_center)
-		draw_circle(center, 18.0 * _scale(), SLOT_COLOR)
-		draw_arc(center, 18.0 * _scale(), 0.0, TAU, 28, PLAYER_DARK[color], maxf(1.2, 1.8 * _scale()), true)
+		draw_circle(center + Vector2(0.0, 1.5) * scale, 18.0 * scale, Color(BOARD_INK, GameboxTokens.GAME["board_target_camp_alpha"]))
+		draw_circle(center, 18.0 * scale, SLOT_COLOR)
+		draw_arc(center, 18.0 * scale, 0.0, TAU, 28, PLAYER_DARK[color], maxf(1.2, 1.8 * scale), true)
+
+
+func _draw_route_guide() -> void:
+	var route := PackedVector2Array()
+	for point in MAIN_PATH:
+		route.append(_logical_to_pixel(point))
+	route.append(_logical_to_pixel(MAIN_PATH[0]))
+	draw_polyline(route, Color(BOARD_INK, GameboxTokens.GAME["board_target_camp_alpha"]), maxf(4.0, 7.0 * _scale()), true)
 
 
 func _draw_main_route() -> void:
 	for index in MAIN_PATH.size():
-		_draw_route_tile(MAIN_PATH[index], PLAYER_COLORS[route_color(index)])
+		_draw_route_tile(index)
 
 
-func _draw_home_stretch(color: String) -> void:
-	for point in HOME_STRETCHES[color]:
-		_draw_route_tile(point, PLAYER_COLORS[color])
-
-
-func _draw_route_tile(logical_center: Vector2, color: Color) -> void:
+func _draw_home_lane_backdrop(color: String) -> void:
+	var points: Array = HOME_STRETCHES[color]
 	var scale := _scale()
+	var start := _logical_to_pixel(points[0])
+	var finish := _logical_to_pixel(points[-1])
+	var direction := (finish - start).normalized()
+	var perpendicular := Vector2(-direction.y, direction.x)
+	var half_width := 14.0 * scale
+	var tail := start - direction * 15.0 * scale
+	var neck := finish + direction * 7.0 * scale
+	var tip := finish + direction * 28.0 * scale
+	var lane := PackedVector2Array([
+		tail - perpendicular * half_width,
+		neck - perpendicular * half_width,
+		neck - perpendicular * half_width * 1.32,
+		tip,
+		neck + perpendicular * half_width * 1.32,
+		neck + perpendicular * half_width,
+		tail + perpendicular * half_width,
+	])
+	draw_colored_polygon(lane, PLAYER_COLORS[color])
+	draw_polyline(PackedVector2Array(Array(lane) + [lane[0]]), PLAYER_DARK[color], maxf(1.0, 1.4 * scale), true)
+
+
+func _draw_home_lane_slots(color: String) -> void:
+	var scale := _scale()
+	for point in HOME_STRETCHES[color]:
+		var center := _logical_to_pixel(point)
+		draw_circle(center, 9.0 * scale, SLOT_COLOR)
+		draw_arc(center, 9.0 * scale, 0.0, TAU, 24, PLAYER_DARK[color], maxf(0.8, scale), true)
+
+
+func _draw_route_tile(index: int) -> void:
+	var scale := _scale()
+	var logical_center: Vector2 = MAIN_PATH[index]
+	var color: Color = PLAYER_COLORS[route_color(index)]
 	var center := _logical_to_pixel(logical_center)
-	var rect := Rect2(center - Vector2(15.0, 14.0) * scale, Vector2(30.0, 28.0) * scale)
-	_draw_rounded_rect(rect, color, 4.5 * scale, BOARD_INK, maxf(1.0, 1.3 * scale))
-	draw_circle(center, 8.5 * scale, SLOT_COLOR)
-	draw_arc(center, 8.5 * scale, 0.0, TAU, 20, Color(BOARD_INK, GameboxTokens.GAME["board_hole_alpha"]), maxf(0.8, scale), true)
+	var rect := Rect2(center - Vector2(14.0, 13.0) * scale, Vector2(28.0, 26.0) * scale)
+	_draw_rounded_rect(Rect2(rect.position + Vector2(0.0, 1.4) * scale, rect.size), Color(BOARD_INK, GameboxTokens.GAME["board_target_camp_alpha"]), 6.0 * scale, BOARD_INK, 0.0)
+	_draw_rounded_rect(rect, color, 6.0 * scale, BOARD_INK, maxf(1.0, 1.2 * scale))
+	var shortcut_color := _shortcut_color(index)
+	if shortcut_color.is_empty():
+		draw_circle(center, 6.3 * scale, SLOT_COLOR)
+		draw_arc(center, 6.3 * scale, 0.0, TAU, 20, Color(BOARD_INK, GameboxTokens.GAME["board_grid_alpha"]), maxf(0.7, scale * 0.75), true)
+	else:
+		_draw_plane(center, 8.2 * scale, SLOT_COLOR, _plane_rotation(shortcut_color))
+
+
+func _shortcut_color(index: int) -> String:
+	for color in SHORTCUTS:
+		if (SHORTCUTS[color] as Vector2i).x == index:
+			return color
+	return ""
 
 
 func _draw_shortcut(color: String) -> void:
@@ -327,28 +398,28 @@ func _draw_shortcut(color: String) -> void:
 	var from := _logical_to_pixel(line[0])
 	var to := _logical_to_pixel(line[1])
 	var delta := to - from
-	var dash_count := 7
+	var dash_count := 6
 	for index in dash_count:
 		var start_t := float(index) / float(dash_count)
-		var end_t := minf(1.0, start_t + 0.075)
-		draw_line(from + delta * start_t, from + delta * end_t, PLAYER_COLORS[color], maxf(4.0, 8.0 * _scale()), true)
+		var end_t := minf(1.0, start_t + 0.08)
+		draw_line(from + delta * start_t, from + delta * end_t, Color(PLAYER_COLORS[color], GameboxTokens.GAME["pending_overlay_alpha"]), maxf(3.0, 5.0 * _scale()), true)
 	var direction := delta.normalized()
 	var perpendicular := Vector2(-direction.y, direction.x)
-	var arrow_size := 18.0 * _scale()
+	var arrow_size := 12.0 * _scale()
 	var points := PackedVector2Array([
 		to,
 		to - direction * arrow_size + perpendicular * arrow_size * 0.62,
 		to - direction * arrow_size + -perpendicular * arrow_size * 0.62,
 	])
-	draw_colored_polygon(points, PLAYER_COLORS[color])
+	draw_colored_polygon(points, Color(PLAYER_COLORS[color], GameboxTokens.GAME["pending_overlay_alpha"]))
 
 
 func _draw_finish_center() -> void:
 	var polygons := {
-		"yellow": [Vector2(269, 277), Vector2(299, 305), Vector2(269, 333), Vector2(239, 305)],
-		"green": [Vector2(271, 275), Vector2(299, 245), Vector2(327, 275), Vector2(299, 305)],
-		"red": [Vector2(329, 277), Vector2(359, 305), Vector2(329, 333), Vector2(299, 305)],
-		"blue": [Vector2(271, 335), Vector2(299, 305), Vector2(327, 335), Vector2(299, 365)],
+		"yellow": [Vector2(300, 300), Vector2(278, 278), Vector2(254, 300), Vector2(278, 322)],
+		"green": [Vector2(300, 300), Vector2(278, 278), Vector2(300, 254), Vector2(322, 278)],
+		"red": [Vector2(300, 300), Vector2(322, 278), Vector2(346, 300), Vector2(322, 322)],
+		"blue": [Vector2(300, 300), Vector2(278, 322), Vector2(300, 346), Vector2(322, 322)],
 	}
 	for color in PLAYER_ORDER:
 		var points := PackedVector2Array()
@@ -356,7 +427,7 @@ func _draw_finish_center() -> void:
 			points.append(_logical_to_pixel(point))
 		draw_colored_polygon(points, PLAYER_COLORS[color])
 		draw_polyline(PackedVector2Array(Array(points) + [points[0]]), BOARD_INK, maxf(1.0, 1.5 * _scale()), true)
-	draw_circle(_logical_to_pixel(Vector2(299, 305)), 8.0 * _scale(), SLOT_COLOR)
+	draw_circle(_logical_to_pixel(Vector2(300, 300)), 6.5 * _scale(), SLOT_COLOR)
 
 
 func _draw_launch_pad(color: String) -> void:
@@ -391,9 +462,11 @@ func _draw_color_pieces(color: String) -> void:
 			draw_circle(center + Vector2(0.0, 4.0 * _scale()), radius * 1.12, Color(BOARD_INK, GameboxTokens.GAME["board_target_fill_alpha"]))
 			radius *= 1.08
 		if pressed:
-			radius *= 0.92
+			radius *= 0.84
 		_draw_stack_layers(center, radius, members.size(), color)
 		_draw_piece(center, radius, color)
+		if selected:
+			draw_arc(center, radius * 1.18, 0.0, TAU, 32, SLOT_COLOR, maxf(2.0, 2.5 * _scale()), true)
 		if members.size() > 1 and index == members[0]:
 			_draw_stack_badge(center, members.size(), color)
 
@@ -498,12 +571,13 @@ static func _plane_rotation(color: String) -> float:
 func _draw_rounded_rect(rect: Rect2, fill: Color, radius: float, border: Color, border_width: float) -> void:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
-	style.border_color = border
-	var width := maxi(1, roundi(border_width))
-	style.border_width_left = width
-	style.border_width_top = width
-	style.border_width_right = width
-	style.border_width_bottom = width
+	if border_width > 0.0:
+		style.border_color = border
+		var width := roundi(border_width)
+		style.border_width_left = width
+		style.border_width_top = width
+		style.border_width_right = width
+		style.border_width_bottom = width
 	var corner := maxi(1, roundi(radius))
 	style.corner_radius_top_left = corner
 	style.corner_radius_top_right = corner
