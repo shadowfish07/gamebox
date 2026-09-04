@@ -2074,6 +2074,13 @@ self_test() {
     || { printf 'APK build provenance is missing\n' >&2; return 1; }
   grep -F 'uninstall "$installed_package"' <<<"$runtime_source" >/dev/null \
     || { printf 'preinstall package cleanup is missing\n' >&2; return 1; }
+  local flight_target_parser_source flight_target_fixture
+  flight_target_parser_source="$(sed -n '/^flight_chess_target_pair() {/,/^}/p' "${BASH_SOURCE[0]}")"
+  eval "$flight_target_parser_source"
+  flight_target_fixture="$(flight_chess_target_pair \
+    'GAMEBOX_FLIGHT_CHESS_TARGETS match=fixture roll=0.875,0.900 red0=0.625,0.750' roll)"
+  [[ "$flight_target_fixture" == '0.875 0.900' ]] \
+    || { printf 'Flight Chess normalized target parser fixture failed\n' >&2; return 1; }
   printf 'Gamebox E2E parser fixtures passed.\n'
 }
 
@@ -3238,11 +3245,11 @@ wait_for_flight_chess_targets() {
 flight_chess_target_pair() {
 	local marker="$1" name="$2"
 	awk -v name="$name" '{
-		for (index = 1; index <= NF; index++) {
-			if ($index ~ ("^" name "=")) {
-				sub("^" name "=", "", $index)
-				gsub(",", " ", $index)
-				print $index
+		for (field_index = 1; field_index <= NF; field_index++) {
+			if ($field_index ~ ("^" name "=")) {
+				sub("^" name "=", "", $field_index)
+				gsub(",", " ", $field_index)
+				print $field_index
 				exit
 			}
 		}
