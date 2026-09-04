@@ -3242,6 +3242,23 @@ wait_for_flight_chess_targets() {
 	return 1
 }
 
+wait_for_flight_chess_confirm_target() {
+	local serial="$1" match_id="$2" deadline=$((SECONDS + WAIT_SECONDS)) marker
+	while ((SECONDS < deadline)); do
+		marker="$(
+			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+				| sed -n "/GAMEBOX_FLIGHT_CHESS_CONFIRM_TARGET match=$match_id /p" \
+				| tail -1
+		)"
+		if [[ -n "$marker" ]]; then
+			printf '%s\n' "$marker"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
 flight_chess_target_pair() {
 	local marker="$1" name="$2"
 	awk -v name="$name" '{
@@ -3266,9 +3283,8 @@ flight_chess_targets_for_serial() {
 	fi
 }
 
-tap_flight_chess_target() {
-	local serial="$1" name="$2" marker fractions fraction_x fraction_y width height point x y
-	marker="$(flight_chess_targets_for_serial "$serial")" || return 1
+tap_flight_chess_marker_target() {
+	local serial="$1" name="$2" marker="$3" fractions fraction_x fraction_y width height point x y
 	fractions="$(flight_chess_target_pair "$marker" "$name")" || return 1
 	read -r fraction_x fraction_y <<<"$fractions"
 	[[ "$fraction_x" =~ ^0\.[0-9]+$|^1\.0+$ && "$fraction_y" =~ ^0\.[0-9]+$|^1\.0+$ ]] || return 1
@@ -3277,6 +3293,12 @@ tap_flight_chess_target() {
 		"$width" "$height" "$fraction_x" "$fraction_y")" || return 1
 	read -r x y <<<"$point"
 	adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_flight_chess_target() {
+	local serial="$1" name="$2" marker
+	marker="$(flight_chess_targets_for_serial "$serial")" || return 1
+	tap_flight_chess_marker_target "$serial" "$name" "$marker"
 }
 
 tap_flight_chess_roll() {
@@ -3299,7 +3321,9 @@ tap_flight_chess_resign() {
 }
 
 tap_flight_chess_confirm_resign() {
-	tap_flight_chess_target "$1" confirm
+	local serial="$1" marker
+	marker="$(wait_for_flight_chess_confirm_target "$serial" "$FLIGHT_MATCH_ID")" || return 1
+	tap_flight_chess_marker_target "$serial" confirm "$marker"
 }
 
 refresh_game_log_boundaries flight-chess-create \

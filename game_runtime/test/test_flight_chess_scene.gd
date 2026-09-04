@@ -122,6 +122,14 @@ static func _exposes_normalized_touch_targets() -> bool:
 	result = result \
 		and _check((targets["roll"] as Vector2).x > (targets["red0"] as Vector2).x, "roll target did not stay right of the board") \
 		and _check((targets["red0"] as Vector2).y > (targets["yellow0"] as Vector2).y, "plane targets lost board orientation")
+	scene.get_node("ResignDialog").open()
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var visible_targets: Dictionary = scene.automation_targets()
+	result = result and _check(
+		(visible_targets["confirm"] as Vector2).x > 0.5,
+		"visible resignation confirmation target was not on the dialog's confirm side",
+	)
 	scene.free()
 	return result
 

@@ -590,6 +590,7 @@ func _on_return_to_lobby_requested(code: String) -> void:
 func _on_resign_pressed() -> void:
 	if _can_offer_resign():
 		$ResignDialog.open()
+		RenderingServer.frame_post_draw.connect(_log_resign_confirm_target, CONNECT_ONE_SHOT)
 
 
 func _on_resign_confirmed() -> void:
@@ -832,6 +833,17 @@ func _log_automation_targets() -> void:
 		(targets["yellow0"] as Vector2).x, (targets["yellow0"] as Vector2).y,
 		(targets["resign"] as Vector2).x, (targets["resign"] as Vector2).y,
 		(targets["confirm"] as Vector2).x, (targets["confirm"] as Vector2).y,
+	])
+
+
+func _log_resign_confirm_target() -> void:
+	if _disposed or _returning or _match_id.is_empty() or not $ResignDialog.visible:
+		return
+	var target: Vector2 = automation_targets().get("confirm", Vector2.ZERO)
+	if target == Vector2.ZERO:
+		return
+	print("GAMEBOX_FLIGHT_CHESS_CONFIRM_TARGET match=%s confirm=%.6f,%.6f" % [
+		_match_id, target.x, target.y,
 	])
 
 
