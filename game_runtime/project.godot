@@ -15,6 +15,7 @@ config/quit_on_go_back=false
 
 [display]
 
+window/energy_saving/keep_screen_on.macos=false
 window/size/viewport_width=1080
 window/size/viewport_height=1920
 window/handheld/orientation=1
