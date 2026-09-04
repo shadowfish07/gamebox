@@ -3365,11 +3365,15 @@ resume_e2e_server || fail "could not resume the server after the Flight Chess mo
 flight_revision=$((flight_revision + 1))
 flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" "$flight_revision" active)" \
 	|| fail "Flight Chess launch move did not commit"
-jq -e --arg color "$flight_color" '
-	.phase == "awaiting_roll" and .dice == null
-	and .nextColor == $color and .pieces[$color][0].zone == "launch"
-' <<<"$flight_snapshot" >/dev/null \
-	|| fail "Flight Chess accepted launch or six extra turn was wrong"
+if ! jq -e --arg color "$flight_color" '
+	.phase == "awaiting_roll" and .dice == null and .nextColor == $color
+	and ([.pieces[$color][] | select(.zone == "launch")] | length == 1)
+	and ([.pieces[$color][] | select(.zone == "hangar")] | length == 3)
+' <<<"$flight_snapshot" >/dev/null; then
+	flight_launch_diagnostic="$(jq -c --arg color "$flight_color" \
+		'{phase,dice,nextColor,zones:[.pieces[$color][] | .zone]}' <<<"$flight_snapshot" 2>/dev/null || printf unavailable)"
+	fail "Flight Chess accepted launch or six extra turn was wrong: $flight_launch_diagnostic"
+fi
 for serial in "$SERIAL_A" "$SERIAL_B"; do
 	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
 		|| fail "$serial did not render the accepted Flight Chess launch"
