@@ -32,10 +32,10 @@ permissions:
   contents: read
 
 concurrency:
-  # Keep trusted rolling release writes serialized. Non-publishing refs build
-  # in isolated groups and may cancel only their own stale runs.
-  group: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'debug-apk-publish' || format('debug-apk-build-{0}', github.ref) }}
-  cancel-in-progress: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+  # Serialize every rolling Release writer, including manual runs from feature
+  # branches. PR-only builds remain isolated and may cancel their own stale run.
+  group: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'debug-apk-publish' || format('debug-apk-build-{0}', github.ref) }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
 
 env:
   FLUTTER_VERSION: "3.47.1"
@@ -152,10 +152,9 @@ jobs:
         run: rm -f app/android/app/release-key.jks app/android/key.properties
 
   publish:
-    # Release write access exists only for the trusted default ref. Manual
-    # dispatches from another ref remain build-only; trusted PR signing is
-    # separately guarded in the read-only build job.
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # A maintainer-triggered manual run publishes the selected branch. Default-
+    # branch pushes publish automatically; PR events remain build-only.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     needs: build
     permissions:
       contents: write

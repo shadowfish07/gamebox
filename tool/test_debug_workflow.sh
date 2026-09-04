@@ -30,6 +30,8 @@ require_line "$build_workflow" '      api_base_url:' 'manual API URL input'
 require_line "$build_workflow" '  contents: read' 'read-only default permissions'
 require_line "$build_workflow" "'debug-apk-publish'" 'serialized trusted publication group'
 require_line "$build_workflow" "format('debug-apk-build-{0}', github.ref)" 'isolated non-publishing build group'
+require_line "$build_workflow" "group: \${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'debug-apk-publish' || format('debug-apk-build-{0}', github.ref) }}" 'any-branch manual publication concurrency'
+require_line "$build_workflow" "cancel-in-progress: \${{ !(github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}" 'non-cancelling serialized publication'
 require_line "$build_workflow" '  build:' 'debug build job'
 require_line "$build_workflow" '          persist-credentials: false' 'credential-free checkout'
 require_line "$build_workflow" '      - name: Configure stable signing for trusted pull request' 'trusted pull request signing step'
@@ -39,7 +41,7 @@ require_line "$build_workflow" 'github.event.pull_request.head.repo.full_name ==
 require_line "$build_workflow" 'uses: actions/upload-artifact@v7' 'temporary artifact upload'
 require_line "$build_workflow" 'retention-days: 14' 'PR artifact retention'
 require_line "$build_workflow" '  publish:' 'trusted publish job'
-require_line "$build_workflow" "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" 'default-ref publication guard'
+require_line "$build_workflow" "if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))" 'any-branch manual publication guard'
 require_line "$build_workflow" '      contents: write' 'publish-only write permission'
 require_line "$build_workflow" '          GAMEBOX_REQUIRE_RELEASE_SIGNING: "true"' 'publish-only stable signing requirement'
 require_line "$build_workflow" 'Keep the tag as the stable release identity' 'stable rolling release behavior'
@@ -109,4 +111,4 @@ if grep -Eq 'actions/checkout|pull_request_target|secrets\.' "$comment_workflow"
   exit 1
 fi
 
-printf 'PASS debug workflow restricts stable PR signing and restores trusted artifact comments\n'
+printf 'PASS debug workflow publishes manual branch builds while restricting PR credentials\n'
