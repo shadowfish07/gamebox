@@ -2,6 +2,7 @@ extends RefCounted
 
 const FlightChessScene = preload("res://games/flight_chess/flight_chess_scene.tscn")
 const FlightChessController = preload("res://games/flight_chess/flight_chess_controller.gd")
+const FlightChessFullGameDriver = preload("res://test/support/flight_chess_full_game_driver.gd")
 const MATCH_ID := "11111111-1111-4111-8111-111111111111"
 const BLACK_ID := "22222222-2222-4222-8222-222222222222"
 const WHITE_ID := "33333333-3333-4333-8333-333333333333"
@@ -19,6 +20,7 @@ static func cases() -> Array:
 		{"name": "flight chess scene stays inside landscape phone safe areas", "run": _respects_phone_safe_areas},
 		{"name": "flight chess scene rolls before enabling manual plane selection", "run": _rolls_before_selection},
 		{"name": "flight chess scene waits for authoritative roll and move events", "run": _waits_for_authoritative_actions},
+		{"name": "flight chess scene plays a natural match through goal victory", "run": _plays_natural_match_to_goal},
 		{"name": "flight chess scene maps player cards to board colors", "run": _maps_player_cards_to_board_colors},
 		{"name": "flight chess Back returns without resigning", "run": _back_is_non_destructive},
 	]
@@ -251,6 +253,52 @@ static func _back_is_non_destructive() -> bool:
 		_check(client.resign_requests == 0, "Back submitted resignation") \
 			and _check(client.dispose_calls == 1, "Back did not dispose the client") \
 			and _check(harness["quit_calls"].size() == 1, "Back did not return to the lobby"),
+	)
+
+
+static func _plays_natural_match_to_goal() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(FlightChessFullGameDriver.initial_snapshot(MATCH_ID, BLACK_ID, WHITE_ID))
+	var roll_count := 0
+	var move_count := 0
+	var move_counts := {"black": 0, "white": 0}
+	var effect_counts := {"jump": 0, "shortcut": 0, "jump_shortcut": 0}
+	while client.state.status == "active" and client.state.revision < 512:
+		var previous_revision: int = client.state.revision
+		var event: Dictionary = FlightChessFullGameDriver.next_event(client.state, MATCH_ID)
+		if not _check(not event.is_empty(), "natural match driver could not produce its next event"):
+			return _network_cleanup(scene)
+		if event["type"] == "flight_chess.roll.accepted":
+			roll_count += 1
+		else:
+			move_count += 1
+			move_counts[event["payload"]["color"]] += 1
+			var effect: String = event["payload"]["effect"]
+			if effect_counts.has(effect):
+				effect_counts[effect] += 1
+		client.accept_event(event)
+		if not _check(client.state.revision == previous_revision + 1, "natural match event was not accepted in sequence"):
+			return _network_cleanup(scene)
+		await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var all_red_finished := true
+	for piece_index in range(4):
+		all_red_finished = all_red_finished and scene.piece_state("red", piece_index)["zone"] == "finished"
+	var result_panel := scene.get_node("ResultPanel") as PanelContainer
+	var local_summary := scene.get_node("LeftRail/Content/LocalCard/Content/Meta") as Label
+	return _network_cleanup(
+		scene,
+		_check(client.state.status == "finished" and client.state.result == "goal", "natural match did not end by goal") \
+			and _check(client.state.winner_user_id == BLACK_ID, "natural match reported the wrong winner") \
+			and _check(all_red_finished, "natural winner did not render all four planes at the destination") \
+			and _check(roll_count > 0 and move_count > 0 and client.state.revision < 512, "natural match did not finish within the event bound") \
+			and _check(move_counts["black"] > 0 and move_counts["white"] > 0, "natural match did not exercise both players") \
+			and _check(effect_counts["jump"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised a same-color jump") \
+			and _check(effect_counts["shortcut"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised the long shortcut") \
+			and _check(local_summary.text == "4 架抵达", "natural winner summary still described finished planes as in transit") \
+			and _check(result_panel.visible and result_panel.get_node("Content/Result").text == "全员抵达", "goal victory did not render the natural result panel"),
 	)
 
 

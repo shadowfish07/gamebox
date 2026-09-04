@@ -66,4 +66,10 @@ fi
 warning_count="$(rg -c 'WARNING:|WARN' "$log_file" || true)"
 warning_count="${warning_count:-0}"
 artifact="${screenshot_path:-interactive window}"
-printf 'PASS flight-chess-preview (artifact=%s, warnings=%s)\n' "$artifact" "$warning_count"
+full_game_summary="$(rg '^GAMEBOX_FLIGHT_CHESS_FULL_GAME ' "$log_file" | tail -n 1 || true)"
+if [[ -n "$full_game_summary" ]]; then
+	full_game_summary="${full_game_summary#GAMEBOX_FLIGHT_CHESS_FULL_GAME }"
+	printf 'PASS flight-chess-preview (%s, artifact=%s, warnings=%s)\n' "$full_game_summary" "$artifact" "$warning_count"
+else
+	printf 'PASS flight-chess-preview (artifact=%s, warnings=%s)\n' "$artifact" "$warning_count"
+fi

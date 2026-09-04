@@ -476,10 +476,20 @@ func _sync_ui() -> void:
 func _piece_summary(color: String) -> String:
 	var waiting := 0
 	var flying := 0
+	var finished := 0
 	for piece in _pieces[color]:
-		if piece["zone"] == "hangar": waiting += 1
-		else: flying += 1
-	return "%d 架在途 · %d 架待机" % [flying, waiting]
+		match piece["zone"]:
+			"hangar": waiting += 1
+			"finished": finished += 1
+			_: flying += 1
+	var segments: Array[String] = []
+	if finished > 0:
+		segments.append("%d 架抵达" % finished)
+	if flying > 0:
+		segments.append("%d 架在途" % flying)
+	if waiting > 0:
+		segments.append("%d 架待机" % waiting)
+	return " · ".join(segments)
 
 
 func _on_back_pressed() -> void:
