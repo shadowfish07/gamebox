@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>飞行棋 · 棋盘外 UX 原型</title>
+  <style>
+    @layer reset, tokens, base, components, states, responsive;
+
+    @layer reset {
+      html { box-sizing: border-box; }
+      body, h1, h2, p, figure, figcaption, menu, fieldset, legend { margin: 0; }
+      button, select { font: inherit; }
+      button { color: inherit; }
+    }
+
+    @layer tokens {
+      :root {
+        color-scheme: light dark;
+        --primary: #006b60;
+        --on-primary: #ffffff;
+        --primary-container: #9ef2e3;
+        --on-primary-container: #005048;
+        --secondary-container: #cce8e2;
+        --on-secondary-container: #334b47;
+        --tertiary-container: #cce5ff;
+        --on-tertiary-container: #2d4960;
+        --error: #ba1a1a;
+        --on-error: #ffffff;
+        --error-container: #ffdad6;
+        --on-error-container: #93000a;
+        --surface: #f4fbf8;
+        --surface-lowest: #ffffff;
+        --surface-low: #eff5f2;
+        --surface-container: #e9efec;
+        --surface-high: #e3eae7;
+        --surface-highest: #dde4e1;
+        --on-surface: #161d1b;
+        --on-surface-variant: #3f4946;
+        --outline: #6f7976;
+        --outline-variant: #bec9c5;
+        --scrim: rgb(0 0 0 / 42%);
+        --shadow: rgb(0 55 49 / 16%);
+        --flight-paper: #fff9e9;
+        --flight-ink: #332f28;
+        --flight-yellow: #f4d33b;
+        --flight-yellow-dark: #8a6d00;
+        --flight-red: #e95755;
+        --flight-red-dark: #8c292a;
+        --flight-blue: #3189d5;
+        --flight-green: #38a968;
+        --space-1: .25rem;
+        --space-2: .5rem;
+        --space-3: .75rem;
+        --space-4: 1rem;
+        --space-6: 1.5rem;
+        --radius-input: .5rem;
+        --radius-card: .75rem;
+        --radius-floating: 1rem;
+        --radius-dialog: 1.75rem;
+        --radius-full: 999rem;
+        --touch: 3rem;
+        --motion-fast: 100ms;
+        --motion-standard: 200ms;
+        --in-oklab: ;
+      }
+
+      @supports (linear-gradient(in oklab, white, black)) {
+        :root { --in-oklab: in oklab; }
+      }
+
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --primary: #82d5c7;
+        --on-primary: #003731;
+        --on-primary: #003731;
+        --primary-container: #005048;
+        --on-primary-container: #9ef2e3;
+        --secondary-container: #334b47;
+        --on-secondary-container: #cce8e2;
+        --tertiary-container: #2d4960;
+        --on-tertiary-container: #cce5ff;
+        --error: #ffb4ab;
+        --on-error: #690005;
+        --error-container: #93000a;
+        --on-error-container: #ffdad6;
+        --surface: #0e1513;
+        --surface-lowest: #090f0e;
+        --surface-low: #161d1b;
+        --surface-container: #1a211f;
+        --surface-high: #252b2a;
+        --surface-highest: #303634;
+        --on-surface: #dde4e1;
+        --on-surface-variant: #bec9c5;
+        --outline: #899390;
+        --outline-variant: #3f4946;
+        --scrim: rgb(0 0 0 / 62%);
+        --shadow: rgb(0 0 0 / 34%);
+        --flight-paper: #e8dfc9;
+        --flight-ink: #2b2924;
+      }
+    }
+
+    @layer base {
+      body {
+        min-block-size: 100dvh;
+        overflow: hidden;
+        background: var(--surface);
+        color: var(--on-surface);
+        font-family: Inter, "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+        line-height: 1.4;
+      }
+
+      :where(main, header, section, aside, article, figure, nav, dialog, menu, button, fieldset) {
+        box-sizing: border-box;
+      }
+
+      :where(button, [popover]) {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      button {
+        min-block-size: var(--touch);
+        border: 0;
+        cursor: pointer;
+      }
+
+      button:focus-visible {
+        outline: .1875rem solid var(--primary);
+        outline-offset: .1875rem;
+      }
+
+      button:active:not(:disabled) {
+        transform: scale(.97);
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: .54;
+      }
+
+      [hidden] { display: none !important; }
+
+      .visually-hidden {
+        position: absolute;
+        inline-size: 1px;
+        block-size: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+    }
+
+    @layer components {
+      .game-shell {
+        position: relative;
+        isolation: isolate;
+        display: grid;
+        grid-template-columns:
+          clamp(9rem, 20vw, 12rem)
+          minmax(18rem, calc(100dvh - 1.5rem))
+          clamp(10.75rem, 22vw, 13rem);
+        gap: var(--space-3);
+        justify-content: center;
+        min-block-size: 100dvh;
+        max-block-size: 100dvh;
+        padding-block: max(var(--space-3), env(safe-area-inset-top)) max(var(--space-3), env(safe-area-inset-bottom));
+        padding-inline: max(var(--space-3), env(safe-area-inset-left)) max(var(--space-3), env(safe-area-inset-right));
+        overflow: hidden;
+        color: var(--on-surface);
+        background:
+          radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--primary-container) 28%, transparent), transparent 34rem),
+          linear-gradient(135deg var(--in-oklab), var(--surface-low), var(--surface));
+      }
+
+      .identity-rail,
+      .action-rail,
+      .board-stage {
+        min-inline-size: 0;
+        min-block-size: 0;
+      }
+
+      .identity-rail {
+        display: grid;
+        grid-template-rows: var(--touch) minmax(0, 1fr);
+        gap: var(--space-3);
+      }
+
+      .utility-bar {
+        display: grid;
+        grid-template-columns: var(--touch) minmax(0, 1fr) var(--touch);
+        align-items: center;
+      }
+
+      .icon-button {
+        display: grid;
+        place-items: center;
+        inline-size: var(--touch);
+        block-size: var(--touch);
+        border-radius: var(--radius-full);
+        background: transparent;
+        font-size: 1.5rem;
+        line-height: 1;
+        transition: background-color var(--motion-standard), transform var(--motion-fast);
+      }
+
+      .icon-button:hover:not(:disabled) {
+        background: var(--surface-highest);
+      }
+
+      .game-title {
+        overflow: hidden;
+        font-size: .875rem;
+        font-weight: 750;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .players {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: var(--space-2);
+        min-block-size: 0;
+      }
+
+      .versus-label {
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+        font-weight: 800;
+        letter-spacing: .12em;
+        text-align: center;
+      }
+
+      .player-card {
+        position: relative;
+        display: grid;
+        align-content: center;
+        gap: var(--space-2);
+        min-block-size: 0;
+        padding: var(--space-3);
+        overflow: hidden;
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-floating);
+        background: var(--surface-low);
+        transition: border-color var(--motion-standard), background-color var(--motion-standard), transform var(--motion-standard);
+      }
+
+      .player-card::before {
+        position: absolute;
+        inset-block: 0;
+        inset-inline-start: 0;
+        inline-size: .3rem;
+        background: var(--player-color);
+        content: "" / "";
+      }
+
+      .player-card[data-player="opponent"] {
+        --player-color: var(--flight-yellow);
+        --player-ink: var(--flight-yellow-dark);
+      }
+
+      .player-card[data-player="me"] {
+        --player-color: var(--flight-red);
+        --player-ink: var(--flight-red-dark);
+      }
+
+      .player-card[data-active="true"] {
+        border-color: var(--player-color);
+        background: color-mix(in oklab, var(--surface-low) 84%, var(--player-color));
+      }
+
+      .player-card[data-active="true"] .turn-indicator {
+        background: var(--player-color);
+        color: #161d1b;
+      }
+
+      .player-heading,
+      .presence,
+      .plane-counts,
+      .dice-meta,
+      .status-line,
+      .banner-content,
+      .snackbar-content,
+      .dialog-actions,
+      .result-actions,
+      .theme-line {
+        display: flex;
+        align-items: center;
+      }
+
+      .player-heading {
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+
+      .player-role {
+        min-inline-size: 0;
+      }
+
+      .player-role strong {
+        display: block;
+        font-size: .875rem;
+        line-height: 1.25;
+      }
+
+      .player-role span {
+        display: block;
+        margin-block-start: .1rem;
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+      }
+
+      .turn-indicator {
+        flex: 0 0 auto;
+        min-inline-size: 2.45rem;
+        padding: .25rem .45rem;
+        border-radius: var(--radius-full);
+        background: var(--surface-highest);
+        color: var(--on-surface-variant);
+        font-size: .625rem;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .presence {
+        gap: .3rem;
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+      }
+
+      .presence-dot {
+        inline-size: .45rem;
+        block-size: .45rem;
+        border-radius: 50%;
+        background: var(--primary);
+      }
+
+      .presence[data-online="false"] .presence-dot {
+        background: var(--outline);
+      }
+
+      .plane-counts {
+        flex-wrap: wrap;
+        gap: .25rem;
+      }
+
+      .plane-count {
+        padding: .18rem .38rem;
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-full);
+        color: var(--on-surface-variant);
+        background: var(--surface-lowest);
+        font-size: .625rem;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .board-stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+      }
+
+      .board-placeholder {
+        position: relative;
+        display: grid;
+        place-items: center;
+        inline-size: min(100%, calc(100dvh - 1.5rem));
+        max-block-size: 100%;
+        aspect-ratio: 1;
+        overflow: hidden;
+        border: 1px solid color-mix(in oklab, var(--flight-ink) 35%, transparent);
+        border-radius: var(--radius-card);
+        background:
+          linear-gradient(90deg var(--in-oklab), var(--flight-yellow) 0 25%, var(--flight-green) 0 50%, var(--flight-red) 0 75%, var(--flight-blue) 0) top / 100% .32rem no-repeat,
+          var(--flight-paper);
+        box-shadow: 0 .4rem 1.3rem var(--shadow);
+        color: var(--flight-ink);
+      }
+
+      .board-placeholder::before,
+      .board-placeholder::after {
+        position: absolute;
+        inline-size: 36%;
+        block-size: 36%;
+        border: 1px dashed rgb(51 47 40 / 16%);
+        border-radius: 50%;
+        content: "" / "";
+      }
+
+      .board-placeholder::before { transform: translate(-44%, -38%); }
+      .board-placeholder::after { transform: translate(44%, 38%); }
+
+      .board-note {
+        z-index: 1;
+        display: grid;
+        gap: var(--space-2);
+        max-inline-size: 16rem;
+        padding: var(--space-4);
+        border: 1px solid rgb(51 47 40 / 16%);
+        border-radius: var(--radius-floating);
+        background: rgb(255 249 233 / 88%);
+        text-align: center;
+        backdrop-filter: blur(.5rem);
+      }
+
+      .board-note strong {
+        font-size: clamp(1rem, .8rem + .75vw, 1.35rem);
+        line-height: 1.2;
+        text-wrap: balance;
+      }
+
+      .board-note span {
+        font-size: .6875rem;
+        line-height: 1.5;
+      }
+
+      .board-state {
+        position: absolute;
+        z-index: 2;
+        inset-inline: var(--space-3);
+        inset-block-end: var(--space-3);
+        display: flex;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      .board-state span {
+        max-inline-size: 88%;
+        padding: .38rem .7rem;
+        border-radius: var(--radius-full);
+        background: rgb(43 50 48 / 88%);
+        color: #ecf2ef;
+        font-size: .6875rem;
+        font-weight: 650;
+        text-align: center;
+      }
+
+      .connection-banner,
+      .snackbar {
+        position: absolute;
+        z-index: 20;
+        inset-inline-start: 50%;
+        inline-size: min(92%, 28rem);
+        border-radius: var(--radius-floating);
+        box-shadow: 0 .4rem 1.1rem var(--shadow);
+        translate: -50% 0;
+      }
+
+      .connection-banner {
+        inset-block-start: var(--space-2);
+        border: 1px solid var(--outline-variant);
+        background: var(--secondary-container);
+        color: var(--on-secondary-container);
+      }
+
+      .connection-banner[data-tone="error"] {
+        border-color: var(--error);
+        background: var(--error-container);
+        color: var(--on-error-container);
+      }
+
+      .banner-content,
+      .snackbar-content {
+        gap: var(--space-2);
+        min-block-size: var(--touch);
+        padding: .35rem .45rem .35rem .75rem;
+      }
+
+      .banner-copy,
+      .snackbar-copy {
+        min-inline-size: 0;
+        flex: 1;
+        font-size: .75rem;
+        font-weight: 650;
+        overflow-wrap: break-word;
+      }
+
+      .banner-action,
+      .snackbar-action {
+        flex: 0 0 auto;
+        min-block-size: var(--touch);
+        padding-inline: .8rem;
+        border-radius: var(--radius-full);
+        background: transparent;
+        font-size: .75rem;
+        font-weight: 800;
+      }
+
+      .banner-action:hover,
+      .snackbar-action:hover {
+        background: color-mix(in oklab, currentColor 10%, transparent);
+      }
+
+      .spinner {
+        flex: 0 0 auto;
+        inline-size: 1rem;
+        block-size: 1rem;
+        border: .14rem solid currentColor;
+        border-inline-end-color: transparent;
+        border-radius: 50%;
+        animation: spin .8s linear infinite;
+      }
+
+      .snackbar {
+        inset-block-end: var(--space-2);
+        background: #2b3230;
+        color: #ecf2ef;
+      }
+
+      .action-rail {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: var(--space-3);
+        padding: var(--space-4);
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-dialog);
+        background: var(--surface-low);
+        box-shadow: 0 .4rem 1.3rem var(--shadow);
+      }
+
+      .turn-copy {
+        display: grid;
+        align-content: start;
+        gap: var(--space-2);
+        min-block-size: 0;
+      }
+
+      .status-line {
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        min-block-size: 1.75rem;
+        max-inline-size: 100%;
+        padding-inline: .65rem;
+        overflow: hidden;
+        border-radius: var(--radius-full);
+        background: var(--primary-container);
+        color: var(--on-primary-container);
+        font-size: .6875rem;
+        font-weight: 800;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-chip[data-tone="pending"] {
+        background: var(--tertiary-container);
+        color: var(--on-tertiary-container);
+      }
+
+      .status-chip[data-tone="error"] {
+        background: var(--error-container);
+        color: var(--on-error-container);
+      }
+
+      .revision-label {
+        flex: 0 0 auto;
+        color: var(--on-surface-variant);
+        font-size: .625rem;
+      }
+
+      .turn-title {
+        font-size: clamp(1.1rem, .9rem + .8vw, 1.5rem);
+        font-weight: 780;
+        line-height: 1.18;
+        letter-spacing: -.02em;
+        text-wrap: balance;
+      }
+
+      .turn-hint {
+        color: var(--on-surface-variant);
+        font-size: .75rem;
+        line-height: 1.5;
+        text-wrap: pretty;
+      }
+
+      .context-rule {
+        display: flex;
+        align-items: flex-start;
+        gap: .4rem;
+        padding: .5rem .6rem;
+        border-radius: var(--radius-card);
+        background: var(--surface-high);
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+        line-height: 1.35;
+      }
+
+      .context-rule strong {
+        color: var(--primary);
+        font-size: .75rem;
+      }
+
+      .action-dock {
+        display: grid;
+        gap: var(--space-2);
+      }
+
+      .dice-meta {
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+
+      .dice-wrap {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+
+      .dice {
+        position: relative;
+        display: grid;
+        grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+        inline-size: clamp(3.5rem, 7.2vw, 4rem);
+        aspect-ratio: 1;
+        padding: .6rem;
+        border: 1px solid var(--outline);
+        border-radius: var(--radius-card);
+        background: var(--surface-lowest);
+        box-shadow: 0 .2rem .55rem var(--shadow);
+      }
+
+      .dice[data-pending="true"] {
+        place-items: center;
+      }
+
+      .dice[data-pending="true"] .pip { display: none; }
+
+      .dice .spinner {
+        position: absolute;
+        inset: calc(50% - .65rem);
+        inline-size: 1.3rem;
+        block-size: 1.3rem;
+        color: var(--primary);
+      }
+
+      .pip {
+        place-self: center;
+        inline-size: .48rem;
+        block-size: .48rem;
+        border-radius: 50%;
+        background: var(--primary);
+      }
+
+      .pip:nth-of-type(1) { grid-area: 1 / 1; }
+      .pip:nth-of-type(2) { grid-area: 1 / 2; }
+      .pip:nth-of-type(3) { grid-area: 1 / 3; }
+      .pip:nth-of-type(4) { grid-area: 2 / 1; }
+      .pip:nth-of-type(5) { grid-area: 2 / 2; }
+      .pip:nth-of-type(6) { grid-area: 2 / 3; }
+      .pip:nth-of-type(7) { grid-area: 3 / 1; }
+      .pip:nth-of-type(8) { grid-area: 3 / 2; }
+      .pip:nth-of-type(9) { grid-area: 3 / 3; }
+
+      .dice-copy strong,
+      .dice-copy span {
+        display: block;
+      }
+
+      .dice-copy strong {
+        font-size: .875rem;
+      }
+
+      .dice-copy span {
+        margin-block-start: .15rem;
+        color: var(--on-surface-variant);
+        font-size: .625rem;
+      }
+
+      .primary-action {
+        inline-size: 100%;
+        min-block-size: 3.25rem;
+        padding-inline: var(--space-4);
+        border-radius: var(--radius-full);
+        background: var(--primary);
+        color: var(--on-primary);
+        font-size: .875rem;
+        font-weight: 800;
+        transition: filter var(--motion-standard), transform var(--motion-fast);
+      }
+
+      .primary-action:hover:not(:disabled) { filter: brightness(1.08); }
+
+      .primary-action[data-kind="waiting"] {
+        background: var(--surface-highest);
+        color: var(--on-surface-variant);
+      }
+
+      [popover] {
+        display: none;
+        margin: 0;
+        padding: .45rem;
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-floating);
+        background: var(--surface-lowest);
+        color: var(--on-surface);
+        box-shadow: 0 .7rem 2rem var(--shadow);
+      }
+
+      [popover]:where(:popover-open, .popover-fallback-open) { display: grid; }
+
+      .game-menu {
+        inset: calc(max(var(--space-3), env(safe-area-inset-top)) + var(--touch) + .25rem)
+          max(var(--space-3), env(safe-area-inset-left)) auto auto;
+        inline-size: min(17rem, calc(100vw - 1.5rem));
+        gap: .2rem;
+      }
+
+      .menu-button {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-3);
+        min-inline-size: 100%;
+        padding-inline: .85rem;
+        border-radius: var(--radius-card);
+        background: transparent;
+        font-size: .8125rem;
+        text-align: start;
+      }
+
+      .menu-button:hover { background: var(--surface-high); }
+      .menu-button[data-danger="true"] { color: var(--error); }
+      .menu-button small { color: var(--on-surface-variant); font-size: .625rem; }
+
+      .menu-separator {
+        block-size: 1px;
+        margin-block: .25rem;
+        background: var(--outline-variant);
+      }
+
+      dialog {
+        inline-size: min(38rem, calc(100vw - 2rem));
+        max-block-size: calc(100dvh - 2rem);
+        padding: 0;
+        overflow: auto;
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-dialog);
+        background: var(--surface-lowest);
+        color: var(--on-surface);
+        box-shadow: 0 1.3rem 4rem var(--shadow);
+      }
+
+      dialog::backdrop { background: var(--scrim); }
+
+      .dialog-body {
+        display: grid;
+        gap: var(--space-3);
+        padding: var(--space-6);
+      }
+
+      .dialog-kicker {
+        color: var(--primary);
+        font-size: .6875rem;
+        font-weight: 800;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+      }
+
+      .dialog-body h2 {
+        font-size: 1.35rem;
+        line-height: 1.2;
+        text-wrap: balance;
+      }
+
+      .dialog-body > p,
+      .rule-list {
+        color: var(--on-surface-variant);
+        font-size: .8125rem;
+        line-height: 1.55;
+        text-wrap: pretty;
+      }
+
+      .dialog-actions {
+        justify-content: flex-end;
+        gap: var(--space-2);
+        margin-block-start: var(--space-2);
+      }
+
+      .dialog-action {
+        min-inline-size: 7rem;
+        padding-inline: var(--space-4);
+        border-radius: var(--radius-full);
+        background: transparent;
+        font-size: .8125rem;
+        font-weight: 800;
+      }
+
+      .dialog-action:hover { background: var(--surface-high); }
+
+      .dialog-action[data-danger="true"] {
+        background: var(--error);
+        color: var(--on-error);
+      }
+
+      .rule-list {
+        display: grid;
+        gap: var(--space-2);
+        padding-inline-start: 1.2rem;
+      }
+
+      .state-dialog { inline-size: min(46rem, calc(100vw - 1rem)); }
+
+      .state-dialog .dialog-body {
+        gap: var(--space-2);
+        padding: var(--space-4);
+      }
+
+      .state-dialog-header,
+      .state-tools {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-3);
+      }
+
+      .state-dialog-header p {
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+      }
+
+      .close-button {
+        flex: 0 0 auto;
+        inline-size: var(--touch);
+        block-size: var(--touch);
+        border-radius: 50%;
+        background: transparent;
+        font-size: 1.25rem;
+      }
+
+      .state-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: .4rem;
+        padding: 0;
+        border: 0;
+      }
+
+      .state-grid legend { padding-block-end: var(--space-2); font-size: .6875rem; font-weight: 750; }
+
+      .state-button,
+      .tool-button {
+        min-block-size: var(--touch);
+        padding: .35rem .55rem;
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-card);
+        background: var(--surface-low);
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+        font-weight: 700;
+        line-height: 1.25;
+      }
+
+      .state-button:hover,
+      .tool-button:hover { background: var(--surface-high); }
+
+      .state-button[aria-pressed="true"] {
+        border-color: var(--primary);
+        background: var(--primary-container);
+        color: var(--on-primary-container);
+      }
+
+      .state-tools { justify-content: flex-start; }
+      .tool-button { padding-inline: .9rem; }
+
+      .result-layer {
+        position: absolute;
+        z-index: 30;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: var(--space-4);
+        background: var(--scrim);
+      }
+
+      .result-card {
+        position: relative;
+        inline-size: min(34rem, calc(100vw - 2rem));
+        padding: 1.4rem;
+        overflow: hidden;
+        border: 1px solid var(--outline-variant);
+        border-radius: var(--radius-dialog);
+        background: var(--surface-lowest);
+        box-shadow: 0 1.4rem 4rem var(--shadow);
+      }
+
+      .result-card::before {
+        position: absolute;
+        inset-block: 0;
+        inset-inline-start: 0;
+        inline-size: .45rem;
+        background: var(--primary);
+        content: "" / "";
+      }
+
+      .result-card[data-outcome="lost"]::before,
+      .result-card[data-outcome="resigned"]::before { background: var(--flight-yellow-dark); }
+
+      .result-card:is([data-outcome="cancelled"], [data-outcome="abandoned"])::before {
+        background: var(--outline);
+      }
+
+      .result-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-3);
+      }
+
+      .outcome-chip {
+        padding: .3rem .75rem;
+        border-radius: var(--radius-full);
+        background: var(--primary-container);
+        color: var(--on-primary-container);
+        font-size: .75rem;
+        font-weight: 800;
+      }
+
+      .result-card:is([data-outcome="cancelled"], [data-outcome="abandoned"]) .outcome-chip {
+        background: var(--surface-highest);
+        color: var(--on-surface-variant);
+      }
+
+      .confirmed-copy {
+        color: var(--on-surface-variant);
+        font-size: .6875rem;
+        font-weight: 650;
+      }
+
+      .result-card h2 {
+        margin-block-start: var(--space-4);
+        font-size: clamp(1.6rem, 1.1rem + 2vw, 2.3rem);
+        line-height: 1.1;
+        text-wrap: balance;
+      }
+
+      .result-support {
+        margin-block-start: var(--space-2);
+        color: var(--on-surface-variant);
+        font-size: .875rem;
+      }
+
+      .result-summary {
+        margin-block-start: var(--space-4);
+        padding: var(--space-3);
+        border-radius: var(--radius-card);
+        background: var(--surface-low);
+      }
+
+      .result-summary strong,
+      .result-summary span { display: block; }
+      .result-summary strong { font-size: 1.1rem; }
+      .result-summary span { margin-block-start: .15rem; color: var(--on-surface-variant); font-size: .6875rem; }
+
+      .result-actions {
+        justify-content: flex-end;
+        gap: var(--space-2);
+        margin-block-start: var(--space-4);
+      }
+
+      .result-actions button {
+        min-inline-size: 8.5rem;
+        padding-inline: var(--space-4);
+        border-radius: var(--radius-full);
+        background: var(--surface-high);
+        font-size: .8125rem;
+        font-weight: 800;
+      }
+
+      .result-actions .result-primary {
+        background: var(--primary);
+        color: var(--on-primary);
+      }
+
+      @keyframes spin { to { rotate: 1turn; } }
+    }
+
+    @layer states {
+      .game-shell[data-lock="true"] .action-rail,
+      .game-shell[data-lock="true"] .identity-rail {
+        filter: saturate(.75);
+      }
+
+      .game-shell[data-state="move-pending"] .board-state span,
+      .game-shell[data-state="reconnecting"] .board-state span {
+        background: color-mix(in oklab, var(--tertiary-container) 88%, #001e31);
+        color: #ffffff;
+      }
+
+      .game-shell[data-state="third-six"] .board-state span,
+      .game-shell[data-state="action-error"] .board-state span {
+        background: color-mix(in oklab, var(--error-container) 86%, #690005);
+        color: #ffffff;
+      }
+    }
+
+    @layer responsive {
+      @media (max-height: 23.75rem) {
+        .game-shell {
+          grid-template-columns: 9rem minmax(18rem, calc(100dvh - 1rem)) minmax(10.5rem, 1fr);
+          gap: var(--space-2);
+          padding-block: max(.5rem, env(safe-area-inset-top)) max(.5rem, env(safe-area-inset-bottom));
+          padding-inline: max(.5rem, env(safe-area-inset-left)) max(.5rem, env(safe-area-inset-right));
+        }
+
+        .identity-rail { gap: var(--space-2); }
+        .player-card { gap: .32rem; padding: .55rem .65rem; }
+        .plane-counts { gap: .18rem; }
+        .action-rail { gap: var(--space-2); padding: var(--space-3); border-radius: 1.4rem; }
+        .turn-copy { gap: .35rem; }
+        .turn-title { font-size: 1.05rem; }
+        .turn-hint { font-size: .6875rem; line-height: 1.35; }
+        .context-rule { padding: .38rem .5rem; font-size: .625rem; }
+        .dice { inline-size: 3.7rem; }
+        .primary-action { min-block-size: 3rem; }
+        .board-placeholder { inline-size: min(100%, calc(100dvh - 1rem)); }
+        .board-note { padding: var(--space-3); }
+        .state-dialog .dialog-body { padding: var(--space-3); }
+        .state-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .state-button { min-block-size: var(--touch); }
+      }
+
+      @media (orientation: landscape) and (max-height: 30rem) {
+        .state-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      }
+
+      @media (max-width: 50rem) {
+        .game-shell {
+          grid-template-columns: minmax(9rem, 1fr) minmax(17rem, calc(100dvh - 1rem)) minmax(10.5rem, 1.15fr);
+        }
+
+        .revision-label { display: none; }
+        .player-card { padding-inline: .6rem; }
+        .player-heading { gap: .25rem; }
+        .player-role strong { font-size: .75rem; white-space: nowrap; }
+        .turn-indicator { min-inline-size: 2rem; padding-inline: .25rem; }
+      }
+
+      @media (max-width: 43rem), (orientation: portrait) {
+        body { overflow: auto; }
+
+        .game-shell {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(19rem, 72vw) auto;
+          max-block-size: none;
+          padding: var(--space-3);
+          overflow: visible;
+        }
+
+        .identity-rail { grid-template-rows: var(--touch) auto; }
+        .players { grid-template: 1fr / 1fr auto 1fr; }
+        .versus-label { align-self: center; }
+        .player-card { min-block-size: 6rem; }
+        .board-placeholder { block-size: 100%; inline-size: auto; }
+        .action-rail { min-block-size: 20rem; }
+      }
+
+      @media (pointer: coarse) {
+        .banner-action,
+        .snackbar-action,
+        .dialog-action { min-block-size: var(--touch); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .spinner { animation-duration: 2.4s; }
+        button, .player-card { transition: none; }
+      }
+
+      @media (forced-colors: active) {
+        .player-card,
+        .board-placeholder,
+        .action-rail,
+        .connection-banner,
+        .snackbar,
+        dialog,
+        .result-card { border: 1px solid CanvasText; }
+
+        .presence-dot,
+        .player-card::before,
+        .result-card::before { background: Highlight; }
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="game-shell" id="gameShell" data-state="ready" data-theme="light" data-lock="false">
+    <header class="identity-rail" aria-label="对局信息">
+      <nav class="utility-bar" aria-label="场景导航">
+        <button class="icon-button" id="backButton" type="button" aria-label="返回大厅">‹</button>
+        <h1 class="game-title">飞行棋</h1>
+        <button class="icon-button" id="menuButton" type="button" popovertarget="gameMenu" aria-label="更多操作">⋯</button>
+      </nav>
+
+      <section class="players" aria-label="双方状态">
+        <article class="player-card" id="opponentCard" data-player="opponent" data-active="false">
+          <div class="player-heading">
+            <p class="player-role"><strong>对手 · 黄方</strong><span>纸飞机</span></p>
+            <span class="turn-indicator" id="opponentTurn">等待</span>
+          </div>
+          <p class="presence" id="opponentPresence" data-online="true"><span class="presence-dot" aria-hidden="true"></span><span>在线</span></p>
+          <p class="plane-counts">
+            <span class="plane-count">2 架在途</span><span class="plane-count">2 架待机</span>
+          </p>
+        </article>
+
+        <p class="versus-label">VS</p>
+
+        <article class="player-card" id="localCard" data-player="me" data-active="true">
+          <div class="player-heading">
+            <p class="player-role"><strong>你 · 红方</strong><span>飞行员</span></p>
+            <span class="turn-indicator" id="localTurn">当前</span>
+          </div>
+          <p class="presence"><span class="presence-dot" aria-hidden="true"></span><span>已连接</span></p>
+          <p class="plane-counts">
+            <span class="plane-count">1 架在途</span><span class="plane-count">3 架待机</span>
+          </p>
+        </article>
+      </section>
+    </header>
+
+    <section class="board-stage" aria-label="棋盘主视觉区">
+      <figure class="board-placeholder">
+        <figcaption class="board-note">
+          <strong>现有经典棋盘保持不变</strong>
+          <span>四角机场 · 52 格环线 · 6 格归家航道<br>本原型只讨论棋盘以外的 UX</span>
+        </figcaption>
+        <p class="board-state"><span id="boardState">棋盘已同步 · 等待掷骰</span></p>
+      </figure>
+
+      <aside class="connection-banner" id="connectionBanner" data-tone="neutral" aria-label="连接状态" hidden>
+        <div class="banner-content">
+          <span class="spinner" id="connectionSpinner" aria-hidden="true"></span>
+          <p class="banner-copy" id="connectionCopy">网络波动，正在恢复对局…</p>
+          <button class="banner-action" id="connectionAction" type="button" hidden>返回大厅</button>
+        </div>
+      </aside>
+
+      <aside class="snackbar" id="snackbar" aria-label="操作反馈" hidden>
+        <div class="snackbar-content">
+          <p class="snackbar-copy" id="snackbarCopy">掷骰未提交成功，棋局没有变化</p>
+          <button class="snackbar-action" id="snackbarAction" type="button" hidden>重试</button>
+        </div>
+      </aside>
+    </section>
+
+    <aside class="action-rail" aria-label="本回合操作">
+      <section class="turn-copy">
+        <div class="status-line">
+          <span class="status-chip" id="statusChip" data-tone="active">你的回合</span>
+          <span class="revision-label">已同步</span>
+        </div>
+        <p class="turn-title" id="turnTitle">先掷骰子</p>
+        <p class="turn-hint" id="turnHint">骰点由服务器生成。确认后，再从棋盘中手动选择飞机。</p>
+        <p class="context-rule"><strong aria-hidden="true">i</strong><span id="contextRule">掷出 6 可从机库起飞，并奖励再掷一次。</span></p>
+      </section>
+
+      <section class="action-dock" aria-label="骰子和主操作">
+        <div class="dice-meta">
+          <div class="dice-wrap">
+            <div class="dice" id="dice" data-pending="false" aria-hidden="true">
+              <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+              <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+              <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+              <span class="spinner" id="diceSpinner" hidden></span>
+            </div>
+            <div class="dice-copy"><strong id="diceLabel">等待掷骰</strong><span id="streakLabel">连续 6：0 / 3</span></div>
+          </div>
+          <output class="visually-hidden" id="diceOutput">尚未掷骰</output>
+        </div>
+        <button class="primary-action" id="primaryAction" type="button">掷骰子</button>
+      </section>
+    </aside>
+
+    <nav class="game-menu" id="gameMenu" popover="auto" aria-label="更多操作菜单">
+      <button class="menu-button" id="rulesButton" type="button"><span>查看本局规则</span><span aria-hidden="true">›</span></button>
+      <button class="menu-button" id="themeButton" type="button"><span>切换明暗主题</span><small id="themeLabel">当前：浅色</small></button>
+      <div class="menu-separator" aria-hidden="true"></div>
+      <button class="menu-button" id="stateButton" type="button"><span>原型：切换关键状态</span><span aria-hidden="true">›</span></button>
+      <div class="menu-separator" aria-hidden="true"></div>
+      <button class="menu-button" id="resignButton" type="button" data-danger="true"><span>认输并结束对局</span><span aria-hidden="true">›</span></button>
+    </nav>
+
+    <section class="result-layer" id="resultLayer" aria-label="对局结果" hidden>
+      <article class="result-card" id="resultCard" data-outcome="won">
+        <div class="result-meta">
+          <span class="outcome-chip" id="outcomeChip">胜利</span>
+          <span class="confirmed-copy">✓ 服务器结果已确认</span>
+        </div>
+        <h2 id="resultTitle">全员抵达</h2>
+        <p class="result-support" id="resultSupport">四架飞机已全部抵达终点。</p>
+        <p class="result-summary" hidden><strong id="resultSummary"></strong><span>已确认操作</span></p>
+        <div class="result-actions">
+          <button id="resultStatesButton" type="button">切换演示状态</button>
+          <button class="result-primary" id="resultReturnButton" type="button">返回大厅</button>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <dialog id="resignDialog" aria-labelledby="resignDialogTitle" closedby="closerequest">
+    <form class="dialog-body" method="dialog">
+      <p class="dialog-kicker">危险操作</p>
+      <h2 id="resignDialogTitle">认输并结束这局？</h2>
+      <p>确认后，本局会立即结束并判对手获胜。返回大厅不会认输，你也可以稍后继续这局。</p>
+      <div class="dialog-actions">
+        <button class="dialog-action" type="submit" value="cancel">继续对局</button>
+        <button class="dialog-action" type="submit" value="resign" data-danger="true">认输并结束本局</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="rulesDialog" aria-labelledby="rulesDialogTitle" closedby="any">
+    <form class="dialog-body" method="dialog">
+      <p class="dialog-kicker">双人经典规则</p>
+      <h2 id="rulesDialogTitle">当前对局怎么走</h2>
+      <ul class="rule-list">
+        <li>红方先手；骰点由服务器生成，掷完后始终手动选择一架可移动飞机。</li>
+        <li>只有 6 能从机库起飞；掷出 6 并完成移动后，可再掷一次。</li>
+        <li>同色飞机可以叠放且不挡路；落在对手叠放位置会一次击落全部。</li>
+        <li>同色格会触发跳跃，特定位置会走长距离飞跃；进入归家航道后必须刚好到达。</li>
+        <li>连续第三个 6 会把本轮前两个 6 移动过的飞机送回机库，并结束回合。</li>
+      </ul>
+      <div class="dialog-actions"><button class="dialog-action" type="submit" value="close">知道了</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="state-dialog" id="stateDialog" aria-labelledby="stateDialogTitle" closedby="any">
+    <section class="dialog-body">
+      <header class="state-dialog-header">
+        <div><h2 id="stateDialogTitle">原型关键状态</h2><p>18 个可切换状态，只影响棋盘外 UI；不会模拟真实服务端。</p></div>
+        <button class="close-button" id="closeStateDialog" type="button" aria-label="关闭状态选择">×</button>
+      </header>
+      <fieldset class="state-grid" id="stateGrid">
+        <legend>选择状态</legend>
+        <button class="state-button" type="button" data-state="connecting" aria-pressed="false">首次连接</button>
+        <button class="state-button" type="button" data-state="ready" aria-pressed="true">待掷骰</button>
+        <button class="state-button" type="button" data-state="roll-pending" aria-pressed="false">掷骰确认中</button>
+        <button class="state-button" type="button" data-state="choose" aria-pressed="false">骰点 6 · 选飞机</button>
+        <button class="state-button" type="button" data-state="move-pending" aria-pressed="false">走子确认中</button>
+        <button class="state-button" type="button" data-state="opponent" aria-pressed="false">对手回合</button>
+        <button class="state-button" type="button" data-state="auto-pass" aria-pressed="false">无合法飞机 · 换手</button>
+        <button class="state-button" type="button" data-state="third-six" aria-pressed="false">连续第三个 6</button>
+        <button class="state-button" type="button" data-state="reconnecting" aria-pressed="false">断线重连</button>
+        <button class="state-button" type="button" data-state="stale-sync" aria-pressed="false">棋盘更新 · 同步</button>
+        <button class="state-button" type="button" data-state="action-error" aria-pressed="false">操作失败可重试</button>
+        <button class="state-button" type="button" data-state="connection-failed" aria-pressed="false">连接失败</button>
+        <button class="state-button" type="button" data-state="resign-pending" aria-pressed="false">认输确认中</button>
+        <button class="state-button" type="button" data-state="result-win" aria-pressed="false">全员抵达 · 胜</button>
+        <button class="state-button" type="button" data-state="result-loss" aria-pressed="false">全员抵达 · 负</button>
+        <button class="state-button" type="button" data-state="result-resigned" aria-pressed="false">认输结果</button>
+        <button class="state-button" type="button" data-state="result-cancelled" aria-pressed="false">对局取消</button>
+        <button class="state-button" type="button" data-state="result-abandoned" aria-pressed="false">对局作废</button>
+      </fieldset>
+      <div class="state-tools">
+        <button class="tool-button" id="stateThemeButton" type="button">◐ 切换明暗</button>
+        <button class="tool-button" id="openResignFromStates" type="button">打开认输确认</button>
+      </div>
+    </section>
+  </dialog>
+
+  <script>
+    const shell = document.querySelector('#gameShell');
+    const elements = {
+      localCard: document.querySelector('#localCard'),
+      opponentCard: document.querySelector('#opponentCard'),
+      localTurn: document.querySelector('#localTurn'),
+      opponentTurn: document.querySelector('#opponentTurn'),
+      opponentPresence: document.querySelector('#opponentPresence'),
+      boardState: document.querySelector('#boardState'),
+      connectionBanner: document.querySelector('#connectionBanner'),
+      connectionSpinner: document.querySelector('#connectionSpinner'),
+      connectionCopy: document.querySelector('#connectionCopy'),
+      connectionAction: document.querySelector('#connectionAction'),
+      snackbar: document.querySelector('#snackbar'),
+      snackbarCopy: document.querySelector('#snackbarCopy'),
+      snackbarAction: document.querySelector('#snackbarAction'),
+      statusChip: document.querySelector('#statusChip'),
+      turnTitle: document.querySelector('#turnTitle'),
+      turnHint: document.querySelector('#turnHint'),
+      contextRule: document.querySelector('#contextRule'),
+      dice: document.querySelector('#dice'),
+      diceSpinner: document.querySelector('#diceSpinner'),
+      diceLabel: document.querySelector('#diceLabel'),
+      streakLabel: document.querySelector('#streakLabel'),
+      diceOutput: document.querySelector('#diceOutput'),
+      primaryAction: document.querySelector('#primaryAction'),
+      resultLayer: document.querySelector('#resultLayer'),
+      resultCard: document.querySelector('#resultCard'),
+      outcomeChip: document.querySelector('#outcomeChip'),
+      resultTitle: document.querySelector('#resultTitle'),
+      resultSupport: document.querySelector('#resultSupport'),
+      resultSummaryPanel: document.querySelector('.result-summary'),
+      resultSummary: document.querySelector('#resultSummary'),
+      themeLabel: document.querySelector('#themeLabel')
+    };
+
+    const states = {
+      connecting: {
+        active: 'none', chip: '连接对局', tone: 'pending', title: '正在同步棋盘',
+        hint: '先恢复服务端的最新状态，再开放任何对局操作。',
+        rule: '首次连接期间不显示可操作的本地猜测状态。', dice: 0, diceLabel: '等待同步', streak: '连续 6：—',
+        action: '同步中…', disabled: true, kind: 'waiting', board: '正在获取权威棋盘', lock: true,
+        connection: { copy: '连接中… 正在获取最新棋盘', tone: 'neutral' }
+      },
+      ready: {
+        active: 'me', chip: '你的回合', tone: 'active', title: '先掷骰子',
+        hint: '骰点由服务器生成。确认后，再从棋盘中手动选择飞机。',
+        rule: '掷出 6 可从机库起飞，并奖励再掷一次。', dice: 0, diceLabel: '等待掷骰', streak: '连续 6：0 / 3',
+        action: '掷骰子', disabled: false, kind: 'primary', board: '棋盘已同步 · 等待掷骰', lock: false
+      },
+      'roll-pending': {
+        active: 'me', chip: '等待服务器确认', tone: 'pending', title: '正在生成骰点',
+        hint: '请求已经提交。确认前不显示骰点，也不会开放棋子选择。',
+        rule: '同一次提交不会重复掷骰。', dice: 0, dicePending: true, diceLabel: '生成骰点…', streak: '连续 6：0 / 3',
+        action: '确认中…', disabled: true, kind: 'waiting', board: '保留最后确认的棋盘', lock: true
+      },
+      choose: {
+        active: 'me', chip: '你的回合', tone: 'active', title: '选择一架飞机',
+        hint: '可移动飞机已在棋盘高亮。即使只有一架，也由你手动确认。',
+        rule: '本次掷出 6；移动确认后仍是你的回合。', dice: 6, diceLabel: '骰点 6', streak: '连续 6：1 / 3',
+        action: '请在棋盘选飞机', disabled: true, kind: 'waiting', board: '点选一架高亮的红方飞机', lock: false
+      },
+      'move-pending': {
+        active: 'me', chip: '等待服务器确认', tone: 'pending', title: '正在确认走子',
+        hint: '3 号机已经提交；服务器确认前，棋盘不会把它画到新位置。',
+        rule: '若请求失败，会恢复选择且保留仍然有效的骰点。', dice: 6, diceLabel: '骰点 6', streak: '连续 6：1 / 3',
+        action: '确认走子中…', disabled: true, kind: 'waiting', board: '已选择 3 号机 · 等待确认', lock: true
+      },
+      opponent: {
+        active: 'opponent', chip: '对手回合', tone: 'active', title: '等待对手',
+        hint: '你仍可查看双方进度和最后确认的棋盘，无需盯着不可用按钮。',
+        rule: '对手正在选择飞机；轮到你时主操作会自动出现。', dice: 4, diceLabel: '对手骰点 4', streak: '对手连续 6：0 / 3',
+        action: '等待对手', disabled: true, kind: 'waiting', board: '对手正在选择黄方飞机', lock: true
+      },
+      'auto-pass': {
+        active: 'opponent', chip: '已自动换手', tone: 'active', title: '掷出 3，无法移动',
+        hint: '红方飞机都在机库，本次没有合法飞机；回合已自动交给对手。',
+        rule: '非 6 不能从机库起飞；没有合法飞机时无需选择。', dice: 3, diceLabel: '本次骰点 3', streak: '连续 6：0 / 3',
+        action: '等待对手', disabled: true, kind: 'waiting', board: '骰点 3 · 无合法飞机 · 已自动换手', lock: true
+      },
+      'third-six': {
+        active: 'opponent', chip: '规则已结算', tone: 'error', title: '连续第三个 6',
+        hint: '前两个 6 移动过的飞机已送回机库，本回合立即结束。',
+        rule: '处罚和回合切换均以服务器确认结果为准。', dice: 6, diceLabel: '骰点 6', streak: '连续 6：3 / 3',
+        action: '等待对手', disabled: true, kind: 'waiting', board: '处罚已确认 · 2 架飞机返回机库', lock: true
+      },
+      reconnecting: {
+        active: 'none', chip: '恢复对局', tone: 'pending', title: '正在重新同步',
+        hint: '最后确认的棋盘仍然可见；恢复完成前暂停新的掷骰和走子。',
+        rule: '本地未确认的选择不会冒充正式走子。', dice: 6, diceLabel: '已确认骰点 6', streak: '连续 6：1 / 3',
+        action: '重连中…', disabled: true, kind: 'waiting', board: '保留 revision 24 的确认棋盘', lock: true,
+        connection: { copy: '网络波动，正在恢复对局… 已确认棋盘会保留', tone: 'neutral' }, online: false
+      },
+      'stale-sync': {
+        active: 'none', chip: '棋盘已更新', tone: 'pending', title: '正在同步最新棋盘',
+        hint: '刚才的操作基于旧状态，已暂停输入并向服务器获取最新棋盘。',
+        rule: '同步完成后以服务器状态重建，不会保留过期的本地选择。', dice: 6, diceLabel: '上次确认骰点 6', streak: '连续 6：待同步',
+        action: '同步中…', disabled: true, kind: 'waiting', board: '保留最后确认画面 · 等待最新快照', lock: true,
+        connection: { copy: '棋盘已更新，正在同步…', tone: 'neutral' }
+      },
+      'action-error': {
+        active: 'me', chip: '你的回合', tone: 'active', title: '请重试掷骰子',
+        hint: '上一请求没有提交成功；棋局未变化，你仍然可以继续。',
+        rule: '失败后恢复可操作状态，不清掉仍然有效的上下文。', dice: 0, diceLabel: '等待掷骰', streak: '连续 6：0 / 3',
+        action: '重新掷骰子', disabled: false, kind: 'primary', board: '棋盘未变化 · 可以重试', lock: false,
+        snackbar: '掷骰未提交成功，棋局没有变化', snackbarAction: false
+      },
+      'connection-failed': {
+        active: 'none', chip: '无法继续', tone: 'error', title: '连接失败',
+        hint: '当前无法恢复对局。返回大厅后，本地不会把未确认状态写入结果。',
+        rule: '连接失败是阻断状态，需要明确的下一步。', dice: 0, diceLabel: '状态未知', streak: '连续 6：—',
+        action: '请返回大厅', disabled: true, kind: 'waiting', board: '最后确认的棋盘已保留', lock: true,
+        connection: { copy: '连接失败，无法继续恢复', tone: 'error', action: true }, online: false
+      },
+      'resign-pending': {
+        active: 'none', chip: '等待服务器确认', tone: 'pending', title: '正在提交认输',
+        hint: '请求已经提交；收到服务器终局前，不提前把这局显示为结束。',
+        rule: '认输是独立危险操作，返回大厅不会触发认输。', dice: 4, diceLabel: '最后确认骰点 4', streak: '连续 6：0 / 3',
+        action: '确认中…', disabled: true, kind: 'waiting', board: '保留最后确认的棋盘', lock: true
+      },
+      'result-win': {
+        active: 'none', chip: '对局结束', tone: 'active', title: '结果已确认',
+        hint: '四架红方飞机已全部抵达。', rule: '终局以后不再开放掷骰或走子。',
+        dice: 1, diceLabel: '最后骰点 1', streak: '最终状态', action: '对局已结束', disabled: true, kind: 'waiting',
+        board: '四架红方飞机已抵达终点', lock: true,
+        result: { outcome: 'won', chip: '胜利', title: '全员抵达', support: '四架飞机已全部抵达终点。' }
+      },
+      'result-loss': {
+        active: 'none', chip: '对局结束', tone: 'active', title: '结果已确认',
+        hint: '黄方率先完成了航程。', rule: '终局以后不再开放掷骰或走子。',
+        dice: 2, diceLabel: '最后骰点 2', streak: '最终状态', action: '对局已结束', disabled: true, kind: 'waiting',
+        board: '四架黄方飞机已抵达终点', lock: true,
+        result: { outcome: 'lost', chip: '惜败', title: '这局差一点', support: '对手率先完成了航程。' }
+      },
+      'result-resigned': {
+        active: 'none', chip: '对局结束', tone: 'active', title: '结果已确认',
+        hint: '认输结果已经由服务器确认。', rule: '返回大厅不会改变已经确认的结果。',
+        dice: 4, diceLabel: '最后确认骰点 4', streak: '最终状态', action: '对局已结束', disabled: true, kind: 'waiting',
+        board: '终局棋盘已确认', lock: true,
+        result: { outcome: 'resigned', chip: '认输', title: '你已认输', support: '飞行棋终局已由服务器确认。' }
+      },
+      'result-cancelled': {
+        active: 'none', chip: '对局结束', tone: 'active', title: '对局已取消',
+        hint: '本局不会计入结果。', rule: '取消状态来自服务器，不等同于玩家认输。',
+        dice: 0, diceLabel: '没有终局骰点', streak: '已取消', action: '对局已结束', disabled: true, kind: 'waiting',
+        board: '已保留最后确认画面', lock: true,
+        result: { outcome: 'cancelled', chip: '已取消', title: '对局已取消', support: '本局不会计入结果。' }
+      },
+      'result-abandoned': {
+        active: 'none', chip: '对局结束', tone: 'active', title: '对局已作废',
+        hint: '本局不会计入结果，双方均不记录胜负。', rule: '作废状态来自服务器，不代表任一方获胜或认输。',
+        dice: 0, diceLabel: '没有终局骰点', streak: '已作废', action: '对局已结束', disabled: true, kind: 'waiting',
+        board: '已保留最后确认画面', lock: true,
+        result: { outcome: 'abandoned', chip: '已作废', title: '对局已作废', support: '本局不会计入结果，双方均不记录胜负。' }
+      }
+    };
+
+    const dicePips = {
+      0: [], 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9],
+      5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9]
+    };
+
+    let actionTimer = 0;
+
+    function setDice(value, pending = false) {
+      const pips = [...elements.dice.querySelectorAll('.pip')];
+      elements.dice.dataset.pending = String(pending);
+      elements.diceSpinner.hidden = !pending;
+      pips.forEach((pip, index) => { pip.hidden = pending || !dicePips[value].includes(index + 1); });
+      elements.diceOutput.value = pending ? '正在生成骰点' : value ? `骰点 ${value}` : '尚未掷骰';
+    }
+
+    function setActivePlayer(active) {
+      const mine = active === 'me';
+      const opponent = active === 'opponent';
+      elements.localCard.dataset.active = String(mine);
+      elements.opponentCard.dataset.active = String(opponent);
+      elements.localTurn.textContent = mine ? '当前' : active === 'none' ? '暂停' : '等待';
+      elements.opponentTurn.textContent = opponent ? '当前' : active === 'none' ? '暂停' : '等待';
+    }
+
+    function setConnection(config) {
+      elements.connectionBanner.hidden = !config;
+      if (!config) return;
+      elements.connectionBanner.dataset.tone = config.tone || 'neutral';
+      elements.connectionCopy.textContent = config.copy;
+      elements.connectionSpinner.hidden = config.tone === 'error';
+      elements.connectionAction.hidden = !config.action;
+    }
+
+    function setResult(config) {
+      elements.resultLayer.hidden = !config;
+      if (!config) return;
+      elements.resultCard.dataset.outcome = config.outcome;
+      elements.outcomeChip.textContent = config.chip;
+      elements.resultTitle.textContent = config.title;
+      elements.resultSupport.textContent = config.support;
+      elements.resultSummaryPanel.hidden = !config.summary;
+      if (config.summary) elements.resultSummary.textContent = config.summary;
+    }
+
+    function showState(name) {
+      const config = states[name];
+      if (!config) return;
+      window.clearTimeout(actionTimer);
+      shell.dataset.state = name;
+      shell.dataset.lock = String(config.lock);
+      setActivePlayer(config.active);
+      elements.opponentPresence.dataset.online = String(config.online !== false);
+      elements.opponentPresence.lastElementChild.textContent = config.online === false ? '状态未知' : '在线';
+      elements.statusChip.textContent = config.chip;
+      elements.statusChip.dataset.tone = config.tone;
+      elements.turnTitle.textContent = config.title;
+      elements.turnHint.textContent = config.hint;
+      elements.contextRule.textContent = config.rule;
+      elements.diceLabel.textContent = config.diceLabel;
+      elements.streakLabel.textContent = config.streak;
+      elements.boardState.textContent = config.board;
+      elements.primaryAction.textContent = config.action;
+      elements.primaryAction.disabled = config.disabled;
+      elements.primaryAction.dataset.kind = config.kind;
+      setDice(config.dice, config.dicePending);
+      setConnection(config.connection);
+      elements.snackbar.hidden = !config.snackbar;
+      if (config.snackbar) elements.snackbarCopy.textContent = config.snackbar;
+      elements.snackbarAction.hidden = config.snackbarAction !== true;
+      setResult(config.result);
+      document.querySelectorAll('.state-button').forEach((button) => {
+        button.setAttribute('aria-pressed', String(button.dataset.state === name));
+      });
+    }
+
+    function hideMenu() {
+      const menu = document.querySelector('#gameMenu');
+      if ('hidePopover' in menu && menu.matches(':popover-open')) menu.hidePopover();
+      menu.classList.remove('popover-fallback-open');
+    }
+
+    function showDialog(dialog) {
+      hideMenu();
+      if (!dialog.open) dialog.showModal();
+    }
+
+    function toggleTheme() {
+      const dark = shell.dataset.theme !== 'dark';
+      shell.dataset.theme = dark ? 'dark' : 'light';
+      elements.themeLabel.textContent = dark ? '当前：深色' : '当前：浅色';
+    }
+
+    function simulateRoll() {
+      showState('roll-pending');
+      actionTimer = window.setTimeout(() => showState('choose'), 900);
+    }
+
+    elements.primaryAction.addEventListener('click', simulateRoll);
+    elements.snackbarAction.addEventListener('click', simulateRoll);
+    elements.connectionAction.addEventListener('click', () => showState('ready'));
+    document.querySelector('#backButton').addEventListener('click', () => {
+      elements.snackbarCopy.textContent = '已返回大厅；这局仍可继续，不会自动认输';
+      elements.snackbarAction.hidden = true;
+      elements.snackbar.hidden = false;
+      actionTimer = window.setTimeout(() => { elements.snackbar.hidden = true; elements.snackbarAction.hidden = false; }, 1800);
+    });
+
+    document.querySelector('#rulesButton').addEventListener('click', () => showDialog(document.querySelector('#rulesDialog')));
+    document.querySelector('#resignButton').addEventListener('click', () => showDialog(document.querySelector('#resignDialog')));
+    document.querySelector('#stateButton').addEventListener('click', () => showDialog(document.querySelector('#stateDialog')));
+    document.querySelector('#themeButton').addEventListener('click', () => { toggleTheme(); hideMenu(); });
+    document.querySelector('#stateThemeButton').addEventListener('click', toggleTheme);
+    document.querySelector('#openResignFromStates').addEventListener('click', () => {
+      document.querySelector('#stateDialog').close();
+      showDialog(document.querySelector('#resignDialog'));
+    });
+    document.querySelector('#closeStateDialog').addEventListener('click', () => document.querySelector('#stateDialog').close());
+
+    document.querySelectorAll('.state-button').forEach((button) => {
+      button.addEventListener('click', () => {
+        showState(button.dataset.state);
+        document.querySelector('#stateDialog').close();
+      });
+    });
+
+    document.querySelector('#resignDialog').addEventListener('close', (event) => {
+      if (event.currentTarget.returnValue === 'resign') {
+        showState('resign-pending');
+        actionTimer = window.setTimeout(() => showState('result-resigned'), 900);
+      }
+    });
+
+    document.querySelector('#resultReturnButton').addEventListener('click', () => showState('ready'));
+    document.querySelector('#resultStatesButton').addEventListener('click', () => showDialog(document.querySelector('#stateDialog')));
+
+    if (!('popover' in HTMLElement.prototype)) {
+      const menuButton = document.querySelector('#menuButton');
+      const menu = document.querySelector('#gameMenu');
+      menuButton.addEventListener('click', () => menu.classList.toggle('popover-fallback-open'));
+      document.addEventListener('click', (event) => {
+        if (!menu.contains(event.target) && event.target !== menuButton) menu.classList.remove('popover-fallback-open');
+      });
+    }
+
+    const initialTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    shell.dataset.theme = initialTheme;
+    elements.themeLabel.textContent = initialTheme === 'dark' ? '当前：深色' : '当前：浅色';
+    showState('ready');
+
+    window.flightChessPrototype = {
+      showState,
+      setTheme(theme) {
+        shell.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+        elements.themeLabel.textContent = shell.dataset.theme === 'dark' ? '当前：深色' : '当前：浅色';
+      },
+      getState() { return { state: shell.dataset.state, theme: shell.dataset.theme }; }
+    };
+  </script>
+</body>
+</html>
