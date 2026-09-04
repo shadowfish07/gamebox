@@ -15,6 +15,7 @@ static func cases() -> Array:
 		{"name": "flight chess scene uses a landscape virtual pixel base", "run": _uses_landscape_content_scale},
 		{"name": "flight chess scene keeps the board dominant at landscape phone sizes", "run": _keeps_board_dominant},
 		{"name": "flight chess scene keeps standard phone actions on screen", "run": _keeps_standard_actions_visible},
+		{"name": "flight chess scene exposes normalized runtime touch targets", "run": _exposes_normalized_touch_targets},
 		{"name": "flight chess scene stays inside landscape phone safe areas", "run": _respects_phone_safe_areas},
 		{"name": "flight chess scene rolls before enabling manual plane selection", "run": _rolls_before_selection},
 		{"name": "flight chess scene waits for authoritative roll and move events", "run": _waits_for_authoritative_actions},
@@ -99,6 +100,29 @@ static func _keeps_standard_actions_visible() -> bool:
 		and _check(hint.text.contains("奖励") and hint.size.y >= hint.get_line_height(), "completed launch hides its rule hint") \
 		and _check(right_rail.get_global_rect().encloses(turn_label.get_global_rect()), "completed launch message escapes the right rail") \
 		and _check(right_rail.get_global_rect().encloses(hint.get_global_rect()), "completed launch hint escapes the right rail")
+	scene.free()
+	return result
+
+
+static func _exposes_normalized_touch_targets() -> bool:
+	var scene = FlightChessScene.instantiate()
+	(scene as Control).set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	(scene as Control).size = Vector2(2400.0, 1080.0)
+	(scene.get_node("LeftRail/Content/ResignButton") as Button).visible = true
+	(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var targets: Dictionary = scene.automation_targets()
+	var result := _check(targets.size() == 5, "runtime touch targets were incomplete")
+	for name in targets:
+		var point: Vector2 = targets[name]
+		result = result and _check(
+			point.x > 0.0 and point.x < 1.0 and point.y > 0.0 and point.y < 1.0,
+			"%s touch target was not normalized" % name,
+		)
+	result = result \
+		and _check((targets["roll"] as Vector2).x > 0.75, "roll target did not follow the expanded right rail") \
+		and _check((targets["red0"] as Vector2).y > (targets["yellow0"] as Vector2).y, "plane targets lost board orientation")
 	scene.free()
 	return result
 

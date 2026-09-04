@@ -253,6 +253,29 @@ func piece_state(color: String, index: int) -> Dictionary:
 	return ((_pieces[color] as Array)[index] as Dictionary).duplicate()
 
 
+func automation_targets() -> Dictionary:
+	var root_rect := get_global_rect()
+	if not root_rect.has_area() or not is_node_ready():
+		return {}
+	var board := $Board as Control
+	var red_center: Vector2 = board.get_global_rect().position + board.piece_center("red", 0)
+	var yellow_center: Vector2 = board.get_global_rect().position + board.piece_center("yellow", 0)
+	return {
+		"roll": _normalized_point(($RightRail/Content/RollButton as Control).get_global_rect().get_center(), root_rect),
+		"red0": _normalized_point(red_center, root_rect),
+		"yellow0": _normalized_point(yellow_center, root_rect),
+		"resign": _normalized_point(($LeftRail/Content/ResignButton as Control).get_global_rect().get_center(), root_rect),
+		"confirm": _normalized_point(($ResignDialog/Dialog/Content/Actions/ConfirmButton as Control).get_global_rect().get_center(), root_rect),
+	}
+
+
+static func _normalized_point(point: Vector2, bounds: Rect2) -> Vector2:
+	return Vector2(
+		clampf((point.x - bounds.position.x) / bounds.size.x, 0.0, 1.0),
+		clampf((point.y - bounds.position.y) / bounds.size.y, 0.0, 1.0),
+	)
+
+
 func _apply_layout() -> void:
 	var layout := layout_for_size(size, _safe_rect())
 	if layout.is_empty():
@@ -792,7 +815,22 @@ func _schedule_ready_marker() -> void:
 		_ready_marker_callback = Callable()
 		if not _disposed and not _returning and is_inside_tree():
 			print("GAMEBOX_GODOT_READY game=flight_chess match=%s" % _match_id)
+			_log_automation_targets()
 	RenderingServer.frame_post_draw.connect(_ready_marker_callback, CONNECT_ONE_SHOT)
+
+
+func _log_automation_targets() -> void:
+	var targets := automation_targets()
+	if _match_id.is_empty() or targets.size() != 5:
+		return
+	print("GAMEBOX_FLIGHT_CHESS_TARGETS match=%s roll=%.6f,%.6f red0=%.6f,%.6f yellow0=%.6f,%.6f resign=%.6f,%.6f confirm=%.6f,%.6f" % [
+		_match_id,
+		(targets["roll"] as Vector2).x, (targets["roll"] as Vector2).y,
+		(targets["red0"] as Vector2).x, (targets["red0"] as Vector2).y,
+		(targets["yellow0"] as Vector2).x, (targets["yellow0"] as Vector2).y,
+		(targets["resign"] as Vector2).x, (targets["resign"] as Vector2).y,
+		(targets["confirm"] as Vector2).x, (targets["confirm"] as Vector2).y,
+	])
 
 
 func _validated_config(config: Dictionary) -> Dictionary:

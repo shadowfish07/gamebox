@@ -3218,46 +3218,81 @@ flight_chess_surface_size() {
 	fi
 }
 
-flight_chess_design_point() {
-	local serial="$1" design_x="$2" design_y="$3" width height
-	read -r width height <<<"$(flight_chess_surface_size "$serial")" || return 1
-	ruby -e '
-		width, height, x, y = ARGV.map(&:to_f)
-		scale = [width / 1920.0, height / 1080.0].min
-		offset_x = (width - 1920.0 * scale) / 2.0
-		offset_y = (height - 1080.0 * scale) / 2.0
-		puts "#{(offset_x + x * scale).round} #{(offset_y + y * scale).round}"
-	' "$width" "$height" "$design_x" "$design_y"
+wait_for_flight_chess_targets() {
+	local serial="$1" match_id="$2" deadline=$((SECONDS + WAIT_SECONDS)) marker
+	while ((SECONDS < deadline)); do
+		marker="$(
+			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+				| sed -n "/GAMEBOX_FLIGHT_CHESS_TARGETS match=$match_id /p" \
+				| tail -1
+		)"
+		if [[ -n "$marker" ]]; then
+			printf '%s\n' "$marker"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
 }
 
-tap_flight_chess_point() {
-	local serial="$1" design_x="$2" design_y="$3" point x y
-	point="$(flight_chess_design_point "$serial" "$design_x" "$design_y")" || return 1
+flight_chess_target_pair() {
+	local marker="$1" name="$2"
+	awk -v name="$name" '{
+		for (index = 1; index <= NF; index++) {
+			if ($index ~ ("^" name "=")) {
+				sub("^" name "=", "", $index)
+				gsub(",", " ", $index)
+				print $index
+				exit
+			}
+		}
+	}' <<<"$marker"
+}
+
+flight_chess_targets_for_serial() {
+	if [[ "$1" == "$SERIAL_A" ]]; then
+		printf '%s\n' "$FLIGHT_TARGETS_A"
+	elif [[ "$1" == "$SERIAL_B" ]]; then
+		printf '%s\n' "$FLIGHT_TARGETS_B"
+	else
+		return 2
+	fi
+}
+
+tap_flight_chess_target() {
+	local serial="$1" name="$2" marker fractions fraction_x fraction_y width height point x y
+	marker="$(flight_chess_targets_for_serial "$serial")" || return 1
+	fractions="$(flight_chess_target_pair "$marker" "$name")" || return 1
+	read -r fraction_x fraction_y <<<"$fractions"
+	[[ "$fraction_x" =~ ^0\.[0-9]+$|^1\.0+$ && "$fraction_y" =~ ^0\.[0-9]+$|^1\.0+$ ]] || return 1
+	read -r width height <<<"$(flight_chess_surface_size "$serial")" || return 1
+	point="$(ruby -e 'width, height, x, y = ARGV.map(&:to_f); puts "#{(width * x).round} #{(height * y).round}"' \
+		"$width" "$height" "$fraction_x" "$fraction_y")" || return 1
 	read -r x y <<<"$point"
 	adb_for "$serial" shell input tap "$x" "$y" >/dev/null
 }
 
 tap_flight_chess_roll() {
-	tap_flight_chess_point "$1" 1710 980
+	tap_flight_chess_target "$1" roll
 }
 
 tap_flight_chess_hangar_plane() {
 	local serial="$1" color="$2"
 	if [[ "$color" == black ]]; then
-		tap_flight_chess_point "$serial" 1263 833
+		tap_flight_chess_target "$serial" red0
 	elif [[ "$color" == white ]]; then
-		tap_flight_chess_point "$serial" 568 148
+		tap_flight_chess_target "$serial" yellow0
 	else
 		return 2
 	fi
 }
 
 tap_flight_chess_resign() {
-	tap_flight_chess_point "$1" 210 285
+	tap_flight_chess_target "$1" resign
 }
 
 tap_flight_chess_confirm_resign() {
-	tap_flight_chess_point "$1" 1120 720
+	tap_flight_chess_target "$1" confirm
 }
 
 refresh_game_log_boundaries flight-chess-create \
@@ -3307,6 +3342,10 @@ for serial in "$SERIAL_A" "$SERIAL_B"; do
 	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=0 status=active connection=connected" \
 		|| fail "$serial did not render the initial authoritative Flight Chess state"
 done
+FLIGHT_TARGETS_A="$(wait_for_flight_chess_targets "$SERIAL_A" "$FLIGHT_MATCH_ID")" \
+	|| fail "A did not expose responsive Flight Chess touch targets"
+FLIGHT_TARGETS_B="$(wait_for_flight_chess_targets "$SERIAL_B" "$FLIGHT_MATCH_ID")" \
+	|| fail "B did not expose responsive Flight Chess touch targets"
 
 refresh_game_log_boundary "$FLIGHT_BLACK_SERIAL" flight-chess-pending-roll \
 	|| fail "could not establish the Flight Chess pending-roll boundary"
