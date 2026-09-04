@@ -3459,6 +3459,7 @@ wait_for_log_marker "$flight_serial" "$GAMEBOX_READY_MARKER game=flight_chess ma
 	|| fail "Flight Chess did not reopen before resignation"
 tap_flight_chess_resign "$flight_serial" || fail "Flight Chess resignation action could not open"
 sleep 0.5
+gamebox_e2e_visual_gate flight-resign "$flight_serial"
 tap_flight_chess_confirm_resign "$flight_serial" || fail "Flight Chess resignation could not be confirmed"
 flight_revision=$((flight_revision + 1))
 flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" "$flight_revision" finished)" \

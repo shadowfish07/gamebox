@@ -17,8 +17,8 @@ static func create(dark: bool) -> Theme:
 	for pair in [
 		["FlightChessBackground", "PanelContainer"],
 		["FlightChessRail", "PanelContainer"],
-		["FlightChessOpponentCard", "PanelContainer"],
-		["FlightChessLocalCard", "PanelContainer"],
+		["FlightChessYellowCard", "PanelContainer"],
+		["FlightChessRedCard", "PanelContainer"],
 		["FlightChessDiceCard", "PanelContainer"],
 		["FlightChessGameTitle", "Label"],
 		["FlightChessEyebrow", "Label"],
@@ -36,8 +36,8 @@ static func create(dark: bool) -> Theme:
 
 	theme.set_stylebox("panel", "FlightChessBackground", _flat_style(colors["surface"]))
 	theme.set_stylebox("panel", "FlightChessRail", StyleBoxEmpty.new())
-	theme.set_stylebox("panel", "FlightChessOpponentCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["yellow"], 0.18), FlightChessBoard.PLAYER_DARK["yellow"], 16, 16, colors["shadow"]))
-	theme.set_stylebox("panel", "FlightChessLocalCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["red"], 0.17), FlightChessBoard.PLAYER_DARK["red"], 16, 16, colors["shadow"]))
+	theme.set_stylebox("panel", "FlightChessYellowCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["yellow"], 0.18), FlightChessBoard.PLAYER_DARK["yellow"], 16, 16, colors["shadow"]))
+	theme.set_stylebox("panel", "FlightChessRedCard", _panel_style(colors["surface"].lerp(FlightChessBoard.PLAYER_COLORS["red"], 0.17), FlightChessBoard.PLAYER_DARK["red"], 16, 16, colors["shadow"]))
 	theme.set_stylebox("panel", "FlightChessDiceCard", _panel_style(colors["surface_container_high"], colors["outline_variant"], 22, 8, colors["shadow"]))
 
 	theme.set_font("font", "FlightChessGameTitle", bold)

@@ -626,6 +626,8 @@ func _sync_network_ui() -> void:
 	$ErrorLabel.present("" if _force_return else _error_text, "error")
 	if has_state:
 		var opponent_board_color := "yellow" if local_board_color == "red" else "red"
+		$LeftRail/Content/LocalCard.theme_type_variation = &"FlightChessRedCard" if local_board_color == "red" else &"FlightChessYellowCard"
+		$LeftRail/Content/OpponentCard.theme_type_variation = &"FlightChessYellowCard" if opponent_board_color == "yellow" else &"FlightChessRedCard"
 		$LeftRail/Content/LocalCard/Content/Role.text = "你 · %s方" % ("红" if local_board_color == "red" else "黄")
 		$LeftRail/Content/OpponentCard/Content/Role.text = "对手 · %s方" % ("黄" if opponent_board_color == "yellow" else "红")
 		$LeftRail/Content/LocalCard/Content/Meta.text = _piece_summary(local_board_color)

@@ -19,6 +19,7 @@ static func cases() -> Array:
 		{"name": "flight chess scene stays inside landscape phone safe areas", "run": _respects_phone_safe_areas},
 		{"name": "flight chess scene rolls before enabling manual plane selection", "run": _rolls_before_selection},
 		{"name": "flight chess scene waits for authoritative roll and move events", "run": _waits_for_authoritative_actions},
+		{"name": "flight chess scene maps player cards to board colors", "run": _maps_player_cards_to_board_colors},
 		{"name": "flight chess Back returns without resigning", "run": _back_is_non_destructive},
 	]
 
@@ -245,9 +246,27 @@ static func _back_is_non_destructive() -> bool:
 	)
 
 
-static func _network_scene_harness() -> Dictionary:
+static func _maps_player_cards_to_board_colors() -> bool:
+	var harness: Dictionary = await _network_scene_harness(WHITE_ID)
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	client.accept_snapshot(_network_snapshot(0))
+	return _network_cleanup(
+		scene,
+		_check(
+			scene.get_node("LeftRail/Content/LocalCard").theme_type_variation == &"FlightChessYellowCard",
+			"local yellow player card retained the red card style",
+		) and _check(
+			scene.get_node("LeftRail/Content/OpponentCard").theme_type_variation == &"FlightChessRedCard",
+			"red opponent card retained the yellow card style",
+		),
+	)
+
+
+static func _network_scene_harness(local_user_id: String = BLACK_ID) -> Dictionary:
 	var scene := FlightChessScene.instantiate() as Control
 	var client := FakeMatchClient.new()
+	client.local_user_id = local_user_id
 	var quit_calls: Array = []
 	scene.configure_launch({
 		"game_id": "flight_chess", "match_id": MATCH_ID,

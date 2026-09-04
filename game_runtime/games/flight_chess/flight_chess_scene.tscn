@@ -64,7 +64,7 @@ text = "认输并结束"
 
 [node name="OpponentCard" type="PanelContainer" parent="LeftRail/Content"]
 layout_mode = 2
-theme_type_variation = &"FlightChessOpponentCard"
+theme_type_variation = &"FlightChessYellowCard"
 
 [node name="Content" type="VBoxContainer" parent="LeftRail/Content/OpponentCard"]
 layout_mode = 2
@@ -91,7 +91,7 @@ size_flags_vertical = 3
 
 [node name="LocalCard" type="PanelContainer" parent="LeftRail/Content"]
 layout_mode = 2
-theme_type_variation = &"FlightChessLocalCard"
+theme_type_variation = &"FlightChessRedCard"
 
 [node name="Content" type="VBoxContainer" parent="LeftRail/Content/LocalCard"]
 layout_mode = 2
