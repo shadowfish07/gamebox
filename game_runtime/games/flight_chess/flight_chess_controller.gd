@@ -254,18 +254,19 @@ func piece_state(color: String, index: int) -> Dictionary:
 
 
 func automation_targets() -> Dictionary:
-	var root_rect := get_global_rect()
-	if not root_rect.has_area() or not is_node_ready():
+	var viewport_rect := get_viewport().get_visible_rect()
+	if not viewport_rect.has_area() or not is_node_ready():
 		return {}
 	var board := $Board as Control
-	var red_center: Vector2 = board.get_global_rect().position + board.piece_center("red", 0)
-	var yellow_center: Vector2 = board.get_global_rect().position + board.piece_center("yellow", 0)
+	var roll_button := $RightRail/Content/RollButton as Control
+	var resign_button := $LeftRail/Content/ResignButton as Control
+	var confirm_button := $ResignDialog/Dialog/Content/Actions/ConfirmButton as Control
 	return {
-		"roll": _normalized_point(($RightRail/Content/RollButton as Control).get_global_rect().get_center(), root_rect),
-		"red0": _normalized_point(red_center, root_rect),
-		"yellow0": _normalized_point(yellow_center, root_rect),
-		"resign": _normalized_point(($LeftRail/Content/ResignButton as Control).get_global_rect().get_center(), root_rect),
-		"confirm": _normalized_point(($ResignDialog/Dialog/Content/Actions/ConfirmButton as Control).get_global_rect().get_center(), root_rect),
+		"roll": _normalized_point(roll_button.get_global_transform_with_canvas() * (roll_button.size * 0.5), viewport_rect),
+		"red0": _normalized_point(board.get_global_transform_with_canvas() * board.piece_center("red", 0), viewport_rect),
+		"yellow0": _normalized_point(board.get_global_transform_with_canvas() * board.piece_center("yellow", 0), viewport_rect),
+		"resign": _normalized_point(resign_button.get_global_transform_with_canvas() * (resign_button.size * 0.5), viewport_rect),
+		"confirm": _normalized_point(confirm_button.get_global_transform_with_canvas() * (confirm_button.size * 0.5), viewport_rect),
 	}
 
 

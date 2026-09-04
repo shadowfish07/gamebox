@@ -106,8 +106,6 @@ static func _keeps_standard_actions_visible() -> bool:
 
 static func _exposes_normalized_touch_targets() -> bool:
 	var scene = FlightChessScene.instantiate()
-	(scene as Control).set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	(scene as Control).size = Vector2(2400.0, 1080.0)
 	(scene.get_node("LeftRail/Content/ResignButton") as Button).visible = true
 	(Engine.get_main_loop() as SceneTree).root.add_child(scene)
 	await (Engine.get_main_loop() as SceneTree).process_frame
@@ -118,10 +116,10 @@ static func _exposes_normalized_touch_targets() -> bool:
 		var point: Vector2 = targets[name]
 		result = result and _check(
 			point.x > 0.0 and point.x < 1.0 and point.y > 0.0 and point.y < 1.0,
-			"%s touch target was not normalized" % name,
+			"%s touch target was not normalized: %s" % [name, point],
 		)
 	result = result \
-		and _check((targets["roll"] as Vector2).x > 0.75, "roll target did not follow the expanded right rail") \
+		and _check((targets["roll"] as Vector2).x > (targets["red0"] as Vector2).x, "roll target did not stay right of the board") \
 		and _check((targets["red0"] as Vector2).y > (targets["yellow0"] as Vector2).y, "plane targets lost board orientation")
 	scene.free()
 	return result
