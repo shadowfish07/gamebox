@@ -3353,6 +3353,7 @@ FLIGHT_TARGETS_A="$(wait_for_flight_chess_targets "$SERIAL_A" "$FLIGHT_MATCH_ID"
 	|| fail "A did not expose responsive Flight Chess touch targets"
 FLIGHT_TARGETS_B="$(wait_for_flight_chess_targets "$SERIAL_B" "$FLIGHT_MATCH_ID")" \
 	|| fail "B did not expose responsive Flight Chess touch targets"
+gamebox_e2e_visual_gate flight-ready "$FLIGHT_BLACK_SERIAL"
 
 refresh_game_log_boundary "$FLIGHT_BLACK_SERIAL" flight-chess-pending-roll \
 	|| fail "could not establish the Flight Chess pending-roll boundary"
