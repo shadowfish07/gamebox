@@ -236,6 +236,7 @@ static func create(dark: bool) -> Theme:
 	theme.set_color("font_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
 	theme.set_color("font_hover_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
 	theme.set_color("font_pressed_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
+	theme.set_color("font_focus_color", "GameboxDialogCancelButton", colors["on_secondary_container"])
 	theme.set_stylebox("normal", "GameboxDialogCancelButton", _style_box(colors["secondary_container"], GameboxTokens.SHAPE["full"]))
 	theme.set_stylebox("hover", "GameboxDialogCancelButton", _style_box(colors["secondary_fixed_dim"], GameboxTokens.SHAPE["full"]))
 	theme.set_stylebox("pressed", "GameboxDialogCancelButton", _style_box(colors["secondary_container"], GameboxTokens.SHAPE["full"]))
