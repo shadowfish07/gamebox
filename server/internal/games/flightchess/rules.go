@@ -71,17 +71,15 @@ type Piece struct {
 }
 
 type snapshotState struct {
-	Status               string             `json:"status"`
-	Phase                string             `json:"phase"`
-	BlackUserID          *string            `json:"blackUserId"`
-	WhiteUserID          *string            `json:"whiteUserId"`
-	NextColor            string             `json:"nextColor"`
-	Dice                 int                `json:"dice"`
-	ConsecutiveSixes     int                `json:"consecutiveSixes"`
-	SixMovedPieceIndices []int              `json:"sixMovedPieceIndices"`
-	Pieces               map[string][]Piece `json:"pieces"`
-	WinnerUserID         *string            `json:"winnerUserId"`
-	Result               *string            `json:"result"`
+	Status       string             `json:"status"`
+	Phase        string             `json:"phase"`
+	BlackUserID  *string            `json:"blackUserId"`
+	WhiteUserID  *string            `json:"whiteUserId"`
+	NextColor    string             `json:"nextColor"`
+	Dice         int                `json:"dice"`
+	Pieces       map[string][]Piece `json:"pieces"`
+	WinnerUserID *string            `json:"winnerUserId"`
+	Result       *string            `json:"result"`
 }
 
 type requestedMovePayload struct {
@@ -89,11 +87,10 @@ type requestedMovePayload struct {
 }
 
 type acceptedRollPayload struct {
-	Color                 string `json:"color"`
-	UserID                string `json:"userId"`
-	Value                 int    `json:"value"`
-	MovablePieceIndices   []int  `json:"movablePieceIndices"`
-	PenalizedPieceIndices []int  `json:"penalizedPieceIndices"`
+	Color               string `json:"color"`
+	UserID              string `json:"userId"`
+	Value               int    `json:"value"`
+	MovablePieceIndices []int  `json:"movablePieceIndices"`
 }
 
 type acceptedMovePayload struct {
@@ -195,12 +192,6 @@ func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action game
 	roll := state.Dice
 	state.Pieces[color][pieceIndex] = resolution.to
 	captured := captureAt(&state, color, resolution.to)
-	if roll == 6 {
-		state.SixMovedPieceIndices = appendUnique(state.SixMovedPieceIndices, pieceIndex)
-	} else {
-		state.ConsecutiveSixes = 0
-		state.SixMovedPieceIndices = []int{}
-	}
 	state.Dice = 0
 	state.Phase = PhaseAwaitingRoll
 	if allFinished(state.Pieces[color]) {
@@ -243,39 +234,16 @@ func (rules *Rules) applyRollValue(snapshot gameapi.Snapshot, actorID string, va
 		return gameapi.Event{}, gameapi.Snapshot{}, err
 	}
 	color := state.NextColor
-	penalized := []int{}
-	movable := []int{}
-	if value == 6 {
-		state.ConsecutiveSixes++
-		if state.ConsecutiveSixes == 3 {
-			penalized = append(penalized, state.SixMovedPieceIndices...)
-			for _, index := range penalized {
-				state.Pieces[color][index] = Piece{Zone: ZoneHangar, Index: index}
-			}
-			state.ConsecutiveSixes = 0
-			state.SixMovedPieceIndices = []int{}
-			state.NextColor = opposite(color)
-		} else {
-			movable = movablePieces(color, state.Pieces[color], value)
-			if len(movable) != 0 {
-				state.Phase = PhaseAwaitingMove
-				state.Dice = value
-			}
-		}
-	} else {
-		state.ConsecutiveSixes = 0
-		state.SixMovedPieceIndices = []int{}
-		movable = movablePieces(color, state.Pieces[color], value)
-		if len(movable) != 0 {
-			state.Phase = PhaseAwaitingMove
-			state.Dice = value
-		} else {
-			state.NextColor = opposite(color)
-		}
+	movable := movablePieces(color, state.Pieces[color], value)
+	if len(movable) != 0 {
+		state.Phase = PhaseAwaitingMove
+		state.Dice = value
+	} else if value != 6 {
+		state.NextColor = opposite(color)
 	}
 	payload, err := json.Marshal(acceptedRollPayload{
 		Color: color, UserID: actorID, Value: value,
-		MovablePieceIndices: movable, PenalizedPieceIndices: penalized,
+		MovablePieceIndices: movable,
 	})
 	if err != nil {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
@@ -309,7 +277,7 @@ func initialState() snapshotState {
 	}
 	return snapshotState{
 		Status: StatusActive, Phase: PhaseAwaitingRoll, NextColor: Black,
-		SixMovedPieceIndices: []int{}, Pieces: pieces,
+		Pieces: pieces,
 	}
 }
 
@@ -445,15 +413,6 @@ func opposite(color string) string {
 	return Black
 }
 
-func appendUnique(values []int, value int) []int {
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
-
 func allFinished(pieces []Piece) bool {
 	if len(pieces) != PieceCount {
 		return false
@@ -492,14 +451,14 @@ func decodeRequestedMove(payload json.RawMessage) (int, error) {
 }
 
 func decodeAcceptedRoll(payload json.RawMessage) (acceptedRollPayload, error) {
-	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}, "penalizedPieceIndices": {}}
+	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}}
 	fields, err := strictObject(payload, allowed)
 	if err != nil || len(fields) != len(allowed) {
 		return acceptedRollPayload{}, gameapi.ErrInvalidEvent
 	}
 	var result acceptedRollPayload
 	if json.Unmarshal(payload, &result) != nil || result.Color != Black && result.Color != White || !validActorID(result.UserID) || result.Value < 1 || result.Value > 6 ||
-		!validIndices(result.MovablePieceIndices) || !validIndices(result.PenalizedPieceIndices) {
+		!validIndices(result.MovablePieceIndices) {
 		return acceptedRollPayload{}, gameapi.ErrInvalidEvent
 	}
 	return result, nil
@@ -528,7 +487,7 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 	}
 	allowed := map[string]struct{}{
 		"status": {}, "phase": {}, "blackUserId": {}, "whiteUserId": {}, "nextColor": {}, "dice": {},
-		"consecutiveSixes": {}, "sixMovedPieceIndices": {}, "pieces": {}, "winnerUserId": {}, "result": {},
+		"pieces": {}, "winnerUserId": {}, "result": {},
 	}
 	fields, err := strictObject(snapshot.State, allowed)
 	if err != nil || len(fields) != len(allowed) {
@@ -544,7 +503,7 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 func validState(state snapshotState) bool {
 	if state.NextColor != Black && state.NextColor != White || !validOptionalActor(state.BlackUserID) || !validOptionalActor(state.WhiteUserID) ||
 		state.BlackUserID != nil && state.WhiteUserID != nil && *state.BlackUserID == *state.WhiteUserID ||
-		state.ConsecutiveSixes < 0 || state.ConsecutiveSixes > 2 || !validIndices(state.SixMovedPieceIndices) || len(state.Pieces) != 2 {
+		len(state.Pieces) != 2 {
 		return false
 	}
 	for _, color := range []string{Black, White} {

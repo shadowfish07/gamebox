@@ -45,8 +45,8 @@ Version 1 accepts only the following directions and types:
 Flight Chess uses an empty payload for `flight_chess.roll.requested`; the
 server generates and persists the die result. `flight_chess.move.requested`
 contains one integer `pieceIndex` in `[0,3]`, and resign also uses an empty
-payload. An accepted roll includes `color`, `userId`, `value`,
-`movablePieceIndices`, and `penalizedPieceIndices`. An accepted move includes
+payload. An accepted roll includes `color`, `userId`, `value`, and
+`movablePieceIndices`. An accepted move includes
 the acting color and user, selected piece and roll, `from`/`to` positions,
 movement `effect`, and `capturedPieceIndices`. The client applies only accepted
 events in contiguous revision order; a gap requests a fresh authoritative

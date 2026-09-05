@@ -12,6 +12,7 @@ static func cases() -> Array:
 	return [
 		{"name": "flight chess restores an authoritative roll snapshot", "run": _restores_snapshot},
 		{"name": "flight chess confirms roll then selected move", "run": _confirms_roll_and_move},
+		{"name": "flight chess keeps repeated sixes without penalty", "run": _keeps_repeated_sixes},
 		{"name": "flight chess applies jump shortcut capture", "run": _applies_jump_shortcut_capture},
 		{"name": "flight chess rejects malformed or out-of-order events", "run": _rejects_invalid_events},
 		{"name": "flight chess maps platform colors to board colors", "run": _maps_board_colors},
@@ -38,7 +39,7 @@ static func _confirms_roll_and_move() -> bool:
 		return _check(false, "roll was not marked pending")
 	var rolled := state.apply_event(_event(1, "flight_chess.roll.accepted", {
 		"color": "black", "userId": BLACK_ID, "value": 6,
-		"movablePieceIndices": [0, 1, 2, 3], "penalizedPieceIndices": [],
+		"movablePieceIndices": [0, 1, 2, 3],
 	}, ACTION_ID))
 	if not rolled.get("ok", false) or not state.pending_action.is_empty() or state.phase != "awaiting_move":
 		return _check(false, "accepted roll did not unlock selection")
@@ -53,6 +54,34 @@ static func _confirms_roll_and_move() -> bool:
 	return _check(moved.get("ok", false), "accepted launch was rejected") \
 		and _check(state.pieces["black"][1] == {"zone": "launch", "index": 0}, "launch did not update the plane") \
 		and _check(state.next_color == "black" and state.phase == "awaiting_roll", "six did not preserve the turn")
+
+
+static func _keeps_repeated_sixes() -> bool:
+	var state = FlightChessState.new(MATCH_ID)
+	if not state.apply_snapshot(_snapshot(0, "awaiting_roll", "black", 0, _initial_pieces())).get("ok", false):
+		return _check(false, "initial snapshot rejected")
+	for roll_number in 3:
+		var movable: Array = []
+		for piece_index in 4:
+			if FlightChessState._resolve_move("black", state.pieces["black"][piece_index], 6).get("ok", false):
+				movable.append(piece_index)
+		var rolled := state.apply_event(_event(state.revision + 1, "flight_chess.roll.accepted", {
+			"color": "black", "userId": BLACK_ID, "value": 6,
+			"movablePieceIndices": movable,
+		}, ACTION_ID))
+		if not rolled.get("ok", false) or state.phase != "awaiting_move":
+			return _check(false, "repeated six %d was rejected" % (roll_number + 1))
+		var from: Dictionary = state.pieces["black"][0]
+		var resolution: Dictionary = FlightChessState._resolve_move("black", from, 6)
+		var moved := state.apply_event(_event(state.revision + 1, "flight_chess.move.accepted", {
+			"color": "black", "userId": BLACK_ID, "pieceIndex": 0, "roll": 6,
+			"from": from, "to": resolution["to"], "effect": resolution["effect"],
+			"capturedPieceIndices": [],
+		}, ACTION_ID))
+		if not moved.get("ok", false):
+			return _check(false, "move after repeated six %d was rejected" % (roll_number + 1))
+	return _check(state.next_color == "black", "repeated sixes changed the turn") \
+		and _check(state.pieces["black"][0]["zone"] != "hangar", "repeated sixes returned the plane")
 
 
 static func _applies_jump_shortcut_capture() -> bool:
@@ -79,7 +108,7 @@ static func _rejects_invalid_events() -> bool:
 		return false
 	var gap := _event(2, "flight_chess.roll.accepted", {
 		"color": "black", "userId": BLACK_ID, "value": 6,
-		"movablePieceIndices": [0, 1, 2, 3], "penalizedPieceIndices": [],
+		"movablePieceIndices": [0, 1, 2, 3],
 	}, ACTION_ID)
 	if state.apply_event(gap).get("status") != "needs_snapshot":
 		return _check(false, "revision gap did not request a snapshot")
@@ -107,8 +136,7 @@ static func _snapshot(revision: int, phase: String, next_color: String, dice: in
 		"payload": {
 			"status": "active", "phase": phase,
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID,
-			"nextColor": next_color, "dice": dice, "consecutiveSixes": 0,
-			"sixMovedPieceIndices": [], "pieces": pieces,
+			"nextColor": next_color, "dice": dice, "pieces": pieces,
 			"winnerUserId": null, "result": null,
 		},
 	}

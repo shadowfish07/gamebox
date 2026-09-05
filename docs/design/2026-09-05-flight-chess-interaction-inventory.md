@@ -1,5 +1,4 @@
 # 飞行棋 MVP 完整交互点清单
-
 > 日期：2026-09-05
 >
 > 范围：从 Flutter 大厅进入两人飞行棋，到 Godot 对局、网络恢复和终局返回的全旅程
@@ -24,7 +23,7 @@
 
 - 产品与视觉边界以 [Flight Chess profile](profiles/flight-chess.md) 为准：两人、红/黄阵营、横屏、手动选棋、轻量叠机。
 - 传输、`revision`、`actionId`、快照与事件连续性以 [protocol/README.md](../../protocol/README.md) 为准。
-- 掉次、合法棋子、路径解算、捕获、三连六与胜利以 [server flightchess rules](../../server/internal/games/flightchess/rules.go) 为权威实现。
+- 掉次、合法棋子、路径解算、捕获与胜利以 [server flightchess rules](../../server/internal/games/flightchess/rules.go) 为权威实现。
 - 匹配生命周期、幂等、过期修订、认输、取消与遗弃以 [match service](../../server/internal/matches/service.go) 为准。
 - 共享 UX 底线来自 [ux-standard.md](../../.agents/skills/gamebox-material-3-ux/references/ux-standard.md) 和 [godot-games.md](../../.agents/skills/gamebox-material-3-ux/references/godot-games.md)。
 - 预览态、fixture 和测试是证据，不是额外规则来源。
@@ -45,8 +44,7 @@
 | 捕获 | 只有最终落点在主航线时检查捕获；落在对手位置会一次捕获该格全部对手飞机并送回机库。 | 捕获发生在跳跃/捷径解算后的最终落点；现有规则没有额外的安全格保护。 |
 | 到达 | 进入 6 格终点航线后继续前进；必须点数刚好到达，超出则该飞机不可移。 | 不存在倒退/反弹规则。第 4 架精确到达立即胜利。 |
 | 无合法棋子 | 非 6 且当前没有任何合法飞机时，掷骰事件直接切换回合，不进入选棋阶段。 | 这不是错误；应短暂告知点数和“无法移动，已换手”。 |
-| 掷出 6 | 前两次连续掷出 6 并完成移动后保持回合；每次移动的 `pieceIndex` 被去重记录。 | UI 应提示额外掷骰以及当前连六风险，但不得在移动被接受前预先累计。 |
-| 第三个 6 | 第三次连续掷出 6 时不进入选棋；本段连六中前两次实际移动过的、去重后的飞机全部回机库，随后清空记录并换手。 | 惩罚只以 `penalizedPieceIndices` 为准；同一架前两次都移动也只惩罚一次。 |
+| 掷出 6 | 完成移动后保持本方回合；再次掷出 6 仍按同一规则处理。 | UI 只需提示可再掷一次，不显示连续 6 计数或风险。 |
 | 结束 | 4 架飞机全部到达时结果为 `goal`；已开始对局可认输，对手获胜，结果为 `resignation`。 | 结果页只能在权威终局快照/事件后出现。 |
 | 平台终止 | 零步对局可取消；双方离线满 24 小时可被标记 `abandoned`，无胜者。 | 取消与认输必须有不同后果文案；`cancelled/abandoned` 不得显示虚假胜负。 |
 | 版本与幂等 | 每个 action 携带 `expectedRevision` 和 `actionId`。相同 actor/actionId/语义重试返回原提交；相同 actionId 换语义为 `action_conflict`；过期修订为 `stale_revision`。 | 客户端需阻止连点；过期时先重新同步，不重复播放已确认效果。 |
@@ -63,7 +61,6 @@ Flutter 登录态
   → active.awaiting_roll
       → roll_pending
       → accepted(no movable) → 对手 awaiting_roll
-      → accepted(third six penalty) → 对手 awaiting_roll
       → accepted(movable) → active.awaiting_move
           → move_pending
           → accepted(roll == 6) → 本方 awaiting_roll
@@ -122,12 +119,11 @@ Flutter 登录态
 
 | ID | Actor / 触发 | 前置 | 用户操作 | 立即反馈 | Pending / 锁定 | 服务端接受 | 拒绝/恢复 | 依据与建议 |
 |---|---|---|---|---|---|---|---|---|
-| ROLL-01 提交掷骰 | 本地当前玩家 | TURN-01 全部成立 | 按下并释放“掷骰子” | pressed → 文案“确认中…”；骰子保持最后权威值/待机态 | pending 携带 actionId + expectedRevision，所有权威操作锁定 | `roll.accepted` 回传 value、movable、penalized，revision +1 | 本地发送失败立即恢复；服务拒绝清 pending、安全告知；stale 请求快照 | R + I + MUST。`REC P0`：将“请求已发出”与“服务端已产生点数”视觉区分。 |
-| ROLL-02 有合法飞机 | `roll.accepted` | 未触发三连六惩罚，movable nonempty | 不需再确认骰子 | 显示确认点数和可移飞机，进入选棋提示 | roll pending 清空，move 尚未 pending；roll 按钮锁定 | `phase=awaiting_move`，`dice=value` | 若事件不连续/无效，不展示局部结果，转快照同步 | R + I + MUST。 |
+| ROLL-01 提交掷骰 | 本地当前玩家 | TURN-01 全部成立 | 按下并释放“掷骰子” | pressed → 文案“确认中…”；骰子保持最后权威值/待机态 | pending 携带 actionId + expectedRevision，所有权威操作锁定 | `roll.accepted` 回传 value 和 movable，revision +1 | 本地发送失败立即恢复；服务拒绝清 pending、安全告知；stale 请求快照 | R + I + MUST。`REC P0`：将“请求已发出”与“服务端已产生点数”视觉区分。 |
+| ROLL-02 有合法飞机 | `roll.accepted` | movable nonempty | 不需再确认骰子 | 显示确认点数和可移飞机，进入选棋提示 | roll pending 清空，move 尚未 pending；roll 按钮锁定 | `phase=awaiting_move`，`dice=value` | 若事件不连续/无效，不展示局部结果，转快照同步 | R + I + MUST。 |
 | ROLL-03 非 6 无合法飞机 | `roll.accepted` | value != 6，movable empty | 无 | `REC P0`：先短暂显示“掷出 N，没有飞机可移，已换手” | 不开启选棋，本方所有操作锁定 | `phase=awaiting_roll`、dice 回 0、nextColor 切换 | 快照同步保底 | R。I：当前 controller 只看最终 state，不消费 accepted-roll payload，因而通常直接显示对手回合。 |
-| ROLL-04 第一/二个 6 | `roll.accepted` | consecutiveSixes 进入 1 或 2 | 按规则选棋 | 显示 6、合法棋子；`REC P1`：显示“第 1/2 次连续 6”和后续风险 | 完成移动前不能再掷 | 移动接受后保持本方 `awaiting_roll` | 移动拒绝不消耗该次点数 | R；风险提示是 REC，不是额外规则。 |
-| ROLL-05 第三个 6 惩罚 | `roll.accepted` | 当前 consecutiveSixes=2 且新 value=6 | 无选棋操作 | `REC P0`：先确认“第三个 6”，再逐架标记 `penalizedPieceIndices` 并表现回机库，最后显示换手 | 全程锁定选棋/掷骰；不显示可移集合 | 去重惩罚前两次移过的飞机，连六计数清零，nextColor 切换 | 快照同步保底；不得在事件确认前送飞机回库 | R。I：当前为棋盘瞬时跳变，无惩罚说明。 |
-| ROLL-06 非当前玩家/错阶段点击 | 用户或自动化过期点击 | roll disabled，或状态在点击后已变 | 点掷骰 | disabled 无提交；若已发出则 pending | 不生成第二个本地 action | 服务可返回 `not_your_turn/invalid_move/stale_revision` | 清 pending、恢复最新可操作态；stale 先同步 | R + I + MUST。 |
+| ROLL-04 掷出 6 | `roll.accepted` | value=6，movable nonempty | 按规则选棋 | 显示 6 和合法棋子 | 完成移动前不能再掷 | 移动接受后保持本方 `awaiting_roll` | 移动拒绝不消耗该次点数 | R；连续掷出 6 不累计惩罚。 |
+| ROLL-05 非当前玩家/错阶段点击 | 用户或自动化过期点击 | roll disabled，或状态在点击后已变 | 点掷骰 | disabled 无提交；若已发出则 pending | 不生成第二个本地 action | 服务可返回 `not_your_turn/invalid_move/stale_revision` | 清 pending、恢复最新可操作态；stale 先同步 | R + I + MUST。 |
 
 ### 4.4 选棋、移动、跳跃、叠机与捕获
 
@@ -139,7 +135,7 @@ Flutter 登录态
 | SEL-04 叠放组选择 | 本地玩家 | 同位有 2–4 架同色飞机，其中至少一架合法 | 点击叠机组 | 显示叠层和数量徽标，整组为一个命中区 | release 后只能发送一个 pieceIndex | 服务端移动该索引的 1 架飞机 | 拒绝则整组恢复可选 | R + I；当前 board 在等距叠机中选取索引最小的合法飞机。该用户语义未被 profile 定义，见 OPEN-01。 |
 | MOVE-01 提交移动 | 本地当前玩家 | 点数已确认，飞机在 movable 中 | 在同一合法目标上 release | pressed → selected → move pending；不先移动棋子 | pending 记录 pieceIndex/actionId/revision，锁定 roll/move/resign 重复提交 | `move.accepted` 返回 from/to/roll/effect/captured，revision +1 | 发送失败或权威拒绝后恢复选择能力；stale 先同步 | R + MUST。I：当前提交后 `_selected_index` 在同步 UI 时清空，没有飞机级 pending 标记。`REC P0`：保留该架的 pending 轮廓。 |
 | MOVE-02 普通前进 | `move.accepted(effect=none)` | 移动合法 | 无 | `REC P0`：按事件中 from→to 显示可追踪移动，然后更新阵营摘要 | 表现期间不允许提前操作下一权威步 | 棋子落在 to；roll=6 保留回合，否则换手 | 事件不连续时跳过动画、按快照收敛 | R。I：当前直接刷新到最终位置。 |
-| MOVE-03 起飞 | `move.accepted` | from=hangar，roll=6 | 无 | `REC P0`：机库飞机到起飞点的明确轨迹+“起飞成功，可再掷一次” | 表现完成前锁定 | to=launch，保持本方 awaiting_roll，连六追踪加入该索引 | 同 MOVE-01 | R。 |
+| MOVE-03 起飞 | `move.accepted` | from=hangar，roll=6 | 无 | `REC P0`：机库飞机到起飞点的明确轨迹+“起飞成功，可再掷一次” | 表现完成前锁定 | to=launch，保持本方 awaiting_roll | 同 MOVE-01 | R。 |
 | MOVE-04 从起飞点入主航线 | `move.accepted` | from=launch | 无 | `REC P1`：按 roll 走到自己主航线进度，不要仅动到第一格 | 同 MOVE-02 | to 由进度解算 | 同 MOVE-02 | R；这是容易被视觉原型误表达的规则边界。 |
 | MOVE-05 跳 4 格 | `move.accepted(effect=jump)` | 最初落点满足跳跃规则 | 无额外选择 | `REC P0`：先表现按点数落位，再沿自动跳跃到最终格，用短文案/音效标记“跳跃” | 整个权威效果串为一次锁定 | to 是跳后最终位置 | 恢复快照不强行补播历史动画 | R。I：事件有 effect，controller 未使用。 |
 | MOVE-06 长捷径 | `move.accepted(effect=shortcut)` | 初始落在自己 progress 18 | 无额外选择 | `REC P0`：显示落点、快捷航线和 progress 30 最终位置 | 同 MOVE-05 | to 是捷径后位置 | 同 MOVE-05 | R。 |
@@ -199,7 +195,7 @@ Flutter 登录态
 
 以下要求适用于所有上述交互，不应只在“理想联网”态成立：
 
-1. **服务器权威**：掷骰、移动、捕获、惩罚、胜负和认输在 accepted event/snapshot 前都不得展示为最终结果。
+1. **服务器权威**：掷骰、移动、捕获、胜负和认输在 accepted event/snapshot 前都不得展示为最终结果。
 2. **完整状态链**：可交互动作均需 `enabled → pressed → pending → accepted/rejected`；不能只有 disabled 与结果两态。
 3. **Pending 防重**：本地只允许一个未决权威动作；提交期间必须有可见状态，并锁定所有重复/冲突入口。
 4. **拒绝可恢复**：拒绝后清 pending、保留最后确认棋盘，告知人能理解的原因和下一步；有效输入/选择不应无原因丢失。
@@ -216,44 +212,41 @@ Flutter 登录态
 
 | ID | 问题 | 已知事实 | 需要的决策/工程动作 | 优先级 |
 |---|---|---|---|---|
-| OPEN-01 | 点击叠机组时哪架飞机移动？ | 服务端 action 必须是单个 `pieceIndex`；当前 board 对等距叠机选索引最小的合法飞机。profile 只说“叠放组为一个可点目标”，未定义组内选择。 | 确认“稳定自动选一架”还是“打开组内选择”；该决定会影响三连六惩罚追踪的 pieceIndex。 | P0 |
+| OPEN-01 | 点击叠机组时哪架飞机移动？ | 服务端 action 必须是单个 `pieceIndex`；当前 board 对等距叠机选索引最小的合法飞机。profile 只说“叠放组为一个可点目标”，未定义组内选择。 | 确认“稳定自动选一架”还是“打开组内选择”。 | P0 |
 | OPEN-02 | 权威移动的动画路径与速度 | accepted move 仅给 from/to/roll/effect/captured，客户端可依规则重建路径；快照恢复没有历史效果序列。 | 定义现场事件的表现顺序、最长锁定时间与“快照直接收敛、不补播”原则。 | P0 |
 | OPEN-03 | 无合法棋子的提示节奏 | 服务在一个 roll event 中同时确定点数和换手；快照中 dice 已回 0。 | 定义一个可读但不拖慢对手操作的短暂提示，并保证重连不重复播放。 | P0 |
-| OPEN-04 | 三连六惩罚表现的可取消性/时长 | 惩罚在 roll accepted 时已完成，用户不能选择。有可能一次送回 1–2 个去重索引。 | 定义非阻塞的解释、高亮和快速收敛；不得表现为用户可取消的惩罚。 | P0 |
 | OPEN-05 | Godot 进入后台又回前台的明确 resync 边界 | 共享 UX 要求恢复后先 resync；当前 Godot 主要依赖 WebSocket 状态和重连，未见独立 resume 状态。 | 定义 host/Godot lifecycle 信号和验收；若连接表面仍 connected，也要证明回前台前的状态不会过期可操作。 | P0 |
 | OPEN-06 | Flight Chess “已有玩法事件后不可取消”的服务端守卫 | Flutter 只在 match revision=0 显示取消。match service 查询“已接受玩法事件”的列表包含其他游戏，但当前没有 Flight Chess roll/move 类型；相关通用测试也只使用 Gomoku。 | 补充服务端 Flight Chess 守卫与回归测试，确保不能绕过 Flutter UI 在已掷骰后取消。 | P0 |
 | OPEN-07 | 512 事件上限时的用户结果 | match service 对 Flight Chess 设 512 事件上限；到达 511 个事件后 roll/move 被拒绝，仍预留一个认输终局事件。玩法/profile 未定义超限和局、强制结束或续局规则。 | 定义服务端产品策略，不能让活跃对局只剩“认输或退出”而无法继续玩。 | P0 |
 | OPEN-08 | 骰子、移动、捕获的音效/触感 | profile 和共享标准没有定义；当前 dice 是静态数值控件。 | 决定是否使用音效/触感，如使用则需可关闭、不与权威结果脱节。 | P2 |
 | OPEN-09 | Android host 已有活跃 GameActivity 时的目标对局校验 | 现有 launch gate 看到活跃游戏进程就 `RESUME_ACTIVE`，并未在 gate 层按新请求的 matchId/gameId 区分。 | 确认当用户从另一张 active 卡片点入时的预期：带回已打开游戏，还是显示明确冲突。 | P1 |
-| OPEN-10 | 结果数据 | 当前结果面板可用数据主要是 winner/result/revision，“已确认操作数”并非玩法统计。 | 若要显示捕获数、连六次数、历时等，需先定义权威数据来源；不从当前页面短期内存猜测。 | P1 |
+| OPEN-10 | 结果数据 | 当前结果面板可用数据主要是 winner/result/revision，“已确认操作数”并非玩法统计。 | 若要显示捕获数、历时等，需先定义权威数据来源；不从当前页面短期内存猜测。 | P1 |
 | OPEN-11 | 协议兼容 fixture 缺口 | `protocol/fixtures` 现有兼容 fixture 都不是 Flight Chess，尽管 README 已定义 Flight Chess action/event。 | 补充 roll/move/resign/snapshot/error 的 Flight Chess 兼容 fixture，以锁定跨端语义。 | P1 |
-| OPEN-12 | 连六惩罚能否撤销已 finished 飞机 | 服务端对 `SixMovedPieceIndices` 无条件设为 hangar，因此从代码上看，若第二个 6 让飞机精确到达但未四机全到，第三个 6 会把它送回机库；现有专项测试只覆盖 main/home 惩罚。 | 由产品确认这是预期规则还是实现缺口，并增加完成区连六测试；UX 暂时只按服务返回的 penalized 列表表现。 | P0 |
 
 ## 7. 当前 UI/UX 缺口与优先级
 
 ### P0：下一轮互动实现前应闭环
 
-1. **accepted event 被降级成“直接换快照”**：Godot controller 未使用 roll 的 `value/movable/penalized` 和 move 的 `from/to/effect/captured`，造成无棋可移、跳跃、捷径、捕获、精确到达、三连六惩罚都只显示棋盘瞬间跳变。
+1. **accepted event 被降级成“直接换快照”**：Godot controller 未使用 roll 的 `value/movable` 和 move 的 `from/to/effect/captured`，造成无棋可移、跳跃、捷径、捕获、精确到达都只显示棋盘瞬间跳变。
 2. **move pending 没有目标级反馈**：点飞机后本地 selected 很快被清掉，只剩通用“等待服务器确认”；用户不能明确看到哪架正在 pending。
-3. **三连六与无合法棋子缺少因果链**：两者都在单个 accepted roll 中完成换手，当前 UI 不显示本次点数和原因。
-4. **叠机组内选择语义未批准**：当前选索引最小者是实现策略，不是明文产品规则；它直接影响连六惩罚。
+3. **无合法棋子缺少因果链**：服务端在单个 accepted roll 中完成换手，当前 UI 不显示本次点数和原因。
+4. **叠机组内选择语义未批准**：当前选索引最小者是实现策略，不是明文产品规则。
 5. **生命周期需明确证明**：Godot 回前台后的 resync 契约尚不明确；服务端 Flight Chess 取消守卫也需补齐。
-6. **连六已 finished 飞机的惩罚语义未专项确认**：当前代码会送回机库，但产品 profile 未单独说明，测试也没有覆盖该边界。
 
 ### P1：让玩家一眼知道“谁、为什么、下一步”
 
 1. Godot 对手卡缺少昵称，将在线状态当成了主标识；Flutter 已经有对手昵称，但启动/协议边界没有传入。
 2. 对局中没有显示当前连续 6 计数与第三次风险；如增加，必须仅在权威接受后更新。
-3. Flutter 活跃局卡片把 revision 称为“当前步数”，但一个完整回合可包含 roll 和 move 两个 revision，语义误导。
-4. 结果面板的“已确认操作数”不是有意义的战局摘要；未有权威统计前应优先精简，不自行推测。
-5. 预览和聚焦测试没有覆盖 initial loading、roll/move/resign pending、拒绝恢复、reconnecting/failed、无法移动、三连六和平台中性终止。
-6. 协议兼容 fixture 缺少 Flight Chess。
+2. Flutter 活跃局卡片把 revision 称为“当前步数”，但一个完整回合可包含 roll 和 move 两个 revision，语义误导。
+3. 结果面板的“已确认操作数”不是有意义的战局摘要；未有权威统计前应优先精简，不自行推测。
+4. 预览和聚焦测试没有覆盖 initial loading、roll/move/resign pending、拒绝恢复、reconnecting/failed、无法移动和平台中性终止。
+5. 协议兼容 fixture 缺少 Flight Chess。
 
 ### P2：在规则可读之后再打磨
 
 1. 骰子、起飞、跳跃、捷径、捕获、到达的节奏、音效和触感。
 2. 第四架到达与胜利的庆祝性转场。
-3. 不打断对局的规则提示入口，例如精确到达、连六惩罚和捷径。
+3. 不打断对局的规则提示入口，例如精确到达和捷径。
 
 ## 8. 交互项到现有代码/测试的追踪表
 
@@ -265,7 +258,7 @@ Flutter 登录态
 | ENT-01 | [GameLaunchGate.kt](../../app/android/app/src/main/kotlin/me/zqydev/gamebox/GameLaunchGate.kt), [MainActivity.kt](../../app/android/app/src/main/kotlin/me/zqydev/gamebox/MainActivity.kt), [GameActivity.kt](../../app/android/app/src/main/kotlin/me/zqydev/gamebox/GameActivity.kt) | [GameLaunchGateTest.kt](../../app/android/app/src/test/kotlin/me/zqydev/gamebox/GameLaunchGateTest.kt), [gomoku_repository_test.dart](../../app/test/features/gomoku/gomoku_repository_test.dart) | 单游戏进程启动门有测试；不同目标 match 的 resume 语义未专项验收。 |
 | ENT-02–03, NET-01–12 | [match_client.gd](../../game_runtime/core/match_client.gd), [flight_chess_controller.gd](../../game_runtime/games/flight_chess/flight_chess_controller.gd), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [hub.go](../../server/internal/matches/hub.go) | [test_match_client.gd](../../game_runtime/test/test_match_client.gd), [test_flight_chess_state.gd](../../game_runtime/test/test_flight_chess_state.gd), [flight-chess two-device scenario](../../tool/e2e/harness.sh) | 无乐观落子、pending、gap 快照、重连恢复与安全错误有证据；后台独立 resync 和全错误 UI 状态矩阵不完整。 |
 | ID-01–02, TURN-01–04, NAV-01–02 | [flight_chess_controller.gd](../../game_runtime/games/flight_chess/flight_chess_controller.gd), [flight_chess_scene.tscn](../../game_runtime/games/flight_chess/flight_chess_scene.tscn) | [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd), [flight-chess two-device scenario](../../tool/e2e/harness.sh) | 阵营映射、轮次锁定、非破坏 Back、presence 有证据；对手昵称没有 Godot 边界。 |
-| ROLL-01–06 | [protocol actions](../../protocol/README.md), [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [controller](../../game_runtime/games/flight_chess/flight_chess_controller.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [matches flight_chess_test.go](../../server/internal/matches/flight_chess_test.go), [test_match_client.gd](../../game_runtime/test/test_match_client.gd), [two-device scenario](../../tool/e2e/harness.sh) | 服务端覆盖起飞、无可移、三连六；两设备覆盖 pending 与真实随机掷骰。Godot 表现层未覆盖无可移/惩罚反馈。 |
+| ROLL-01–05 | [protocol actions](../../protocol/README.md), [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [controller](../../game_runtime/games/flight_chess/flight_chess_controller.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [matches flight_chess_test.go](../../server/internal/matches/flight_chess_test.go), [test_match_client.gd](../../game_runtime/test/test_match_client.gd), [two-device scenario](../../tool/e2e/harness.sh) | 服务端覆盖起飞、无可移和连续掷出 6 无惩罚；两设备覆盖 pending 与真实随机掷骰。Godot 表现层未覆盖无可移反馈。 |
 | SEL-01–04, TOUCH-02–03 | [flight_chess_board.gd](../../game_runtime/games/flight_chess/flight_chess_board.gd), [profile](profiles/flight-chess.md) | [test_flight_chess_board.gd](../../game_runtime/test/test_flight_chess_board.gd), [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd) | 最近合法目标、按下/释放、远处不选、叠层徽标有测试；叠机组内产品语义尚未定义。 |
 | MOVE-01–04 | [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [controller](../../game_runtime/games/flight_chess/flight_chess_controller.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [test_flight_chess_state.gd](../../game_runtime/test/test_flight_chess_state.gd), [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd), [two-device scenario](../../tool/e2e/harness.sh) | 单飞机权威 pending 和起飞续掷已跨层覆盖；飞机级 pending 视觉缺失。 |
 | MOVE-05–09 | [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [flight_chess_board.gd](../../game_runtime/games/flight_chess/flight_chess_board.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [test_flight_chess_state.gd](../../game_runtime/test/test_flight_chess_state.gd), [full-game driver](../../game_runtime/test/support/flight_chess_full_game_driver.gd), [preview driver](../../tool/flight_chess_preview.gd) | 跳跃/捷径/叠机/捕获的规则与最终状态有证据；动画序列和局内反馈未实现。 |
@@ -291,15 +284,15 @@ Flutter 登录态
 
 - `connecting` / `initial-sync`
 - `roll-pending` / `move-pending` / `resign-pending`
-- `no-movable` / `third-six-penalty`
+- `no-movable`
 - `jump` / `shortcut` / `jump-shortcut` / `capture-stack` / `exact-finish`
 - `reconnecting` / `stale-sync` / `rejected` / `failed`
 - `resign-confirmation` / `goal-result` / `resignation-result` / `cancelled` / `abandoned`
 
 ## 10. 清单自查结论
 
-- 已覆盖：进入/加载、双方身份/轮次、掷骰、6 点起飞与加掷、无合法棋子、手动选棋、普通移动、跳跃、长捷径、叠机、捕获/回机库、终点航线/精确到达、三连六惩罚、目标胜利/认输/取消/遗弃、Back、后台/重连/错误、重复/过期动作、触控与自动化契约。
+- 已覆盖：进入/加载、双方身份/轮次、掷骰、6 点起飞与加掷、无合法棋子、手动选棋、普通移动、跳跃、长捷径、叠机、捕获/回机库、终点航线/精确到达、目标胜利/认输/取消/遗弃、Back、后台/重连/错误、重复/过期动作、触控与自动化契约。
 - 已对每类交互给出 actor/触发、前置、用户操作、立即反馈、pending/锁定、权威接受/拒绝、结果与恢复。
-- 已单列 12 个不可靠 UX 猜测的未定义/歧义，其中叠机组内选择、后台 resync、Flight Chess 取消守卫、512 事件上限和 finished 飞机的连六惩罚是 P0。
+- 已单列 10 个不可靠 UX 猜测的未定义/歧义，其中叠机组内选择、后台 resync、Flight Chess 取消守卫和 512 事件上限是 P0。
 - 已将交互 ID 追踪到现有代码、单测、Godot 全局 driver、preview 和两设备 E2E。
-- 当前 MVP **规则状态机和权威性有较完整测试证据，但互动表现仍未闭环**；尤其是 accepted event 的因果反馈、目标级 pending、无法移动和三连六惩罚。
+- 当前 MVP **规则状态机和权威性有较完整测试证据，但互动表现仍未闭环**；尤其是 accepted event 的因果反馈、目标级 pending和无法移动。

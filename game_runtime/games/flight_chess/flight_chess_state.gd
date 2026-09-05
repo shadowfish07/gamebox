@@ -40,12 +40,6 @@ var next_color: String:
 var dice: int:
 	get: return _dice
 	set(_value): pass
-var consecutive_sixes: int:
-	get: return _consecutive_sixes
-	set(_value): pass
-var six_moved_piece_indices: Array:
-	get: return _six_moved_piece_indices.duplicate()
-	set(_value): pass
 var pieces: Dictionary:
 	get: return _pieces.duplicate(true)
 	set(_value): pass
@@ -67,8 +61,6 @@ var _black_user_id := ""
 var _white_user_id := ""
 var _next_color := ""
 var _dice := 0
-var _consecutive_sixes := 0
-var _six_moved_piece_indices: Array = []
 var _pieces: Dictionary = {BLACK: [], WHITE: []}
 var _winner_user_id: Variant = null
 var _result: Variant = null
@@ -169,8 +161,6 @@ func apply_snapshot(envelope: Dictionary) -> Dictionary:
 	_white_user_id = payload["whiteUserId"]
 	_next_color = payload["nextColor"]
 	_dice = payload["dice"]
-	_consecutive_sixes = payload["consecutiveSixes"]
-	_six_moved_piece_indices = payload["sixMovedPieceIndices"].duplicate()
 	_pieces = payload["pieces"].duplicate(true)
 	_winner_user_id = payload["winnerUserId"]
 	_result = payload["result"]
@@ -246,55 +236,28 @@ func apply_error(envelope: Dictionary) -> Dictionary:
 func _apply_roll(envelope: Dictionary) -> Dictionary:
 	var payload: Variant = envelope["payload"]
 	if not payload is Dictionary or not _exact_keys(payload, [
-		"color", "movablePieceIndices", "penalizedPieceIndices", "userId", "value",
+		"color", "movablePieceIndices", "userId", "value",
 	]) or payload.get("color") != next_color or _color_for_user(payload.get("userId", "")) != next_color \
 		or typeof(payload.get("value")) != TYPE_INT or payload["value"] < 1 or payload["value"] > 6 \
 		or not _valid_indices(payload.get("movablePieceIndices")) \
-		or not _valid_indices(payload.get("penalizedPieceIndices")) \
 		or phase != PHASE_AWAITING_ROLL or dice != 0:
 		return _failure("invalid_event")
 	var color := next_color
 	var value: int = payload["value"]
-	var expected_penalized: Array = []
-	var expected_movable: Array = []
-	var next_sixes := consecutive_sixes
-	var next_moved := six_moved_piece_indices
+	var expected_movable: Array = _movable_pieces(color, _pieces[color], value)
 	var next_phase := PHASE_AWAITING_ROLL
 	var next_dice := 0
 	var next_turn := next_color
-	var next_pieces := _pieces.duplicate(true)
-	if value == 6:
-		next_sixes += 1
-		if next_sixes == 3:
-			expected_penalized = next_moved.duplicate()
-			for piece_index in expected_penalized:
-				next_pieces[color][piece_index] = {"zone": ZONE_HANGAR, "index": piece_index}
-			next_sixes = 0
-			next_moved = []
-			next_turn = _opposite(color)
-		else:
-			expected_movable = _movable_pieces(color, next_pieces[color], value)
-			if not expected_movable.is_empty():
-				next_phase = PHASE_AWAITING_MOVE
-				next_dice = value
-	else:
-		next_sixes = 0
-		next_moved = []
-		expected_movable = _movable_pieces(color, next_pieces[color], value)
-		if not expected_movable.is_empty():
-			next_phase = PHASE_AWAITING_MOVE
-			next_dice = value
-		else:
-			next_turn = _opposite(color)
-	if payload["movablePieceIndices"] != expected_movable \
-		or payload["penalizedPieceIndices"] != expected_penalized:
+	if not expected_movable.is_empty():
+		next_phase = PHASE_AWAITING_MOVE
+		next_dice = value
+	elif value != 6:
+		next_turn = _opposite(color)
+	if payload["movablePieceIndices"] != expected_movable:
 		return _failure("invalid_event")
-	_consecutive_sixes = next_sixes
-	_six_moved_piece_indices = next_moved
 	_phase = next_phase
 	_dice = next_dice
 	_next_color = next_turn
-	_pieces = next_pieces
 	return {"ok": true}
 
 
@@ -330,19 +293,9 @@ func _apply_move(envelope: Dictionary) -> Dictionary:
 	if payload["capturedPieceIndices"] != expected_captured:
 		return _failure("invalid_event")
 	var roll := dice
-	var next_sixes := consecutive_sixes
-	var next_moved := six_moved_piece_indices
-	if roll == 6:
-		if not next_moved.has(piece_index):
-			next_moved.append(piece_index)
-	else:
-		next_sixes = 0
-		next_moved = []
 	_pieces = next_pieces
 	_dice = 0
 	_phase = PHASE_AWAITING_ROLL
-	_consecutive_sixes = next_sixes
-	_six_moved_piece_indices = next_moved
 	if _all_finished(next_pieces[color]):
 		_status = STATUS_FINISHED
 		_result = "goal"
@@ -406,16 +359,13 @@ func _validate_snapshot(envelope: Dictionary) -> Dictionary:
 		return _failure("invalid_snapshot")
 	var payload: Variant = envelope["payload"]
 	if not payload is Dictionary or not _exact_keys(payload, [
-		"blackUserId", "consecutiveSixes", "dice", "nextColor", "phase", "pieces", "result", \
-		"sixMovedPieceIndices", "status", "whiteUserId", "winnerUserId",
+		"blackUserId", "dice", "nextColor", "phase", "pieces", "result", "status", \
+		"whiteUserId", "winnerUserId",
 	]) or not _canonical_uuid(payload.get("blackUserId")) or not _canonical_uuid(payload.get("whiteUserId")) \
 		or payload["blackUserId"] == payload["whiteUserId"] \
 		or payload.get("nextColor") not in [BLACK, WHITE] \
 		or payload.get("phase") not in [PHASE_AWAITING_ROLL, PHASE_AWAITING_MOVE] \
 		or typeof(payload.get("dice")) != TYPE_INT \
-		or typeof(payload.get("consecutiveSixes")) != TYPE_INT \
-		or payload["consecutiveSixes"] < 0 or payload["consecutiveSixes"] > 2 \
-		or not _valid_indices(payload.get("sixMovedPieceIndices")) \
 		or not _valid_pieces(payload.get("pieces")):
 		return _failure("invalid_snapshot")
 	if payload["phase"] == PHASE_AWAITING_ROLL and payload["dice"] != 0:

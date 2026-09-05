@@ -342,7 +342,7 @@ static func _network_snapshot(revision: int) -> Dictionary:
 		"payload": {
 			"status": "active", "phase": "awaiting_roll",
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
-			"dice": 0, "consecutiveSixes": 0, "sixMovedPieceIndices": [],
+			"dice": 0,
 			"pieces": _network_pieces(), "winnerUserId": null, "result": null,
 		},
 	}
@@ -354,7 +354,7 @@ static func _network_roll(revision: int) -> Dictionary:
 		"revision": revision, "type": "flight_chess.roll.accepted", "actionId": ROLL_ACTION_ID,
 		"payload": {
 			"color": "black", "userId": BLACK_ID, "value": 6,
-			"movablePieceIndices": [0, 1, 2, 3], "penalizedPieceIndices": [],
+			"movablePieceIndices": [0, 1, 2, 3],
 		},
 	}
 

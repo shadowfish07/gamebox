@@ -27,8 +27,6 @@ static func initial_snapshot(match_id: String, black_user_id: String, white_user
 			"whiteUserId": white_user_id,
 			"nextColor": BLACK,
 			"dice": 0,
-			"consecutiveSixes": 0,
-			"sixMovedPieceIndices": [],
 			"pieces": pieces,
 			"winnerUserId": null,
 			"result": null,
@@ -62,7 +60,6 @@ static func _roll_event(state: Variant, match_id: String) -> Dictionary:
 			"userId": state.black_user_id if color == BLACK else state.white_user_id,
 			"value": value,
 			"movablePieceIndices": movable,
-			"penalizedPieceIndices": [],
 		},
 	}
 
@@ -105,8 +102,6 @@ static func _move_event(state: Variant, match_id: String) -> Dictionary:
 
 static func _choose_roll(state: Variant, color: String) -> int:
 	for value in [6, 5, 4, 3, 2, 1]:
-		if value == 6 and state.consecutive_sixes >= 2:
-			continue
 		for piece_index in _movable_indices(state, color, value):
 			var resolution: Dictionary = FlightChessState._resolve_move(
 				color,
@@ -115,7 +110,7 @@ static func _choose_roll(state: Variant, color: String) -> int:
 			)
 			if resolution.get("effect", "") in ["shortcut", "jump_shortcut"]:
 				return value
-	if state.consecutive_sixes < 2 and not _movable_indices(state, color, 6).is_empty():
+	if not _movable_indices(state, color, 6).is_empty():
 		return 6
 	for value in [5, 4, 3, 2, 1]:
 		if not _movable_indices(state, color, value).is_empty():

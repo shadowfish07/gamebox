@@ -2643,11 +2643,10 @@ type acceptedChineseCheckersMove struct {
 }
 
 type acceptedFlightChessRoll struct {
-	Color                 string `json:"color"`
-	UserID                string `json:"userId"`
-	Value                 int    `json:"value"`
-	MovablePieceIndices   []int  `json:"movablePieceIndices"`
-	PenalizedPieceIndices []int  `json:"penalizedPieceIndices"`
+	Color               string `json:"color"`
+	UserID              string `json:"userId"`
+	Value               int    `json:"value"`
+	MovablePieceIndices []int  `json:"movablePieceIndices"`
 }
 
 type acceptedFlightChessMove struct {
@@ -2662,14 +2661,14 @@ type acceptedFlightChessMove struct {
 }
 
 func decodeAcceptedFlightChessRoll(payload json.RawMessage) (acceptedFlightChessRoll, error) {
-	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}, "penalizedPieceIndices": {}}
+	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}}
 	fields, err := strictJSONObject(payload, allowed)
 	if err != nil || len(fields) != len(allowed) {
 		return acceptedFlightChessRoll{}, ErrInternal
 	}
 	var value acceptedFlightChessRoll
 	if json.Unmarshal(payload, &value) != nil || value.Color != string(ColorBlack) && value.Color != string(ColorWhite) ||
-		!validIdentifier(value.UserID) || value.Value < 1 || value.Value > 6 || !validFlightChessIndices(value.MovablePieceIndices) || !validFlightChessIndices(value.PenalizedPieceIndices) {
+		!validIdentifier(value.UserID) || value.Value < 1 || value.Value > 6 || !validFlightChessIndices(value.MovablePieceIndices) {
 		return acceptedFlightChessRoll{}, ErrInternal
 	}
 	return value, nil

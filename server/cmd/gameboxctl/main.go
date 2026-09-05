@@ -232,24 +232,22 @@ type matchPlayerResponse struct {
 }
 
 type matchShowResponse struct {
-	ID                   string                         `json:"id"`
-	GameID               string                         `json:"gameId"`
-	Status               string                         `json:"status"`
-	Revision             int64                          `json:"revision"`
-	Result               *string                        `json:"result"`
-	WinnerUserID         *string                        `json:"winnerUserId"`
-	Players              []matchPlayerResponse          `json:"players"`
-	BoardSize            int                            `json:"boardSize"`
-	Board                []int                          `json:"board"`
-	NextColor            string                         `json:"nextColor,omitempty"`
-	Format               string                         `json:"format,omitempty"`
-	Round                int                            `json:"round,omitempty"`
-	Scores               map[string]int                 `json:"scores,omitempty"`
-	Phase                string                         `json:"phase,omitempty"`
-	Dice                 int                            `json:"dice,omitempty"`
-	ConsecutiveSixes     int                            `json:"consecutiveSixes,omitempty"`
-	SixMovedPieceIndices []int                          `json:"sixMovedPieceIndices,omitempty"`
-	Pieces               map[string][]flightchess.Piece `json:"pieces,omitempty"`
+	ID           string                         `json:"id"`
+	GameID       string                         `json:"gameId"`
+	Status       string                         `json:"status"`
+	Revision     int64                          `json:"revision"`
+	Result       *string                        `json:"result"`
+	WinnerUserID *string                        `json:"winnerUserId"`
+	Players      []matchPlayerResponse          `json:"players"`
+	BoardSize    int                            `json:"boardSize"`
+	Board        []int                          `json:"board"`
+	NextColor    string                         `json:"nextColor,omitempty"`
+	Format       string                         `json:"format,omitempty"`
+	Round        int                            `json:"round,omitempty"`
+	Scores       map[string]int                 `json:"scores,omitempty"`
+	Phase        string                         `json:"phase,omitempty"`
+	Dice         int                            `json:"dice,omitempty"`
+	Pieces       map[string][]flightchess.Piece `json:"pieces,omitempty"`
 }
 
 type gomokuStateView struct {
@@ -263,12 +261,10 @@ type chineseCheckersStateView struct {
 }
 
 type flightChessStateView struct {
-	Phase                string                         `json:"phase"`
-	NextColor            string                         `json:"nextColor"`
-	Dice                 int                            `json:"dice"`
-	ConsecutiveSixes     int                            `json:"consecutiveSixes"`
-	SixMovedPieceIndices []int                          `json:"sixMovedPieceIndices"`
-	Pieces               map[string][]flightchess.Piece `json:"pieces"`
+	Phase     string                         `json:"phase"`
+	NextColor string                         `json:"nextColor"`
+	Dice      int                            `json:"dice"`
+	Pieces    map[string][]flightchess.Piece `json:"pieces"`
 }
 
 type rpsStateView struct {
@@ -322,8 +318,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	var round int
 	var scores map[string]int
 	var phase string
-	var dice, consecutiveSixes int
-	var sixMovedPieceIndices []int
+	var dice int
 	var pieces map[string][]flightchess.Piece
 	switch snapshot.Match.GameID {
 	case chinesecheckers.GameID:
@@ -365,8 +360,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			writeLine(stderr, matchFailed)
 			return exitFailure
 		}
-		phase, nextColor, dice, consecutiveSixes = state.Phase, state.NextColor, state.Dice, state.ConsecutiveSixes
-		sixMovedPieceIndices = append([]int(nil), state.SixMovedPieceIndices...)
+		phase, nextColor, dice = state.Phase, state.NextColor, state.Dice
 		pieces = map[string][]flightchess.Piece{
 			flightchess.Black: append([]flightchess.Piece(nil), state.Pieces[flightchess.Black]...),
 			flightchess.White: append([]flightchess.Piece(nil), state.Pieces[flightchess.White]...),
@@ -415,8 +409,7 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Revision: snapshot.Match.Revision, Result: cloneString(snapshot.Match.Result),
 		WinnerUserID: cloneString(snapshot.Match.WinnerUserID), Players: players,
 		BoardSize: boardSize, Board: board, NextColor: nextColor, Format: format, Round: round, Scores: scores,
-		Phase: phase, Dice: dice, ConsecutiveSixes: consecutiveSixes,
-		SixMovedPieceIndices: sixMovedPieceIndices, Pieces: pieces,
+		Phase: phase, Dice: dice, Pieces: pieces,
 	}
 	if err := json.NewEncoder(stdout).Encode(response); err != nil {
 		writeLine(stderr, matchFailed)

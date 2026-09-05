@@ -374,7 +374,7 @@ func TestMatchShowReturnsFlightChessAuthorityState(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 		t.Fatalf("decode stdout %q: %v", stdout.String(), err)
 	}
-	if response.GameID != flightchess.GameID || response.Revision != 0 || response.Phase != flightchess.PhaseAwaitingRoll || response.NextColor != flightchess.Black || response.Dice != 0 || response.ConsecutiveSixes != 0 || len(response.SixMovedPieceIndices) != 0 || len(response.Board) != 0 {
+	if response.GameID != flightchess.GameID || response.Revision != 0 || response.Phase != flightchess.PhaseAwaitingRoll || response.NextColor != flightchess.Black || response.Dice != 0 || len(response.Board) != 0 {
 		t.Fatalf("Flight Chess response metadata=%+v", response)
 	}
 	for _, color := range []string{flightchess.Black, flightchess.White} {

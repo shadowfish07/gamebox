@@ -902,7 +902,7 @@ static func _flight_chess_snapshot(revision: int) -> Dictionary:
 		"type": "platform.snapshot", "payload": {
 			"status": "active", "phase": "awaiting_roll",
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
-			"dice": 0, "consecutiveSixes": 0, "sixMovedPieceIndices": [], "pieces": pieces,
+			"dice": 0, "pieces": pieces,
 			"winnerUserId": null, "result": null,
 		},
 	}
@@ -914,7 +914,7 @@ static func _flight_chess_roll(revision: int, action_id: String) -> Dictionary:
 		"type": "flight_chess.roll.accepted", "actionId": action_id,
 		"payload": {
 			"color": "black", "userId": BLACK_ID, "value": 6,
-			"movablePieceIndices": [0, 1, 2, 3], "penalizedPieceIndices": [],
+			"movablePieceIndices": [0, 1, 2, 3],
 		},
 	}
 

@@ -41,11 +41,11 @@ func TestRollSixLaunchesPlaneAndKeepsTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rolled.Type != RollAccepted || string(rolled.Payload) != `{"color":"black","userId":"00000000-0000-4000-8000-000000000001","value":6,"movablePieceIndices":[0,1,2,3],"penalizedPieceIndices":[]}` {
+	if rolled.Type != RollAccepted || string(rolled.Payload) != `{"color":"black","userId":"00000000-0000-4000-8000-000000000001","value":6,"movablePieceIndices":[0,1,2,3]}` {
 		t.Fatalf("unexpected roll event: %s", rolled.Payload)
 	}
 	state := decodeStateForTest(t, afterRoll)
-	if state.Phase != PhaseAwaitingMove || state.Dice != 6 || state.ConsecutiveSixes != 1 || state.NextColor != Black {
+	if state.Phase != PhaseAwaitingMove || state.Dice != 6 || state.NextColor != Black {
 		t.Fatalf("unexpected rolled state: %#v", state)
 	}
 
@@ -132,32 +132,26 @@ func TestExactFinishRejectsOvershootAndFourthPlaneWins(t *testing.T) {
 	}
 }
 
-func TestThirdSixReturnsPiecesMovedDuringStreakAndEndsTurn(t *testing.T) {
+func TestRepeatedSixesKeepTurnWithoutPenalty(t *testing.T) {
 	rules := NewRules()
-	state := initialState()
-	state.BlackUserID = stringPointer(blackID)
-	state.WhiteUserID = stringPointer(whiteID)
-	state.Phase = PhaseAwaitingRoll
-	state.ConsecutiveSixes = 2
-	state.SixMovedPieceIndices = []int{0, 1}
-	state.Pieces[Black][0] = Piece{Zone: ZoneMain, Index: 9}
-	state.Pieces[Black][1] = Piece{Zone: ZoneHome, Index: 2}
-	snapshot := encodeStateForTest(t, 12, state)
-
-	event, next, err := rules.ApplyRandom(snapshot, blackID, gameapi.Action{Type: RollRequested, Payload: json.RawMessage(`{}`)}, bytes.NewReader([]byte{5}))
-	if err != nil {
-		t.Fatal(err)
+	var snapshot gameapi.Snapshot
+	for rollNumber := 1; rollNumber <= 3; rollNumber++ {
+		_, afterRoll, err := rules.ApplyRandom(snapshot, blackID, gameapi.Action{Type: RollRequested, Payload: json.RawMessage(`{}`)}, bytes.NewReader([]byte{5}))
+		if err != nil {
+			t.Fatalf("roll %d: %v", rollNumber, err)
+		}
+		state := decodeStateForTest(t, afterRoll)
+		if state.Phase != PhaseAwaitingMove || state.NextColor != Black {
+			t.Fatalf("roll %d did not keep selection: %#v", rollNumber, state)
+		}
+		_, snapshot, err = rules.Apply(afterRoll, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":0}`)})
+		if err != nil {
+			t.Fatalf("move %d: %v", rollNumber, err)
+		}
 	}
-	var payload acceptedRollPayload
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if len(payload.PenalizedPieceIndices) != 2 || len(payload.MovablePieceIndices) != 0 {
-		t.Fatalf("unexpected penalty payload: %#v", payload)
-	}
-	state = decodeStateForTest(t, next)
-	if state.Pieces[Black][0].Zone != ZoneHangar || state.Pieces[Black][1].Zone != ZoneHangar || state.NextColor != White || state.ConsecutiveSixes != 0 || state.Phase != PhaseAwaitingRoll {
-		t.Fatalf("unexpected penalty state: %#v", state)
+	state := decodeStateForTest(t, snapshot)
+	if state.Pieces[Black][0].Zone == ZoneHangar || state.NextColor != Black || state.Phase != PhaseAwaitingRoll {
+		t.Fatalf("repeated sixes applied a penalty: %#v", state)
 	}
 }
 
@@ -166,7 +160,7 @@ func TestRebuildRejectsTamperedAcceptedRoll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event.Payload = json.RawMessage(`{"color":"black","userId":"00000000-0000-4000-8000-000000000001","value":6,"movablePieceIndices":[0],"penalizedPieceIndices":[]}`)
+	event.Payload = json.RawMessage(`{"color":"black","userId":"00000000-0000-4000-8000-000000000001","value":6,"movablePieceIndices":[0]}`)
 	if _, err := NewRules().Rebuild([]gameapi.Event{event}); !errors.Is(err, gameapi.ErrInvalidEvent) {
 		t.Fatalf("tampered rebuild error = %v", err)
 	}
