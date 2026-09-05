@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>飞行棋 · 棋盘外 UX 原型</title>
+  <title>飞行棋 · 完整交互与动画演示</title>
   <style>
     @layer reset, tokens, base, components, states, responsive;
 
@@ -105,9 +105,14 @@
     @layer base {
       body {
         min-block-size: 100dvh;
-        overflow: hidden;
-        background: var(--surface);
-        color: var(--on-surface);
+        display: grid;
+        place-items: center;
+        padding: clamp(1.5rem, 5vmin, 3rem);
+        overflow: auto;
+        background:
+          radial-gradient(circle at 50% 42%, rgb(0 107 96 / 18%), transparent 34rem),
+          #07100e;
+        color: #d9e5e1;
         font-family: Inter, "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
         line-height: 1.4;
       }
@@ -142,6 +147,32 @@
 
       [hidden] { display: none !important; }
 
+      .prototype-stage {
+        display: grid;
+        justify-items: center;
+        gap: var(--space-3);
+      }
+
+      .device-viewport {
+        container: phone / size;
+        position: relative;
+        inline-size: min(50rem, calc(100dvw - 4rem));
+        aspect-ratio: 20 / 9;
+        overflow: hidden;
+        border-radius: 1.5rem;
+        background: #050908;
+        box-shadow:
+          0 0 0 .5rem #111817,
+          0 1.5rem 4rem rgb(0 0 0 / 44%);
+      }
+
+      .viewport-caption {
+        color: #aebcb8;
+        font-size: .75rem;
+        font-weight: 650;
+        letter-spacing: .04em;
+      }
+
       .visually-hidden {
         position: absolute;
         inline-size: 1px;
@@ -159,15 +190,17 @@
         display: grid;
         grid-template-columns:
           clamp(9rem, 20vw, 12rem)
-          minmax(18rem, calc(100dvh - 1.5rem))
+          minmax(18rem, calc(100cqb - 1.5rem))
           clamp(10.75rem, 22vw, 13rem);
         gap: var(--space-3);
         justify-content: center;
-        min-block-size: 100dvh;
-        max-block-size: 100dvh;
+        inline-size: 100%;
+        min-block-size: 100%;
+        max-block-size: 100%;
         padding-block: max(var(--space-3), env(safe-area-inset-top)) max(var(--space-3), env(safe-area-inset-bottom));
         padding-inline: max(var(--space-3), env(safe-area-inset-left)) max(var(--space-3), env(safe-area-inset-right));
         overflow: hidden;
+        border-radius: inherit;
         color: var(--on-surface);
         background:
           radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--primary-container) 28%, transparent), transparent 34rem),
@@ -367,7 +400,7 @@
         position: relative;
         display: grid;
         place-items: center;
-        inline-size: min(100%, calc(100dvh - 1.5rem));
+        inline-size: min(100%, calc(100cqb - 1.5rem));
         max-block-size: 100%;
         aspect-ratio: 1;
         overflow: hidden;
@@ -706,9 +739,9 @@
       [popover]:where(:popover-open, .popover-fallback-open) { display: grid; }
 
       .game-menu {
-        inset: calc(max(var(--space-3), env(safe-area-inset-top)) + var(--touch) + .25rem)
-          max(var(--space-3), env(safe-area-inset-left)) auto auto;
-        inline-size: min(17rem, calc(100vw - 1.5rem));
+        position: fixed;
+        inset: var(--menu-top, 4rem) auto auto var(--menu-left, 1rem);
+        inline-size: min(13rem, calc(100cqi - 1rem));
         gap: .2rem;
       }
 
@@ -737,7 +770,7 @@
 
       dialog {
         inline-size: min(38rem, calc(100vw - 2rem));
-        max-block-size: calc(100dvh - 2rem);
+        max-block-size: min(calc(100dvh - 2rem), calc(100cqb - 1rem));
         padding: 0;
         overflow: auto;
         border: 1px solid var(--outline-variant);
@@ -805,7 +838,7 @@
         padding-inline-start: 1.2rem;
       }
 
-      .state-dialog { inline-size: min(46rem, calc(100vw - 1rem)); }
+      .state-dialog { inline-size: min(46rem, calc(100cqi - 1rem)); }
 
       .state-dialog .dialog-body {
         gap: var(--space-2);
@@ -881,7 +914,7 @@
 
       .result-card {
         position: relative;
-        inline-size: min(34rem, calc(100vw - 2rem));
+        inline-size: min(34rem, calc(100cqi - 2rem));
         padding: 1.4rem;
         overflow: hidden;
         border: 1px solid var(--outline-variant);
@@ -1000,9 +1033,9 @@
     }
 
     @layer responsive {
-      @media (max-height: 23.75rem) {
+      @container phone (max-height: 23.75rem) {
         .game-shell {
-          grid-template-columns: 9rem minmax(18rem, calc(100dvh - 1rem)) minmax(10.5rem, 1fr);
+          grid-template-columns: 9rem minmax(18rem, calc(100cqb - 1rem)) minmax(10.5rem, 1fr);
           gap: var(--space-2);
           padding-block: max(.5rem, env(safe-area-inset-top)) max(.5rem, env(safe-area-inset-bottom));
           padding-inline: max(.5rem, env(safe-area-inset-left)) max(.5rem, env(safe-area-inset-right));
@@ -1018,20 +1051,20 @@
         .context-rule { padding: .38rem .5rem; font-size: .625rem; }
         .dice { inline-size: 3.7rem; }
         .primary-action { min-block-size: 3rem; }
-        .board-placeholder { inline-size: min(100%, calc(100dvh - 1rem)); }
+        .board-placeholder { inline-size: min(100%, calc(100cqb - 1rem)); }
         .board-note { padding: var(--space-3); }
         .state-dialog .dialog-body { padding: var(--space-3); }
         .state-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
         .state-button { min-block-size: var(--touch); }
       }
 
-      @media (orientation: landscape) and (max-height: 30rem) {
+      @container phone (min-aspect-ratio: 1 / 1) and (max-height: 30rem) {
         .state-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
       }
 
-      @media (max-width: 50rem) {
+      @container phone (max-width: 50rem) {
         .game-shell {
-          grid-template-columns: minmax(9rem, 1fr) minmax(17rem, calc(100dvh - 1rem)) minmax(10.5rem, 1.15fr);
+          grid-template-columns: minmax(9rem, 1fr) minmax(17rem, calc(100cqb - 1rem)) minmax(10.5rem, 1.15fr);
         }
 
         .revision-label { display: none; }
@@ -1041,7 +1074,7 @@
         .turn-indicator { min-inline-size: 2rem; padding-inline: .25rem; }
       }
 
-      @media (max-width: 43rem), (orientation: portrait) {
+      @container phone (max-aspect-ratio: 1 / 1) {
         body { overflow: auto; }
 
         .game-shell {
@@ -1058,6 +1091,19 @@
         .player-card { min-block-size: 6rem; }
         .board-placeholder { block-size: 100%; inline-size: auto; }
         .action-rail { min-block-size: 20rem; }
+      }
+
+      @media (orientation: landscape) and (max-width: 60rem) {
+        body { padding: 0; overflow: hidden; }
+        .prototype-stage,
+        .device-viewport { inline-size: 100%; block-size: 100dvh; }
+        .device-viewport {
+          aspect-ratio: auto;
+          border-radius: 0;
+          box-shadow: none;
+        }
+        .game-shell { border-radius: 0; }
+        .viewport-caption { display: none; }
       }
 
       @media (pointer: coarse) {
@@ -1085,10 +1131,83 @@
         .result-card::before { background: Highlight; }
       }
     }
+    @layer components {
+      .live-board::before, .live-board::after { display: none; }
+      .live-board { background: var(--flight-paper); container: board / inline-size; }
+      #flightBoard { display: block; inline-size: 100%; block-size: 100%; }
+      .piece-layer { position: absolute; inset: 0; }
+      .plane { position: absolute; width: 7.7%; height: 7.7%; min-block-size: 0; padding: 0;
+        translate: -50% -50%; scale: 1; rotate: 0deg; background: none; border-radius: 50%;
+        display: grid; place-items: center; z-index: 3; transition: scale 120ms; }
+      .plane:active:not(:disabled) { transform: none; scale: .92; }
+      .plane:disabled { opacity: 1; }
+      .plane-disc { display: grid; place-items: center; width: 76%; height: 76%; border-radius: 50%;
+        background: var(--plane-color); border: 2px solid #fff8e9; box-shadow: 0 2px 3px #302b2955;
+        color: #fff; font: 800 5cqi / 1 system-ui; position: relative; }
+      .plane[data-color="yellow"] .plane-disc { color: #594400; }
+      .plane-number { position: absolute; right: -3px; bottom: -3px; border-radius: 50%;
+        background: #fff9e9; color: #332f28; font: 800 2.5cqi / 1.4 system-ui; min-width: 1.4em; }
+      .plane[data-legal="true"]::before, .plane[data-pending="true"]::before { content: ''; position: absolute; inset: -8%; border: 2px solid var(--primary);
+        border-radius: 50%; animation: selectable 1200ms ease-in-out infinite; }
+      .plane[data-selected="true"] { z-index: 6; scale: 1.16; }
+      .plane[data-selected="true"]::before { border-width: 3px; animation: none; }
+      .plane[data-pending="true"]::before { border-style: dashed; animation: selectable 700ms ease-in-out infinite; }
+      .plane[data-moving="true"] { z-index: 8; }
+      .stack-count { position: absolute; left: -5px; top: -5px; padding: 1px 3px; border-radius: 9px;
+        color: #fff; background: #303b38; font: 800 2.3cqi / 1.3 system-ui; animation: count-enter 160ms ease-out; }
+      .stack-picker { position: absolute; z-index: 12; inset: auto 8% 8%; border-radius: 12px; padding: 8px;
+        background: var(--surface-high); color: var(--on-surface); box-shadow: 0 4px 24px #0004; text-align: center; }
+      .stack-picker p { font-size: 12px; margin-bottom: 4px; }
+      .stack-picker button { border-radius: 10px; background: var(--primary-container); margin: 2px; min-width: 48px; }
+      .live-board .board-state { inset-inline: 20%; bottom: 1%; }
+      .live-board .board-state span { padding: 3px 6px; font-size: 9px; max-inline-size: 100%; }
+      .route-preview { fill: none; stroke: #253e38; stroke-width: 4; stroke-dasharray: 7 6; stroke-linejoin: round; opacity: .75; }
+      .route-target { fill: #ffffffa0; stroke: #006b60; stroke-width: 4; }
+      .director { inline-size: min(800px, calc(100vw - 48px)); color: #d9e5e1; font-size: 13px; line-height: 1.65; }
+      .director-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .director-tools strong { margin-right: auto; letter-spacing: .08em; }
+      .director-tools strong span { font-size: 11px; color: #8eaaa2; font-weight: 500; }
+      .director button { background: #213b33; color: #d9e5e1; border-radius: 10px; padding: 8px 14px; }
+      #directorStatus { color: #aac4bb; padding-block: 10px; }
+      .director details { border-top: 1px solid #33453e; padding-top: 12px; }
+      .director summary { cursor: pointer; }
+      .director details p { margin: 12px 0; }
+      .director table { border-collapse: collapse; width: 100%; font-size: 12px; }
+      .director td, .director th { border-bottom: 1px solid #33453e; padding: 10px 8px; text-align: left; vertical-align: top; }
+      .director td:first-child { width: 22%; color: #99e3cd; }
+      .game-shell[data-state="connecting"] .piece-layer { visibility: hidden; }
+      .game-shell[data-state="connecting"] #flightBoard { opacity: .35; }
+      .game-shell[data-state="roll-pending"] .dice { rotate: 0deg; animation: dice-wait 600ms ease-in-out infinite alternate; }
+      .result-card { translate: 0 0; animation: result-enter 240ms ease-out; }
+      .lobby-layer { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center;
+        background: var(--surface); color: var(--on-surface); text-align: center; }
+      .lobby-layer h2 { margin-bottom: 12px; }
+      .lobby-layer button { margin-top: 20px; padding: 8px 24px; border-radius: 24px; background: var(--primary); color: var(--on-primary); }
+      @keyframes selectable { 50% { opacity: .4; scale: 1.12; } }
+      @keyframes dice-wait { to { rotate: 8deg; } }
+      @keyframes result-enter { from { opacity: 0; translate: 0 12px; } }
+      @keyframes count-enter { from { opacity: 0; } }
+    }
+    @layer responsive {
+      @container phone (max-width: 44rem) and (min-aspect-ratio: 1 / 1) {
+        .game-shell { grid-template-columns: 136px minmax(0, 1fr) 156px; gap: 6px; }
+        .live-board { inline-size: 100%; block-size: auto; }
+        .action-rail { padding: 8px; }
+        .player-heading { flex-wrap: wrap; }
+        .game-title { font-size: 12px; }
+        .dice { inline-size: 48px; }
+      }
+      @media (orientation: landscape) and (max-width: 60rem) { .director { display: none; } }
+      @media (prefers-reduced-motion: reduce) {
+        .plane::before, .game-shell .dice, .result-card { animation: none !important; }
+      }
+    }
   </style>
 </head>
 <body>
-  <main class="game-shell" id="gameShell" data-state="ready" data-theme="light" data-lock="false">
+  <div class="prototype-stage">
+    <div class="device-viewport">
+      <main class="game-shell" id="gameShell" data-state="ready" data-theme="light" data-lock="false">
     <header class="identity-rail" aria-label="对局信息">
       <nav class="utility-bar" aria-label="场景导航">
         <button class="icon-button" id="backButton" type="button" aria-label="返回大厅">‹</button>
@@ -1124,11 +1243,10 @@
     </header>
 
     <section class="board-stage" aria-label="棋盘主视觉区">
-      <figure class="board-placeholder">
-        <figcaption class="board-note">
-          <strong>棋盘保持不变</strong>
-          <span>四角机场 · 52 格环线 · 6 格归家航道<br>本稿只改外围 UX</span>
-        </figcaption>
+      <figure class="board-placeholder live-board">
+        <svg id="flightBoard" viewBox="0 0 600 600" role="img" aria-label="经典飞行棋棋盘，四角机场、52 格顺时针环线与四色归家航道"></svg>
+        <div id="pieceLayer" class="piece-layer" aria-label="飞机"></div>
+        <div id="stackPicker" class="stack-picker" hidden></div>
         <p class="board-state"><span id="boardState">棋盘已同步 · 等待掷骰</span></p>
       </figure>
 
@@ -1200,9 +1318,9 @@
         </div>
       </article>
     </section>
-  </main>
+      </main>
 
-  <dialog id="resignDialog" aria-labelledby="resignDialogTitle" closedby="closerequest">
+      <dialog id="resignDialog" aria-labelledby="resignDialogTitle" closedby="closerequest">
     <form class="dialog-body" method="dialog">
       <p class="dialog-kicker">危险操作</p>
       <h2 id="resignDialogTitle">认输并结束这局？</h2>
@@ -1212,9 +1330,9 @@
         <button class="dialog-action" type="submit" value="resign" data-danger="true">认输并结束本局</button>
       </div>
     </form>
-  </dialog>
+      </dialog>
 
-  <dialog id="rulesDialog" aria-labelledby="rulesDialogTitle" closedby="any">
+      <dialog id="rulesDialog" aria-labelledby="rulesDialogTitle" closedby="any">
     <form class="dialog-body" method="dialog">
       <p class="dialog-kicker">双人经典规则</p>
       <h2 id="rulesDialogTitle">本局规则</h2>
@@ -1226,12 +1344,12 @@
       </ul>
       <div class="dialog-actions"><button class="dialog-action" type="submit" value="close">知道了</button></div>
     </form>
-  </dialog>
+      </dialog>
 
-  <dialog class="state-dialog" id="stateDialog" aria-labelledby="stateDialogTitle" closedby="any">
+      <dialog class="state-dialog" id="stateDialog" aria-labelledby="stateDialogTitle" closedby="any">
     <section class="dialog-body">
       <header class="state-dialog-header">
-        <div><h2 id="stateDialogTitle">原型状态</h2><p>17 个棋盘外状态；不模拟服务端。</p></div>
+        <div><h2 id="stateDialogTitle">交互演示台</h2><p>本地确定性演示 · 确认、网络与对手均为模拟</p></div>
         <button class="close-button" id="closeStateDialog" type="button" aria-label="关闭状态选择">×</button>
       </header>
       <fieldset class="state-grid" id="stateGrid">
@@ -1248,6 +1366,7 @@
         <button class="state-button" type="button" data-state="action-error" aria-pressed="false">操作失败</button>
         <button class="state-button" type="button" data-state="connection-failed" aria-pressed="false">连接失败</button>
         <button class="state-button" type="button" data-state="resign-pending" aria-pressed="false">认输中</button>
+        <button class="state-button" type="button" data-state="resign-error" aria-pressed="false">认输失败</button>
         <button class="state-button" type="button" data-state="result-win" aria-pressed="false">胜利</button>
         <button class="state-button" type="button" data-state="result-loss" aria-pressed="false">惜败</button>
         <button class="state-button" type="button" data-state="result-resigned" aria-pressed="false">认输结果</button>
@@ -1258,8 +1377,36 @@
         <button class="tool-button" id="stateThemeButton" type="button">◐ 切换明暗</button>
         <button class="tool-button" id="openResignFromStates" type="button">打开认输确认</button>
       </div>
+      <fieldset class="state-grid" id="scenarioGrid"><legend>棋盘交互 · 载入后亲手操作</legend></fieldset>
+      <div class="state-tools">
+        <button class="tool-button" id="recoverButton" type="button">恢复连接</button>
+        <button class="tool-button" id="rejectButton" type="button">下一次走子失败</button>
+        <button class="tool-button" id="motionButton" type="button">动画：正常</button>
+      </div>
     </section>
-  </dialog>
+      </dialog>
+    </div>
+    <p class="viewport-caption">手机横屏 · HTML 交互演示 / Godot 实现参考 · 本地模拟</p>
+    <section class="director" aria-label="Godot 演示说明">
+      <div class="director-tools"><strong>FLIGHT LAB <span>交互与动效稿</span></strong><button id="labButton" type="button">场景 / 异常演示</button><button id="restartButton" type="button">重新开始</button></div>
+      <p id="directorStatus" aria-live="polite">先掷骰，再点击高亮飞机；选中后显示路线，确认才提交。</p>
+      <details><summary>Godot 实现注释 · 状态、时序与边界</summary>
+        <p>本稿沿用 Lightweight Board 布局：左侧身份、中央棋盘、右侧回合操作。拓扑与规则对应 flight_chess_board.gd / server/internal/games/flightchess/rules.go；红、黄参与对战，蓝、绿机场仅保留棋盘结构。</p>
+        <table><thead><tr><th>触发 / 状态</th><th>画面与输入</th><th>Godot 动画建议</th></tr></thead><tbody>
+          <tr><td>按下 → 请求掷骰</td><td>即时压缩；锁掷骰，等待时不显示虚构点数。</td><td>按压 100ms；等待轻摆循环；roll.accepted 后 180ms 落定再亮可选飞机。</td></tr>
+          <tr><td>选机 → 预览</td><td>可选机呼吸环；点选显示虚线路线和终点圈，可换选或取消。叠机先展开编号，哪怕仅一架合法也需手选。</td><td>呼吸周期 1200ms；选中抬升 120ms。路线不改变棋局。</td></tr>
+          <tr><td>提交 → 等待确认</td><td>飞机留在原位；右侧等待，保留预览；禁止重复提交。</td><td>原位描边脉冲。pending 无移动音效、无撞机、无计分。</td></tr>
+          <tr><td>move.accepted → 移动</td><td>锁输入，按顺序播放确认事件；逻辑快照先提交，表现层追赶。</td><td>Tween：每格 140ms，轻微起落；起飞 420ms；同色跳 320ms；跨航道飞行 640ms，正交折线路径。</td></tr>
+          <tr><td>落点结算</td><td>只在最终落点撞机；对方整组回库。同色轻量叠放不挡路，移动只移动选中一架。</td><td>落点环 220ms → 被撞组并行回库 420ms → 叠机数量淡入 160ms。</td></tr>
+          <tr><td>归家 / 额外回合 / 终局</td><td>精确点数归家，超出不可选、不反弹；6 点再掷；最后一架到达后显示结果。</td><td>归家收束 360ms → 人数更新 → 换手 200ms；终局面板淡入上移 240ms。</td></tr>
+          <tr><td>失败 / 过期 / 重连</td><td>失败保留骰点，可重新选择；过期与重连冻结最后确认棋局。恢复按快照重建，不重放历史撞机或胜利。</td><td>取消 Tween 和旧回调；去掉预览。新快照 160ms 淡入。事件按 revision 去重。</td></tr>
+          <tr><td>返回 / 认输</td><td>返回大厅保留可恢复对局；认输须二次确认。确认中不提前判负，结果后禁止再提交。</td><td>退出取消表现队列；恢复先同步。认输确认后收到终局再播放结果。</td></tr>
+        </tbody></table>
+        <p>推荐拆分：Board（静态拓扑）/ Pieces（确认位置）/ Preview（虚线与目标）/ Effects（移动、回库）/ HUD（回合与弹层）。只让本地状态机管理输入；服务端的 movablePieceIndices、from、to、effect、capturedPieceIndices 决定动作是否合法及最终结果。本稿的选中预览与确认按钮是待迁移的交互设计，非现有协议变更。</p>
+        <p>演示台可以载入固定局面、暂停在网络状态、注入一次走子失败，并用慢速查看动画。每个场景可重进重播；无真实网络、账号、大厅或音效。系统减少动态效果时压缩动效时长，保留状态顺序。</p>
+      </details>
+    </section>
+  </div>
 
   <script>
     const shell = document.querySelector('#gameShell');
@@ -1361,6 +1508,12 @@
         action: '重新掷骰', disabled: false, kind: 'primary', board: '棋局未变', lock: false,
         snackbar: '掷骰失败，棋局未变', snackbarAction: false
       },
+      'resign-error': {
+        active: 'none', chip: '认输未成功', tone: 'error', title: '对局仍在进行',
+        hint: '认输请求未生效，请恢复对局后重试。', rule: '未确认前不显示认输结果。',
+        dice: 0, diceLabel: '等待恢复', action: '恢复对局', disabled: false, kind: 'primary',
+        board: '棋局保留 · 认输未生效', lock: true
+      },
       'connection-failed': {
         active: 'none', chip: '无法继续', tone: 'error', title: '连接失败',
         hint: '暂时无法恢复，请返回大厅。',
@@ -1418,6 +1571,20 @@
 
     let actionTimer = 0;
 
+    function positionGameMenu() {
+      const menuButton = document.querySelector('#menuButton');
+      const menu = document.querySelector('#gameMenu');
+      const viewportRect = document.querySelector('.device-viewport').getBoundingClientRect();
+      const rect = menuButton.getBoundingClientRect();
+      const menuWidth = Math.min(208, viewportRect.width - 16);
+      const menuLeft = Math.max(
+        viewportRect.left + 8,
+        Math.min(rect.right - menuWidth, viewportRect.right - menuWidth - 8)
+      );
+      menu.style.setProperty('--menu-top', `${rect.bottom + 4}px`);
+      menu.style.setProperty('--menu-left', `${menuLeft}px`);
+    }
+
     function setDice(value, pending = false) {
       const pips = [...elements.dice.querySelectorAll('.pip')];
       elements.dice.dataset.pending = String(pending);
@@ -1458,6 +1625,7 @@
     function showState(name) {
       const config = states[name];
       if (!config) return;
+      if (config.result) confirmedResult = name;
       window.clearTimeout(actionTimer);
       shell.dataset.state = name;
       shell.dataset.lock = String(config.lock);
@@ -1483,6 +1651,9 @@
       document.querySelectorAll('.state-button').forEach((button) => {
         button.setAttribute('aria-pressed', String(button.dataset.state === name));
       });
+      renderBoard();
+      document.querySelector('#directorStatus').textContent = `${scenarioTitle} · ${config.title}：${config.hint}`;
+      document.querySelector('#resignButton').disabled = Boolean(config.result) || name === 'resign-pending';
     }
 
     function hideMenu() {
@@ -1499,23 +1670,21 @@
     function toggleTheme() {
       const dark = shell.dataset.theme !== 'dark';
       shell.dataset.theme = dark ? 'dark' : 'light';
+      document.querySelector('.device-viewport').dataset.theme = shell.dataset.theme;
       elements.themeLabel.textContent = dark ? '当前：深色' : '当前：浅色';
     }
 
     function simulateRoll() {
-      showState('roll-pending');
-      actionTimer = window.setTimeout(() => showState('choose'), 900);
+      if (shell.dataset.state === 'resign-error') { restoreConfirmed(); return; }
+      if (shell.dataset.state === 'selected') { submitMove(selected); return; }
+      if (['ready', 'bonus', 'action-error'].includes(shell.dataset.state)) rollTurn();
+      else if (shell.dataset.state === 'move-error') { selected = -1; showChoose(); }
     }
 
     elements.primaryAction.addEventListener('click', simulateRoll);
     elements.snackbarAction.addEventListener('click', simulateRoll);
-    elements.connectionAction.addEventListener('click', () => showState('ready'));
-    document.querySelector('#backButton').addEventListener('click', () => {
-      elements.snackbarCopy.textContent = '已返回大厅；本局未认输';
-      elements.snackbarAction.hidden = true;
-      elements.snackbar.hidden = false;
-      actionTimer = window.setTimeout(() => { elements.snackbar.hidden = true; elements.snackbarAction.hidden = false; }, 1800);
-    });
+    elements.connectionAction.addEventListener('click', openLobby);
+    document.querySelector('#backButton').addEventListener('click', openLobby);
 
     document.querySelector('#rulesButton').addEventListener('click', () => showDialog(document.querySelector('#rulesDialog')));
     document.querySelector('#resignButton').addEventListener('click', () => showDialog(document.querySelector('#resignDialog')));
@@ -1527,42 +1696,439 @@
       showDialog(document.querySelector('#resignDialog'));
     });
     document.querySelector('#closeStateDialog').addEventListener('click', () => document.querySelector('#stateDialog').close());
+    document.querySelector('#gameMenu').addEventListener('beforetoggle', (event) => {
+      if (event.newState === 'open') positionGameMenu();
+    });
+    window.addEventListener('resize', positionGameMenu);
 
     document.querySelectorAll('.state-button').forEach((button) => {
       button.addEventListener('click', () => {
-        showState(button.dataset.state);
+        loadState(button.dataset.state);
         document.querySelector('#stateDialog').close();
       });
     });
 
     document.querySelector('#resignDialog').addEventListener('close', (event) => {
       if (event.currentTarget.returnValue === 'resign') {
+        cancelFlow();
         showState('resign-pending');
         actionTimer = window.setTimeout(() => showState('result-resigned'), 900);
       }
     });
 
-    document.querySelector('#resultReturnButton').addEventListener('click', () => showState('ready'));
+    document.querySelector('#resultReturnButton').addEventListener('click', openLobby);
     document.querySelector('#resultStatesButton').addEventListener('click', () => showDialog(document.querySelector('#stateDialog')));
 
     if (!('popover' in HTMLElement.prototype)) {
       const menuButton = document.querySelector('#menuButton');
       const menu = document.querySelector('#gameMenu');
-      menuButton.addEventListener('click', () => menu.classList.toggle('popover-fallback-open'));
+      menuButton.addEventListener('click', () => {
+        positionGameMenu();
+        menu.classList.toggle('popover-fallback-open');
+      });
       document.addEventListener('click', (event) => {
         if (!menu.contains(event.target) && event.target !== menuButton) menu.classList.remove('popover-fallback-open');
       });
     }
 
+    // Godot reference: exact 600-unit topology from FlightChessBoard. Keep art,
+    // confirmed pieces, preview and transient effects in separate layers.
+    const route = [[78,204],[111,190],[142,190],[176,202],[202,176],[190,142],[190,111],[204,78],[237,63],[268.5,63],[300,54],[331.5,63],[363,63],[396,78],[410,111],[410,142],[398,176],[424,202],[458,190],[489,190],[522,204],[537,237],[537,268.5],[546,300],[537,331.5],[537,363],[522,396],[489,410],[458,410],[424,398],[398,424],[410,458],[410,489],[396,522],[363,537],[331.5,537],[300,546],[268.5,537],[237,537],[204,522],[190,489],[190,458],[202,424],[176,398],[142,410],[111,410],[78,396],[63,363],[63,331.5],[54,300],[63,268.5],[63,237]];
+    const basePolygons = [[[32,221],[95,221],[95,158]],[[95,158],[126.5,158],[126.5,221],[95,221]],[[126.5,158],[158,158],[158,221],[126.5,221]],[[158,158],[158,221],[221,221]],[[158,158],[221,158],[221,221]],[[158,126.5],[221,126.5],[221,158],[158,158]],[[158,95],[221,95],[221,126.5],[158,126.5]],[[158,95],[221,95],[221,32]],[[221,32],[252.5,32],[252.5,95],[221,95]],[[252.5,32],[284,32],[284,95],[252.5,95]],[[284,63],[300,38],[316,63],[300,79]],[[316,32],[347.5,32],[347.5,95],[316,95]],[[347.5,32],[379,32],[379,95],[347.5,95]]];
+    const colors = { yellow:'#f4d33b', green:'#38a968', red:'#e95755', blue:'#3189d5' };
+    const seats = ['yellow','green','red','blue'];
+    const starts = {red:26, yellow:0};
+    const hangars = {yellow:[[63,63],[126,63],[63,126],[126,126]],red:[[474,474],[537,474],[474,537],[537,537]]};
+    const launch = {yellow:[54,174],red:[546,426]};
+    const boardSVG = document.querySelector('#flightBoard');
+    const pieceLayer = document.querySelector('#pieceLayer');
+    const stackPicker = document.querySelector('#stackPicker');
+    const svgNS = 'http://www.w3.org/2000/svg';
+    function svg(tag, attrs, parent = boardSVG) {
+      const node = document.createElementNS(svgNS, tag);
+      Object.entries(attrs).forEach(([key,value]) => node.setAttribute(key,value));
+      parent.append(node); return node;
+    }
+    function rotatePoint([x,y], turns) { for (let n=0;n<turns;n++) [x,y]=[600-y,x]; return [x,y]; }
+    function drawBoard() {
+      svg('rect',{x:14,y:14,width:572,height:572,rx:20,fill:'none',stroke:'#7f735b',opacity:.25});
+      seats.forEach((color,turn) => {
+        const group = svg('g',{transform:`rotate(${turn*90} 300 300)`});
+        svg('rect',{x:32,y:32,width:126,height:126,rx:20,fill:colors[color],opacity:color==='blue'||color==='green'?.35:.9},group);
+        [[63,63],[126,63],[63,126],[126,126]].forEach(([cx,cy]) => svg('circle',{cx,cy,r:23,fill:'#fff9e9',opacity:.85},group));
+        svg('path',{d:'M 49 163 L 72 181 L 42 188 Z',fill:colors[color],stroke:'#fff9e9','stroke-width':2},group);
+        for (let n=0;n<6;n++) {
+          const cx=n===5?270:114+n*32;
+          svg('rect',{x:cx-15,y:284,width:30,height:32,rx:3,fill:colors[color],stroke:'#fff9e9','stroke-width':2},group);
+          svg('path',{d:`M ${cx-3} 295 l 5 5 l -5 5`,fill:'none',stroke:color==='yellow'?'#897127':'#fff9e9','stroke-width':2},group);
+        }
+        svg('path',{d:'M 424 202 L 418 236 L 418 364 L 424 398',fill:'none',stroke:colors[color],'stroke-width':5,'stroke-dasharray':'8 7',opacity:.65},group);
+      });
+      route.forEach((point,index) => {
+        const polygon = basePolygons[index%13].map(p=>rotatePoint(p,Math.floor(index/13)).join(',')).join(' ');
+        svg('polygon',{points:polygon,fill:colors[['blue','yellow','green','red'][index%4]],stroke:'#fff9e9','stroke-width':2,'data-route-index':index});
+      });
+      ['yellow','green','red','blue'].forEach((color,turn) => {
+        const points=[[300,300],[279,279],[279,321]].map(p=>rotatePoint(p,turn));
+        svg('polygon',{points:points.map(p=>p.join(',')).join(' '),fill:colors[color]});
+      });
+      const labels=[['黄方',95,23],['空席',505,23],['红方',505,590],['空席',95,590]];
+      labels.forEach(([copy,x,y]) => {svg('text',{x,y,'text-anchor':'middle',fill:'#6b6250','font-size':11,'font-weight':700}).textContent=copy;});
+      svg('text',{x:300,y:355,'text-anchor':'middle',fill:'#8b806b','font-size':10}).textContent='顺时针 · 精确归家';
+      svg('g',{id:'previewLayer'});
+      svg('g',{id:'effectLayer'});
+    }
+
+    // Progress is demo-only: -1 hangar, 0 launch, 1…50 outer route,
+    // 51…56 home, 57 finished. Production consumes server zones and indices.
+    let pieces = {red:[8,-1,-1,-1],yellow:[8,20,-1,-1]};
+    let selected=-1, diceValue=6, turn='red', rollCursor=0, rejectNext=false;
+    let scenarioTitle='自由演示', currentScenario='free', slowMotion=false;
+    let flow = new AbortController();
+    let confirmedTurn='red', confirmedPhase='roll', confirmedResult='';
+    const activeAnimations = new Set();
+    const scenarios = {
+      free:{label:'完整回合',red:[8,-1,-1,-1],yellow:[8,20,-1,-1],dice:6,ready:true},
+      launch:{label:'6 点起飞 / 再掷',red:[-1,-1,-1,-1],yellow:[8,20,-1,-1],dice:6},
+      walk:{label:'逐格移动',red:[3,-1,-1,-1],yellow:[8,20,-1,-1],dice:4},
+      jump:{label:'同色跳跃',red:[3,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
+      fly:{label:'跨航道飞行',red:[15,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
+      combo:{label:'先跳再飞',red:[11,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
+      capture:{label:'撞机 / 整组回库',red:[3,-1,-1,-1],yellow:[33,33,-1,-1],dice:4},
+      stack:{label:'叠机 / 拆开选择',red:[3,3,7,-1],yellow:[8,20,-1,-1],dice:4},
+      home:{label:'进入归家航道',red:[49,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
+      finish:{label:'单机抵达终点',red:[54,8,-1,-1],yellow:[8,20,-1,-1],dice:3},
+      exact:{label:'超点不可走',red:[56,52,57,57],yellow:[8,20,-1,-1],dice:3},
+      blockedSix:{label:'6 点无棋 / 仍再掷',red:[52,53,54,55],yellow:[8,20,-1,-1],dice:6},
+      pass:{label:'无棋可走 / 换手',red:[-1,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
+      win:{label:'最后一架 / 胜利',red:[56,57,57,57],yellow:[8,20,-1,-1],dice:1},
+      loss:{label:'对手抵达 / 惜败',red:[8,-1,-1,-1],yellow:[56,57,57,57],dice:1,opponent:true}
+    };
+    states.selected={...states.choose,title:'确认这架飞机',hint:'路线仅供预览；确认后提交。',action:'确认移动',disabled:false,kind:'primary',board:'路线预览 · 尚未提交'};
+    states.animating={...states['move-pending'],chip:'已确认',title:'飞机移动中',hint:'移动完成后更新本回合操作。',rule:'动画结束后再进行下一步操作。',board:'走子已确认 · 播放动画'};
+    states.bonus={...states.ready,chip:'再掷一次',title:'6 点，继续你的回合',hint:'本次移动完成，可以再掷一次。',board:'额外回合'};
+    states['move-error']={...states.choose,title:'走子未成功',hint:'骰点保留，可重新选择飞机。',action:'重新选择飞机',disabled:false,kind:'primary',board:'棋局未变 · 请重新选择',snackbar:'走子失败，骰点保留'};
+    const cancelSelection = document.createElement('button');
+    cancelSelection.type='button'; cancelSelection.className='tool-button'; cancelSelection.textContent='取消选择'; cancelSelection.hidden=true;
+    document.querySelector('.action-dock').append(cancelSelection);
+    cancelSelection.addEventListener('click',()=>{selected=-1;showChoose();});
+
+    function pointFor(color,progress,index=0) {
+      if(progress===-1) return hangars[color][index];
+      if(progress===0) return launch[color];
+      if(progress<=50) return route[(starts[color]+progress-1)%52];
+      if(progress<=56) return color==='red'?[progress===56?330:486-(progress-51)*32,300]:[progress===56?270:114+(progress-51)*32,300];
+      return color==='red'?[312,300]:[288,300];
+    }
+    function resolve(progress,value) {
+      if(progress===57 || progress+value>57 || progress===-1 && value!==6) return null;
+      if(progress===-1) return {to:0,steps:[0],effect:'launch'};
+      let to=progress+value;
+      const steps=Array.from({length:value},(_,i)=>progress+i+1);
+      let effect='walk';
+      if(to===18) {to=30;effect='fly';}
+      else if(to<=50 && to%4===2 && to<50) {to+=4;effect='jump';if(to===18){to=30;effect='combo';}}
+      return {to,steps,effect};
+    }
+    function legalIndices(color=turn) { return pieces[color].flatMap((p,i)=>resolve(p,diceValue)?[i]:[]); }
+    function setPosition(node,point) {node.style.left=`${point[0]/6}%`;node.style.top=`${point[1]/6}%`;}
+    function routePoints(color,progress,index,resolution) {
+      const points=[pointFor(color,progress,index),...resolution.steps.map(p=>pointFor(color,p,index))];
+      if(resolution.effect==='jump'||resolution.effect==='combo') points.push(pointFor(color,resolution.steps.at(-1)+4,index));
+      if(resolution.effect==='fly'||resolution.effect==='combo') {
+        points.push(...(color==='red'?[[182,364],[182,236]]:[[418,236],[418,364]]));
+        points.push(pointFor(color,resolution.to,index));
+      }
+      return points;
+    }
+    function renderBoard() {
+      if(!document.querySelector('#previewLayer')) return;
+      pieceLayer.replaceChildren(); stackPicker.hidden=true;
+      const choosing=['choose','selected','move-error'].includes(shell.dataset.state);
+      const legal=choosing && turn==='red'?legalIndices('red'):[];
+      cancelSelection.hidden=shell.dataset.state!=='selected';
+      for(const color of ['yellow','red']) {
+        const groupMap=new Map();
+        pieces[color].forEach((progress,index)=>{
+          if(progress===57)return;
+          const key=progress===-1?`hangar-${index}`:String(progress);
+          if(!groupMap.has(key))groupMap.set(key,[]);
+          groupMap.get(key).push(index);
+        });
+        groupMap.forEach(indices=>{
+          // One board target per stack; the numbered picker resolves ambiguity.
+          const index=indices.includes(selected)&&color==='red'?selected:indices[0];
+          const button=document.createElement('button');
+          button.type='button';button.className='plane';button.dataset.color=color;button.dataset.index=index;
+          button.style.setProperty('--plane-color',colors[color]);
+          button.dataset.legal=String(color==='red'&&indices.some(i=>legal.includes(i)));
+          button.dataset.selected=String(color==='red'&&index===selected);
+          button.dataset.pending=String(color==='red'&&index===selected&&shell.dataset.state==='move-pending');
+          button.disabled=button.dataset.legal!=='true';
+          button.setAttribute('aria-label',`${color==='red'?'红':'黄'}方 ${indices.map(i=>i+1).join('、')} 号机${indices.length>1?'，叠机':''}`);
+          button.innerHTML=`<span class="plane-disc">✈<span class="plane-number">${index+1}</span></span>${indices.length>1?`<span class="stack-count">×${indices.length}</span>`:''}`;
+          setPosition(button,pointFor(color,pieces[color][index],index));
+          button.addEventListener('click',()=>{
+            if(indices.length===1){selectPiece(index);return;}
+            stackPicker.replaceChildren();
+            const copy=document.createElement('p');copy.textContent=`同格 ${indices.length} 架 · 选择要移动的一架`;stackPicker.append(copy);
+            indices.forEach(i=>{const pick=document.createElement('button');pick.type='button';pick.textContent=`${i+1} 号`;pick.disabled=!legal.includes(i);pick.addEventListener('click',()=>selectPiece(i));stackPicker.append(pick);});
+            const close=document.createElement('button');close.type='button';close.textContent='取消';close.addEventListener('click',()=>{stackPicker.hidden=true;});stackPicker.append(close);stackPicker.hidden=false;
+          });
+          pieceLayer.append(button);
+        });
+        const counts=pieces[color];
+        document.querySelector(`#${color==='red'?'local':'opponent'}Card .plane-counts`).innerHTML=shell.dataset.state==='connecting'?'<span class="plane-count">等待同步</span>':
+          `<span class="plane-count">${counts.filter(p=>p>=0&&p<57).length} 架在途</span><span class="plane-count">${counts.filter(p=>p===-1).length} 架待机</span><span class="plane-count">${counts.filter(p=>p===57).length} / 4 抵达</span>`;
+      }
+      const preview=document.querySelector('#previewLayer');preview.replaceChildren();
+      if(selected>=0&&['selected','move-pending'].includes(shell.dataset.state)) {
+        const resolution=resolve(pieces.red[selected],diceValue);
+        if(resolution) {
+          const points=routePoints('red',pieces.red[selected],selected,resolution);
+          svg('polyline',{points:points.map(p=>p.join(',')).join(' '),class:'route-preview'},preview);
+          const [cx,cy]=points.at(-1);svg('circle',{cx,cy,r:20,class:'route-target'},preview);
+        }
+      }
+    }
+    function showChoose() {
+      states.choose={...states.choose,dice:diceValue,diceLabel:`骰点 ${diceValue}`};
+      if(!legalIndices().length){
+        confirmedPhase='roll';
+        if(diceValue===6){
+          states.bonus={...states.bonus,title:'无棋可走，仍可再掷',hint:'本次都是超点，6 点保留你的回合。'};
+          showState('bonus');return;
+        }
+        states['auto-pass']={...states['auto-pass'],dice:diceValue,diceLabel:`骰点 ${diceValue}`,title:`骰点 ${diceValue}，无法移动`};
+        confirmedTurn='yellow';showState('auto-pass');
+        actionTimer=setTimeout(()=>opponentTurn(),duration(1000));return;
+      }
+      showState('choose');
+      const reveal=elements.dice.animate([{scale:.88,opacity:.5},{scale:1,opacity:1}],{duration:duration(180),easing:'ease-out'});
+      activeAnimations.add(reveal);reveal.onfinish=()=>activeAnimations.delete(reveal);
+    }
+    function selectPiece(index) {
+      if(!['choose','selected','move-error'].includes(shell.dataset.state)||!legalIndices('red').includes(index))return;
+      selected=index;
+      const move=resolve(pieces.red[index],diceValue);
+      const effectNames={walk:'逐格移动',launch:'起飞到起飞位',jump:'同色跳跃',fly:'跨航道飞行',combo:'先跳再飞'};
+      states.selected={...states.selected,dice:diceValue,diceLabel:`骰点 ${diceValue}`,title:`${index+1} 号机 · ${move.to===57?'抵达终点':effectNames[move.effect]}`,hint:'点其他飞机可换选，确认后提交。',board:`${index+1} 号机 · 路线预览`};
+      showState('selected');
+    }
+    function cancelFlow() {
+      flow.abort(); flow=new AbortController();
+      window.clearTimeout(actionTimer);
+      activeAnimations.forEach(a=>a.cancel());activeAnimations.clear();
+      document.querySelector('#effectLayer')?.replaceChildren();
+      selected=-1;
+    }
+    function duration(ms) {return window.matchMedia('(prefers-reduced-motion: reduce)').matches?Math.min(ms,40):ms*(slowMotion?2.5:1);}
+    function waitStep(ms,signal) {
+      return new Promise(resolveWait=>{
+        if(signal.aborted){resolveWait(false);return;}
+        const done=()=>{signal.removeEventListener('abort',abort);resolveWait(true);};
+        const timer=setTimeout(done,duration(ms));
+        const abort=()=>{clearTimeout(timer);resolveWait(false);};
+        signal.addEventListener('abort',abort,{once:true});
+      });
+    }
+    async function tween(node,points,ms,signal,lift=0) {
+      if(signal.aborted)return false;
+      const frames=points.map((p,i)=>({transform:`translate(${(p[0]-points[0][0])/6}cqi, ${(p[1]-points[0][1])/6}cqi)`,scale:i>0&&i<points.length-1?1+lift:1}));
+      // Board size is the query container; pixel-independent animation survives resize.
+      const animation=node.animate(frames,{duration:duration(ms),easing:'ease-in-out',fill:'forwards'});
+      activeAnimations.add(animation);
+      const alive=await waitStep(ms,signal);
+      if(alive)setPosition(node,points.at(-1));
+      animation.cancel();activeAnimations.delete(animation);return alive;
+    }
+    async function rollTurn() {
+      cancelFlow();const signal=flow.signal;
+      turn='red';showState('roll-pending');
+      if(!await waitStep(700,signal))return;
+      diceValue=[6,3,4,2,6,1,5][rollCursor++%7];
+      confirmedTurn='red';confirmedPhase='move';
+      showChoose();
+    }
+    async function submitMove(index,color='red',opponent=false) {
+      if(!opponent&&shell.dataset.state!=='selected')return;
+      const resolution=resolve(pieces[color][index],diceValue);if(!resolution)return;
+      const signal=flow.signal;
+      const from=pieces[color][index],roll=diceValue;
+      if(!opponent){
+        states['move-pending']={...states['move-pending'],dice:roll,diceLabel:`骰点 ${roll}`,hint:`${index+1} 号机等待确认，棋局尚未改变。`,board:`${index+1} 号机 · 待确认`};
+        showState('move-pending');
+        if(!await waitStep(650,signal))return;
+        if(rejectNext){rejectNext=false;states['move-error']={...states['move-error'],dice:roll,diceLabel:`骰点 ${roll}`};showState('move-error');return;}
+      }
+      states.animating={...states.animating,active:opponent?'opponent':'me',dice:roll,diceLabel:`${opponent?'对手':''}骰点 ${roll}`};
+      showState('animating');
+      const enemy=color==='red'?'yellow':'red';
+      const target=pointFor(color,resolution.to,index);
+      const captured=resolution.to>0&&resolution.to<=50?pieces[enemy].flatMap((p,i)=>p>0&&p<=50&&pointFor(enemy,p,i).join()===target.join()?[i]:[]):[];
+      const oldPieces=structuredClone(pieces);
+      // Acceptance boundary: commit the simulated authoritative snapshot NOW.
+      // The existing DOM is the presentation buffer; reconnect renders this snapshot.
+      pieces[color][index]=resolution.to;captured.forEach(i=>{pieces[enemy][i]=-1;});
+      confirmedTurn=roll===6?color:enemy;confirmedPhase='roll';
+      const original=pieceLayer.querySelector(`[data-color="${color}"][data-index="${index}"]`) || [...pieceLayer.children].find(n=>n.dataset.color===color&&oldPieces[color][+n.dataset.index]===from);
+      const moving=original.cloneNode(true);moving.dataset.moving='true';moving.dataset.legal='false';moving.dataset.selected='false';
+      moving.querySelector('.stack-count')?.remove();moving.querySelector('.plane-number').textContent=index+1;pieceLayer.append(moving);
+      if(oldPieces[color].filter(p=>p===from).length===1||from===-1)original.hidden=true;
+      let previous=pointFor(color,from,index);
+      if(resolution.effect==='launch') {
+        if(!await tween(moving,[previous,[(previous[0]+target[0])/2-15,(previous[1]+target[1])/2-25],target],420,signal,.2))return;
+      } else {
+        for(const progress of resolution.steps){
+          const next=pointFor(color,progress,index);
+          if(!await tween(moving,[previous,[(previous[0]+next[0])/2,(previous[1]+next[1])/2-5],next],140,signal,.08))return;
+          previous=next;
+        }
+        if(['jump','combo'].includes(resolution.effect)) {
+          elements.boardState.textContent='同色跳跃 · 前进 4 格';
+          const next=pointFor(color,resolution.steps.at(-1)+4,index);
+          if(!await tween(moving,[previous,[(previous[0]+next[0])/2,(previous[1]+next[1])/2-25],next],320,signal,.18))return;
+          previous=next;
+        }
+        if(['fly','combo'].includes(resolution.effect)) {
+          elements.boardState.textContent='飞越航道 · 前进 12 格';
+          const corners=color==='red'?[[182,364],[182,236]]:[[418,236],[418,364]];
+          if(!await tween(moving,[previous,...corners,target],640,signal,.22))return;
+        }
+      }
+      const ring=svg('circle',{cx:target[0],cy:target[1],r:24,fill:'none',stroke:colors[color],'stroke-width':5},document.querySelector('#effectLayer'));
+      ring.style.transformOrigin='center';ring.style.transformBox='fill-box';ring.style.scale='1';
+      const impact=ring.animate([{scale:.5,opacity:1},{scale:1.3,opacity:0}],{duration:duration(220)});
+      activeAnimations.add(impact);impact.onfinish=()=>activeAnimations.delete(impact);
+      if(!await waitStep(220,signal))return;ring.remove();
+      if(captured.length) {
+        elements.boardState.textContent=`撞机 · ${captured.length} 架回库`;
+        const enemyNodes=[...pieceLayer.children].filter(n=>n.dataset.color===enemy&&captured.includes(+n.dataset.index));
+        enemyNodes.forEach(n=>{n.hidden=true;});
+        const flights=captured.map(i=>{
+          const copy=enemyNodes[0].cloneNode(true);copy.hidden=false;copy.querySelector('.stack-count')?.remove();copy.querySelector('.plane-number').textContent=i+1;pieceLayer.append(copy);
+          const home=hangars[enemy][i];return tween(copy,[target,[(target[0]+home[0])/2,(target[1]+home[1])/2-40],home],420,signal,.1);
+        });
+        if(!(await Promise.all(flights)).every(Boolean))return;
+      }
+      if(resolution.to===57){
+        elements.boardState.textContent=`${index+1} 号机抵达终点`;
+        const arrival=moving.animate([{scale:1,opacity:1},{scale:.15,opacity:0}],{duration:duration(360),fill:'forwards'});
+        activeAnimations.add(arrival);
+        if(!await waitStep(360,signal))return;
+        arrival.cancel();activeAnimations.delete(arrival);
+      }
+      selected=-1;renderBoard();
+      if(pieces[color].every(p=>p===57)){
+        const outcome=color==='red'?'result-win':'result-loss';
+        states[outcome]={...states[outcome],dice:roll,diceLabel:`最后骰点 ${roll}`};
+        showState(outcome);return;
+      }
+      if(opponent) {
+        if(roll===6){opponentTurn();return;}
+        turn='red';showState('ready');
+      } else if(roll===6){states.bonus={...states.bonus,title:'6 点，继续你的回合',hint:'本次移动完成，可以再掷一次。'};showState('bonus');}
+      else {opponentTurn();}
+    }
+    async function opponentTurn(forcedDice=4) {
+      const signal=flow.signal;turn='yellow';selected=-1;
+      confirmedTurn='yellow';confirmedPhase='roll';
+      states.opponent={...states.opponent,dice:0,diceLabel:'对手正在掷骰',board:'等待对手掷骰'};showState('opponent');
+      if(!await waitStep(900,signal))return;
+      diceValue=forcedDice;const legal=legalIndices('yellow');
+      confirmedPhase=legal.length?'move':'roll';
+      states.opponent={...states.opponent,dice:diceValue,diceLabel:`对手骰点 ${diceValue}`,board:legal.length?'对手正在选飞机':'对手无棋可走'};showState('opponent');
+      if(!await waitStep(650,signal))return;
+      if(!legal.length){
+        if(diceValue===6){opponentTurn();return;}
+        turn='red';confirmedTurn='red';confirmedPhase='roll';showState('ready');return;
+      }
+      await submitMove(legal[0],'yellow',true);
+    }
+    function loadScenario(name) {
+      const scenario=scenarios[name];if(!scenario)return;
+      cancelFlow();lobby.hidden=true;rejectNext=false;rollCursor=0;turn='red';
+      currentScenario=name;scenarioTitle=scenario.label;pieces={red:[...scenario.red],yellow:[...scenario.yellow]};diceValue=scenario.dice;
+      confirmedResult='';
+      confirmedTurn='red';confirmedPhase=scenario.ready?'roll':'move';
+      if(scenario.opponent){opponentTurn(scenario.dice);return;}
+      if(scenario.ready)showState('ready');
+      else showChoose();
+    }
+    let resumeState='ready';
+    function loadState(name) {
+      const previous=shell.dataset.state;
+      if(['reconnecting','stale-sync'].includes(name))resumeState=confirmedPhase==='move'?'choose':previous==='bonus'?'bonus':'ready';
+      cancelFlow();lobby.hidden=true;
+      if(['connecting','ready','choose','roll-pending','move-pending','auto-pass','opponent','action-error'].includes(name)) {
+        loadScenario(name==='auto-pass'?'pass':'free');cancelFlow();
+      }
+      if(name==='choose'){diceValue=6;confirmedPhase='move';showChoose();return;}
+      if(name==='move-pending'){diceValue=6;confirmedPhase='move';selected=0;}
+      if(name==='result-win')pieces.red=[57,57,57,57];
+      if(name==='result-loss')pieces.yellow=[57,57,57,57];
+      if(['reconnecting','stale-sync','resign-pending'].includes(name)) {
+        states[name]={...states[name],dice:diceValue,diceLabel:`上次确认骰点 ${diceValue}`};
+      }
+      showState(name);
+      if(name==='connecting')actionTimer=setTimeout(()=>showState('ready'),duration(900));
+      if(name==='roll-pending')actionTimer=setTimeout(()=>{diceValue=6;showChoose();},duration(900));
+      if(name==='move-pending')actionTimer=setTimeout(()=>{showChoose();selectPiece(0);submitMove(0);},duration(500));
+      if(name==='opponent')opponentTurn();
+      if(name==='auto-pass')actionTimer=setTimeout(()=>opponentTurn(),duration(1000));
+      if(name==='resign-pending')actionTimer=setTimeout(()=>showState('result-resigned'),duration(900));
+    }
+    function recover() {
+      if(!['reconnecting','stale-sync','connection-failed'].includes(shell.dataset.state))return;
+      cancelFlow();
+      restoreConfirmed();
+    }
+    function restoreConfirmed() {
+      if(confirmedResult){showState(confirmedResult);return;}
+      if(pieces.red.every(p=>p===57)){showState('result-win');return;}
+      if(pieces.yellow.every(p=>p===57)){showState('result-loss');return;}
+      turn=confirmedTurn;
+      if(turn==='yellow'){opponentTurn();return;}
+      if(confirmedPhase==='move')showChoose();else showState(resumeState==='bonus'?'bonus':'ready');
+    }
+    const lobby=document.createElement('section');lobby.className='lobby-layer';lobby.hidden=true;
+    lobby.innerHTML='<div><h2>演示大厅</h2><p id="lobbyCopy">本局保留，可以继续对局。</p><button type="button" id="resumeGame">继续对局</button></div>';
+    shell.append(lobby);let lobbyResume='ready';
+    function openLobby() {
+      hideMenu();lobbyResume=shell.dataset.state;cancelFlow();lobby.hidden=false;
+      const ended=Boolean(states[lobbyResume]?.result);
+      document.querySelector('#lobbyCopy').textContent=ended?'本局已结束。可重新开始演示。':'返回不会认输，本局保留。';
+      document.querySelector('#resumeGame').textContent=ended?'重新开始演示':'继续对局';
+    }
+    document.querySelector('#resumeGame').addEventListener('click',()=>{
+      lobby.hidden=true;
+      if(states[lobbyResume]?.result){loadScenario('free');return;}
+      if(['resign-pending'].includes(lobbyResume)){showState('result-resigned');return;}
+      showState('connecting');
+      actionTimer=setTimeout(restoreConfirmed,duration(500));
+    });
+    Object.entries(scenarios).forEach(([name,scenario])=>{
+      const button=document.createElement('button');button.type='button';button.className='tool-button';button.textContent=scenario.label;
+      button.addEventListener('click',()=>{document.querySelector('#stateDialog').close();loadScenario(name);});document.querySelector('#scenarioGrid').append(button);
+    });
+    document.querySelector('#labButton').addEventListener('click',()=>showDialog(document.querySelector('#stateDialog')));
+    document.querySelector('#restartButton').addEventListener('click',()=>loadScenario(currentScenario));
+    document.querySelector('#recoverButton').addEventListener('click',()=>{document.querySelector('#stateDialog').close();recover();});
+    document.querySelector('#rejectButton').addEventListener('click',()=>{rejectNext=true;document.querySelector('#stateDialog').close();elements.snackbarCopy.textContent='演示：下一次走子会被拒绝';elements.snackbar.hidden=false;});
+    document.querySelector('#motionButton').addEventListener('click',event=>{slowMotion=!slowMotion;event.currentTarget.textContent=slowMotion?'动画：0.4× 慢速':'动画：正常';});
+    drawBoard();
     const initialTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     shell.dataset.theme = initialTheme;
+    document.querySelector('.device-viewport').dataset.theme = initialTheme;
     elements.themeLabel.textContent = initialTheme === 'dark' ? '当前：深色' : '当前：浅色';
     showState('ready');
 
     window.flightChessPrototype = {
-      showState,
+      showState: loadState,
+      loadScenario,
       setTheme(theme) {
         shell.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+        document.querySelector('.device-viewport').dataset.theme = shell.dataset.theme;
         elements.themeLabel.textContent = shell.dataset.theme === 'dark' ? '当前：深色' : '当前：浅色';
       },
       getState() { return { state: shell.dataset.state, theme: shell.dataset.theme }; }
