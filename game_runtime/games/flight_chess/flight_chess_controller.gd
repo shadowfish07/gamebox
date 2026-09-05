@@ -63,6 +63,9 @@ var _error_text := ""
 var _presented_result_signature := ""
 var _logged_state_signature := ""
 var _ready_marker_callback := Callable()
+var _bounce_roll := 0
+var _bounce_playing := false
+var _last_presented_event_revision := -1
 
 
 func configure_launch(config: Dictionary) -> bool:
@@ -499,6 +502,7 @@ func _on_back_pressed() -> void:
 	if _returning:
 		return
 	_returning = true
+	_cancel_home_bounce()
 	_dispose_client()
 	if _quit_callback.is_valid():
 		_quit_callback.call()
@@ -540,18 +544,21 @@ func _on_connection_state_changed(next_state: String) -> void:
 		return
 	_connection_state = next_state
 	if next_state != "connected":
+		_cancel_home_bounce()
 		_awaiting_snapshot = true
 		_selected_index = -1
 	_sync_ui()
 
 
 func _on_snapshot_sync_started() -> void:
+	_cancel_home_bounce()
 	_awaiting_snapshot = true
 	_selected_index = -1
 	_sync_ui()
 
 
 func _on_snapshot_received(envelope: Dictionary) -> void:
+	_cancel_home_bounce()
 	if _state == null:
 		return
 	var applied: Dictionary = _state.apply_snapshot(envelope)
@@ -559,6 +566,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
 	else:
+		_last_presented_event_revision = _state.revision
 		_awaiting_snapshot = false
 		_resign_submitted = false
 		_selected_index = -1
@@ -573,8 +581,33 @@ func _on_event_received(envelope: Dictionary) -> void:
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
+	if _state.revision <= _last_presented_event_revision:
+		if not applied.get("ok", false):
+			_cancel_home_bounce()
+			_sync_ui()
+		return
+	_last_presented_event_revision = _state.revision
+	_cancel_home_bounce()
+	var payload: Dictionary = envelope.get("payload", {})
+	var bounce: bool = envelope.get("type") == "flight_chess.move.accepted" \
+		and applied.get("ok", false) and payload.get("from", {}).get("zone") == "home" \
+		and int(payload["from"]["index"]) + int(payload["roll"]) > 6
+	_bounce_playing = bounce
+	_bounce_roll = int(payload["roll"]) if bounce else 0
 	_selected_index = -1
 	_sync_ui()
+	if bounce:
+		var color := "red" if payload["color"] == "black" else "yellow"
+		var animation: Tween = $Board.animate_home_bounce(color, payload["pieceIndex"], payload["from"]["index"], payload["roll"])
+		animation.finished.connect(func() -> void:
+			_bounce_playing = false
+			_sync_ui()
+		)
+
+
+func _cancel_home_bounce() -> void:
+	_bounce_playing = false
+	$Board.cancel_home_bounce()
 
 
 func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
@@ -582,6 +615,7 @@ func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
 
 
 func _on_match_error(code: String) -> void:
+	_cancel_home_bounce()
 	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
 	_resign_submitted = false
 	_selected_index = -1
@@ -591,6 +625,7 @@ func _on_match_error(code: String) -> void:
 
 
 func _on_return_to_lobby_requested(code: String) -> void:
+	_cancel_home_bounce()
 	_error_text = str(SAFE_ERROR_COPY.get(code, "连接失败，请返回大厅"))
 	_force_return = true
 	_selected_index = -1
@@ -617,7 +652,7 @@ func _sync_network_ui() -> void:
 	var has_state: bool = _state != null and _state.revision >= 0
 	if has_state:
 		_pieces = _state.visual_pieces()
-		_dice_value = _state.dice
+		_dice_value = _bounce_roll if _bounce_playing else _state.dice
 	else:
 		_pieces = _empty_visual_pieces()
 		_dice_value = 0
@@ -649,6 +684,8 @@ func _sync_network_ui() -> void:
 
 
 func _network_status_text(has_state: bool) -> String:
+	if _bounce_playing:
+		return "超点反弹"
 	if not has_state:
 		return "连接对局"
 	if _state.status in TERMINAL_STATUSES:
@@ -659,6 +696,8 @@ func _network_status_text(has_state: bool) -> String:
 
 
 func _network_turn_text(has_state: bool) -> String:
+	if _bounce_playing:
+		return "飞机移动中"
 	if not has_state:
 		return "正在同步棋盘"
 	if _state.status in TERMINAL_STATUSES:
@@ -673,6 +712,8 @@ func _network_turn_text(has_state: bool) -> String:
 
 
 func _network_hint_text(has_state: bool) -> String:
+	if _bounce_playing:
+		return "到达尽头后，原路退回多余步数"
 	if not has_state or _awaiting_snapshot or _connection_state != "connected":
 		return "棋盘会保留，恢复同步后继续"
 	if _state.status in TERMINAL_STATUSES:
@@ -726,18 +767,18 @@ func _present_terminal_result(has_state: bool) -> void:
 
 
 func _can_roll() -> bool:
-	return _started and not _disposed and not _awaiting_snapshot and _connection_state == "connected" \
+	return not _bounce_playing and _started and not _disposed and not _awaiting_snapshot and _connection_state == "connected" \
 		and _state != null and _state.can_request_roll(_client.local_user_id)
 
 
 func _can_select_piece() -> bool:
-	return _started and not _disposed and not _awaiting_snapshot and _connection_state == "connected" \
+	return not _bounce_playing and _started and not _disposed and not _awaiting_snapshot and _connection_state == "connected" \
 		and _state != null and _state.status == "active" and _state.phase == "awaiting_move" \
 		and _state.pending_action.is_empty() and _local_platform_color() == _state.next_color
 
 
 func _can_offer_resign() -> bool:
-	return _started and not _disposed and not _awaiting_snapshot and not _resign_submitted \
+	return not _bounce_playing and _started and not _disposed and not _awaiting_snapshot and not _resign_submitted \
 		and _connection_state == "connected" and _state != null \
 		and _state.can_request_resign(_client.local_user_id)
 

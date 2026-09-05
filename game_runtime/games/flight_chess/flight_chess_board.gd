@@ -121,6 +121,8 @@ var pressed_piece_index: int:
 	get: return _pressed_piece_index
 	set(_value): pass
 
+var _bounce := {}
+var _bounce_tween: Tween
 var _pieces := {}
 var _selectable_color := ""
 var _selectable_piece_indices: Array = []
@@ -211,6 +213,45 @@ func present(
 	set_process(_interactable)
 	queue_redraw()
 	return true
+
+
+# Animate only confirmed overshoots; the underlying pieces remain authoritative.
+func animate_home_bounce(color: String, index: int, from_index: int, roll: int) -> Tween:
+	cancel_home_bounce()
+	_bounce = {"color": color, "index": index, "point": HOME_STRETCHES[color][from_index]}
+	_bounce_tween = create_tween()
+	for step in range(1, roll + 1):
+		var progress := from_index + step
+		if progress > 6:
+			progress = 12 - progress
+		var target: Vector2 = FINISH_POINTS[color] if progress == 6 else HOME_STRETCHES[color][progress]
+		_bounce_tween.tween_method(_set_bounce_point, _bounce_path_point(color, from_index, step - 1), target, 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_bounce_tween.tween_callback(func() -> void:
+		_bounce.clear()
+		queue_redraw()
+	)
+	queue_redraw()
+	return _bounce_tween
+
+
+func _bounce_path_point(color: String, from_index: int, step: int) -> Vector2:
+	var progress := from_index + step
+	if progress > 6:
+		progress = 12 - progress
+	return FINISH_POINTS[color] if progress == 6 else HOME_STRETCHES[color][progress]
+
+
+func _set_bounce_point(point: Vector2) -> void:
+	_bounce["point"] = point
+	queue_redraw()
+
+
+func cancel_home_bounce() -> void:
+	if _bounce_tween != null:
+		_bounce_tween.kill()
+		_bounce_tween = null
+	_bounce.clear()
+	queue_redraw()
 
 
 func board_rect() -> Rect2:
@@ -315,6 +356,8 @@ func _draw() -> void:
 		_draw_launch_pad(color)
 	for color in PLAYER_ORDER:
 		_draw_color_pieces(color)
+	if not _bounce.is_empty():
+		_draw_piece(_logical_to_pixel(_bounce["point"]), 18.0 * _scale(), _bounce["color"])
 
 
 func _draw_board_surface(rect: Rect2) -> void:
@@ -470,6 +513,8 @@ func _draw_color_pieces(color: String) -> void:
 		return
 	var color_pieces: Array = _pieces[color]
 	for index in color_pieces.size():
+		if _bounce.get("color") == color and _bounce.get("index") == index:
+			continue
 		var piece: Dictionary = color_pieces[index]
 		var members := _stack_members(color, piece)
 		if index != members[0]:
@@ -555,6 +600,8 @@ func _stack_members(color: String, piece: Dictionary) -> Array:
 	var result: Array = []
 	var color_pieces: Array = _pieces[color]
 	for index in color_pieces.size():
+		if _bounce.get("color") == color and _bounce.get("index") == index:
+			continue
 		var candidate: Dictionary = color_pieces[index]
 		if candidate["zone"] == piece["zone"] and candidate["index"] == piece["index"]:
 			result.append(index)

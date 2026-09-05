@@ -10,6 +10,7 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess bounces all home rolls and validates authority", "run": _bounces_home_rolls},
 		{"name": "flight chess restores an authoritative roll snapshot", "run": _restores_snapshot},
 		{"name": "flight chess confirms roll then selected move", "run": _confirms_roll_and_move},
 		{"name": "flight chess keeps repeated sixes without penalty", "run": _keeps_repeated_sixes},
@@ -164,3 +165,37 @@ static func _check(condition: bool, message: String) -> bool:
 	if not condition:
 		push_error(message)
 	return condition
+
+
+static func _bounces_home_rolls() -> bool:
+	for color in ["black", "white"]:
+		for index in 6:
+			for roll in range(1, 7):
+				var target: int = index
+				var direction := 1
+				for _step in roll:
+					target += direction
+					if target == 6:
+						direction = -1
+				var expected := {"zone": "finished", "index": 0} if target == 6 else {"zone": "home", "index": target}
+				var pieces := _initial_pieces()
+				pieces[color][0] = {"zone": "home", "index": index}
+				for finished_index in range(1, 4):
+					pieces[color][finished_index] = {"zone": "finished", "index": 0}
+				var state = FlightChessState.new(MATCH_ID)
+				if not state.apply_snapshot(_snapshot(10, "awaiting_move", color, roll, pieces)).get("ok", false):
+					return _check(false, "home snapshot rejected")
+				if not _check(state.movable_piece_indices() == [0], "home plane must remain movable"):
+					return false
+				var event := _event(11, "flight_chess.move.accepted", {
+					"color": color, "userId": BLACK_ID if color == "black" else WHITE_ID,
+					"pieceIndex": 0, "roll": roll, "from": pieces[color][0], "to": expected,
+					"effect": "none", "capturedPieceIndices": [],
+				}, ACTION_ID)
+				if not _check(state.apply_event(event).get("ok", false), "authoritative home move rejected"):
+					return false
+				if not _check((state.status == "finished") == (target == 6), "passing finish must not win"):
+					return false
+				if target != 6 and not _check(state.next_color == (color if roll == 6 else ("white" if color == "black" else "black")), "bounce turn incorrect"):
+					return false
+	return true

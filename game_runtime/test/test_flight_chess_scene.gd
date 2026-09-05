@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess bounce locks input and cancels on sync", "run": _bounce_lifecycle},
 		{"name": "flight chess scene declares sensor landscape for mobile", "run": _declares_mobile_landscape},
 		{"name": "flight chess scene uses a landscape virtual pixel base", "run": _uses_landscape_content_scale},
 		{"name": "flight chess scene keeps the board dominant at landscape phone sizes", "run": _keeps_board_dominant},
@@ -389,6 +390,46 @@ static func _check(condition: bool, message: String) -> bool:
 	if not condition:
 		push_error(message)
 	return condition
+
+
+static func _bounce_lifecycle() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var snapshot := _network_snapshot(10)
+	snapshot["payload"]["phase"] = "awaiting_move"
+	snapshot["payload"]["dice"] = 6
+	snapshot["payload"]["pieces"]["black"][0] = {"zone": "home", "index": 5}
+	client.accept_snapshot(snapshot)
+	var move := _network_move(11, 0)
+	move["payload"]["from"] = {"zone": "home", "index": 5}
+	move["payload"]["to"] = {"zone": "home", "index": 1}
+	client.accept_event(move)
+	var board: Control = scene.get_node("Board")
+	if not _check(scene._bounce_playing and scene.get_node("RightRail/Content/RollButton").disabled, "bounce did not lock next roll"):
+		return _network_cleanup(scene)
+	client.event_received.emit(move)
+	if not _check(scene._bounce_playing, "duplicate event canceled animation"):
+		return _network_cleanup(scene)
+	await (Engine.get_main_loop() as SceneTree).create_timer(1.0).timeout
+	if not _check(not scene._bounce_playing and not scene.get_node("RightRail/Content/RollButton").disabled, "six did not unlock after animation"):
+		return _network_cleanup(scene)
+	snapshot["revision"] = 12
+	move["revision"] = 13
+	client.accept_snapshot(snapshot)
+	client.accept_event(move)
+	if not _check(scene._bounce_playing, "second confirmed bounce did not start"):
+		return _network_cleanup(scene)
+	client.snapshot_sync_started.emit()
+	if not _check(not scene._bounce_playing and board._bounce.is_empty(), "snapshot sync did not cancel animation"):
+		return _network_cleanup(scene)
+	var resumed := snapshot.duplicate(true)
+	resumed["revision"] = 13
+	resumed["payload"]["phase"] = "awaiting_roll"
+	resumed["payload"]["dice"] = 0
+	resumed["payload"]["pieces"]["black"][0] = move["payload"]["to"]
+	client.accept_snapshot(resumed)
+	return _network_cleanup(scene, _check(not scene._bounce_playing and board._bounce.is_empty(), "snapshot replayed historical bounce"))
 
 
 class FakeMatchClient:

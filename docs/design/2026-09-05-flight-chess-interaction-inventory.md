@@ -42,7 +42,7 @@
 | 跳跃/飞跃 | 在自己路程上落到进度 18 自动长捷径到 30；其他满足 `progress % 4 == 2` 且小于 50 的落点自动跳 4 格；跳到 18 时继续长捷径，记为 `jump_shortcut`。 | `none/jump/shortcut/jump_shortcut` 都是服务端结果，不提供“是否跳”的额外选择。 |
 | 叠机 | 同色飞机可在同一位置叠放，不形成拦路。 | 需要数量徽标和可触达的组目标；移动组内哪架见 OPEN-01。 |
 | 捕获 | 只有最终落点在主航线时检查捕获；落在对手位置会一次捕获该格全部对手飞机并送回机库。 | 捕获发生在跳跃/捷径解算后的最终落点；现有规则没有额外的安全格保护。 |
-| 到达 | 确认设计：必须恰好停在终点；超点先到终点，再原路退回多余步数。 | 经过终点不计抵达；第 4 架精确到达立即胜利。HTML 已更新，服务端与 Godot 尚待迁移。 |
+| 到达 | 确认设计：必须恰好停在终点；超点先到终点，再原路退回多余步数。 | 经过终点不计抵达；第 4 架精确到达立即胜利。HTML、服务端与 Godot 判定已同步；Godot 已接入确认后的反弹动画。 |
 | 无合法棋子 | 非 6 且当前没有任何合法飞机时，掷骰事件直接切换回合，不进入选棋阶段。 | 这不是错误；应短暂告知点数和“无法移动，已换手”。 |
 | 掷出 6 | 完成移动后保持本方回合；再次掷出 6 仍按同一规则处理。 | UI 只需提示可再掷一次，不显示连续 6 计数或风险。 |
 | 结束 | 4 架飞机全部到达时结果为 `goal`；已开始对局可认输，对手获胜，结果为 `resignation`。 | 结果页只能在权威终局快照/事件后出现。 |
@@ -143,7 +143,7 @@ Flutter 登录态
 | MOVE-08 形成叠机 | `move.accepted` | to 已有同色飞机 | 无 | 移动完成后合并为叠层+数量徽标 | 移动 pending 期不预先改变数量 | 同色全部保留在该位置，不阻挡通过 | 事件拒绝保持原组合 | R + I。 |
 | MOVE-09 捕获一架/叠机 | `move.accepted` | 最终 to.zone=main 且有对手飞机 | 无 | `REC P0`：本方落位后突出 captured 数，按 `capturedPieceIndices` 显示对手逐架回机库 | 捕获为同一 accepted move 的不可分割部分 | 该格所有对手飞机回 hangar | 无事件则不预先捕获；快照恢复直接收敛最终位置 | R。I：controller 未使用 captured payload。 |
 | MOVE-10 进入终点航线 | `move.accepted` | 主航线进度越过 50 且未超过精确到达 | 无 | `REC P1`：主航线转入本方 6 格航线，已到达棋子与在途棋子明显区分 | 同 MOVE-02 | to.zone=home | 同 MOVE-02 | R。 |
-| MOVE-11 超出终点 | 选机 → 确认移动 | home 飞机需要的点数小于本次 roll | 可选该飞机，预览往返路径和最终落点 | 逐格走到终点，再原路退回剩余步数 | 同 MOVE-02 | 仍在 home；经过终点不退场、不计抵达、不触发胜利；6 点仍再掷 | 同 MOVE-02 | 确认设计，HTML 已实现；服务端与 Godot 仍拒绝超点，迁移时需同步合法集合、结算及测试。 |
+| MOVE-11 超出终点 | 选机 → 确认移动 | home 飞机需要的点数小于本次 roll | 可选该飞机，预览往返路径和最终落点 | 逐格走到终点，再原路退回剩余步数 | 同 MOVE-02 | 仍在 home；经过终点不退场、不计抵达、不触发胜利；6 点仍再掷 | 同 MOVE-02 | HTML、服务端与 Godot 已实现超点可选和反弹结算；Godot 确认后逐格往返，动画中锁定输入，重连取消动画。路线预览仍仅 HTML 已实现。 |
 | MOVE-12 精确到达 | `move.accepted` | home index + roll = 6 | 无 | `REC P0`：飞机进入 finished 区，更新“已抵达”计数 | 效果完成前锁定 | to.zone=finished；非第 4 架时按骰子是否为 6 决定续掷/换手 | 同 MOVE-02 | R。 |
 | MOVE-13 第四架到达 | `move.accepted` | 移动后本方 4 架 finished | 无 | 完成抵达表现后进入结果；不被额外掷骰提示打断 | 游戏操作全部锁定 | status=finished, result=goal, winner=本地 actor | 若终局事件与快照冲突，强制同步/返回 | R + MUST。 |
 | MOVE-14 非法/过期选棋 | 用户或自动化 | 棋子不在 movable、非本方回合、阶段已变或 revision 过期 | 点飞机 | 本地可拦截则无提交；已提交则显示 pending | 不产生并行本地 action | `not_your_turn/invalid_move/stale_revision` | 安全文案，清 pending，保留已确认棋盘；stale 同步后恢复新的合法选择 | R + I + MUST。 |
@@ -227,7 +227,7 @@ Flutter 登录态
 
 ### P0：下一轮互动实现前应闭环
 
-1. **accepted event 被降级成“直接换快照”**：Godot controller 未使用 roll 的 `value/movable` 和 move 的 `from/to/effect/captured`，造成无棋可移、跳跃、捷径、捕获、精确到达都只显示棋盘瞬间跳变。
+1. **accepted event 被降级成“直接换快照”**：Godot controller 未使用 roll 的 `value/movable` 和 move 的 `from/to/effect/captured`，造成无棋可移、跳跃、捷径、捕获、精确到达都只显示棋盘瞬间跳变。超点反弹现已单独消费确认事件播放动画，其余动效仍待迁移。
 2. **move pending 没有目标级反馈**：点飞机后本地 selected 很快被清掉，只剩通用“等待服务器确认”；用户不能明确看到哪架正在 pending。
 3. **无合法棋子缺少因果链**：服务端在单个 accepted roll 中完成换手，当前 UI 不显示本次点数和原因。
 4. **叠机组内选择语义未批准**：当前选索引最小者是实现策略，不是明文产品规则。
@@ -262,7 +262,7 @@ Flutter 登录态
 | SEL-01–04, TOUCH-02–03 | [flight_chess_board.gd](../../game_runtime/games/flight_chess/flight_chess_board.gd), [profile](profiles/flight-chess.md) | [test_flight_chess_board.gd](../../game_runtime/test/test_flight_chess_board.gd), [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd) | 最近合法目标、按下/释放、远处不选、叠层徽标有测试；叠机组内产品语义尚未定义。 |
 | MOVE-01–04 | [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [controller](../../game_runtime/games/flight_chess/flight_chess_controller.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [test_flight_chess_state.gd](../../game_runtime/test/test_flight_chess_state.gd), [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd), [two-device scenario](../../tool/e2e/harness.sh) | 单飞机权威 pending 和起飞续掷已跨层覆盖；飞机级 pending 视觉缺失。 |
 | MOVE-05–09 | [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd), [flight_chess_board.gd](../../game_runtime/games/flight_chess/flight_chess_board.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [test_flight_chess_state.gd](../../game_runtime/test/test_flight_chess_state.gd), [full-game driver](../../game_runtime/test/support/flight_chess_full_game_driver.gd), [preview driver](../../tool/flight_chess_preview.gd) | 跳跃/捷径/叠机/捕获的规则与最终状态有证据；动画序列和局内反馈未实现。 |
-| MOVE-10–13 | [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [full-game driver](../../game_runtime/test/support/flight_chess_full_game_driver.gd), [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd), [preview driver](../../tool/flight_chess_preview.gd) | 现有测试覆盖精确到达、旧规则的超出无效、第四架胜利；超点反弹目前仅 HTML 已实现，正式规则及测试待迁移。 |
+| MOVE-10–13 | [server rules](../../server/internal/games/flightchess/rules.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd) | [rules_test.go](../../server/internal/games/flightchess/rules_test.go), [full-game driver](../../game_runtime/test/support/flight_chess_full_game_driver.gd), [test_flight_chess_scene.gd](../../game_runtime/test/test_flight_chess_scene.gd), [preview driver](../../tool/flight_chess_preview.gd) | 规则测试覆盖双方全部归家位置与骰点、超点可选、精确到达与胜利；场景测试覆盖反弹锁定、6 点续掷、重复事件和快照恢复。 |
 | MOVE-14, NET-06–10 | [service.go](../../server/internal/matches/service.go), [hub.go](../../server/internal/matches/hub.go), [flight_chess_state.gd](../../game_runtime/games/flight_chess/flight_chess_state.gd) | [matches flight_chess_test.go](../../server/internal/matches/flight_chess_test.go), [service_test.go](../../server/internal/matches/service_test.go), [test_match_client.gd](../../game_runtime/test/test_match_client.gd) | not-your-turn、stale、幂等重试、action conflict、随机失败无变异有服务/客户证据；完整拒绝 UI 截图矩阵缺失。 |
 | RES-01–04 | [protocol resignation](../../protocol/README.md), [service.go](../../server/internal/matches/service.go), [controller](../../game_runtime/games/flight_chess/flight_chess_controller.gd), [scene](../../game_runtime/games/flight_chess/flight_chess_scene.tscn) | [matches flight_chess_test.go](../../server/internal/matches/flight_chess_test.go), [two-device scenario](../../tool/e2e/harness.sh) | 确认、权威认输、双端结果和 slot 释放有 E2E；认输拒绝/断线 pending 未有专项视觉验收。 |
 | RES-05–07 | [service.go](../../server/internal/matches/service.go), [controller](../../game_runtime/games/flight_chess/flight_chess_controller.gd), [home_controller.dart](../../app/lib/features/home/home_controller.dart) | [service_test.go](../../server/internal/matches/service_test.go), [test_flight_chess_state.gd](../../game_runtime/test/test_flight_chess_state.gd), [two-device scenario](../../tool/e2e/harness.sh) | 通用平台 terminal 合成和返大厅有证据；Flight Chess 取消守卫和中性结果视觉需补齐。 |

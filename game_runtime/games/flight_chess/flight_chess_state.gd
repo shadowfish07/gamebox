@@ -446,6 +446,8 @@ static func _resolve_move(color: String, piece: Dictionary, roll: int) -> Dictio
 			return _resolve_progress(color, progress + roll)
 		ZONE_HOME:
 			var target: int = piece["index"] + roll
+			if target > HOME_CELL_COUNT:
+				target = 2 * HOME_CELL_COUNT - target
 			if target < HOME_CELL_COUNT:
 				return {"ok": true, "to": {"zone": ZONE_HOME, "index": target}, "effect": "none"}
 			if target == HOME_CELL_COUNT:

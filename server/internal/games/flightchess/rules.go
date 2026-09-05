@@ -127,6 +127,11 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 				return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
 			}
 			produced, next, err = rules.applyRollValue(snapshot, persisted.ActorID, accepted.Value)
+			if err == nil && !bytes.Equal(produced.Payload, persisted.Payload) {
+				// Historical rolls excluded overshoots. Replay their original turn
+				// transition without changing the rule for newly requested rolls.
+				produced, next, err = rules.applyRollValueWithBounce(snapshot, persisted.ActorID, accepted.Value, false)
+			}
 		case MoveAccepted:
 			accepted, decodeErr := decodeAcceptedMove(persisted.Payload)
 			if decodeErr != nil || accepted.UserID != persisted.ActorID {
@@ -220,6 +225,10 @@ func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action game
 }
 
 func (rules *Rules) applyRollValue(snapshot gameapi.Snapshot, actorID string, value int) (gameapi.Event, gameapi.Snapshot, error) {
+	return rules.applyRollValueWithBounce(snapshot, actorID, value, true)
+}
+
+func (rules *Rules) applyRollValueWithBounce(snapshot gameapi.Snapshot, actorID string, value int, allowBounce bool) (gameapi.Event, gameapi.Snapshot, error) {
 	if value < 1 || value > 6 || !validActorID(actorID) {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
 	}
@@ -235,6 +244,16 @@ func (rules *Rules) applyRollValue(snapshot gameapi.Snapshot, actorID string, va
 	}
 	color := state.NextColor
 	movable := movablePieces(color, state.Pieces[color], value)
+	if !allowBounce {
+		legacyMovable := make([]int, 0, len(movable))
+		for _, index := range movable {
+			piece := state.Pieces[color][index]
+			if piece.Zone != ZoneHome || piece.Index+value <= HomeCellCount {
+				legacyMovable = append(legacyMovable, index)
+			}
+		}
+		movable = legacyMovable
+	}
 	if len(movable) != 0 {
 		state.Phase = PhaseAwaitingMove
 		state.Dice = value
@@ -301,6 +320,9 @@ func resolveMove(color string, piece Piece, roll int) (moveResolution, bool) {
 		return resolveProgress(color, progress+roll)
 	case ZoneHome:
 		target := piece.Index + roll
+		if target > HomeCellCount {
+			target = 2*HomeCellCount - target
+		}
 		if target < HomeCellCount {
 			return moveResolution{to: Piece{Zone: ZoneHome, Index: target}, effect: EffectNone}, true
 		}

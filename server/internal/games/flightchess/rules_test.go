@@ -103,7 +103,7 @@ func TestMoveResolvesColorJumpShortcutStackAndCapture(t *testing.T) {
 	}
 }
 
-func TestExactFinishRejectsOvershootAndFourthPlaneWins(t *testing.T) {
+func TestExactFinishBouncesOvershootAndFourthPlaneWins(t *testing.T) {
 	rules := NewRules()
 	state := initialState()
 	state.BlackUserID = stringPointer(blackID)
@@ -115,8 +115,10 @@ func TestExactFinishRejectsOvershootAndFourthPlaneWins(t *testing.T) {
 	state.Pieces[Black][2] = Piece{Zone: ZoneFinished, Index: 0}
 	state.Pieces[Black][3] = Piece{Zone: ZoneMain, Index: 26}
 	overshoot := encodeStateForTest(t, 20, state)
-	if _, _, err := rules.Apply(overshoot, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":0}`)}); !errors.Is(err, ErrInvalidMove) {
+	if _, bounced, err := rules.Apply(overshoot, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":0}`)}); err != nil {
 		t.Fatalf("overshoot error = %v", err)
+	} else if got := decodeStateForTest(t, bounced); got.Pieces[Black][0] != state.Pieces[Black][0] || got.Status != StatusActive || got.NextColor != White {
+		t.Fatalf("bounce back to starting cell failed: %#v", got)
 	}
 
 	state.Dice = 1
@@ -185,3 +187,76 @@ func encodeStateForTest(t *testing.T, revision int64, state snapshotState) gamea
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestHomeLaneRollsBounceAndRemainMovable(t *testing.T) {
+	for _, color := range []string{Black, White} {
+		for index := 0; index < HomeCellCount; index++ {
+			for roll := 1; roll <= 6; roll++ {
+				// Walk one step at a time as an independent rules oracle.
+				target, direction := index, 1
+				for step := 0; step < roll; step++ {
+					target += direction
+					if target == HomeCellCount {
+						direction = -1
+					}
+				}
+				want := Piece{Zone: ZoneHome, Index: target}
+				if target == HomeCellCount {
+					want = Piece{Zone: ZoneFinished}
+				}
+				got, ok := resolveMove(color, Piece{Zone: ZoneHome, Index: index}, roll)
+				if !ok || got.to != want {
+					t.Fatalf("%s home %d roll %d: got %#v, want %#v", color, index, roll, got, want)
+				}
+				state := initialState()
+				state.Pieces[color][0] = Piece{Zone: ZoneHome, Index: index}
+				if indices := movablePieces(color, state.Pieces[color], roll); len(indices) == 0 || indices[0] != 0 {
+					t.Fatalf("home plane excluded: %v", indices)
+				}
+			}
+		}
+	}
+}
+
+func TestRebuildAcceptsHistoricalOvershootExclusionAndNewBounce(t *testing.T) {
+	rules := NewRules()
+	var snapshot gameapi.Snapshot
+	var events []gameapi.Event
+	// Reach home through real accepted rolls and moves, without snapshot injection.
+	for step := 0; step < 20; step++ {
+		roll, rolled, err := rules.applyRollValue(snapshot, blackID, 6)
+		if err != nil {
+			t.Fatal(err)
+		}
+		move, moved, err := rules.Apply(rolled, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":0}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, roll, move)
+		snapshot = moved
+		if decodeStateForTest(t, snapshot).Pieces[Black][0].Zone == ZoneHome {
+			break
+		}
+	}
+	state := decodeStateForTest(t, snapshot)
+	if state.Pieces[Black][0].Zone != ZoneHome || state.Pieces[Black][0].Index == 0 {
+		t.Fatal("fixture did not reach an overshooting position")
+	}
+	roll, rolled, err := rules.applyRollValue(snapshot, blackID, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exact payload stored by the old rule: home plane excluded, hangars legal.
+	legacy := roll
+	legacy.Payload = json.RawMessage(`{"color":"black","userId":"00000000-0000-4000-8000-000000000001","value":6,"movablePieceIndices":[1,2,3]}`)
+	if rebuilt, err := rules.Rebuild(append(append([]gameapi.Event{}, events...), legacy)); err != nil || !bytes.Equal(rebuilt.State, rolled.State) {
+		t.Fatalf("legacy roll could not be restored: %v", err)
+	}
+	move, moved, err := rules.Apply(rolled, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":0}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt, err := rules.Rebuild(append(events, roll, move)); err != nil || !bytes.Equal(rebuilt.State, moved.State) {
+		t.Fatalf("new bounce could not be replayed: %v", err)
+	}
+}
