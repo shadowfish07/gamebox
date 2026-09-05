@@ -572,12 +572,12 @@ static func _animation_queue() -> bool:
 
 
 static func _responsive_hud_bounds() -> bool:
-	for dimensions in [Vector2(1920,1080),Vector2(2400,1080)]:
-		var scene := FlightChessScene.instantiate() as Control
-		scene.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	var scene := FlightChessScene.instantiate() as Control
+	scene.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	scene.set_preview_safe_insets(Vector4(72,24,36,24))
+	(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+	for dimensions in [Vector2(2400,1080),Vector2(1920,1080),Vector2(2400,1080),Vector2(1920,1080)]:
 		scene.size = dimensions
-		scene.set_preview_safe_insets(Vector4(72,24,36,24))
-		(Engine.get_main_loop() as SceneTree).root.add_child(scene)
 		for i in 5:
 			await (Engine.get_main_loop() as SceneTree).process_frame
 		scene.set_preview_state("selected")
@@ -594,7 +594,7 @@ static func _responsive_hud_bounds() -> bool:
 		if not _check(action.get_global_rect().end.y <= cancel.global_position.y,"confirm and cancel overlap"):
 			scene.free()
 			return false
-		scene.free()
+	scene.free()
 	return true
 
 

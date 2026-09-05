@@ -139,6 +139,7 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		label.custom_maximum_size.x = (rw-24)*unit
 	right.get_node("HintLabel").visible = regions.board.size.y >= 650
 	right.get_node("SyncLabel").text = ""
+	right.get_node("DiceLabel").vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	right.get_node("DiceCard").add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	right.get_node("DiceCard/Content/Dice").custom_minimum_size = Vector2(80,80)*unit
 	for name in ["RollButton", "CancelSelection"]:

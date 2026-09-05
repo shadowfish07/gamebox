@@ -1319,6 +1319,12 @@ func _finish_rail_layout() -> void:
 		return
 	_apply_rect($LeftRail,regions.left)
 	_apply_rect($RightRail,regions.right)
+	# Font and container minimum sizes settle after the initial resize pass.
+	# Refit all HUD children against the latest regions, not only the outer rails.
+	HUD.layout(self,regions,bool(_preview_dark))
+	_refresh_hud()
+	if $ResignDialog.visible:
+		_fit_resign_dialog.call_deferred()
 
 
 func _log_selection_target() -> void:
