@@ -1420,7 +1420,7 @@
           <tr><td>提交 → 等待确认</td><td>飞机留在原位；右侧等待，保留预览；禁止重复提交。</td><td>原位描边脉冲。pending 无移动音效、无撞机、无计分。</td></tr>
           <tr><td>move.accepted → 移动</td><td>锁输入，按顺序播放确认事件；逻辑快照先提交，表现层追赶。</td><td>Tween：每格 140ms，轻微起落；起飞 420ms；同色跳 320ms；跨航道飞行 640ms，正交折线路径。</td></tr>
           <tr><td>落点结算</td><td>只在最终落点撞机；对方整组回库。同色轻量叠放不挡路，移动只移动选中一架。</td><td>落点环 220ms → 被撞组并行回库 420ms → 叠机数量淡入 160ms。</td></tr>
-          <tr><td>归家 / 额外回合 / 终局</td><td>精确点数归家，超出不可选、不反弹；6 点再掷；最后一架到达后显示结果。</td><td>归家收束 360ms → 人数更新 → 换手 200ms；终局面板淡入上移 240ms。</td></tr>
+          <tr><td>归家 / 额外回合 / 终局</td><td>精确点数归家；超点先到终点，再原路退回剩余步数；6 点再掷；最后一架到达后显示结果。</td><td>反弹逐格往返，经过终点不计抵达；精确归家收束 360ms → 数量更新 → 换手 200ms；终局面板淡入上移 240ms。</td></tr>
           <tr><td>失败 / 过期 / 重连</td><td>失败保留骰点，可重新选择；过期与重连冻结最后确认棋局。恢复按快照重建，不重放历史撞机或胜利。</td><td>取消 Tween 和旧回调；去掉预览。新快照 160ms 淡入。事件按 revision 去重。</td></tr>
           <tr><td>返回 / 认输</td><td>返回大厅保留可恢复对局；认输须二次确认。确认中不提前判负，结果后禁止再提交。</td><td>退出取消表现队列；恢复先同步。认输确认后收到终局再播放结果。</td></tr>
         </tbody></table>
@@ -1821,8 +1821,8 @@
       stack:{label:'叠机 / 拆开选择',red:[3,3,7,-1],yellow:[8,20,-1,-1],dice:4},
       home:{label:'进入归家航道',red:[49,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
       finish:{label:'单机抵达终点',red:[54,8,-1,-1],yellow:[8,20,-1,-1],dice:3},
-      exact:{label:'超点不可走',red:[56,52,57,57],yellow:[8,20,-1,-1],dice:3},
-      blockedSix:{label:'6 点无棋 / 仍再掷',red:[52,53,54,55],yellow:[8,20,-1,-1],dice:6},
+      exact:{label:'超点反弹',red:[56,52,57,57],yellow:[8,20,-1,-1],dice:3},
+      blockedSix:{label:'6 点反弹 / 再掷',red:[52,53,54,55],yellow:[8,20,-1,-1],dice:6},
       pass:{label:'无棋可走 / 换手',red:[-1,-1,-1,-1],yellow:[8,20,-1,-1],dice:3},
       win:{label:'最后一架 / 胜利',red:[56,57,57,57],yellow:[8,20,-1,-1],dice:1},
       loss:{label:'对手抵达 / 惜败',red:[8,-1,-1,-1],yellow:[56,57,57,57],dice:1,opponent:true}
@@ -1844,10 +1844,11 @@
       return color==='red'?[312,300]:[288,300];
     }
     function resolve(progress,value) {
-      if(progress===57 || progress+value>57 || progress===-1 && value!==6) return null;
+      if(progress===57 || progress===-1 && value!==6) return null;
       if(progress===-1) return {to:0,steps:[0],effect:'launch'};
       let to=progress+value;
-      const steps=Array.from({length:value},(_,i)=>progress+i+1);
+      const steps=Array.from({length:value},(_,i)=>{const next=progress+i+1;return next>57?114-next:next;});
+      if(to>57) return {to:steps.at(-1),steps,effect:'bounce'};
       let effect='walk';
       if(to===18) {to=30;effect='fly';}
       else if(to<=50 && to%4===2 && to<50) {to+=4;effect='jump';if(to===18){to=30;effect='combo';}}
@@ -1923,7 +1924,7 @@
       if(!legalIndices().length){
         confirmedPhase='roll';
         if(diceValue===6){
-          states.bonus={...states.bonus,title:'无棋可走，仍可再掷',hint:'本次都是超点，6 点保留你的回合。'};
+          states.bonus={...states.bonus,title:'无棋可走，仍可再掷',hint:'暂无可移动飞机，6 点保留你的回合。'};
           showState('bonus');return;
         }
         states['auto-pass']={...states['auto-pass'],dice:diceValue,diceLabel:`骰点 ${diceValue}`,title:`骰点 ${diceValue}，无法移动`};
@@ -1938,7 +1939,7 @@
       if(!['choose','selected','move-error'].includes(shell.dataset.state)||!legalIndices('red').includes(index))return;
       selected=index;
       const move=resolve(pieces.red[index],diceValue);
-      const effectNames={walk:'逐格移动',launch:'起飞到起飞位',jump:'同色跳跃',fly:'跨航道飞行',combo:'先跳再飞'};
+      const effectNames={bounce:'超点反弹',walk:'逐格移动',launch:'起飞到起飞位',jump:'同色跳跃',fly:'跨航道飞行',combo:'先跳再飞'};
       states.selected={...states.selected,dice:diceValue,diceLabel:`骰点 ${diceValue}`,title:`${index+1} 号机 · ${move.to===57?'抵达终点':effectNames[move.effect]}`,hint:'点其他飞机可换选，确认后提交。',board:`${index+1} 号机 · 路线预览`};
       showState('selected');
     }
@@ -2007,6 +2008,7 @@
         if(!await tween(moving,[previous,[(previous[0]+target[0])/2-15,(previous[1]+target[1])/2-25],target],420,signal,.2))return;
       } else {
         for(const progress of resolution.steps){
+          if(resolution.effect==='bounce') elements.boardState.textContent=progress===57?'到达尽头 · 原路退回剩余步数':'超点反弹 · 逐格移动';
           const next=pointFor(color,progress,index);
           if(!await tween(moving,[previous,[(previous[0]+next[0])/2,(previous[1]+next[1])/2-5],next],140,signal,.08))return;
           previous=next;
