@@ -207,6 +207,12 @@
           linear-gradient(135deg var(--in-oklab), var(--surface-low), var(--surface));
       }
 
+      .plane-count svg {
+        inline-size: 1rem;
+        block-size: 1rem;
+        flex-shrink: 0;
+      }
+
       .identity-rail,
       .action-rail,
       .board-stage {
@@ -376,16 +382,17 @@
 
       .plane-counts {
         flex-wrap: wrap;
-        gap: .25rem;
+        gap: .75rem;
       }
 
       .plane-count {
-        padding: .18rem .38rem;
-        border: 1px solid var(--outline-variant);
-        border-radius: var(--radius-full);
+        display: inline-flex;
+        align-items: center;
+        gap: .25rem;
+        padding-block: .18rem;
         color: var(--on-surface-variant);
-        background: var(--surface-lowest);
-        font-size: .625rem;
+        font-size: .75rem;
+        font-variant-numeric: tabular-nums;
         font-weight: 650;
         white-space: nowrap;
       }
@@ -1052,7 +1059,7 @@
 
         .identity-rail { gap: var(--space-2); }
         .player-card { gap: .32rem; padding: .55rem .65rem; }
-        .plane-counts { gap: .18rem; }
+        .plane-counts { gap: .5rem; }
         .action-rail { gap: var(--space-2); padding: var(--space-3); border-radius: 1.4rem; }
         .turn-copy { gap: .35rem; }
         .turn-title { font-size: 1.05rem; }
@@ -1232,7 +1239,7 @@
           </div>
           <p class="presence" id="opponentPresence" data-online="true"><span class="presence-dot" aria-hidden="true"></span><span>在线</span></p>
           <p class="plane-counts">
-            <span class="plane-count">2 架在途</span><span class="plane-count">2 架待机</span>
+            <span class="plane-count">等待同步</span>
           </p>
         </article>
 
@@ -1245,7 +1252,7 @@
           </div>
           <p class="presence"><span class="presence-dot" aria-hidden="true"></span><span>已连接</span></p>
           <p class="plane-counts">
-            <span class="plane-count">1 架在途</span><span class="plane-count">3 架待机</span>
+            <span class="plane-count">等待同步</span>
           </p>
         </article>
       </section>
@@ -1895,7 +1902,11 @@
         });
         const counts=pieces[color];
         document.querySelector(`#${color==='red'?'local':'opponent'}Card .plane-counts`).innerHTML=shell.dataset.state==='connecting'?'<span class="plane-count">等待同步</span>':
-          `<span class="plane-count">${counts.filter(p=>p>=0&&p<57).length} 架在途</span><span class="plane-count">${counts.filter(p=>p===-1).length} 架待机</span><span class="plane-count">${counts.filter(p=>p===57).length} / 4 抵达</span>`;
+          [
+            ['在途', counts.filter(p=>p>=0&&p<57).length, 'M22 16v-2l-8-5V3a2 2 0 0 0-4 0v6l-8 5v2l8-2v6l-2 1v1l4-1 4 1v-1l-2-1v-6z'],
+            ['待机', counts.filter(p=>p===-1).length, 'M3 21V8l9-5 9 5v13M7 21V11h10v10M3 21h18M7 15h10M7 18h10'],
+            ['抵达', counts.filter(p=>p===57).length, 'M5 22V3m0 1c5-5 9 5 15 0v10c-6 5-10-5-15 0']
+          ].map(([label,count,path])=>`<span class="plane-count" role="img" aria-label="${label} ${count} 架" title="${label}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg><span aria-hidden="true">${count}</span></span>`).join('');
       }
       const preview=document.querySelector('#previewLayer');preview.replaceChildren();
       if(selected>=0&&['selected','move-pending'].includes(shell.dataset.state)) {
