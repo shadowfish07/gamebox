@@ -104,13 +104,13 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		button.add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 		button.add_theme_stylebox_override("normal",box(colors.surface_container_high,colors.outline_variant,8*unit,unit))
 		button.add_theme_color_override("font_color",colors.error if i == 2 else colors.on_surface)
-	var card_height := (height-88.0)/2.0
-	for pair in [["OpponentCard", 56], ["LocalCard",height-card_height]]:
+	var card_height := 112.0
+	for pair in [["OpponentCard", 56], ["LocalCard",56+card_height+24]]:
 		var card := left.get_node(pair[0])
 		place(card, Rect2(Vector2(0,pair[1]) * unit, Vector2(lw,card_height) * unit))
 		var content := card.get_node("Content")
 		content.add_theme_constant_override("separation", roundi(4 * unit))
-		content.alignment = BoxContainer.ALIGNMENT_CENTER
+		content.alignment = BoxContainer.ALIGNMENT_BEGIN
 		content.get_node("Role").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 		content.get_node("Name").add_theme_font_override("font",scene.theme.default_font)
 		content.get_node("Name").add_theme_color_override("font_color",colors.on_surface_variant)
@@ -121,10 +121,10 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		card.get_node("BadgeOverlay/TurnBadge").set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 		card.get_node("BadgeOverlay/TurnBadge").offset_left = -36 * unit
 		card.get_node("BadgeOverlay/TurnBadge").offset_right = -8 * unit
-		card.get_node("BadgeOverlay/TurnBadge").offset_top = (card_height/2-54)*unit
-		card.get_node("BadgeOverlay/TurnBadge").offset_bottom = (card_height/2-32)*unit
+		card.get_node("BadgeOverlay/TurnBadge").offset_top = -8*unit
+		card.get_node("BadgeOverlay/TurnBadge").offset_bottom = 14*unit
 		card.get_node("BadgeOverlay/TurnBadge").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_small.font_size*unit))
-	place(left.get_node("Versus"), Rect2(Vector2(0,56+card_height)*unit,Vector2(lw,32)*unit))
+	place(left.get_node("Versus"), Rect2(Vector2(0,56+card_height)*unit,Vector2(lw,24)*unit))
 	left.get_node("Versus").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 	for pair in [["StatusLabel",Rect2(12,12,76,26)], ["SyncLabel",Rect2(rw-60,12,48,26)], ["TurnLabel",Rect2(12,46,rw-24,30)], ["HintLabel",Rect2(12,74,rw-24,30)], ["RuleLabel",Rect2(12,108,rw-24,28)], ["DiceCard",Rect2(12,height-150,80,80)], ["DiceLabel",Rect2(100,height-136,rw-112,52)], ["RollButton",Rect2(12,height-60,rw-24,48)], ["CancelSelection",Rect2(12,height-60,rw-24,48)]]:
 		place(right.get_node(pair[0]),Rect2(pair[1].position*unit,pair[1].size*unit))
@@ -143,7 +143,7 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 	right.get_node("DiceCard/Content/Dice").custom_minimum_size = Vector2(80,80)*unit
 	for name in ["RollButton", "CancelSelection"]:
 		right.get_node(name).add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_large.font_size*unit))
-	right.get_node("CancelSelection").add_theme_stylebox_override("normal",box(colors.surface_container_low,colors.outline_variant,12*unit,unit))
+	right.get_node("CancelSelection").add_theme_stylebox_override("normal",StyleBoxEmpty.new())
 	right.get_node("CancelSelection").add_theme_color_override("font_color",colors.on_surface)
 	var rule_style := box(colors.surface_container_high,colors.surface_container_low,12*unit,0)
 	rule_style.content_margin_left = 8*unit
@@ -179,12 +179,12 @@ static func present_card(scene: Control, node_name: String, color: String, activ
 	var fill: Color = colors.surface_container_low.lerp(Board.PLAYER_COLORS[color],0.14) if active else colors.surface_container_low
 	var style := box(fill,Board.PLAYER_COLORS[color] if active else colors.outline_variant,16*unit,unit)
 	var stripe := card.get_node("BadgeOverlay/Stripe")
-	stripe.color = Board.PLAYER_COLORS[color]
+	stripe.hide()
 	place(stripe,Rect2(Vector2(-9,-8)*unit,Vector2(3,card.size.y/unit-32)*unit))
-	style.content_margin_left = 10*unit
+	style.content_margin_left = 14*unit
 	style.content_margin_right = 8*unit
-	style.content_margin_top = 24*unit
-	style.content_margin_bottom = 10*unit
+	style.content_margin_top = 20*unit
+	style.content_margin_bottom = 16*unit
 	card.add_theme_stylebox_override("panel",style)
 	card.get_node("Content/Name").text = "● " + presence
 	card.get_node("Content/Stats").present(pieces)

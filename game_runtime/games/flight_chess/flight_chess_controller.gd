@@ -1124,9 +1124,17 @@ func _refresh_hud() -> void:
 	$RightRail/Content/DiceCard/Content/Dice.set_pending(rolling)
 	if rolling:
 		$RightRail/Content/DiceLabel.text = "等待骰点"
-	$RightRail/Content/RollButton.position.y = $Board.size.y - _hud_unit*116 if $RightRail/Content/CancelSelection.visible else $Board.size.y-maxf(96,_hud_unit*48)-_hud_unit*12
-	$RightRail/Content/DiceCard.position.y = $Board.size.y - _hud_unit * (206 if $RightRail/Content/CancelSelection.visible else 150)
-	$RightRail/Content/DiceLabel.position.y = $Board.size.y - _hud_unit * (192 if $RightRail/Content/CancelSelection.visible else 136)
+	# Lay out bottom actions from their actual heights, including minimum touch sizes.
+	var right := $RightRail/Content
+	var unit := _hud_unit
+	var cancel: Button = right.get_node("CancelSelection")
+	var action: Button = right.get_node("RollButton")
+	cancel.position.y = $Board.size.y - 12*unit - cancel.size.y
+	action.position.y = cancel.position.y - 12*unit - action.size.y if cancel.visible else $Board.size.y - 16*unit - action.size.y
+	right.get_node("DiceCard").position.y = action.position.y - 20*unit - right.get_node("DiceCard").size.y
+	right.get_node("DiceLabel").position.y = right.get_node("DiceCard").position.y + 14*unit
+	right.get_node("RuleLabel").hide()
+
 
 
 
