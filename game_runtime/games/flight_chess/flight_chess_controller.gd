@@ -9,10 +9,12 @@ const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd
 const GameboxTheme = preload("res://design_system/gamebox_theme.gd")
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
+const Motion = preload("res://games/flight_chess/flight_chess_motion.gd")
+const HUD = preload("res://games/flight_chess/flight_chess_hud.gd")
+
 const MIN_VIEWPORT := Vector2(960.0, 540.0)
 const LANDSCAPE_CONTENT_SCALE := Vector2i(1920, 1080)
 const MIN_RAIL_WIDTH := 192.0
-const MAX_RAIL_WIDTH := 360.0
 const DICE_SEQUENCE := [6, 4, 2, 5, 3, 1]
 const TERMINAL_STATUSES := ["finished", "cancelled", "abandoned"]
 const SAFE_ERROR_COPY := {
@@ -63,6 +65,19 @@ var _error_text := ""
 var _presented_result_signature := ""
 var _logged_state_signature := ""
 var _ready_marker_callback := Callable()
+var _result_tween: Tween
+var _snapshot_tween: Tween
+var _hud_unit := 2.0
+var _last_action := ""
+var _turn_feedback := ""
+var _feedback_dice := 0
+var _animation_copy := ""
+var _event_queue: Array[Dictionary] = []
+var _event_visuals := {}
+var _moving_visuals := {}
+var _moving_card_pieces := {}
+var _moving_color := ""
+var _menu_open := false
 var _bounce_roll := 0
 var _bounce_playing := false
 var _last_presented_event_revision := -1
@@ -114,10 +129,16 @@ func _ready() -> void:
 	_apply_mobile_orientation()
 	var dark := bool(_preview_dark) if _preview_dark is bool else GameboxTheme.system_prefers_dark()
 	theme = FlightChessTheme.create(dark)
+	_preview_dark = dark
+	HUD.setup(self)
+	$LeftRail/Content/MenuButton.pressed.connect(_toggle_menu)
+	$LeftRail/Content/ThemeButton.pressed.connect(func() -> void: set_preview_dark(not bool(_preview_dark)); _toggle_menu())
+	$LeftRail/Content/RulesButton.pressed.connect(_show_rules)
+	$RightRail/Content/CancelSelection.pressed.connect(func() -> void: _selected_index = -1; _sync_ui())
 	$LeftRail/Content/BackButton.pressed.connect(_on_back_pressed)
 	$LeftRail/Content/ResignButton.pressed.connect(_on_resign_pressed)
 	$RightRail/Content/RollButton.pressed.connect(_on_roll_pressed)
-	$Board.piece_pressed.connect(_on_piece_pressed)
+	$Board.piece_pressed.connect(_on_board_piece_pressed)
 	$ConnectionLabel.return_requested.connect(_on_back_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResultPanel.return_requested.connect(_on_back_pressed)
@@ -157,9 +178,9 @@ static func layout_for_size(viewport: Vector2, safe_rect: Rect2 = Rect2()) -> Di
 	var safe_bounds := safe_rect.intersection(viewport_rect) if safe_rect.has_area() else viewport_rect
 	if not safe_bounds.has_area():
 		return {}
-	var page_margin := float(GameboxTokens.SPACING["page"]) * GameboxTheme.LOGICAL_SCALE
-	var max_margin := float(GameboxTokens.SPACING["section"]) * GameboxTheme.LOGICAL_SCALE
-	var margin := clampf(safe_bounds.size.y * 0.03, page_margin, max_margin)
+	var page_margin := float(GameboxTokens.SPACING["layout"]) * GameboxTheme.LOGICAL_SCALE
+	var max_margin := float(GameboxTokens.SPACING["compact"]) * GameboxTheme.LOGICAL_SCALE
+	var margin := clampf(safe_bounds.size.y * 0.022, page_margin, max_margin)
 	var min_gap := float(GameboxTokens.SPACING["layout"]) * GameboxTheme.LOGICAL_SCALE
 	var max_gap := float(GameboxTokens.SPACING["compact"]) * GameboxTheme.LOGICAL_SCALE
 	var gap := clampf(safe_bounds.size.y * 0.02, min_gap, max_gap)
@@ -167,16 +188,18 @@ static func layout_for_size(viewport: Vector2, safe_rect: Rect2 = Rect2()) -> Di
 	var board_side := minf(available.y, available.x - MIN_RAIL_WIDTH * 2.0 - gap * 2.0)
 	if board_side <= 0.0:
 		return {}
-	var rail_width := clampf((available.x - board_side - gap * 2.0) * 0.5, MIN_RAIL_WIDTH, MAX_RAIL_WIDTH)
+	var rail_width := (available.x - board_side - gap * 2.0) * 0.5
 	var total_width := board_side + rail_width * 2.0 + gap * 2.0
-	if total_width > available.x:
+	if total_width > available.x + 0.01:
 		return {}
 	var origin_y := safe_bounds.position.y + (safe_bounds.size.y - board_side) * 0.5
-	var board_x := safe_bounds.get_center().x - board_side * 0.5
+	var left_width := rail_width * 2.0 / 2.15
+	var right_width := rail_width * 2.0 - left_width
+	var board_x := safe_bounds.position.x + margin + left_width + gap
 	return {
-		"left": Rect2(safe_bounds.position.x + margin, origin_y, rail_width, board_side),
+		"left": Rect2(safe_bounds.position.x + margin, origin_y, left_width, board_side),
 		"board": Rect2(board_x, origin_y, board_side, board_side),
-		"right": Rect2(safe_bounds.end.x - margin - rail_width, origin_y, rail_width, board_side),
+		"right": Rect2(safe_bounds.end.x - margin - right_width, origin_y, right_width, board_side),
 	}
 
 
@@ -231,6 +254,7 @@ func set_preview_dark(dark: bool) -> void:
 	_preview_dark = dark
 	if is_node_ready():
 		theme = FlightChessTheme.create(dark)
+		_apply_layout()
 
 
 func set_preview_safe_insets(insets: Vector4) -> bool:
@@ -265,6 +289,7 @@ func automation_targets() -> Dictionary:
 	var resign_button := $LeftRail/Content/ResignButton as Control
 	var confirm_button := $ResignDialog/Dialog/Content/Actions/ConfirmButton as Control
 	return {
+		"menu": _normalized_point($LeftRail/Content/MenuButton.get_global_transform_with_canvas() * ($LeftRail/Content/MenuButton.size * 0.5), viewport_rect),
 		"roll": _normalized_point(roll_button.get_global_transform_with_canvas() * (roll_button.size * 0.5), viewport_rect),
 		"red0": _normalized_point(board.get_global_transform_with_canvas() * board.piece_center("red", 0), viewport_rect),
 		"yellow0": _normalized_point(board.get_global_transform_with_canvas() * board.piece_center("yellow", 0), viewport_rect),
@@ -287,17 +312,9 @@ func _apply_layout() -> void:
 	_apply_rect($LeftRail, layout["left"])
 	_apply_rect($Board, layout["board"])
 	_apply_rect($RightRail, layout["right"])
-	var rail_padding := float(GameboxTokens.SPACING["layout"]) * GameboxTheme.LOGICAL_SCALE
-	var right_text_width := maxf(1.0, (layout["right"] as Rect2).size.x - rail_padding * 2.0)
-	for label in [$RightRail/Content/TurnLabel, $RightRail/Content/HintLabel, $RightRail/Content/RuleLabel]:
-		(label as Label).custom_maximum_size.x = right_text_width
-	var compact := layout_is_compact(layout)
-	$RightRail/Content/HintLabel.visible = not compact
-	$LeftRail/Content/Eyebrow.visible = not compact
-	$RightRail/Content/TurnLabel.theme_type_variation = &"FlightChessTurnCompact" if compact else &"FlightChessTurn"
-	$RightRail/Content/RuleLabel.theme_type_variation = &"FlightChessRuleCompact" if compact else &"FlightChessRule"
-	$RightRail/Content/DiceCard.custom_minimum_size.y = 136.0 if compact else 200.0
-	$RightRail/Content/DiceCard/Content/Dice.custom_minimum_size = Vector2(112.0, 112.0) if compact else Vector2(168.0, 168.0)
+	HUD.layout(self, layout, bool(_preview_dark))
+	_refresh_hud()
+	_settle_rail_layout.call_deferred()
 
 
 func _safe_rect() -> Rect2:
@@ -333,11 +350,11 @@ func _reset_demo() -> void:
 	_pieces = {
 		"yellow": [
 			{"zone": "hangar", "index": 0}, {"zone": "hangar", "index": 1},
-			{"zone": "main", "index": 6}, {"zone": "main", "index": 17},
+			{"zone": "main", "index": 7}, {"zone": "main", "index": 19},
 		],
 		"red": [
 			{"zone": "hangar", "index": 0}, {"zone": "hangar", "index": 1},
-			{"zone": "hangar", "index": 2}, {"zone": "main", "index": 30},
+			{"zone": "hangar", "index": 2}, {"zone": "main", "index": 33},
 		],
 	}
 	_dice_value = 0
@@ -374,9 +391,19 @@ func _apply_preview_state() -> void:
 
 
 func _on_roll_pressed() -> void:
+	if _bounce_playing:
+		return
+	if not _started and _selected_index >= 0:
+		_submit_preview_move()
+		return
+	if _started and _selected_index >= 0 and _can_select_piece():
+		_submit_selected_move()
+		return
 	if _started:
 		if _can_roll() and not _client.request_flight_chess_roll().is_empty():
 			_error_text = ""
+			_last_action = "roll"
+			_turn_feedback = ""
 		else:
 			_error_text = "暂时无法掷骰子，请重试"
 		_sync_ui()
@@ -408,48 +435,48 @@ func _show_rolled_six() -> void:
 
 
 func _on_piece_pressed(color: String, index: int) -> void:
+	if _bounce_playing:
+		return
 	if _started:
 		if color != _local_board_color() or not _selectable_indices.has(index):
 			return
 		_selected_index = index
+		_error_text = ""
+		_turn_feedback = ""
 		_sync_ui()
-		if _client.request_flight_chess_move(index).is_empty():
-			_selected_index = -1
-			_error_text = "操作失败，请重试"
-		else:
-			_error_text = ""
-		_sync_ui()
+		_log_selection_target()
 		return
+
 	if color != "red" or not _selectable_indices.has(index):
 		return
 	_selected_index = index
-	var piece: Dictionary = (_pieces["red"] as Array)[index]
-	var rolled_six := _dice_value == 6
-	match piece["zone"]:
-		"hangar":
-			if not rolled_six:
-				return
-			piece = {"zone": "launch", "index": 0}
-			_status_text = "起飞成功"
-			_turn_text = "可以再掷一次"
-			_hint_text = "掷出 6 会奖励额外一次掷骰"
-		"launch":
-			piece = {"zone": "main", "index": FlightChessBoard.PATH_STARTS["red"]}
-			_status_text = "已进入主航线"
-			_turn_text = "移动完成"
-			_hint_text = "待联机规则接入后，这里将等待服务端确认"
-		"main":
-			piece = {"zone": "main", "index": (int(piece["index"]) + _dice_value) % 52}
-			_status_text = "移动完成"
-			_turn_text = "航程 +%d" % _dice_value
-			_hint_text = "当前为本地视觉原型，未接入服务端权威状态"
-		_:
-			return
-	(_pieces["red"] as Array)[index] = piece
-	_dice_value = 0
+	_sync_ui()
+
+
+func _submit_preview_move() -> void:
+	var index := _selected_index
+	var from: Dictionary = _pieces.red[index]
+	var roll := _dice_value
+	var resolution := FlightChessState._resolve_move("black",from,roll)
+	if not resolution.get("ok",false):
+		return
+	_pieces.red[index] = resolution.to
 	_selectable_indices.clear()
 	_selected_index = -1
+	_bounce_playing = true
+	_status_text = "已确认"
+	_turn_text = "飞机移动中"
+	_hint_text = "移动完成后继续本回合"
 	_sync_ui()
+	var animation: Tween = $Board.animate_move("red",index,Motion.segments("red",index,from,roll,resolution.effect),[],resolution.to.zone == "finished")
+	animation.finished.connect(func() -> void:
+		_bounce_playing = false
+		_dice_value = 0
+		_status_text = "再掷一次" if roll == 6 else "移动完成"
+		_turn_text = "可以再掷一次" if roll == 6 else "请掷骰子"
+		_hint_text = "掷出 6 会奖励额外一次掷骰" if roll == 6 else "选择已起飞的飞机继续航程"
+		_sync_ui()
+	)
 
 
 func _movable_route_pieces() -> Array:
@@ -470,32 +497,21 @@ func _sync_ui() -> void:
 	$RightRail/Content/StatusLabel.text = _status_text
 	$RightRail/Content/TurnLabel.text = _turn_text
 	$RightRail/Content/HintLabel.text = _hint_text
-	$RightRail/Content/RollButton.disabled = not _selectable_indices.is_empty()
-	$RightRail/Content/RollButton.text = "先选飞机" if not _selectable_indices.is_empty() else "掷骰子"
-	$LeftRail/Content/OpponentCard/Content/Meta.text = _piece_summary("yellow")
-	$LeftRail/Content/LocalCard/Content/Meta.text = _piece_summary("red")
-
-
-func _piece_summary(color: String) -> String:
-	var waiting := 0
-	var flying := 0
-	var finished := 0
-	for piece in _pieces[color]:
-		match piece["zone"]:
-			"hangar": waiting += 1
-			"finished": finished += 1
-			_: flying += 1
-	var segments: Array[String] = []
-	if finished > 0:
-		segments.append("%d 架抵达" % finished)
-	if flying > 0:
-		segments.append("%d 架在途" % flying)
-	if waiting > 0:
-		segments.append("%d 架待机" % waiting)
-	return " · ".join(segments)
+	$RightRail/Content/RollButton.disabled = _bounce_playing or (not _selectable_indices.is_empty() and _selected_index < 0)
+	$RightRail/Content/RollButton.text = "确认移动" if _selected_index >= 0 else "先选飞机" if not _selectable_indices.is_empty() else "掷骰子"
+	_refresh_hud()
 
 
 func _on_back_pressed() -> void:
+	if has_node("RulesOverlay"):
+		_close_rules()
+		return
+	if has_node("StackPicker"):
+		_close_stack_picker()
+		return
+	if _menu_open:
+		_toggle_menu()
+		return
 	if $ResignDialog.visible:
 		$ResignDialog.close()
 		return
@@ -558,6 +574,8 @@ func _on_snapshot_sync_started() -> void:
 
 
 func _on_snapshot_received(envelope: Dictionary) -> void:
+	_turn_feedback = ""
+	_feedback_dice = 0
 	_cancel_home_bounce()
 	if _state == null:
 		return
@@ -572,40 +590,84 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_selected_index = -1
 		_error_text = ""
 	_sync_ui()
+	if applied.get("ok",false) and not _awaiting_snapshot:
+		if _snapshot_tween != null:
+			_snapshot_tween.kill()
+		$Board.modulate.a = 0.5
+		_snapshot_tween = create_tween()
+		_snapshot_tween.tween_property($Board,"modulate:a",1.0,0.16)
 
 
 func _on_event_received(envelope: Dictionary) -> void:
+	if _bounce_playing:
+		if int(envelope.get("revision",-1)) > _last_presented_event_revision and not _event_queue.any(func(item: Dictionary) -> bool: return item.revision == envelope.revision):
+			_event_queue.append(envelope.duplicate(true))
+			_event_visuals[envelope.revision] = _state.visual_pieces()
+		return
 	if _state == null:
 		return
 	var applied: Dictionary = _state.apply_event(envelope)
+	if applied.get("status") == "needs_snapshot":
+		_cancel_home_bounce()
+		_awaiting_snapshot = true
+		_sync_ui()
+		return
 	if not applied.get("ok", false):
 		_error_text = "同步失败，请返回大厅"
 		_force_return = true
-	if _state.revision <= _last_presented_event_revision:
+	if int(envelope.get("revision",_state.revision)) <= _last_presented_event_revision:
 		if not applied.get("ok", false):
 			_cancel_home_bounce()
 			_sync_ui()
 		return
-	_last_presented_event_revision = _state.revision
-	_cancel_home_bounce()
+	_last_presented_event_revision = int(envelope.get("revision",_state.revision))
+	_cancel_home_bounce(false)
 	var payload: Dictionary = envelope.get("payload", {})
-	var bounce: bool = envelope.get("type") == "flight_chess.move.accepted" \
-		and applied.get("ok", false) and payload.get("from", {}).get("zone") == "home" \
-		and int(payload["from"]["index"]) + int(payload["roll"]) > 6
-	_bounce_playing = bounce
-	_bounce_roll = int(payload["roll"]) if bounce else 0
+	_turn_feedback = ""
+	_feedback_dice = 0
+	if envelope.get("type") == "flight_chess.roll.accepted" and payload.get("movablePieceIndices",[]).is_empty():
+		_turn_feedback = "无棋可走"
+		_feedback_dice = int(payload.get("value",0))
+	elif envelope.get("type") == "flight_chess.move.accepted" and payload.get("roll") == 6:
+		_turn_feedback = "再掷一次"
+	var moving: bool = envelope.get("type") == "flight_chess.move.accepted" and applied.get("ok", false)
+	_moving_visuals = _event_visuals.get(envelope.revision,_state.visual_pieces())
+	_event_visuals.erase(envelope.revision)
+	_bounce_playing = moving
+	_bounce_roll = int(payload["roll"]) if moving else 0
 	_selected_index = -1
+	if moving:
+		_moving_color = "red" if payload.color == "black" else "yellow"
+		# Authority already advanced; keep counters at their pre-move values until landing.
+		_moving_card_pieces = _moving_visuals.duplicate(true)
+		_moving_card_pieces[_moving_color][payload.pieceIndex] = payload.from.duplicate(true)
+		var captured_color := "yellow" if _moving_color == "red" else "red"
+		for index in payload.capturedPieceIndices:
+			_moving_card_pieces[captured_color][index] = payload.to.duplicate(true)
+		var from: Dictionary = payload.from
+		_animation_copy = "超点反弹" if from.zone == "home" and from.index + payload.roll > 6 else "抵达终点" if payload.to.zone == "finished" else "撞机 · %d 架回库" % payload.capturedPieceIndices.size() if not payload.capturedPieceIndices.is_empty() else "飞行中"
 	_sync_ui()
-	if bounce:
-		var color := "red" if payload["color"] == "black" else "yellow"
-		var animation: Tween = $Board.animate_home_bounce(color, payload["pieceIndex"], payload["from"]["index"], payload["roll"])
+	if moving:
+		var color := "red" if payload.color == "black" else "yellow"
+		var segments := Motion.segments(color,payload.pieceIndex,payload.from,payload.roll,payload.effect)
+		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished")
 		animation.finished.connect(func() -> void:
 			_bounce_playing = false
-			_sync_ui()
+			if not _event_queue.is_empty():
+				var next: Dictionary = _event_queue.pop_front()
+				_on_event_received(next)
+			else:
+				_sync_ui()
 		)
+	elif not _event_queue.is_empty():
+		var next: Dictionary = _event_queue.pop_front()
+		_on_event_received(next)
 
 
-func _cancel_home_bounce() -> void:
+func _cancel_home_bounce(clear_queue: bool = true) -> void:
+	if clear_queue:
+		_event_queue.clear()
+		_event_visuals.clear()
 	_bounce_playing = false
 	$Board.cancel_home_bounce()
 
@@ -616,6 +678,8 @@ func _on_player_presence_changed(_user_id: String, _online: bool) -> void:
 
 func _on_match_error(code: String) -> void:
 	_cancel_home_bounce()
+	if code != "stale_revision":
+		_turn_feedback = "认输未成功" if _last_action == "resign" else "掷骰失败" if _last_action == "roll" else "走子未成功" if _last_action == "move" else ""
 	_error_text = str(SAFE_ERROR_COPY.get(code, "操作失败，请稍后重试"))
 	_resign_submitted = false
 	_selected_index = -1
@@ -633,8 +697,11 @@ func _on_return_to_lobby_requested(code: String) -> void:
 
 
 func _on_resign_pressed() -> void:
+	if _menu_open:
+		_toggle_menu()
 	if _can_offer_resign():
 		$ResignDialog.open()
+		_fit_resign_dialog.call_deferred()
 		RenderingServer.frame_post_draw.connect(_log_resign_confirm_target, CONNECT_ONE_SHOT)
 
 
@@ -642,6 +709,9 @@ func _on_resign_confirmed() -> void:
 	if not _can_offer_resign() or _resign_submitted:
 		return
 	_resign_submitted = true
+	_last_action = "resign"
+	_turn_feedback = ""
+	_error_text = ""
 	if _client.request_resign().is_empty():
 		_resign_submitted = false
 		_error_text = "操作失败，请重试"
@@ -649,86 +719,122 @@ func _on_resign_confirmed() -> void:
 
 
 func _sync_network_ui() -> void:
+	_close_stack_picker()
 	var has_state: bool = _state != null and _state.revision >= 0
 	if has_state:
 		_pieces = _state.visual_pieces()
-		_dice_value = _bounce_roll if _bounce_playing else _state.dice
+		_dice_value = _bounce_roll if _bounce_playing else _feedback_dice if _feedback_dice > 0 else _state.dice
 	else:
 		_pieces = _empty_visual_pieces()
 		_dice_value = 0
 	var local_board_color := _local_board_color()
 	_selectable_indices = _state.movable_piece_indices() if _can_select_piece() else []
-	if not _selectable_indices.has(_selected_index):
+	var pending_piece: int = _state.pending_action.get("piece_index", -1) if has_state else -1
+	if pending_piece >= 0:
+		_selected_index = pending_piece
+	elif not _selectable_indices.has(_selected_index):
 		_selected_index = -1
-	$Board.present(_pieces, local_board_color, _selectable_indices, _selected_index, not _selectable_indices.is_empty())
+	$Board.present(_moving_visuals if _bounce_playing else _pieces, local_board_color, [pending_piece] if pending_piece >= 0 else _selectable_indices, _selected_index, not _selectable_indices.is_empty())
 	$RightRail/Content/DiceCard/Content/Dice.set_value(_dice_value)
 	$RightRail/Content/StatusLabel.text = _network_status_text(has_state)
 	$RightRail/Content/TurnLabel.text = _network_turn_text(has_state)
 	$RightRail/Content/HintLabel.text = _network_hint_text(has_state)
-	$RightRail/Content/RollButton.disabled = not _can_roll()
-	$RightRail/Content/RollButton.text = "确认中…" if has_state and _state.pending_action.get("type") == "flight_chess.roll.requested" else "掷骰子"
+	$RightRail/Content/RollButton.disabled = not (_can_roll() or (_can_select_piece() and _selected_index >= 0))
+	$RightRail/Content/RollButton.text = _primary_action_text(has_state)
 	$LeftRail/Content/ResignButton.disabled = not _can_offer_resign()
 	$ConnectionLabel.present(_connection_banner_state(), _error_text if _force_return else "")
-	$ErrorLabel.present("" if _force_return else _error_text, "error")
+	$ErrorLabel.present("" if _force_return or _awaiting_snapshot else _error_text, "error")
 	if has_state:
 		var opponent_board_color := "yellow" if local_board_color == "red" else "red"
 		$LeftRail/Content/LocalCard.theme_type_variation = &"FlightChessRedCard" if local_board_color == "red" else &"FlightChessYellowCard"
 		$LeftRail/Content/OpponentCard.theme_type_variation = &"FlightChessYellowCard" if opponent_board_color == "yellow" else &"FlightChessRedCard"
 		$LeftRail/Content/LocalCard/Content/Role.text = "你 · %s方" % ("红" if local_board_color == "red" else "黄")
 		$LeftRail/Content/OpponentCard/Content/Role.text = "对手 · %s方" % ("黄" if opponent_board_color == "yellow" else "红")
-		$LeftRail/Content/LocalCard/Content/Meta.text = _piece_summary(local_board_color)
-		$LeftRail/Content/OpponentCard/Content/Meta.text = _piece_summary(opponent_board_color)
 		$LeftRail/Content/OpponentCard/Content/Name.text = _opponent_presence_text()
+	$LeftRail/Content/ResignButton.visible = _menu_open
+	_refresh_hud()
 	_present_terminal_result(has_state)
 	_log_runtime_state()
 
 
 func _network_status_text(has_state: bool) -> String:
+	if _force_return:
+		return "无法继续"
+	if has_state and (_awaiting_snapshot or _connection_state != "connected"):
+		return "恢复对局"
 	if _bounce_playing:
-		return "超点反弹"
+		return _animation_copy
 	if not has_state:
 		return "连接对局"
 	if _state.status in TERMINAL_STATUSES:
 		return "对局结束"
 	if not _state.pending_action.is_empty():
-		return "等待服务器确认"
+		return "确认中"
+	if not _turn_feedback.is_empty():
+		return _turn_feedback
 	return "你的回合" if _local_platform_color() == _state.next_color else "对手回合"
 
 
 func _network_turn_text(has_state: bool) -> String:
+	if _force_return:
+		return "连接失败"
+	if has_state and (_awaiting_snapshot or _connection_state != "connected"):
+		return "正在恢复棋盘"
 	if _bounce_playing:
 		return "飞机移动中"
 	if not has_state:
 		return "正在同步棋盘"
 	if _state.status in TERMINAL_STATUSES:
 		return "结果已确认"
+	if _turn_feedback == "认输未成功":
+		return "对局仍在进行"
+	if _turn_feedback in ["掷骰失败", "走子未成功"]:
+		return _turn_feedback
+	if _selected_index >= 0:
+		return "%d 号机 · 确认移动" % (_selected_index + 1)
 	if _state.pending_action.get("type") == "flight_chess.roll.requested":
 		return "正在生成骰点"
 	if _state.pending_action.get("type") == "flight_chess.move.requested":
 		return "正在确认走子"
+	if _resign_submitted:
+		return "正在提交认输"
+	if _turn_feedback == "无棋可走":
+		return "骰点 %d，无法移动" % _feedback_dice
+	if _turn_feedback == "再掷一次" and _local_platform_color() == _state.next_color:
+		return "6 点，继续你的回合"
 	if _local_platform_color() != _state.next_color:
 		return "等待对手"
 	return "选一架飞机" if _state.phase == "awaiting_move" else "请掷骰子"
 
 
 func _network_hint_text(has_state: bool) -> String:
+	if _force_return:
+		return "暂时无法恢复，请返回大厅"
 	if _bounce_playing:
-		return "到达尽头后，原路退回多余步数"
-	if not has_state or _awaiting_snapshot or _connection_state != "connected":
+		return "到达尽头后，原路退回多余步数" if _animation_copy == "超点反弹" else "落稳后更新回合与飞机计数"
+	if not has_state:
+		return "同步完成后，再开始掷骰"
+	if _awaiting_snapshot or _connection_state != "connected":
 		return "棋盘会保留，恢复同步后继续"
 	if _state.status in TERMINAL_STATUSES:
 		return "结果已由服务器确认"
 	if not _state.pending_action.is_empty():
 		return "操作已提交，棋盘将在确认后更新"
+	if _turn_feedback == "认输未成功":
+		return "认输未生效，可从菜单重试"
+	if _turn_feedback == "走子未成功":
+		return "骰点保留，可重新选择飞机"
+	if _turn_feedback == "掷骰失败":
+		return "棋局未变，可以重试"
 	if _local_platform_color() != _state.next_color:
 		return "对手正在%s" % ("选择飞机" if _state.phase == "awaiting_move" else "掷骰子")
 	if _state.phase == "awaiting_move":
 		return "掷出 %d，可移动的飞机已高亮" % _state.dice
-	return "掷出 6 可起飞，并奖励再掷一次"
+	return "确认骰点后，再选择飞机"
 
 
 func _present_terminal_result(has_state: bool) -> void:
-	if not has_state or _state.status not in TERMINAL_STATUSES:
+	if not has_state or _state.status not in TERMINAL_STATUSES or _bounce_playing:
 		_presented_result_signature = ""
 		$ResultPanel.present_details({})
 		$ResultScrim.visible = false
@@ -750,7 +856,6 @@ func _present_terminal_result(has_state: bool) -> void:
 			"outcome_label": "胜利" if local_won else "认输",
 			"title": "对手已认输" if local_won else "你已认输",
 			"support": "飞行棋终局已由服务器确认。",
-			"summary": [{"value": "%d 次" % max(_state.revision - 1, 0), "label": "已确认操作"}],
 			"review_available": false,
 		}
 	else:
@@ -758,10 +863,16 @@ func _present_terminal_result(has_state: bool) -> void:
 			"outcome": "won" if local_won else "lost",
 			"title": "全员抵达" if local_won else "这局差一点",
 			"support": "四架飞机已全部抵达终点。" if local_won else "对手率先完成了航程。",
-			"summary": [{"value": "%d 次" % _state.revision, "label": "已确认操作"}],
 			"review_available": false,
 		}
 	$ResultPanel.present_details(details)
+	HUD.layout_result(self,bool(_preview_dark))
+	var result_style: StyleBoxFlat = $ResultPanel.get_theme_stylebox("panel").duplicate()
+	var result_colors: Dictionary = GameboxTokens.DARK if _preview_dark else GameboxTokens.LIGHT
+	result_style.border_color = result_colors.primary if local_won else result_colors.outline if _state.status in ["cancelled","abandoned"] else FlightChessBoard.PLAYER_DARK.yellow
+	$ResultPanel.add_theme_stylebox_override("panel",result_style)
+	$ResultPanel.modulate.a = 0.0
+	_animate_result_panel.call_deferred(signature)
 	$ResultScrim.visible = true
 	print("GAMEBOX_MATCH_RESULT match=%s result=%s" % [_match_id, str(_state.result)])
 
@@ -875,15 +986,16 @@ func _schedule_ready_marker() -> void:
 
 func _log_automation_targets() -> void:
 	var targets := automation_targets()
-	if _match_id.is_empty() or targets.size() != 5:
+	if _match_id.is_empty() or targets.size() != 6:
 		return
-	print("GAMEBOX_FLIGHT_CHESS_TARGETS match=%s roll=%.6f,%.6f red0=%.6f,%.6f yellow0=%.6f,%.6f resign=%.6f,%.6f confirm=%.6f,%.6f" % [
+	print("GAMEBOX_FLIGHT_CHESS_TARGETS match=%s roll=%.6f,%.6f red0=%.6f,%.6f yellow0=%.6f,%.6f resign=%.6f,%.6f confirm=%.6f,%.6f menu=%.6f,%.6f" % [
 		_match_id,
 		(targets["roll"] as Vector2).x, (targets["roll"] as Vector2).y,
 		(targets["red0"] as Vector2).x, (targets["red0"] as Vector2).y,
 		(targets["yellow0"] as Vector2).x, (targets["yellow0"] as Vector2).y,
 		(targets["resign"] as Vector2).x, (targets["resign"] as Vector2).y,
 		(targets["confirm"] as Vector2).x, (targets["confirm"] as Vector2).y,
+		(targets["menu"] as Vector2).x, (targets["menu"] as Vector2).y,
 	])
 
 
@@ -946,8 +1058,268 @@ func _log_runtime_state() -> void:
 
 
 static func _empty_visual_pieces() -> Dictionary:
-	var result := {"red": [], "yellow": []}
-	for color in result:
-		for index in 4:
-			result[color].append({"zone": "hangar", "index": index})
-	return result
+	return {"red": [], "yellow": []}
+
+
+func _refresh_hud() -> void:
+	if not has_node("BoardStatus"):
+		return
+	var local_color := _local_board_color() if _started else "red"
+	if local_color.is_empty():
+		local_color = "red"
+	var opponent_color := "yellow" if local_color == "red" else "red"
+	var local_turn: bool = not _started or (_state != null and _state.next_color == _local_platform_color())
+	if _bounce_playing:
+		local_turn = _moving_color == local_color
+	var card_pieces: Dictionary = _moving_card_pieces if _bounce_playing and not _moving_card_pieces.is_empty() else _pieces
+	var paused: bool = _started and (_state == null or _state.revision < 0 or (_state.status != "active" and not _bounce_playing) or _awaiting_snapshot or _connection_state != "connected" or _resign_submitted)
+	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, "已连接" if not _started or _connection_state == "connected" else "连接中", card_pieces.get(local_color, []))
+	HUD.present_card(self, "OpponentCard", opponent_color, not local_turn and not paused, _opponent_presence_text() if _started and _state != null else "在线", card_pieces.get(opponent_color, []))
+	if paused:
+		$LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge.text = "暂停"
+		$LeftRail/Content/OpponentCard/BadgeOverlay/TurnBadge.text = "暂停"
+	$RightRail/Content/DiceLabel.text = "骰点 %d" % _dice_value if _dice_value > 0 else "等待掷骰"
+	$RightRail/Content/RuleLabel.text = "i  路线预览，确认后移动" if _selected_index >= 0 else "i  每次只移动一架飞机" if _dice_value > 0 else "i  掷出 6：可起飞，并再掷一次"
+	var confirmed: bool = not _started or (_state != null and _state.revision >= 0)
+	$Board.modulate.a = 1.0 if confirmed else 0.35
+	for name in ["LocalCard", "OpponentCard"]:
+		var content := get_node("LeftRail/Content/"+name+"/Content")
+		content.get_node("Stats").visible = confirmed
+		content.get_node("Meta").visible = not confirmed
+		if not confirmed:
+			content.get_node("Meta").text = "等待同步"
+	$BoardStatus.text = _animation_copy if _bounce_playing else "棋盘已同步 · 等待掷骰" if _selectable_indices.is_empty() else "选择飞机 · 查看路线"
+	if not confirmed:
+		$BoardStatus.text = "正在同步棋盘"
+		$RightRail/Content/DiceLabel.text = "等待同步"
+		$RightRail/Content/RuleLabel.text = "i  同步完成后才能操作"
+	elif _force_return:
+		$BoardStatus.text = "连接失败 · 棋盘已保留"
+		$RightRail/Content/RuleLabel.text = "i  返回大厅后可重新进入"
+	elif _resign_submitted:
+		$BoardStatus.text = "认输等待确认"
+		$RightRail/Content/RuleLabel.text = "i  确认后结束本局"
+	elif _started and _state != null and _state.status in TERMINAL_STATUSES and not _bounce_playing:
+		$BoardStatus.text = "对局已结束"
+		$RightRail/Content/RuleLabel.text = "i  结果已确认"
+	elif paused:
+		$BoardStatus.text = "保留最后确认的棋盘"
+		$RightRail/Content/RuleLabel.text = "i  恢复同步后继续对局"
+	elif _turn_feedback == "无棋可走":
+		$BoardStatus.text = "无法移动 · 已换手"
+		$RightRail/Content/RuleLabel.text = "i  非 6 不能从机库起飞"
+	$RightRail/Content/CancelSelection.visible = _selected_index >= 0 and (not _started or _can_select_piece())
+	var route: Array = []
+	if _selected_index >= 0 and _pieces.has(local_color):
+		var piece: Dictionary = _pieces[local_color][_selected_index]
+		var resolution := FlightChessState._resolve_move("black" if local_color == "red" else "white",piece,_dice_value)
+		if resolution.get("ok",false):
+			route = Motion.segments(local_color,_selected_index,piece,_dice_value,resolution.effect)
+			$BoardStatus.text = "%d 号机 · 路线预览" % (_selected_index+1)
+	var pending_piece: int = _state.pending_action.get("piece_index",-1) if _started and _state != null else -1
+	$Board.set_route_preview(route,pending_piece)
+	if pending_piece >= 0:
+		$BoardStatus.text = "%d 号机 · 等待确认" % (pending_piece+1)
+	var rolling: bool = _started and _state != null and _state.pending_action.get("type") == "flight_chess.roll.requested"
+	$RightRail/Content/DiceCard/Content/Dice.set_pending(rolling)
+	if rolling:
+		$RightRail/Content/DiceLabel.text = "等待骰点"
+	$RightRail/Content/RollButton.position.y = $Board.size.y - _hud_unit*116 if $RightRail/Content/CancelSelection.visible else $Board.size.y-maxf(96,_hud_unit*48)-_hud_unit*12
+	$RightRail/Content/DiceCard.position.y = $Board.size.y - _hud_unit * (206 if $RightRail/Content/CancelSelection.visible else 150)
+	$RightRail/Content/DiceLabel.position.y = $Board.size.y - _hud_unit * (192 if $RightRail/Content/CancelSelection.visible else 136)
+
+
+
+func _toggle_menu() -> void:
+	_menu_open = not _menu_open
+	if _menu_open and not _match_id.is_empty():
+		var target: Vector2 = automation_targets().resign
+		print("GAMEBOX_FLIGHT_CHESS_MENU_TARGET match=%s resign=%.6f,%.6f" % [_match_id,target.x,target.y])
+	for name in ["RulesButton", "ThemeButton", "ResignButton"]:
+		get_node("LeftRail/Content/" + name).visible = _menu_open
+
+
+func _show_rules() -> void:
+	_toggle_menu()
+	var overlay := Control.new()
+	overlay.name = "RulesOverlay"
+	overlay.z_index = 60
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var scrim := ColorRect.new()
+	scrim.color = $ResultScrim.color
+	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(scrim)
+	var panel := PanelContainer.new()
+	var unit: float = _hud_unit
+	var colors: Dictionary = GameboxTokens.DARK if _preview_dark else GameboxTokens.LIGHT
+	var style := HUD.box(colors.surface_container_low,colors.outline_variant,24*unit,unit)
+	style.content_margin_left = 20*unit
+	style.content_margin_right = 20*unit
+	style.content_margin_top = 20*unit
+	style.content_margin_bottom = 20*unit
+	panel.add_theme_stylebox_override("panel",style)
+	panel.position = size/2-Vector2(220,136)*unit
+	panel.size = Vector2(440,272)*unit
+	overlay.add_child(panel)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation",roundi(16*unit))
+	panel.add_child(content)
+	var title := Label.new()
+	title.text = "本局规则"
+	title.add_theme_font_size_override("font_size",roundi(22*unit))
+	content.add_child(title)
+	var copy := Label.new()
+	copy.text = "掷出 6 可起飞，并可再掷一次。\n落到同色格跳 4 格，飞行点沿捷径前进。\n撞到对手飞机，对方整组返回机库。\n归家超点走到尽头后原路退回。\n精确抵达终点，四架全部抵达获胜。"
+	copy.add_theme_font_size_override("font_size",roundi(13*unit))
+	copy.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(copy)
+	var close := Button.new()
+	close.text = "知道了"
+	close.custom_minimum_size.y = 48*unit
+	close.add_theme_font_size_override("font_size",roundi(14*unit))
+	close.pressed.connect(_close_rules)
+	content.add_child(close)
+	add_child(overlay)
+
+
+func _close_rules() -> void:
+	if has_node("RulesOverlay"):
+		var overlay := get_node("RulesOverlay")
+		remove_child(overlay)
+		overlay.queue_free()
+
+
+func _submit_selected_move() -> void:
+	if not _can_select_piece() or not _selectable_indices.has(_selected_index):
+		return
+	_last_action = "move"
+	if _client.request_flight_chess_move(_selected_index).is_empty():
+		_error_text = "操作失败，请重试"
+	_sync_ui()
+
+
+func _on_board_piece_pressed(color: String, index: int) -> void:
+	var members: Array = $Board._stack_members(color,_pieces[color][index])
+	if members.size() <= 1:
+		_on_piece_pressed(color,index)
+		return
+	_close_stack_picker()
+	var panel := PanelContainer.new()
+	panel.name = "StackPicker"
+	panel.z_index = 35
+	var row := HBoxContainer.new()
+	panel.add_child(row)
+	var unit: float = _hud_unit
+	for member in members:
+		var button := Button.new()
+		button.text = "%d 号" % (member+1)
+		button.custom_minimum_size = Vector2(48,48)*unit
+		button.add_theme_font_size_override("font_size",roundi(12*unit))
+		button.disabled = not _selectable_indices.has(member)
+		button.pressed.connect(func() -> void: _close_stack_picker(); _on_piece_pressed(color,member))
+		row.add_child(button)
+	var cancel := Button.new()
+	cancel.text = "取消"
+	cancel.custom_minimum_size = Vector2(48,48)*unit
+	cancel.add_theme_font_size_override("font_size",roundi(12*unit))
+	cancel.pressed.connect(_close_stack_picker)
+	row.add_child(cancel)
+	add_child(panel)
+	panel.position = $Board.position+Vector2(($Board.size.x-panel.get_combined_minimum_size().x)/2,$Board.size.y*0.68)
+
+
+func _close_stack_picker() -> void:
+	if has_node("StackPicker"):
+		var picker := get_node("StackPicker")
+		remove_child(picker)
+		picker.queue_free()
+
+
+func _primary_action_text(has_state: bool) -> String:
+	if _force_return:
+		return "返回大厅"
+	if not has_state or _awaiting_snapshot:
+		return "同步中…"
+	if _bounce_playing:
+		return "移动中…"
+	if _state.status in TERMINAL_STATUSES:
+		return "对局已结束"
+	if not _state.pending_action.is_empty():
+		return "确认中…"
+	if _local_platform_color() != _state.next_color:
+		return "等待对手"
+	if _can_select_piece():
+		return "确认移动" if _selected_index >= 0 else "在棋盘选飞机"
+	return "重新掷骰" if _turn_feedback == "掷骰失败" else "掷骰子"
+
+
+func _fit_resign_dialog() -> void:
+	# Bound callbacks disconnect automatically when the scene is freed.
+	get_tree().process_frame.connect(_queue_resign_layout, CONNECT_ONE_SHOT)
+
+
+func _queue_resign_layout() -> void:
+	get_tree().process_frame.connect(_finish_resign_layout, CONNECT_ONE_SHOT)
+
+
+func _finish_resign_layout() -> void:
+	# Wrapped labels must settle at the new width before their height is measured.
+	if not $ResignDialog.visible:
+		return
+	var dimensions: Vector2 = Vector2(420,200)*(_hud_unit)
+	$ResignDialog/Dialog.size = dimensions
+	$ResignDialog/Dialog.position = (size-dimensions)/2
+
+
+func _animate_result_panel(signature: String) -> void:
+	get_tree().process_frame.connect(_queue_result_layout.bind(signature), CONNECT_ONE_SHOT)
+
+
+func _queue_result_layout(signature: String) -> void:
+	get_tree().process_frame.connect(_finish_result_layout.bind(signature), CONNECT_ONE_SHOT)
+
+
+func _finish_result_layout(signature: String) -> void:
+	if signature != _presented_result_signature or not $ResultPanel.visible:
+		return
+	if _result_tween != null:
+		_result_tween.kill()
+	if $ResultPanel._entrance_tween != null:
+		$ResultPanel._entrance_tween.kill()
+	$ResultPanel.size = Vector2(544,220)*(_hud_unit)
+	var final_position: Vector2 = (size-$ResultPanel.size)/2
+	$ResultPanel.position = final_position+Vector2(0,24)
+	$ResultPanel.modulate.a = 0.0
+	_result_tween = create_tween().set_parallel(true)
+	_result_tween.tween_property($ResultPanel,"modulate:a",1.0,0.24)
+	_result_tween.tween_property($ResultPanel,"position",final_position,0.24).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+
+func _settle_rail_layout() -> void:
+	if not get_tree().process_frame.is_connected(_finish_rail_layout):
+		get_tree().process_frame.connect(_finish_rail_layout,CONNECT_ONE_SHOT)
+
+
+func _finish_rail_layout() -> void:
+	var regions := layout_for_size(size,_safe_rect())
+	if regions.is_empty():
+		return
+	_apply_rect($LeftRail,regions.left)
+	_apply_rect($RightRail,regions.right)
+
+
+func _log_selection_target() -> void:
+	if _match_id.is_empty() or _selected_index < 0:
+		return
+	var target: Vector2 = automation_targets().roll
+	print("GAMEBOX_FLIGHT_CHESS_SELECTION_TARGET match=%s confirm=%.6f,%.6f" % [_match_id,target.x,target.y])
+
+
+func _input(event: InputEvent) -> void:
+	if not _menu_open or not (event is InputEventMouseButton or event is InputEventScreenTouch) or not event.pressed:
+		return
+	for name in ["MenuButton", "RulesButton", "ThemeButton", "ResignButton"]:
+		if get_node("LeftRail/Content/"+name).get_global_rect().has_point(event.position):
+			return
+	_toggle_menu()
+	get_viewport().set_input_as_handled()

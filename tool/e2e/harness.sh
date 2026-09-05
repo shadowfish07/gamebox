@@ -3243,11 +3243,11 @@ wait_for_flight_chess_targets() {
 }
 
 wait_for_flight_chess_confirm_target() {
-	local serial="$1" match_id="$2" deadline=$((SECONDS + WAIT_SECONDS)) marker
+	local serial="$1" match_id="$2" kind="${3:-CONFIRM}" deadline=$((SECONDS + WAIT_SECONDS)) marker
 	while ((SECONDS < deadline)); do
 		marker="$(
 			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
-				| sed -n "/GAMEBOX_FLIGHT_CHESS_CONFIRM_TARGET match=$match_id /p" \
+				| sed -n "/GAMEBOX_FLIGHT_CHESS_${kind}_TARGET match=$match_id /p" \
 				| tail -1
 		)"
 		if [[ -n "$marker" ]]; then
@@ -3317,7 +3317,16 @@ tap_flight_chess_hangar_plane() {
 }
 
 tap_flight_chess_resign() {
-	tap_flight_chess_target "$1" resign
+	local serial="$1" marker
+	tap_flight_chess_target "$serial" menu || return 1
+	marker="$(wait_for_flight_chess_confirm_target "$serial" "$FLIGHT_MATCH_ID" MENU)" || return 1
+	tap_flight_chess_marker_target "$serial" resign "$marker"
+}
+
+tap_flight_chess_confirm_move() {
+	local serial="$1" marker
+	marker="$(wait_for_flight_chess_confirm_target "$serial" "$FLIGHT_MATCH_ID" SELECTION)" || return 1
+	tap_flight_chess_marker_target "$serial" confirm "$marker"
 }
 
 tap_flight_chess_confirm_resign() {
@@ -3431,7 +3440,9 @@ refresh_game_log_boundary "$flight_serial" flight-chess-pending-move \
 	|| fail "could not establish the Flight Chess pending-move boundary"
 pause_e2e_server || fail "could not pause the server before the Flight Chess move"
 tap_flight_chess_hangar_plane "$flight_serial" "$flight_color" \
-	|| fail "$flight_color player could not submit a Flight Chess plane"
+	|| fail "$flight_color player could not select a Flight Chess plane"
+tap_flight_chess_confirm_move "$flight_serial" \
+	|| fail "$flight_color player could not confirm the selected Flight Chess plane"
 wait_for_log_marker "$flight_serial" "GAMEBOX_FLIGHT_CHESS_PENDING match=$FLIGHT_MATCH_ID revision=$flight_revision pending=true" \
 	|| fail "Flight Chess move did not remain pending before authority"
 [[ "$(jq -r '.revision' <<<"$(flight_chess_match_show "$FLIGHT_MATCH_ID")")" == "$flight_revision" ]] \

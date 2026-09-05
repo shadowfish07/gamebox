@@ -12,6 +12,10 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name":"flight chess menu actions receive pointer input above player cards", "run":_menu_pointer_input},
+		{"name":"flight chess responsive HUD keeps cards and confirmation controls inside rails", "run":_responsive_hud_bounds},
+		{"name":"flight chess selection cancels and rejected moves retain the die", "run":_selection_recovery},
+		{"name":"flight chess queues confirmed animations and delays goal result", "run":_animation_queue},
 		{"name": "flight chess bounce locks input and cancels on sync", "run": _bounce_lifecycle},
 		{"name": "flight chess scene declares sensor landscape for mobile", "run": _declares_mobile_landscape},
 		{"name": "flight chess scene uses a landscape virtual pixel base", "run": _uses_landscape_content_scale},
@@ -61,9 +65,9 @@ static func _keeps_board_dominant() -> bool:
 		if not _check(is_equal_approx(board.size.x, board.size.y), "board stretched at %s" % viewport) \
 			or not _check(board.size.x > left.size.x and board.size.x > right.size.x, "board stopped being dominant at %s" % viewport) \
 			or not _check(left.end.x < board.position.x and board.end.x < right.position.x, "rail overlaps the board at %s" % viewport) \
-			or not _check(left.position.x >= 24.0 and left.position.x <= 40.0, "left rail is not anchored to the usable edge at %s" % viewport) \
-			or not _check(right.end.x <= viewport.x - 24.0 and right.end.x >= viewport.x - 40.0, "right rail is not anchored to the usable edge at %s" % viewport) \
-			or not _check(board.get_center().is_equal_approx(viewport * 0.5), "board is not centered in the usable viewport at %s" % viewport):
+			or not _check(left.position.x >= 16.0 and left.position.x <= 24.0, "left rail is not anchored to the usable edge at %s" % viewport) \
+			or not _check(right.end.x <= viewport.x - 16.0 and right.end.x >= viewport.x - 24.0, "right rail is not anchored to the usable edge at %s" % viewport) \
+			or not _check(is_equal_approx(board.get_center().y,viewport.y*0.5) and is_equal_approx(board.position.x-left.end.x,right.position.x-board.end.x), "board is not vertically centered with balanced rail gaps at %s" % viewport):
 			return false
 	return true
 
@@ -96,6 +100,8 @@ static func _keeps_standard_actions_visible() -> bool:
 		and _check(hint.get_line_count() >= 2, "standard phone does not wrap the long selection hint") \
 		and _check(right_rail.get_global_rect().encloses(hint.get_global_rect()), "standard phone hint escapes the right rail")
 	scene._on_piece_pressed("red", 0)
+	scene._on_roll_pressed()
+	scene.get_node("Board")._bounce_tween.custom_step(5.0)
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	var turn_label := scene.get_node("RightRail/Content/TurnLabel") as Label
@@ -115,7 +121,7 @@ static func _exposes_normalized_touch_targets() -> bool:
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	var targets: Dictionary = scene.automation_targets()
-	var result := _check(targets.size() == 5, "runtime touch targets were incomplete")
+	var result := _check(targets.size() == 6, "runtime touch targets were incomplete")
 	for name in targets:
 		var point: Vector2 = targets[name]
 		result = result and _check(
@@ -156,9 +162,9 @@ static func _respects_phone_safe_areas() -> bool:
 	)
 	var result := _check(is_equal_approx(board.size.x, board.size.y), "safe-area board stretched") \
 		and _check(left.end.x < board.position.x and board.end.x < right.position.x, "safe-area rails overlap the board") \
-		and _check(is_equal_approx(right.end.x, safe_rect.end.x - 32.0), "right rail is not anchored to the 16dp page inset") \
-		and _check(is_equal_approx(left.position.x, safe_rect.position.x + 32.0), "left rail is not anchored to the 16dp page inset") \
-		and _check(board.get_center().is_equal_approx(safe_rect.get_center()), "safe-area board is not centered") \
+		and _check(is_equal_approx(right.end.x, safe_rect.end.x - clampf(safe_rect.size.y*0.022,16,24)), "right rail is not anchored to the compact game inset") \
+		and _check(is_equal_approx(left.position.x, safe_rect.position.x + clampf(safe_rect.size.y*0.022,16,24)), "left rail is not anchored to the compact game inset") \
+		and _check(is_equal_approx(board.get_center().y,safe_rect.get_center().y) and is_equal_approx(board.position.x-left.end.x,right.position.x-board.end.x), "safe-area board lost its centered height or balanced gaps") \
 		and _check(FlightChessController.layout_is_compact(short_safe_layout), "short safe-area phone did not switch to compact controls")
 	var scene = FlightChessScene.instantiate()
 	(scene as Control).set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -202,6 +208,9 @@ static func _rolls_before_selection() -> bool:
 		and _check(board.selectable_piece_indices == [0, 1, 2, 3], "six did not enable manual plane selection") \
 		and _check((scene.get_node("RightRail/Content/HintLabel") as Label).text.contains("选择"), "rolled state does not prompt plane selection")
 	scene._on_piece_pressed("red", 0)
+	result = result and _check(scene.piece_state("red",0).zone == "hangar", "selection moved a plane before confirmation")
+	scene._on_roll_pressed()
+	scene.get_node("Board")._bounce_tween.custom_step(5.0)
 	result = result \
 		and _check(scene.piece_state("red", 0)["zone"] == "launch", "selected hangar plane did not move to launch") \
 		and _check(scene.dice_value == 0, "resolved selection retained the die") \
@@ -232,10 +241,17 @@ static func _waits_for_authoritative_actions() -> bool:
 	if not _check(scene.dice_value == 6 and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
 		return _network_cleanup(scene)
 	scene._on_piece_pressed("red", 1)
+	if not _check(client.move_requests.is_empty() and not board._route_preview.is_empty(), "selection submitted instead of previewing"):
+		return _network_cleanup(scene)
+	scene._on_roll_pressed()
+	scene._on_roll_pressed()
 	if not _check(client.move_requests == [1], "selected plane was not submitted") \
 		or not _check(scene.piece_state("red", 1)["zone"] == "hangar", "plane moved before server confirmation"):
 		return _network_cleanup(scene)
 	client.accept_event(_network_move(2, 1))
+	if not _check(roll_button.disabled and scene._bounce_playing, "accepted move did not lock animation"):
+		return _network_cleanup(scene)
+	board._bounce_tween.custom_step(5.0)
 	return _network_cleanup(
 		scene,
 		_check(scene.piece_state("red", 1)["zone"] == "launch", "accepted plane did not launch") \
@@ -280,6 +296,8 @@ static func _plays_natural_match_to_goal() -> bool:
 			if effect_counts.has(effect):
 				effect_counts[effect] += 1
 		client.accept_event(event)
+		if scene._bounce_playing:
+			scene.get_node("Board")._bounce_tween.custom_step(5.0)
 		if not _check(client.state.revision == previous_revision + 1, "natural match event was not accepted in sequence"):
 			return _network_cleanup(scene)
 		await (Engine.get_main_loop() as SceneTree).process_frame
@@ -288,7 +306,7 @@ static func _plays_natural_match_to_goal() -> bool:
 	for piece_index in range(4):
 		all_red_finished = all_red_finished and scene.piece_state("red", piece_index)["zone"] == "finished"
 	var result_panel := scene.get_node("ResultPanel") as PanelContainer
-	var local_summary := scene.get_node("LeftRail/Content/LocalCard/Content/Meta") as Label
+	var local_summary := scene.get_node("LeftRail/Content/LocalCard/Content/Stats")
 	return _network_cleanup(
 		scene,
 		_check(client.state.status == "finished" and client.state.result == "goal", "natural match did not end by goal") \
@@ -298,7 +316,7 @@ static func _plays_natural_match_to_goal() -> bool:
 			and _check(move_counts["black"] > 0 and move_counts["white"] > 0, "natural match did not exercise both players") \
 			and _check(effect_counts["jump"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised a same-color jump") \
 			and _check(effect_counts["shortcut"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised the long shortcut") \
-			and _check(local_summary.text == "4 架抵达", "natural winner summary still described finished planes as in transit") \
+			and _check(local_summary.counts == [0,0,4], "natural winner summary still described finished planes as in transit") \
 			and _check(result_panel.visible and result_panel.get_node("Content/Result").text == "全员抵达", "goal victory did not render the natural result panel"),
 	)
 
@@ -411,7 +429,7 @@ static func _bounce_lifecycle() -> bool:
 	client.event_received.emit(move)
 	if not _check(scene._bounce_playing, "duplicate event canceled animation"):
 		return _network_cleanup(scene)
-	await (Engine.get_main_loop() as SceneTree).create_timer(1.0).timeout
+	await (Engine.get_main_loop() as SceneTree).create_timer(1.2).timeout
 	if not _check(not scene._bounce_playing and not scene.get_node("RightRail/Content/RollButton").disabled, "six did not unlock after animation"):
 		return _network_cleanup(scene)
 	snapshot["revision"] = 12
@@ -495,3 +513,115 @@ class FakeMatchClient:
 			push_error("fake Flight Chess event invalid")
 			return
 		event_received.emit(envelope)
+
+
+static func _selection_recovery() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	client.accept_snapshot(_network_snapshot(0))
+	client.accept_event(_network_roll(1))
+	scene._on_piece_pressed("red",1)
+	scene.get_node("RightRail/Content/CancelSelection").pressed.emit()
+	if not _check(scene._selected_index == -1 and scene.get_node("Board")._route_preview.is_empty() and client.move_requests.is_empty(),"cancel submitted or retained the preview"):
+		return _network_cleanup(scene)
+	scene._on_piece_pressed("red",2)
+	scene._on_roll_pressed()
+	if not _check(scene.get_node("Board")._pending_index == 2 and not scene.get_node("Board")._route_preview.is_empty(),"pending lost its plane-level feedback"):
+		return _network_cleanup(scene)
+	client.state.clear_pending(MOVE_ACTION_ID)
+	client.match_error.emit("invalid_move")
+	if not _check(scene.dice_value == 6 and scene._selectable_indices == [0,1,2,3] and scene._selected_index == -1,"rejection did not preserve the authoritative die and choices"):
+		return _network_cleanup(scene)
+	scene._on_piece_pressed("red",0)
+	client.snapshot_sync_started.emit()
+	return _network_cleanup(scene,_check(scene.get_node("Board")._route_preview.is_empty() and scene.get_node("RightRail/Content/RollButton").disabled,"resync retained a selectable route"))
+
+
+static func _animation_queue() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	client.accept_snapshot(_network_snapshot(0))
+	client.accept_event(_network_roll(1))
+	client.accept_event(_network_move(2,0))
+	var first: Tween = scene.get_node("Board")._bounce_tween
+	client.accept_event(_network_roll(3))
+	var next := FlightChessFullGameDriver.next_event(client.state,MATCH_ID)
+	client.accept_event(next)
+	if not _check(scene.get_node("Board")._bounce_tween == first and scene._event_queue.size() == 2,"incoming turn interrupted a confirmed animation"):
+		return _network_cleanup(scene)
+	first.custom_step(5.0)
+	if not _check(scene._bounce_playing and scene._event_queue.is_empty(),"queued move was not animated after its predecessor"):
+		return _network_cleanup(scene)
+	scene.get_node("Board")._bounce_tween.custom_step(5.0)
+	var snapshot := _network_snapshot(10)
+	snapshot.payload.phase = "awaiting_move"
+	snapshot.payload.dice = 1
+	for i in 4:
+		snapshot.payload.pieces.black[i] = {"zone":"finished","index":0}
+	snapshot.payload.pieces.black[0] = {"zone":"home","index":5}
+	client.accept_snapshot(snapshot)
+	client.accept_event(FlightChessFullGameDriver.next_event(client.state,MATCH_ID))
+	if not _check(client.state.status == "finished" and not scene.get_node("ResultPanel").visible,"goal result appeared before arrival animation"):
+		return _network_cleanup(scene)
+	if not _check(scene.get_node("LeftRail/Content/LocalCard/Content/Stats").counts == [1,0,3] and scene.get_node("LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge").text == "当前","arrival updated counters or turn before landing"):
+		return _network_cleanup(scene)
+	scene.get_node("Board")._bounce_tween.custom_step(5.0)
+	return _network_cleanup(scene,_check(scene.get_node("ResultPanel").visible and scene.get_node("LeftRail/Content/LocalCard/Content/Stats").counts == [0,0,4],"arrival did not finish with the result and icon counters"))
+
+
+static func _responsive_hud_bounds() -> bool:
+	for dimensions in [Vector2(1920,1080),Vector2(2400,1080)]:
+		var scene := FlightChessScene.instantiate() as Control
+		scene.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		scene.size = dimensions
+		scene.set_preview_safe_insets(Vector4(72,24,36,24))
+		(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+		for i in 5:
+			await (Engine.get_main_loop() as SceneTree).process_frame
+		scene.set_preview_state("selected")
+		for i in 3:
+			await (Engine.get_main_loop() as SceneTree).process_frame
+		for pair in [["LeftRail","Content/OpponentCard"],["LeftRail","Content/LocalCard"],["RightRail","Content/RollButton"],["RightRail","Content/CancelSelection"]]:
+			var rail: Control = scene.get_node(pair[0])
+			var child: Control = rail.get_node(pair[1])
+			if not _check(rail.get_global_rect().grow(0.01).encloses(child.get_global_rect()),"responsive HUD overflow: %s at %s rail=%s child=%s" % [pair[1],dimensions,rail.get_global_rect(),child.get_global_rect()]):
+				scene.free()
+				return false
+		var action: Control = scene.get_node("RightRail/Content/RollButton")
+		var cancel: Control = scene.get_node("RightRail/Content/CancelSelection")
+		if not _check(action.get_global_rect().end.y <= cancel.global_position.y,"confirm and cancel overlap"):
+			scene.free()
+			return false
+		scene.free()
+	return true
+
+
+static func _click_control(control: Control) -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	for pressed in [true,false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = control.get_global_rect().get_center()
+		event.global_position = event.position
+		event.pressed = pressed
+		tree.root.push_input(event,true)
+		await tree.process_frame
+
+
+static func _menu_pointer_input() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	client.accept_snapshot(_network_snapshot(1))
+	for i in 5:
+		await (Engine.get_main_loop() as SceneTree).process_frame
+	await _click_control(scene.get_node("LeftRail/Content/MenuButton"))
+	await _click_control(scene.get_node("LeftRail/Content/ResignButton"))
+	for i in 4:
+		await (Engine.get_main_loop() as SceneTree).process_frame
+	if not _check(scene.get_node("ResignDialog").visible,"player card intercepted the visible menu action"):
+		return _network_cleanup(scene)
+	await _click_control(scene.get_node("ResignDialog/Dialog/Content/Actions/CancelButton"))
+	return _network_cleanup(scene,_check(client.resign_requests == 0 and not scene.get_node("ResignDialog").visible,"cancel target did not preserve the match"))

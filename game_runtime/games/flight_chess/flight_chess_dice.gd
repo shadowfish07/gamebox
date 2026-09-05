@@ -8,6 +8,8 @@ var value: int:
 	get: return _value
 	set(next_value): set_value(next_value)
 
+var _pending := false
+var _phase := 0.0
 var _value := 0
 
 
@@ -50,7 +52,9 @@ func _draw() -> void:
 	style.shadow_size = roundi(side * 0.055)
 	style.shadow_offset = Vector2(0.0, side * 0.035)
 	draw_style_box(style, rect)
-	if _value == 0:
+	if _pending:
+		draw_arc(rect.get_center(),rect.size.x*0.23,_phase,_phase+PI*1.5,36,get_theme_color("pip_color", "FlightChessDice"),rect.size.x*0.045,true)
+	elif _value == 0:
 		_draw_idle_mark(rect)
 	else:
 		_draw_pips(rect)
@@ -58,34 +62,16 @@ func _draw() -> void:
 
 func _draw_idle_mark(rect: Rect2) -> void:
 	var center := rect.get_center()
-	var color := get_theme_color("pip_color", "FlightChessDice")
-	var radius := rect.size.x * 0.24
-	draw_circle(center, radius, Color(color, GameboxTokens.GAME["board_side_camp_alpha"]))
-	draw_arc(center, radius, -0.22, PI * 1.08, 28, Color(color, GameboxTokens.GAME["pending_overlay_alpha"]), maxf(2.0, rect.size.x * 0.025), true)
-	draw_arc(center, radius, PI - 0.22, PI * 2.08, 28, Color(color, GameboxTokens.GAME["board_grid_alpha"]), maxf(2.0, rect.size.x * 0.018), true)
-	var direction := Vector2.RIGHT.rotated(-0.22)
-	var tip := center + direction * radius
-	var perpendicular := Vector2(-direction.y, direction.x)
-	draw_colored_polygon(PackedVector2Array([
-		tip,
-		tip - direction * rect.size.x * 0.09 + perpendicular * rect.size.x * 0.05,
-		tip - direction * rect.size.x * 0.09 - perpendicular * rect.size.x * 0.05,
-	]), color)
-	_draw_plane_mark(center, rect.size.x * 0.17, color)
-
-
-func _draw_plane_mark(center: Vector2, radius: float, color: Color) -> void:
-	var source := [
-		Vector2(0.92, 0.0), Vector2(0.2, -0.16), Vector2(-0.14, -0.78),
-		Vector2(-0.36, -0.78), Vector2(-0.22, -0.13), Vector2(-0.74, -0.34),
-		Vector2(-0.88, -0.18), Vector2(-0.42, 0.0), Vector2(-0.88, 0.18),
-		Vector2(-0.74, 0.34), Vector2(-0.22, 0.13), Vector2(-0.36, 0.78),
-		Vector2(-0.14, 0.78), Vector2(0.2, 0.16),
-	]
-	var points := PackedVector2Array()
-	for point in source:
-		points.append(center + point * radius)
-	draw_colored_polygon(points, color)
+	var ink := get_theme_color("outline_color", "FlightChessDice")
+	var unit := rect.size.x / 64.0
+	var lines := [[Vector2(0,-20),Vector2(18,-10),Vector2(18,10),Vector2(0,20),Vector2(-18,10),Vector2(-18,-10),Vector2(0,-20)],[Vector2(-18,-10),Vector2(0,0),Vector2(18,-10)],[Vector2(0,0),Vector2(0,20)]]
+	for line in lines:
+		var points := PackedVector2Array()
+		for point in line:
+			points.append(center+point*unit)
+		draw_polyline(points,ink,2*unit,true)
+	for point in [Vector2(0,-11),Vector2(-10,-2),Vector2(-6,10),Vector2(7,1),Vector2(12,-2),Vector2(7,11)]:
+		draw_circle(center+point*unit,1.7*unit,ink)
 
 
 func _draw_pips(rect: Rect2) -> void:
@@ -104,3 +90,14 @@ func _draw_pips(rect: Rect2) -> void:
 	var radius := rect.size.x * 0.064
 	for key in layout[_value]:
 		draw_circle(positions[key], radius, get_theme_color("pip_color", "FlightChessDice"))
+
+
+func set_pending(pending: bool) -> void:
+	_pending = pending
+	set_process(pending)
+	queue_redraw()
+
+
+func _process(delta: float) -> void:
+	_phase = fmod(_phase+delta*TAU,TAU)
+	queue_redraw()

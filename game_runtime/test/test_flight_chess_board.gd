@@ -1,10 +1,13 @@
 extends RefCounted
 
+const Motion = preload("res://games/flight_chess/flight_chess_motion.gd")
+const State = preload("res://games/flight_chess/flight_chess_state.gd")
 const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd")
 
 
 static func cases() -> Array:
 	return [
+		{"name":"flight chess presentation paths end at the authoritative destination", "run":_motion_destinations},
 		{"name": "flight chess board exposes the classic 52-space topology", "run": _exposes_classic_topology},
 		{"name": "flight chess board keeps its four route quadrants rotationally symmetric", "run": _keeps_route_quadrants_symmetric},
 		{"name": "flight chess board aligns straight route cells edge to edge", "run": _aligns_straight_route_cells},
@@ -224,3 +227,32 @@ static func _check(condition: bool, message: String) -> bool:
 	if not condition:
 		push_error(message)
 	return condition
+
+
+static func _motion_destinations() -> bool:
+	var board := FlightChessBoard.new()
+	for color in ["red","yellow"]:
+		for progress in range(-1,57):
+			var piece: Dictionary
+			if progress == -1:
+				piece = {"zone":"hangar","index":0}
+			elif progress == 0:
+				piece = {"zone":"launch","index":0}
+			elif progress <= 50:
+				piece = {"zone":"main","index":(FlightChessBoard.PATH_STARTS[color]+progress-1)%52}
+			else:
+				piece = {"zone":"home","index":progress-51}
+			for roll in range(1,7):
+				var resolved := State._resolve_move("black" if color == "red" else "white",piece,roll)
+				if not resolved.get("ok",false):
+					continue
+				var segments := Motion.segments(color,0,piece,roll,resolved.effect)
+				if not _check(segments[0].from == board._logical_piece_center(color,piece) and segments[-1].to == board._logical_piece_center(color,resolved.to),"presentation path diverges from authority: %s %d + %d" % [color,progress,roll]):
+					board.free()
+					return false
+				for i in range(1,segments.size()):
+					if not _check(segments[i-1].to == segments[i].from,"presentation path skips between segments"):
+						board.free()
+						return false
+	board.free()
+	return true

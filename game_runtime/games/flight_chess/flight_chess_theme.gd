@@ -9,9 +9,18 @@ const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd
 static func create(dark: bool) -> Theme:
 	var colors: Dictionary = GameboxTokens.DARK if dark else GameboxTokens.LIGHT
 	var theme := GameboxTheme.create(dark)
+	var body := SystemFont.new()
+	body.font_names = PackedStringArray(["PingFang SC", "Noto Sans CJK SC", "sans-serif"])
+	body.font_weight = 400
+	theme.default_font = body
+	var shadow: Color = colors.shadow
+	shadow.a = 0.0
+	theme.set_color("font_shadow_color", "Label", shadow)
 	var semibold := SystemFont.new()
+	semibold.font_names = body.font_names
 	semibold.font_weight = 650
 	var bold := SystemFont.new()
+	bold.font_names = body.font_names
 	bold.font_weight = 750
 
 	for pair in [

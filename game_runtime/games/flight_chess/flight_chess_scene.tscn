@@ -1,10 +1,9 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_board.gd" id="2_board"]
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_dice.gd" id="3_dice"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_back_button.tscn" id="4_back"]
-[ext_resource type="Script" path="res://games/flight_chess/flight_chess_backdrop.gd" id="5_backdrop"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_connection_banner.tscn" id="6_connection"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_snackbar.tscn" id="7_snackbar"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="8_confirmation"]
@@ -28,7 +27,6 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 theme_type_variation = &"FlightChessBackground"
-script = ExtResource("5_backdrop")
 
 [node name="LeftRail" type="PanelContainer" parent="."]
 offset_left = 24.0
@@ -37,7 +35,7 @@ offset_right = 224.0
 offset_bottom = 516.0
 theme_type_variation = &"FlightChessRail"
 
-[node name="Content" type="VBoxContainer" parent="LeftRail"]
+[node name="Content" type="Control" parent="LeftRail"]
 layout_mode = 2
 
 [node name="BackButton" parent="LeftRail/Content" instance=ExtResource("4_back")]
@@ -77,12 +75,12 @@ text = "对手 · 黄方"
 [node name="Name" type="Label" parent="LeftRail/Content/OpponentCard/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessPlayerName"
-text = "纸飞机"
+text = "在线"
 
 [node name="Meta" type="Label" parent="LeftRail/Content/OpponentCard/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessPlayerMeta"
-text = "2 架在途 · 2 架待机"
+text = "等待同步"
 autowrap_mode = 2
 
 [node name="Spacer" type="Control" parent="LeftRail/Content"]
@@ -104,12 +102,12 @@ text = "你 · 红方"
 [node name="Name" type="Label" parent="LeftRail/Content/LocalCard/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessPlayerName"
-text = "飞行员"
+text = "已连接"
 
 [node name="Meta" type="Label" parent="LeftRail/Content/LocalCard/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessPlayerMeta"
-text = "1 架在途 · 3 架待机"
+text = "等待同步"
 autowrap_mode = 2
 
 [node name="Board" type="Control" parent="."]
@@ -126,7 +124,7 @@ offset_right = 936.0
 offset_bottom = 516.0
 theme_type_variation = &"FlightChessRail"
 
-[node name="Content" type="VBoxContainer" parent="RightRail"]
+[node name="Content" type="Control" parent="RightRail"]
 layout_mode = 2
 
 [node name="StatusLabel" type="Label" parent="RightRail/Content"]

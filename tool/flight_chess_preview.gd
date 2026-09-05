@@ -97,6 +97,8 @@ func _play_full_game() -> void:
 			if not await _capture_move_milestone(payload, captured_milestones):
 				quit(1)
 				return
+		if _scene._bounce_playing:
+			await _scene.get_node("Board")._bounce_tween.finished
 		await process_frame
 		if _step_delay > 0.0:
 			await create_timer(_step_delay).timeout
@@ -124,6 +126,7 @@ func _submit_local_action(event: Dictionary) -> bool:
 		_scene._on_roll_pressed()
 	else:
 		_scene._on_piece_pressed("red", event["payload"]["pieceIndex"])
+		_scene._on_roll_pressed()
 	await process_frame
 	return not _client.state.pending_action.is_empty()
 
@@ -171,7 +174,7 @@ func _validate_finished_match(counts: Dictionary) -> bool:
 		and _client.roll_requests == counts["black_rolls"] and _client.move_requests == counts["black_moves"] \
 		and counts["jumps"] > 0 and counts["shortcuts"] > 0 \
 		and all_red_finished and result_panel.visible \
-		and _scene.get_node("LeftRail/Content/LocalCard/Content/Meta").text == "4 架抵达" \
+		and _scene.get_node("LeftRail/Content/LocalCard/Content/Stats").counts == [0,0,4] \
 		and result_panel.get_node("Content/Result").text == "全员抵达"
 	if not valid:
 		push_error("Flight Chess full-game preview did not reach a valid goal result")

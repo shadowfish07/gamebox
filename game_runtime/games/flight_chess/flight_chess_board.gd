@@ -6,7 +6,7 @@ signal piece_pressed(color: String, index: int)
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
 const BOARD_UNITS := 600.0
-const LOCAL_PADDING := 10.0
+const LOCAL_PADDING := 0.0
 const MIN_LANE_CLEARANCE := 40.0
 const LAUNCH_EDGE_CLEARANCE := 28.0
 const EMPTY_HIT := {}
@@ -121,6 +121,11 @@ var pressed_piece_index: int:
 	get: return _pressed_piece_index
 	set(_value): pass
 
+var _paper: Color = BOARD_PAPER
+var _route_preview: Array = []
+var _captured_flights: Array = []
+var _impact := {}
+var _pending_index := -1
 var _bounce := {}
 var _bounce_tween: Tween
 var _pieces := {}
@@ -215,42 +220,13 @@ func present(
 	return true
 
 
-# Animate only confirmed overshoots; the underlying pieces remain authoritative.
-func animate_home_bounce(color: String, index: int, from_index: int, roll: int) -> Tween:
-	cancel_home_bounce()
-	_bounce = {"color": color, "index": index, "point": HOME_STRETCHES[color][from_index]}
-	_bounce_tween = create_tween()
-	for step in range(1, roll + 1):
-		var progress := from_index + step
-		if progress > 6:
-			progress = 12 - progress
-		var target: Vector2 = FINISH_POINTS[color] if progress == 6 else HOME_STRETCHES[color][progress]
-		_bounce_tween.tween_method(_set_bounce_point, _bounce_path_point(color, from_index, step - 1), target, 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_bounce_tween.tween_callback(func() -> void:
-		_bounce.clear()
-		queue_redraw()
-	)
-	queue_redraw()
-	return _bounce_tween
-
-
-func _bounce_path_point(color: String, from_index: int, step: int) -> Vector2:
-	var progress := from_index + step
-	if progress > 6:
-		progress = 12 - progress
-	return FINISH_POINTS[color] if progress == 6 else HOME_STRETCHES[color][progress]
-
-
-func _set_bounce_point(point: Vector2) -> void:
-	_bounce["point"] = point
-	queue_redraw()
-
-
 func cancel_home_bounce() -> void:
 	if _bounce_tween != null:
 		_bounce_tween.kill()
 		_bounce_tween = null
 	_bounce.clear()
+	_captured_flights.clear()
+	_impact.clear()
 	queue_redraw()
 
 
@@ -338,6 +314,7 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
+	_paper = BOARD_PAPER.lerp(BOARD_INK,0.10) if get_theme_color("font_color","Label").get_luminance() > 0.5 else BOARD_PAPER
 	var rect := board_rect()
 	if rect.size.x <= 0.0:
 		return
@@ -347,17 +324,24 @@ func _draw() -> void:
 	for color in PLAYER_ORDER:
 		_draw_shortcut(color)
 	_draw_main_route()
-	for color in PLAYER_ORDER:
-		_draw_home_lane_backdrop(color)
 	_draw_finish_center()
 	for color in PLAYER_ORDER:
 		_draw_home_lane_slots(color)
 	for color in PLAYER_ORDER:
 		_draw_launch_pad(color)
+	_draw_route_preview()
 	for color in PLAYER_ORDER:
 		_draw_color_pieces(color)
 	if not _bounce.is_empty():
-		_draw_piece(_logical_to_pixel(_bounce["point"]), 18.0 * _scale(), _bounce["color"])
+		_draw_piece(_logical_to_pixel(_bounce["point"]), 18.0 * _scale() * _bounce.get("scale",1.0), _bounce["color"], _bounce.get("scale",1.0))
+		if _bounce.get("scale",1.0) > 0.5:
+			_draw_piece_number(_logical_to_pixel(_bounce.point),_bounce.index)
+	for flight in _captured_flights:
+		_draw_piece(_logical_to_pixel(flight.point),18*_scale(),flight.color)
+		_draw_piece_number(_logical_to_pixel(flight.point),flight.index)
+	if not _impact.is_empty():
+		var opacity: float = 1.0-_impact.phase
+		draw_arc(_logical_to_pixel(_impact.point), (12+20*_impact.phase)*_scale(),0,TAU,40,Color(PLAYER_COLORS[_impact.color],opacity),4*_scale(),true)
 
 
 func _draw_board_surface(rect: Rect2) -> void:
@@ -369,31 +353,23 @@ func _draw_board_surface(rect: Rect2) -> void:
 		BOARD_INK,
 		0.0,
 	)
-	_draw_rounded_rect(rect, BOARD_PAPER, 13.0 * scale, BOARD_INK, maxf(2.0, scale * 3.0))
-	var center := _logical_to_pixel(Vector2(300, 300))
-	draw_circle(center, 111.0 * scale, Color(BOARD_INK, GameboxTokens.GAME["board_center_alpha"]))
-	draw_arc(center, 111.0 * scale, 0.0, TAU, 64, Color(BOARD_INK, GameboxTokens.GAME["board_side_camp_alpha"]), maxf(1.0, scale), true)
+	_draw_rounded_rect(rect, _paper, 16.0 * scale, Color(BOARD_INK,GameboxTokens.GAME["piece_shadow_alpha"]), maxf(1.0, scale))
+	_draw_rounded_rect(rect.grow(-14 * scale), _paper, 20 * scale, Color(BOARD_INK, GameboxTokens.GAME["board_target_camp_alpha"]), scale, false)
 
 
 func _draw_hangar(color: String) -> void:
 	var logical_rect: Rect2 = HANGAR_RECTS[color]
 	var pixel_rect := _logical_rect_to_pixel(logical_rect)
 	var scale := _scale()
-	_draw_rounded_rect(
-		Rect2(pixel_rect.position + Vector2(0.0, 2.5) * scale, pixel_rect.size),
-		Color(BOARD_INK, GameboxTokens.GAME["piece_shadow_alpha"]),
-		11.0 * scale,
-		BOARD_INK,
-		0.0,
-	)
-	_draw_rounded_rect(pixel_rect, PLAYER_COLORS[color], 11.0 * scale, PLAYER_DARK[color], 2.0 * scale)
-	var wash_rect := pixel_rect.grow(-8.0 * scale)
-	_draw_rounded_rect(wash_rect, Color(SLOT_COLOR, GameboxTokens.GAME["board_side_camp_alpha"]), 7.0 * scale, Color(SLOT_COLOR, GameboxTokens.GAME["piece_shadow_alpha"]), maxf(1.0, scale))
+	var fill: Color = PLAYER_COLORS[color]
+	if color in ["blue", "green"]:
+		fill = _paper.lerp(fill, 0.35)
+	_draw_rounded_rect(pixel_rect, fill, 20 * scale, PLAYER_COLORS[color], 0)
 	for logical_center in HANGAR_SLOTS[color]:
-		var center := _logical_to_pixel(logical_center)
-		draw_circle(center + Vector2(0.0, 1.5) * scale, 18.0 * scale, Color(BOARD_INK, GameboxTokens.GAME["board_target_camp_alpha"]))
-		draw_circle(center, 18.0 * scale, SLOT_COLOR)
-		draw_arc(center, 18.0 * scale, 0.0, TAU, 28, PLAYER_DARK[color], maxf(1.2, 1.8 * scale), true)
+		draw_circle(_logical_to_pixel(logical_center), 23 * scale, _paper)
+	var label := "黄方" if color == "yellow" else "红方" if color == "red" else "空席"
+	var point := Vector2(logical_rect.get_center().x, 23 if color in ["yellow", "green"] else 590)
+	_draw_board_text(point, label, 11, BOARD_INK)
 
 
 func _draw_main_route() -> void:
@@ -401,36 +377,15 @@ func _draw_main_route() -> void:
 		_draw_route_tile(index)
 
 
-func _draw_home_lane_backdrop(color: String) -> void:
-	var points: Array = HOME_STRETCHES[color]
-	var scale := _scale()
-	var start := _logical_to_pixel(points[0])
-	var finish := _logical_to_pixel(points[-1])
-	var direction := (finish - start).normalized()
-	var perpendicular := Vector2(-direction.y, direction.x)
-	var half_width := 14.0 * scale
-	var tail := start - direction * 15.0 * scale
-	var neck := finish + direction * 7.0 * scale
-	var tip := finish + direction * 28.0 * scale
-	var lane := PackedVector2Array([
-		tail - perpendicular * half_width,
-		neck - perpendicular * half_width,
-		neck - perpendicular * half_width * 1.32,
-		tip,
-		neck + perpendicular * half_width * 1.32,
-		neck + perpendicular * half_width,
-		tail + perpendicular * half_width,
-	])
-	draw_colored_polygon(lane, PLAYER_COLORS[color])
-	draw_polyline(PackedVector2Array(Array(lane) + [lane[0]]), PLAYER_DARK[color], maxf(1.0, 1.4 * scale), true)
-
-
 func _draw_home_lane_slots(color: String) -> void:
 	var scale := _scale()
+	var direction: Vector2 = (FINISH_POINTS[color] - HOME_STRETCHES[color][0]).normalized()
+	var normal := Vector2(-direction.y, direction.x)
 	for point in HOME_STRETCHES[color]:
 		var center := _logical_to_pixel(point)
-		draw_circle(center, 9.0 * scale, SLOT_COLOR)
-		draw_arc(center, 9.0 * scale, 0.0, TAU, 24, PLAYER_DARK[color], maxf(0.8, scale), true)
+		_draw_rounded_rect(Rect2(center-Vector2(15,15)*scale,Vector2(30,30)*scale),PLAYER_COLORS[color],3*scale,_paper,2*scale)
+		var ink: Color = PLAYER_DARK[color] if color == "yellow" else _paper
+		draw_polyline(PackedVector2Array([center-direction*3*scale-normal*5*scale, center+direction*2*scale,center-direction*3*scale+normal*5*scale]),ink,2*scale,true)
 
 
 func _draw_route_tile(index: int) -> void:
@@ -444,23 +399,10 @@ func _draw_route_tile(index: int) -> void:
 	draw_colored_polygon(tile, color)
 	draw_polyline(
 		PackedVector2Array(Array(tile) + [tile[0]]),
-		Color(BOARD_INK, GameboxTokens.GAME["board_grid_alpha"]),
-		maxf(0.7, 0.9 * scale),
+		_paper,
+		maxf(0.7, 2.0 * scale),
 		true,
 	)
-	var shortcut_color := _shortcut_color(index)
-	if shortcut_color.is_empty():
-		draw_circle(center, 7.4 * scale, SLOT_COLOR)
-		draw_arc(center, 7.4 * scale, 0.0, TAU, 20, Color(BOARD_INK, GameboxTokens.GAME["board_grid_alpha"]), maxf(0.7, scale * 0.75), true)
-	else:
-		_draw_plane(center, 8.2 * scale, SLOT_COLOR, _plane_rotation(shortcut_color))
-
-
-func _shortcut_color(index: int) -> String:
-	for color in SHORTCUTS:
-		if (SHORTCUTS[color] as Vector2i).x == index:
-			return color
-	return ""
 
 
 func _draw_shortcut(color: String) -> void:
@@ -485,27 +427,26 @@ func _draw_shortcut(color: String) -> void:
 
 
 func _draw_finish_center() -> void:
-	var polygons := {
-		"yellow": [Vector2(300, 300), Vector2(278, 278), Vector2(254, 300), Vector2(278, 322)],
-		"green": [Vector2(300, 300), Vector2(278, 278), Vector2(300, 254), Vector2(322, 278)],
-		"red": [Vector2(300, 300), Vector2(322, 278), Vector2(346, 300), Vector2(322, 322)],
-		"blue": [Vector2(300, 300), Vector2(278, 322), Vector2(300, 346), Vector2(322, 322)],
-	}
 	for color in PLAYER_ORDER:
+		var turns: int = PLAYER_ORDER.find(color)
 		var points := PackedVector2Array()
-		for point in polygons[color]:
+		for source in [Vector2(300,300),Vector2(279,279),Vector2(279,321)]:
+			var point: Vector2 = source
+			for _turn in turns:
+				point = Vector2(600-point.y,point.x)
 			points.append(_logical_to_pixel(point))
-		draw_colored_polygon(points, PLAYER_COLORS[color])
-		draw_polyline(PackedVector2Array(Array(points) + [points[0]]), BOARD_INK, maxf(1.0, 1.5 * _scale()), true)
-	draw_circle(_logical_to_pixel(Vector2(300, 300)), 6.5 * _scale(), SLOT_COLOR)
+		draw_colored_polygon(points,PLAYER_COLORS[color])
+	_draw_board_text(Vector2(300,355), "顺时针 · 精确归家", 10, Color(BOARD_INK,GameboxTokens.GAME["pending_overlay_alpha"]))
 
 
 func _draw_launch_pad(color: String) -> void:
 	var center := _logical_to_pixel(LAUNCH_POINTS[color])
-	var radius := 18.0 * _scale()
-	draw_circle(center, radius, SLOT_COLOR)
-	draw_arc(center, radius, 0.0, TAU, 28, PLAYER_COLORS[color], maxf(2.0, 4.0 * _scale()), true)
-	_draw_plane(center, radius * 0.7, PLAYER_COLORS[color], _plane_rotation(color))
+	var rotation := _plane_rotation(color)
+	var points := PackedVector2Array()
+	for point in [Vector2(-5,-11),Vector2(18,7),Vector2(-12,14)]:
+		points.append(center+point.rotated(rotation)*_scale())
+	draw_colored_polygon(points,PLAYER_COLORS[color])
+	draw_polyline(PackedVector2Array(Array(points)+[points[0]]),_paper,2*_scale(),true)
 
 
 func _draw_color_pieces(color: String) -> void:
@@ -513,9 +454,11 @@ func _draw_color_pieces(color: String) -> void:
 		return
 	var color_pieces: Array = _pieces[color]
 	for index in color_pieces.size():
-		if _bounce.get("color") == color and _bounce.get("index") == index:
+		if _presentation_hides(color,index):
 			continue
 		var piece: Dictionary = color_pieces[index]
+		if piece.zone == "finished":
+			continue
 		var members := _stack_members(color, piece)
 		if index != members[0]:
 			continue
@@ -537,6 +480,10 @@ func _draw_color_pieces(color: String) -> void:
 			radius *= 0.84
 		_draw_stack_layers(center, radius, members.size(), color)
 		_draw_piece(center, radius, color)
+		_draw_piece_number(center, index)
+		if _pending_index >= 0 and members.has(_pending_index):
+			for dash in 12:
+				draw_arc(center,radius*1.45,dash*TAU/12.0,dash*TAU/12.0+0.25,6,PLAYER_DARK[color],3*_scale(),true)
 		if selected:
 			draw_arc(center, radius * 1.18, 0.0, TAU, 32, SLOT_COLOR, maxf(2.0, 2.5 * _scale()), true)
 		if members.size() > 1 and index == members[0]:
@@ -563,11 +510,11 @@ func _draw_stack_badge(center: Vector2, count: int, color: String) -> void:
 	draw_string(font, badge_center + Vector2(-text_size.x * 0.5, text_size.y * 0.35), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, SLOT_COLOR)
 
 
-func _draw_piece(center: Vector2, radius: float, color: String) -> void:
-	draw_circle(center + Vector2(0.0, radius * 0.16), radius, Color(BOARD_INK, GameboxTokens.GAME["piece_shadow_alpha"]))
-	draw_circle(center, radius, PLAYER_DARK[color])
-	draw_circle(center, radius * 0.88, PLAYER_COLORS[color])
-	_draw_plane(center, radius * 0.68, SLOT_COLOR, _plane_rotation(color))
+func _draw_piece(center: Vector2, radius: float, color: String, opacity: float = 1.0) -> void:
+	draw_circle(center + Vector2(0.0, radius * 0.16), radius, Color(BOARD_INK, GameboxTokens.GAME["piece_shadow_alpha"] * opacity))
+	draw_circle(center, radius, Color(_paper,opacity))
+	draw_circle(center, radius * 0.86, Color(PLAYER_COLORS[color],opacity))
+	_draw_plane(center, radius * 0.68, Color(PLAYER_DARK[color] if color == "yellow" else SLOT_COLOR,opacity), _plane_rotation(color))
 
 
 func _draw_plane(center: Vector2, radius: float, color: Color, rotation: float) -> void:
@@ -600,7 +547,7 @@ func _stack_members(color: String, piece: Dictionary) -> Array:
 	var result: Array = []
 	var color_pieces: Array = _pieces[color]
 	for index in color_pieces.size():
-		if _bounce.get("color") == color and _bounce.get("index") == index:
+		if _presentation_hides(color,index):
 			continue
 		var candidate: Dictionary = color_pieces[index]
 		if candidate["zone"] == piece["zone"] and candidate["index"] == piece["index"]:
@@ -642,9 +589,10 @@ static func _plane_rotation(color: String) -> float:
 	return 0.0
 
 
-func _draw_rounded_rect(rect: Rect2, fill: Color, radius: float, border: Color, border_width: float) -> void:
+func _draw_rounded_rect(rect: Rect2, fill: Color, radius: float, border: Color, border_width: float, filled: bool = true) -> void:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
+	style.draw_center = filled
 	if border_width > 0.0:
 		style.border_color = border
 		var width := roundi(border_width)
@@ -658,3 +606,80 @@ func _draw_rounded_rect(rect: Rect2, fill: Color, radius: float, border: Color, 
 	style.corner_radius_bottom_right = corner
 	style.corner_radius_bottom_left = corner
 	draw_style_box(style, rect)
+
+
+func _draw_piece_number(center: Vector2, index: int) -> void:
+	var point := center + Vector2(14,14)*_scale()
+	draw_circle(point,9*_scale(),_paper)
+	var font_size := maxi(1,roundi(13*_scale()))
+	var font := get_theme_default_font()
+	var width := font.get_string_size(str(index+1),HORIZONTAL_ALIGNMENT_LEFT,-1,font_size).x
+	draw_string(font,point+Vector2(-width/2,5*_scale()),str(index+1),HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,BOARD_INK)
+
+
+func _draw_board_text(point: Vector2, text: String, font_size: int, color: Color) -> void:
+	var font := get_theme_default_font()
+	var scaled_size := maxi(1,roundi(font_size*_scale()))
+	var width := font.get_string_size(text,HORIZONTAL_ALIGNMENT_LEFT,-1,scaled_size).x
+	draw_string(font,_logical_to_pixel(point)-Vector2(width/2,0),text,HORIZONTAL_ALIGNMENT_LEFT,-1,scaled_size,color)
+
+
+func _presentation_hides(color: String, index: int) -> bool:
+	if _bounce.get("color") == color and _bounce.get("index") == index:
+		return true
+	for flight in _captured_flights:
+		if flight.color == color and flight.index == index:
+			return true
+	return false
+
+
+func set_route_preview(segments: Array, pending_index: int = -1) -> void:
+	_route_preview = segments
+	_pending_index = pending_index
+	queue_redraw()
+
+
+func _draw_route_preview() -> void:
+	for segment in _route_preview:
+		draw_dashed_line(_logical_to_pixel(segment.from),_logical_to_pixel(segment.to), Color(PLAYER_DARK.get(_selectable_color, BOARD_INK),GameboxTokens.GAME["pending_overlay_alpha"]),3*_scale(),8*_scale(),true,true)
+	if not _route_preview.is_empty():
+		var point: Vector2 = _route_preview[-1].to
+		draw_arc(_logical_to_pixel(point),24*_scale(),0,TAU,40,PLAYER_DARK.get(_selectable_color,BOARD_INK),3*_scale(),true)
+
+
+func animate_move(color: String, index: int, segments: Array, captured: Array, finished: bool) -> Tween:
+	cancel_home_bounce()
+	_route_preview.clear()
+	_bounce = {"color":color,"index":index,"point":segments[0].from,"scale":1.0}
+	var enemy := "yellow" if color == "red" else "red"
+	var target: Vector2 = segments[-1].to
+	for captured_index in captured:
+		_captured_flights.append({"color":enemy,"index":captured_index,"point":target})
+	_bounce_tween = create_tween()
+	for segment in segments:
+		_bounce_tween.tween_method(func(t: float) -> void:
+			_bounce.point = segment.from.lerp(segment.to,t)+Vector2(0,-sin(t*PI)*segment.lift)
+			queue_redraw()
+		,0.0,1.0,segment.duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_bounce_tween.tween_method(func(t: float) -> void:
+		_impact = {"point":target,"color":color,"phase":t}
+		queue_redraw()
+	,0.0,1.0,0.22)
+	if not captured.is_empty():
+		_bounce_tween.tween_method(func(t: float) -> void:
+			for flight in _captured_flights:
+				flight.point = target.lerp(HANGAR_SLOTS[enemy][flight.index],t)+Vector2(0,-sin(t*PI)*40)
+			queue_redraw()
+		,0.0,1.0,0.42)
+	if finished:
+		_bounce_tween.tween_method(func(t: float) -> void:
+			_bounce.scale = 1-t
+			queue_redraw()
+		,0.0,1.0,0.36)
+	_bounce_tween.tween_callback(func() -> void:
+		_bounce.clear()
+		_captured_flights.clear()
+		_impact.clear()
+		queue_redraw()
+	)
+	return _bounce_tween
