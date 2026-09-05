@@ -130,7 +130,8 @@ jobs:
       - name: Stage temporary debug artifact
         run: |
           mkdir -p debug-assets
-          artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          build_time="$(date -u +%Y%m%d-%H%M%S)"
+          artifact_identity="${build_time}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           asset_name="gamebox-debug-${artifact_identity}.apk"
           checksum_name="checksums-${artifact_identity}.txt"
           cp app/build/app/outputs/flutter-apk/app-debug.apk "debug-assets/${asset_name}"
@@ -237,11 +238,16 @@ jobs:
       - name: Stage signed release assets
         run: |
           mkdir -p debug-assets
-          artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          build_time="$(date -u +%Y%m%d-%H%M%S)"
+          artifact_identity="${build_time}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           asset_name="gamebox-debug-${artifact_identity}.apk"
           checksum_name="checksums-${artifact_identity}.txt"
           cp app/build/app/outputs/flutter-apk/app-debug.apk "debug-assets/${asset_name}"
           (cd debug-assets && sha256sum "${asset_name}" > "${checksum_name}")
+          {
+            echo "GAMEBOX_DEBUG_ARTIFACT_IDENTITY=${artifact_identity}"
+            echo "GAMEBOX_DEBUG_BUILD_TIME=${build_time}"
+          } >> "${GITHUB_ENV}"
 
       - name: Publish rolling debug release
         env:
@@ -249,13 +255,14 @@ jobs:
           API_BASE_URL: ${{ inputs.api_base_url || env.DEBUG_API_BASE_URL }}
         run: |
           short_sha="${GITHUB_SHA::7}"
-          artifact_identity="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          artifact_identity="${GAMEBOX_DEBUG_ARTIFACT_IDENTITY}"
           pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' app/pubspec.yaml)"
           asset_name="gamebox-debug-${artifact_identity}.apk"
           checksum_name="checksums-${artifact_identity}.txt"
           notes="Debug build from \`${GITHUB_SHA}\` (\`${GITHUB_REF_NAME}\`)
 
           - version: \`${pubspec_version}-dev.${short_sha}\`
+          - built: \`${GAMEBOX_DEBUG_BUILD_TIME} UTC\`
           - run: \`${GITHUB_RUN_ID}\` (attempt \`${GITHUB_RUN_ATTEMPT}\`)
           - package: \`me.zqydev.gamebox.debug\`
           - api: \`${API_BASE_URL}\`
