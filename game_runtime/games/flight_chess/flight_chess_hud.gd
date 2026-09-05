@@ -161,14 +161,25 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 
 	layout_result(scene,dark)
 	var dialog := scene.get_node("ResignDialog/Dialog")
-	place(dialog,Rect2(scene.size/2-Vector2(210,100)*unit,Vector2(420,200)*unit))
+	place(dialog,Rect2(Vector2.ZERO,Vector2(400*unit,0)))
+	var dialog_style := box(colors.surface_container_high,colors.outline_variant,24*unit,unit)
+	for edge in ["left","right","top","bottom"]:
+		dialog_style.set("content_margin_"+edge,24*unit)
+	dialog.add_theme_stylebox_override("panel",dialog_style)
 	var dialog_content := dialog.get_node("Content")
-	dialog_content.add_theme_constant_override("separation",roundi(16*unit))
+	dialog_content.add_theme_constant_override("separation",roundi(12*unit))
+	for name in ["Title","Message"]:
+		dialog_content.get_node(name).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var actions := dialog_content.get_node("Actions")
+	actions.add_theme_constant_override("separation",roundi(12*unit))
+	actions.custom_minimum_size.y = 60*unit
 	dialog_content.get_node("Title").add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.title_large.font_size*unit))
 	dialog_content.get_node("Message").add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.body_small.font_size*unit))
 	dialog_content.get_node("Actions/ConfirmButton").text = "认输并结束本局"
 	for name in ["CancelButton","ConfirmButton"]:
 		dialog_content.get_node("Actions/"+name).custom_minimum_size = Vector2(160,48)*unit
+		dialog_content.get_node("Actions/"+name).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dialog_content.get_node("Actions/"+name).size_flags_vertical = Control.SIZE_SHRINK_END
 		dialog_content.get_node("Actions/"+name).add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.body_small.font_size*unit))
 
 

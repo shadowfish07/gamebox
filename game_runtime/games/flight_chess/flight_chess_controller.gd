@@ -313,6 +313,8 @@ func _apply_layout() -> void:
 	_apply_rect($Board, layout["board"])
 	_apply_rect($RightRail, layout["right"])
 	HUD.layout(self, layout, bool(_preview_dark))
+	if $ResignDialog.visible:
+		_fit_resign_dialog.call_deferred()
 	_refresh_hud()
 	_settle_rail_layout.call_deferred()
 
@@ -702,7 +704,6 @@ func _on_resign_pressed() -> void:
 	if _can_offer_resign():
 		$ResignDialog.open()
 		_fit_resign_dialog.call_deferred()
-		RenderingServer.frame_post_draw.connect(_log_resign_confirm_target, CONNECT_ONE_SHOT)
 
 
 func _on_resign_confirmed() -> void:
@@ -1263,20 +1264,24 @@ func _primary_action_text(has_state: bool) -> String:
 
 func _fit_resign_dialog() -> void:
 	# Bound callbacks disconnect automatically when the scene is freed.
-	get_tree().process_frame.connect(_queue_resign_layout, CONNECT_ONE_SHOT)
+	if not get_tree().process_frame.is_connected(_queue_resign_layout):
+		get_tree().process_frame.connect(_queue_resign_layout, CONNECT_ONE_SHOT)
 
 
 func _queue_resign_layout() -> void:
-	get_tree().process_frame.connect(_finish_resign_layout, CONNECT_ONE_SHOT)
+	if not get_tree().process_frame.is_connected(_finish_resign_layout):
+		get_tree().process_frame.connect(_finish_resign_layout, CONNECT_ONE_SHOT)
 
 
 func _finish_resign_layout() -> void:
 	# Wrapped labels must settle at the new width before their height is measured.
 	if not $ResignDialog.visible:
 		return
-	var dimensions: Vector2 = Vector2(420,200)*(_hud_unit)
-	$ResignDialog/Dialog.size = dimensions
-	$ResignDialog/Dialog.position = (size-dimensions)/2
+	var dialog: Control = $ResignDialog/Dialog
+	dialog.size = Vector2(400*_hud_unit,0)
+	dialog.position = (size-dialog.size)/2
+	if not RenderingServer.frame_post_draw.is_connected(_log_resign_confirm_target):
+		RenderingServer.frame_post_draw.connect(_log_resign_confirm_target, CONNECT_ONE_SHOT)
 
 
 func _animate_result_panel(signature: String) -> void:
