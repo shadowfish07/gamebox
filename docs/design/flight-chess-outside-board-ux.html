@@ -665,6 +665,15 @@
 
       .dice[data-pending="true"] .pip { display: none; }
 
+      .dice-idle-icon {
+        position: absolute;
+        inset: 18%;
+        inline-size: 64%;
+        block-size: 64%;
+        color: var(--on-surface-variant);
+        opacity: .65;
+      }
+
       .dice .spinner {
         position: absolute;
         inset: calc(50% - .65rem);
@@ -1285,6 +1294,12 @@
               <span class="pip"></span><span class="pip"></span><span class="pip"></span>
               <span class="pip"></span><span class="pip"></span><span class="pip"></span>
               <span class="spinner" id="diceSpinner" hidden></span>
+              <!-- Idle illustration only: the angled outline is not a confirmed roll. -->
+              <svg class="dice-idle-icon" id="diceIdleIcon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M24 4 42 14v20L24 44 6 34V14Z M6 14l18 10 18-10 M24 24v20" />
+                <ellipse cx="24" cy="14" rx="2.6" ry="1.5" fill="currentColor" stroke="none" />
+                <path d="M14 24v1m3 8v1m14-7v1m5-6v1m-5 12v1" stroke-width="3.3" />
+              </svg>
             </div>
             <div class="dice-copy"><strong id="diceLabel">等待掷骰</strong></div>
           </div>
@@ -1589,6 +1604,7 @@
       const pips = [...elements.dice.querySelectorAll('.pip')];
       elements.dice.dataset.pending = String(pending);
       elements.diceSpinner.hidden = !pending;
+      document.querySelector('#diceIdleIcon').toggleAttribute('hidden', pending || value !== 0);
       pips.forEach((pip, index) => { pip.hidden = pending || !dicePips[value].includes(index + 1); });
       elements.diceOutput.value = pending ? '正在生成骰点' : value ? `骰点 ${value}` : '尚未掷骰';
     }
