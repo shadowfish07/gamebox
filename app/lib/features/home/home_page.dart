@@ -597,6 +597,7 @@ final class _ActiveMatchActions extends StatelessWidget {
     required this.onContinue,
     required this.onCancel,
     this.semanticPrefix = '',
+    this.showMoveCount = true,
     this.historyGame,
     this.onOpenHistory,
   }) : assert((historyGame == null) == (onOpenHistory == null));
@@ -608,6 +609,7 @@ final class _ActiveMatchActions extends StatelessWidget {
   final VoidCallback onContinue;
   final VoidCallback onCancel;
   final String semanticPrefix;
+  final bool showMoveCount;
   final MatchHistoryGame? historyGame;
   final VoidCallback? onOpenHistory;
 
@@ -639,7 +641,7 @@ final class _ActiveMatchActions extends StatelessWidget {
       children: [
         Text('对手：${match.opponent.nickname}'),
         Text(sideLabel),
-        Text('当前步数：${match.revision}'),
+        if (showMoveCount) Text('当前步数：${match.revision}'),
         SizedBox(height: GameboxTokens.spacing.page),
         primaryActions,
         if (match.revision == 0) ...[
@@ -819,6 +821,7 @@ final class _FlightChessCard extends StatelessWidget {
                 sideLabel:
                     '你的阵营：${active.match.color == GomokuColor.black ? '红方 · 先手' : '黄方 · 后手'}',
                 semanticPrefix: 'flight-chess-',
+                showMoveCount: false,
                 isLaunching: isLaunching,
                 isMutating: isMutating,
                 onContinue: onContinue,

@@ -2945,8 +2945,10 @@ func safeActionRuleError(err error) error {
 		return chinesecheckers.ErrInvalidPath
 	case errors.Is(err, flightchess.ErrNotYourTurn):
 		return flightchess.ErrNotYourTurn
-	case errors.Is(err, flightchess.ErrInvalidMove), errors.Is(err, flightchess.ErrInvalidPhase):
-		return ErrInvalidRequest
+	case errors.Is(err, flightchess.ErrInvalidMove):
+		return flightchess.ErrInvalidMove
+	case errors.Is(err, flightchess.ErrInvalidPhase):
+		return flightchess.ErrInvalidPhase
 	case errors.Is(err, flightchess.ErrRandomUnavailable):
 		return ErrInternal
 	case errors.Is(err, gomoku.ErrNotYourTurn):

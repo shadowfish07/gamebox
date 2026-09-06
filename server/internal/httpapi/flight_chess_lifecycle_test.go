@@ -87,6 +87,14 @@ func TestFlightChessLimitBroadcastsTerminalToBothClients(t *testing.T) {
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("cancel after gameplay status=%d", response.StatusCode)
 	}
+	writeWS(t, bobWS, fmt.Sprintf(`{"protocolVersion":1,"gameId":"flight_chess","matchId":%s,"expectedRevision":511,"type":"flight_chess.move.requested","actionId":"bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb","payload":{"pieceIndex":0}}`, quote(created.ID)))
+	rejected := readWSEnvelope(t, bobWS)
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if rejected.Type != protocol.TypePlatformError || json.Unmarshal(rejected.Payload, &failure) != nil || failure.Code != "invalid_move" {
+		t.Fatalf("wrong phase recovery: %+v", rejected)
+	}
 	rollMessage := fmt.Sprintf(`{"protocolVersion":1,"gameId":"flight_chess","matchId":%s,"expectedRevision":511,"type":"flight_chess.roll.requested","actionId":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","payload":{}}`, quote(created.ID))
 	writeWS(t, bobWS, rollMessage)
 	for _, connection := range []*websocket.Conn{aliceWS, bobWS} {

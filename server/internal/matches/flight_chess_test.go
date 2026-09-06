@@ -248,3 +248,35 @@ func TestFlightChessEventLimitEndsMatchAndPreservesHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestFlightChessInvalidMoveErrorsKeepDomainRecovery(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0, 5, 0, 0}))
+	ctx := context.Background()
+	created, err := service.Create(ctx, flightchess.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRejected := func(sequence int, revision int64, actionType, payload string, want error) {
+		t.Helper()
+		_, _, err := service.ApplyAction(ctx, flightChessAction(created.ID, initiatorID, sequence, revision, actionType, payload))
+		if !errors.Is(err, want) || safeActionErrorCode(err) != "invalid_move" {
+			t.Fatalf("rejected error=%v code=%s want=%v/invalid_move", err, safeActionErrorCode(err), want)
+		}
+		if snapshot, err := service.Snapshot(ctx, created.ID); err != nil || snapshot.Match.Revision != revision {
+			t.Fatalf("rejection mutated match=(%+v,%v)", snapshot.Match, err)
+		}
+	}
+	assertRejected(5000, 0, flightchess.MoveRequested, `{"pieceIndex":0}`, flightchess.ErrInvalidPhase)
+	if _, _, err := service.ApplyAction(ctx, flightChessAction(created.ID, initiatorID, 5001, 0, flightchess.RollRequested, `{}`)); err != nil {
+		t.Fatal(err)
+	}
+	assertRejected(5002, 1, flightchess.RollRequested, `{}`, flightchess.ErrInvalidPhase)
+	if _, _, err := service.ApplyAction(ctx, flightChessAction(created.ID, initiatorID, 5003, 1, flightchess.MoveRequested, `{"pieceIndex":0}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.ApplyAction(ctx, flightChessAction(created.ID, initiatorID, 5004, 2, flightchess.RollRequested, `{}`)); err != nil {
+		t.Fatal(err)
+	}
+	assertRejected(5005, 3, flightchess.MoveRequested, `{"pieceIndex":1}`, flightchess.ErrInvalidMove)
+}

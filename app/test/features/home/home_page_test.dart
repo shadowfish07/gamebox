@@ -170,6 +170,7 @@ void main() {
     expect(find.text('飞行棋'), findsOneWidget);
     expect(find.text('2 人 · 掷骰竞速'), findsOneWidget);
     expect(find.text('你的阵营：红方 · 先手'), findsOneWidget);
+    expect(find.textContaining('当前步数'), findsNothing);
     expect(
       find.bySemanticsIdentifier('flight-chess-continue-match'),
       findsOneWidget,
@@ -183,6 +184,33 @@ void main() {
       findsOneWidget,
     );
 
+    gomoku.dispose();
+    flightChess.dispose();
+  });
+
+  testWidgets('Flight Chess active card does not count rolls as moves', (
+    tester,
+  ) async {
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final flightChess = _Fixture(now)..api.status = _active(revision: 2);
+    await tester.pumpWidget(
+      _app(
+        gomoku.controller,
+        aliceId,
+        flightChessController: flightChess.controller,
+      ),
+    );
+    await _flushWidget(tester);
+    expect(find.textContaining('当前步数'), findsNothing);
+    expect(find.text('对局进行中'), findsOneWidget);
+    expect(
+      find.bySemanticsIdentifier('flight-chess-continue-match'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsIdentifier('flight-chess-cancel-match'),
+      findsNothing,
+    );
     gomoku.dispose();
     flightChess.dispose();
   });
