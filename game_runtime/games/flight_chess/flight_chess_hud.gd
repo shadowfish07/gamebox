@@ -104,7 +104,7 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		button.add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 		button.add_theme_stylebox_override("normal",box(colors.surface_container_high,colors.outline_variant,8*unit,unit))
 		button.add_theme_color_override("font_color",colors.error if i == 2 else colors.on_surface)
-	var card_height := 112.0
+	var card_height := 120.0
 	for pair in [["OpponentCard", 56], ["LocalCard",56+card_height+24]]:
 		var card := left.get_node(pair[0])
 		place(card, Rect2(Vector2(0,pair[1]) * unit, Vector2(lw,card_height) * unit))
@@ -116,7 +116,7 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		content.get_node("Name").add_theme_color_override("font_color",colors.on_surface_variant)
 		content.get_node("Name").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_small.font_size*unit))
 		content.get_node("Meta").hide()
-		content.get_node("Stats").custom_minimum_size = Vector2(132,24) * unit
+		content.get_node("Stats").custom_minimum_size = Vector2(132,40) * unit
 		card.get_node("BadgeOverlay/TurnBadge").mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.get_node("BadgeOverlay/TurnBadge").set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 		card.get_node("BadgeOverlay/TurnBadge").offset_left = -36 * unit
@@ -199,7 +199,10 @@ static func present_card(scene: Control, node_name: String, color: String, activ
 	style.content_margin_bottom = 16*unit
 	card.add_theme_stylebox_override("panel",style)
 	card.get_node("Content/Name").text = "● " + presence
-	card.get_node("Content/Stats").present(pieces)
+	var stats := card.get_node("Content/Stats")
+	stats.arrival_color = Board.PLAYER_COLORS[color] if scene._preview_dark == true else Board.PLAYER_DARK[color]
+	stats.empty_color = colors.outline_variant
+	stats.present(pieces)
 	card.get_node("BadgeOverlay/TurnBadge").text = "当前" if active else "等待"
 	card.get_node("BadgeOverlay/TurnBadge").add_theme_stylebox_override("normal",box(Board.PLAYER_COLORS[color] if active else colors.surface_container_high,colors.surface_container_low,12*unit,0))
 	card.get_node("BadgeOverlay/TurnBadge").add_theme_color_override("font_color",Board.BOARD_INK if active else colors.on_surface_variant)

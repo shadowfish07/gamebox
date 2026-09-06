@@ -1,26 +1,34 @@
 extends Control
 
+const Tokens = preload("res://design_system/generated/gamebox_tokens.gd")
+const PLANE = [Vector2(12,0),Vector2(14,2),Vector2(14,9),Vector2(23,15),Vector2(23,18),Vector2(14,14),Vector2(14,20),Vector2(18,23),Vector2(18,24),Vector2(12,22),Vector2(6,24),Vector2(6,23),Vector2(10,20),Vector2(10,14),Vector2(1,18),Vector2(1,15),Vector2(10,9),Vector2(10,2)]
+
 var counts := [0, 0, 0]
+var arrival_color: Color = Tokens.LIGHT.primary
+var empty_color: Color = Tokens.LIGHT.outline_variant
 
 func present(pieces: Array) -> void:
 	counts = [0, 0, 0]
 	for piece in pieces:
 		counts[1 if piece.zone == "hangar" else 2 if piece.zone == "finished" else 0] += 1
-	tooltip_text = "在途 %d · 待机 %d · 抵达 %d" % counts
+	tooltip_text = "已抵达 %d / 4" % counts[2]
 	queue_redraw()
 
 func _draw() -> void:
-	var unit := size.y / 24.0
+	var unit := size.y / 40.0
 	var ink := get_theme_color("font_color", "Label")
-	for i in 3:
-		var origin := Vector2(i * 44.0 + 2.0, 5.0) * unit
-		var points: Array
-		match i:
-			0: points = [Vector2(7, 0), Vector2(9, 1), Vector2(9, 6), Vector2(14, 10), Vector2(14, 12), Vector2(9, 10), Vector2(9, 14), Vector2(11, 16), Vector2(5, 16), Vector2(7, 14), Vector2(7, 10), Vector2(2, 12), Vector2(2, 10), Vector2(7, 6), Vector2(7, 0)]
-			1: points = [Vector2(1, 15), Vector2(1, 5), Vector2(8, 0), Vector2(15, 5), Vector2(15, 15), Vector2(1, 15), Vector2(4, 15), Vector2(4, 7), Vector2(12, 7), Vector2(12, 15)]
-			_: points = [Vector2(2, 16), Vector2(2, 1), Vector2(8, 1), Vector2(10, 3), Vector2(15, 3), Vector2(15, 10), Vector2(10, 10), Vector2(8, 8), Vector2(2, 8)]
-		var line := PackedVector2Array()
-		for point in points:
-			line.append(origin + point * unit)
-		draw_polyline(line, ink, 1.3 * unit, true)
-		draw_string(get_theme_default_font(), origin + Vector2(21, 13) * unit, str(counts[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(1,roundi(12 * unit)), ink)
+	var font := get_theme_default_font()
+	var font_size := maxi(1,roundi(Tokens.TYPOGRAPHY.label_small.font_size * unit))
+	var value := "%d / 4" % counts[2]
+	draw_string(font,Vector2(0,11)*unit,"全部抵达" if counts[2] == 4 else "已抵达",HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,ink)
+	draw_string(font,Vector2(size.x-font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size).x,11*unit),value,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,ink)
+	for i in 4:
+		var origin := Vector2(i * (size.x-24*unit)/3.0,16*unit)
+		var polygon := PackedVector2Array()
+		for point in PLANE:
+			polygon.append(origin + point * unit)
+		if i < counts[2]:
+			draw_colored_polygon(polygon,arrival_color)
+		else:
+			polygon.append(polygon[0])
+			draw_polyline(polygon,empty_color,1.3*unit,true)
