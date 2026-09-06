@@ -215,7 +215,7 @@ bash tool/release.sh patch  # 也可使用 minor / major
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-[调试工作流](.github/workflows/debug.yml) 会以只读仓库权限将分支和 PR 构建保存为短期 workflow artifact。由 `shadowfish07` 从本仓库分支创建或重新打开的 PR 会使用稳定签名密钥，因此这些 artifact 可以覆盖之前安装的调试版；其他非默认分支仍使用临时 Android debug key。只有来自默认分支的受信构建会将稳定签名包发布到滚动的 `debug-latest` 预发布。稳定版和调试版使用不同的应用 ID，可同时安装。
+[调试工作流](.github/workflows/debug.yml) 以只读仓库权限将构建保存为短期 workflow artifact。符合路径过滤的 PR 在创建或重新打开时构建，不发布 release；只有 PR 作者和触发者均为 `shadowfish07` 且分支属于本仓库时才使用稳定签名密钥，其他 PR 构建使用临时 Android debug key。推送到 `main` 或从任意选定分支手动运行工作流，还会将稳定签名包发布到滚动的 `debug-latest` 预发布。因此该渠道可能包含尚未合入的分支构建：下方下载命令选择最新的 APK 资产，不保证来自 `main`。安装前请通过 release 说明和资产标识核对来源 ref、提交 SHA、构建时间和运行记录。稳定版和调试版使用不同的应用 ID，可同时安装。
 
 由于 release 资产保留不可变的溯源文件名，应通过 release 元数据解析最新 APK，不要猜测文件名：
 

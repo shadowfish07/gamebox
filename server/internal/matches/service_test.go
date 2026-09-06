@@ -1090,7 +1090,7 @@ func readPlayers(t *testing.T, db *sql.DB, matchID string) []Player {
 
 func assertTableCount(t *testing.T, db *sql.DB, table string, want int) {
 	t.Helper()
-	allowed := map[string]bool{"matches": true, "match_players": true, "active_game_slots": true, "match_events": true, "launch_tickets": true}
+	allowed := map[string]bool{"matches": true, "match_players": true, "active_game_slots": true, "match_events": true, "launch_tickets": true, "flight_chess_limit_actions": true}
 	if !allowed[table] {
 		t.Fatalf("unsafe table %q", table)
 	}

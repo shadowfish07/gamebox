@@ -627,7 +627,7 @@ final class _FakeLauncher implements GameLauncher {
   }
 
   @override
-  Future<void> launchHostSmoke() =>
+  Future<void> launchHostSmoke({String? previewGame}) =>
       Future<void>.error(StateError('unexpected host smoke'));
 }
 

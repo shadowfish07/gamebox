@@ -75,6 +75,10 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("GET /v1/games/chinese_checkers/opponents", router.authenticated(http.HandlerFunc(router.chineseCheckersOpponents)))
 	mux.Handle("GET /v1/games/chinese_checkers/history", router.authenticated(http.HandlerFunc(router.chineseCheckersHistory)))
 	mux.Handle("POST /v1/games/chinese_checkers/matches", router.authenticated(http.HandlerFunc(router.createChineseCheckersMatch)))
+	mux.Handle("GET /v1/games/flight_chess/status", router.authenticated(http.HandlerFunc(router.flightChessStatus)))
+	mux.Handle("GET /v1/games/flight_chess/opponents", router.authenticated(http.HandlerFunc(router.flightChessOpponents)))
+	mux.Handle("GET /v1/games/flight_chess/history", router.authenticated(http.HandlerFunc(router.flightChessHistory)))
+	mux.Handle("POST /v1/games/flight_chess/matches", router.authenticated(http.HandlerFunc(router.createFlightChessMatch)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
 	mux.Handle("GET /v1/games/gomoku/history", router.authenticated(http.HandlerFunc(router.gomokuHistory)))
@@ -96,6 +100,10 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games/chinese_checkers/opponents", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/chinese_checkers/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/chinese_checkers/matches", http.MethodPost)
+	registerMethodFallback(mux, "/v1/games/flight_chess/status", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/flight_chess/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/flight_chess/history", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/flight_chess/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/history", http.MethodGet)
@@ -307,7 +315,7 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
+	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
 	}
 	const launchPrefix = "/v1/matches/"

@@ -46,6 +46,14 @@ class GameLaunchArgsTest {
     }
 
     @Test
+    fun `flight chess preview builds bounded host smoke arguments`() {
+        assertArrayEquals(
+            arrayOf("--", "--host-smoke", "--preview-game", "flight_chess"),
+            GameLaunchArgs.flightChessPreview().commandLineParams,
+        )
+    }
+
+    @Test
     fun `invalid null blank and extra native fields are safely rejected`() {
         val valid = mapOf(
             "gameId" to "gomoku",

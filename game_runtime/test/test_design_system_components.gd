@@ -280,6 +280,7 @@ static func _confirmation_contract() -> bool:
 			and _check((dialog.get_node("Dialog/Content/Message") as Label).text == "认输后本局立即结束，确认认输吗？", "danger copy changed") \
 			and _check(ok_button.text == "确认认输", "danger confirmation action changed") \
 			and _check(cancel_button.text == "继续对局", "danger cancellation action changed") \
+			and _check(cancel_button.get_theme_color("font_focus_color") == colors["on_secondary_container"], "focused confirmation cancel lost readable contrast") \
 			and _check(ok_focus is StyleBoxEmpty, "confirmation action uses the default square focus border") \
 			and _check(cancel_focus is StyleBoxEmpty, "confirmation cancel uses the default square focus border") \
 			and _check(panel_style != null and panel_style.bg_color == colors["surface_container_high"], "confirmation panel surface drifted") \

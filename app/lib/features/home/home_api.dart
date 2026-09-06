@@ -18,7 +18,9 @@ abstract interface class HomeApi {
 final class HttpHomeApi implements HomeApi {
   HttpHomeApi(this._client, this._session, {String gameId = gomokuGameId})
     : _gameId = gameId {
-    if (gameId != gomokuGameId && gameId != chineseCheckersGameId) {
+    if (gameId != gomokuGameId &&
+        gameId != chineseCheckersGameId &&
+        gameId != flightChessGameId) {
       throw ArgumentError.value(gameId, 'gameId', 'unsupported board game');
     }
   }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -33,7 +34,7 @@ func (router *router) listGames(writer http.ResponseWriter, _ *http.Request) {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		title := map[string]string{chinesecheckers.GameID: "跳棋", gomoku.GameID: "五子棋", rps.GameID: "石头剪刀布"}[descriptor.GameID]
+		title := map[string]string{chinesecheckers.GameID: "跳棋", flightchess.GameID: "飞行棋", gomoku.GameID: "五子棋", rps.GameID: "石头剪刀布"}[descriptor.GameID]
 		if title == "" {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")
 			return
@@ -58,6 +59,10 @@ func (router *router) gomokuOpponents(writer http.ResponseWriter, request *http.
 
 func (router *router) chineseCheckersOpponents(writer http.ResponseWriter, request *http.Request) {
 	router.gameOpponents(writer, request, chinesecheckers.GameID)
+}
+
+func (router *router) flightChessOpponents(writer http.ResponseWriter, request *http.Request) {
+	router.gameOpponents(writer, request, flightchess.GameID)
 }
 
 func (router *router) rpsOpponents(writer http.ResponseWriter, request *http.Request) {
@@ -104,6 +109,10 @@ func (router *router) gomokuStatus(writer http.ResponseWriter, request *http.Req
 
 func (router *router) chineseCheckersStatus(writer http.ResponseWriter, request *http.Request) {
 	router.gameStatus(writer, request, chinesecheckers.GameID, "chinese_checkers_status")
+}
+
+func (router *router) flightChessStatus(writer http.ResponseWriter, request *http.Request) {
+	router.gameStatus(writer, request, flightchess.GameID, "flight_chess_status")
 }
 
 func (router *router) rpsStatus(writer http.ResponseWriter, request *http.Request) {
@@ -157,6 +166,10 @@ func (router *router) createGomokuMatch(writer http.ResponseWriter, request *htt
 
 func (router *router) createChineseCheckersMatch(writer http.ResponseWriter, request *http.Request) {
 	router.createUnconfiguredMatch(writer, request, chinesecheckers.GameID)
+}
+
+func (router *router) createFlightChessMatch(writer http.ResponseWriter, request *http.Request) {
+	router.createUnconfiguredMatch(writer, request, flightchess.GameID)
 }
 
 func (router *router) createUnconfiguredMatch(writer http.ResponseWriter, request *http.Request, gameID string) {

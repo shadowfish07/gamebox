@@ -36,7 +36,7 @@ void main() {
     expect(historyApi.calls, 0);
   });
 
-  testWidgets('explicit host-smoke override renders one stable launch button', (
+  testWidgets('explicit host-smoke override renders stable launch controls', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -44,6 +44,10 @@ void main() {
     );
 
     expect(find.byKey(const Key('host-smoke.launch')), findsOneWidget);
+    expect(
+      find.byKey(const Key('host-smoke.flight-chess-preview')),
+      findsOneWidget,
+    );
     expect(find.text('身份功能将在 Phase 3 接入'), findsNothing);
     expect(find.byKey(const Key('host-smoke.normal-canary')), findsNothing);
   });
@@ -98,6 +102,33 @@ void main() {
         hasTapAction: true,
       ),
     );
+    expect(
+      tester.getSemantics(
+        find.byKey(const Key('host-smoke.flight-chess-preview')),
+      ),
+      matchesSemantics(
+        label: 'host-smoke.flight-chess-preview',
+        isButton: true,
+        isEnabled: true,
+        hasEnabledState: true,
+        hasTapAction: true,
+      ),
+    );
+  });
+
+  testWidgets('flight chess host preview uses the bounded smoke launcher', (
+    tester,
+  ) async {
+    final launcher = _FakeGameLauncher();
+    await tester.pumpWidget(
+      GameboxApp(gameLauncher: launcher, hostSmokeEnabled: true),
+    );
+
+    await tester.tap(find.byKey(const Key('host-smoke.flight-chess-preview')));
+    await tester.pump();
+
+    expect(launcher.hostSmokeCalls, 1);
+    expect(launcher.lastPreviewGame, 'flight_chess');
   });
 
   testWidgets(
@@ -188,6 +219,7 @@ class _FakeGameLauncher implements GameLauncher {
   Completer<void>? pendingSmoke;
   Object? smokeError;
   GameLaunchRequest? lastRequest;
+  String? lastPreviewGame;
 
   @override
   Future<void> launch(GameLaunchRequest request) async {
@@ -196,8 +228,9 @@ class _FakeGameLauncher implements GameLauncher {
   }
 
   @override
-  Future<void> launchHostSmoke() {
+  Future<void> launchHostSmoke({String? previewGame}) {
     hostSmokeCalls += 1;
+    lastPreviewGame = previewGame;
     if (smokeError != null) {
       return Future<void>.error(smokeError!);
     }

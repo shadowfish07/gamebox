@@ -99,6 +99,31 @@ func TestDecodeClientAcceptsOnlyCanonicalRpsChoices(t *testing.T) {
 	}
 }
 
+func TestDecodeClientAcceptsFlightChessRollMoveAndResign(t *testing.T) {
+	valid := []string{
+		`{"protocolVersion":1,"gameId":"flight_chess","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":0,"type":"flight_chess.roll.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{}}`,
+		`{"protocolVersion":1,"gameId":"flight_chess","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":1,"type":"flight_chess.move.requested","actionId":"33333333-3333-4333-8333-333333333334","payload":{"pieceIndex":2}}`,
+		`{"protocolVersion":1,"gameId":"flight_chess","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":2,"type":"flight_chess.resign.requested","actionId":"33333333-3333-4333-8333-333333333335","payload":{}}`,
+	}
+	for _, input := range valid {
+		if _, err := DecodeClient([]byte(input)); err != nil {
+			t.Fatalf("DecodeClient rejected %s: %v", input, err)
+		}
+	}
+	invalid := []string{
+		strings.Replace(valid[0], `"payload":{}`, `"payload":{"value":6}`, 1),
+		strings.Replace(valid[1], `"pieceIndex":2`, `"pieceIndex":4`, 1),
+		strings.Replace(valid[1], `"pieceIndex":2`, `"pieceIndex":2.0`, 1),
+		strings.Replace(valid[1], `"gameId":"flight_chess"`, `"gameId":"gomoku"`, 1),
+		strings.Replace(valid[2], `"payload":{}`, `"payload":{"confirm":true}`, 1),
+	}
+	for _, input := range invalid {
+		if _, err := DecodeClient([]byte(input)); err == nil {
+			t.Fatalf("DecodeClient accepted %s", input)
+		}
+	}
+}
+
 func TestDecodeClientAcceptsOnlyBoundedChineseCheckersPaths(t *testing.T) {
 	base := `{"protocolVersion":1,"gameId":"chinese_checkers","matchId":"11111111-1111-4111-8111-111111111111","expectedRevision":0,"type":"chinese_checkers.move.requested","actionId":"33333333-3333-4333-8333-333333333333","payload":{"path":[6,14]}}`
 	if envelope, err := DecodeClient([]byte(base)); err != nil || envelope.Type != TypeChineseCheckersMoveRequested {

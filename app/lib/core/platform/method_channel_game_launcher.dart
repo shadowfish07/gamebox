@@ -30,9 +30,15 @@ class MethodChannelGameLauncher implements GameLauncher {
   }
 
   @override
-  Future<void> launchHostSmoke() async {
+  Future<void> launchHostSmoke({String? previewGame}) async {
+    if (previewGame != null && previewGame != 'flight_chess') {
+      throw const GameLaunchException('invalid_preview_game');
+    }
     try {
-      await _channel.invokeMethod<void>('launchHostSmoke');
+      final method = previewGame == 'flight_chess'
+          ? 'launchFlightChessPreview'
+          : 'launchHostSmoke';
+      await _channel.invokeMethod<void>(method);
     } on PlatformException catch (error) {
       throw GameLaunchException(error.code);
     } on MissingPluginException {

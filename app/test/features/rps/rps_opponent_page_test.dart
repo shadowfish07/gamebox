@@ -186,5 +186,5 @@ final class _Launcher implements GameLauncher {
   Future<void> launch(GameLaunchRequest request) async {}
 
   @override
-  Future<void> launchHostSmoke() async {}
+  Future<void> launchHostSmoke({String? previewGame}) async {}
 }

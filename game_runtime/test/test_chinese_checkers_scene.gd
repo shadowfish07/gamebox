@@ -277,6 +277,13 @@ static func _plays_confirmed_move_sound_for_either_player() -> bool:
 			var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
 			if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
 				return _cleanup(scene)
+			# Keep playback observable even if CI pauses longer than the short clip.
+			# Duplicate the resource so production and other tests retain normal playback.
+			var probe_stream := sound.stream.duplicate() as AudioStreamOggVorbis
+			if not _check(probe_stream != null, "confirmed move sound must be an Ogg stream"):
+				return _cleanup(scene)
+			probe_stream.loop = true
+			sound.stream = probe_stream
 			var revision := 1
 			var move_user_id := BLACK_ID
 			var path := [6, 14]
@@ -294,6 +301,8 @@ static func _plays_confirmed_move_sound_for_either_player() -> bool:
 			if not _check(not sound.playing, "snapshot or replayed move produced sound"):
 				return _cleanup(scene)
 			client.accept_event(_move(revision, move_user_id, move_color, path))
+			# Let the original short clip duration elapse, as it can on busy CI.
+			await (Engine.get_main_loop() as SceneTree).create_timer(sound.stream.get_length() + 0.05).timeout
 			if not _check(sound.playing, "confirmed %s move was silent for local user %s" % [move_color, local_user_id]):
 				return _cleanup(scene)
 			sound.stop()

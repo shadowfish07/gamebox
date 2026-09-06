@@ -537,6 +537,11 @@ xml_query() {
       matches = nodes.select { |node| pattern.match?(node.attributes["resource-id"].to_s) && enabled.call(node) && bounds.call(node) }
       exit 3 unless matches.length == 1
       puts matches.first.attributes["resource-id"]
+    when "flight-chess-opponent"
+      pattern = /\Aflight-chess-opponent-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
+      matches = nodes.select { |node| pattern.match?(node.attributes["resource-id"].to_s) && enabled.call(node) && bounds.call(node) }
+      exit 3 unless matches.length == 1
+      puts matches.first.attributes["resource-id"]
     when "field-text"
       matches = nodes.select { |node| node.attributes["resource-id"] == expected }
       exit 3 unless matches.length == 1
@@ -2069,6 +2074,13 @@ self_test() {
     || { printf 'APK build provenance is missing\n' >&2; return 1; }
   grep -F 'uninstall "$installed_package"' <<<"$runtime_source" >/dev/null \
     || { printf 'preinstall package cleanup is missing\n' >&2; return 1; }
+  local flight_target_parser_source flight_target_fixture
+  flight_target_parser_source="$(sed -n '/^flight_chess_target_pair() {/,/^}/p' "${BASH_SOURCE[0]}")"
+  eval "$flight_target_parser_source"
+  flight_target_fixture="$(flight_chess_target_pair \
+    'GAMEBOX_FLIGHT_CHESS_TARGETS match=fixture roll=0.875,0.900 red0=0.625,0.750' roll)"
+  [[ "$flight_target_fixture" == '0.875 0.900' ]] \
+    || { printf 'Flight Chess normalized target parser fixture failed\n' >&2; return 1; }
   printf 'Gamebox E2E parser fixtures passed.\n'
 }
 
@@ -2845,6 +2857,23 @@ wait_for_chinese_checkers_opponent_identifier() {
 	return 1
 }
 
+wait_for_flight_chess_opponent_identifier() {
+	local serial="$1"
+	local deadline=$((SECONDS + WAIT_SECONDS))
+	local xml="$TEMP_DIR/ui-flight-chess-opponent-${serial//[^A-Za-z0-9_.-]/_}.xml"
+	while ((SECONDS < deadline)); do
+		if dump_ui "$serial" "$xml"; then
+			local identifier
+			identifier="$(xml_query flight-chess-opponent "$xml" 2>/dev/null)" && {
+				printf '%s\n' "$identifier"
+				return 0
+			}
+		fi
+		sleep 1
+	done
+	return 1
+}
+
 gamebox_e2e_visual_gate() {
 	local phase="$1"
 	local serial="$2"
@@ -3139,6 +3168,363 @@ gamebox_e2e_record_scenario_result flutter-host '{
 fi
 
 uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+
+if gamebox_e2e_scenario_enabled flight-chess-network; then
+gamebox_e2e_enter_phase scenario:flight-chess-network
+
+wait_for_new_flight_chess_ready_match_id() {
+	local serial="$1"
+	local deadline=$((SECONDS + WAIT_SECONDS))
+	while ((SECONDS < deadline)); do
+		local candidates candidate_count
+		candidates="$(
+			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+				| sed -E -n 's/.*GAMEBOX_GODOT_READY game=flight_chess match=([0-9a-f-]{36}).*/\1/p' \
+				| sort -u
+		)"
+		candidate_count="$(printf '%s\n' "$candidates" | awk 'NF { count++ } END { print count + 0 }')"
+		if [[ "$candidate_count" == "1" ]]; then
+			printf '%s\n' "$candidates"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+flight_chess_match_show() {
+	"$CTL_BIN" match show --id "$1" --db "$DB_PATH" --json
+}
+
+wait_for_flight_chess_match() {
+	local match_id="$1"
+	local expected_revision="$2"
+	local expected_status="$3"
+	local deadline=$((SECONDS + WAIT_SECONDS)) snapshot=""
+	while ((SECONDS < deadline)); do
+		snapshot="$(flight_chess_match_show "$match_id" 2>/dev/null || true)"
+		if [[ "$(jq -r '.id // ""' <<<"$snapshot" 2>/dev/null)" == "$match_id" \
+			&& "$(jq -r '.revision // -1' <<<"$snapshot" 2>/dev/null)" == "$expected_revision" \
+			&& "$(jq -r '.status // ""' <<<"$snapshot" 2>/dev/null)" == "$expected_status" ]]; then
+			printf '%s\n' "$snapshot"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+flight_chess_surface_size() {
+	local serial="$1" width height
+	read -r width height <<<"$(device_effective_size "$serial")"
+	[[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] || return 1
+	if ((width < height)); then
+		printf '%s %s\n' "$height" "$width"
+	else
+		printf '%s %s\n' "$width" "$height"
+	fi
+}
+
+wait_for_flight_chess_targets() {
+	local serial="$1" match_id="$2" deadline=$((SECONDS + WAIT_SECONDS)) marker
+	while ((SECONDS < deadline)); do
+		marker="$(
+			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+				| sed -n "/GAMEBOX_FLIGHT_CHESS_TARGETS match=$match_id /p" \
+				| tail -1
+		)"
+		if [[ -n "$marker" ]]; then
+			printf '%s\n' "$marker"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+wait_for_flight_chess_confirm_target() {
+	local serial="$1" match_id="$2" kind="${3:-CONFIRM}" deadline=$((SECONDS + WAIT_SECONDS)) marker
+	while ((SECONDS < deadline)); do
+		marker="$(
+			game_logs_after_boundary "$serial" "$(boundary_for_serial "$serial")" \
+				| sed -n "/GAMEBOX_FLIGHT_CHESS_${kind}_TARGET match=$match_id /p" \
+				| tail -1
+		)"
+		if [[ -n "$marker" ]]; then
+			printf '%s\n' "$marker"
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+flight_chess_target_pair() {
+	local marker="$1" name="$2"
+	awk -v name="$name" '{
+		for (field_index = 1; field_index <= NF; field_index++) {
+			if ($field_index ~ ("^" name "=")) {
+				sub("^" name "=", "", $field_index)
+				gsub(",", " ", $field_index)
+				print $field_index
+				exit
+			}
+		}
+	}' <<<"$marker"
+}
+
+flight_chess_targets_for_serial() {
+	if [[ "$1" == "$SERIAL_A" ]]; then
+		printf '%s\n' "$FLIGHT_TARGETS_A"
+	elif [[ "$1" == "$SERIAL_B" ]]; then
+		printf '%s\n' "$FLIGHT_TARGETS_B"
+	else
+		return 2
+	fi
+}
+
+tap_flight_chess_marker_target() {
+	local serial="$1" name="$2" marker="$3" fractions fraction_x fraction_y width height point x y
+	fractions="$(flight_chess_target_pair "$marker" "$name")" || return 1
+	read -r fraction_x fraction_y <<<"$fractions"
+	[[ "$fraction_x" =~ ^0\.[0-9]+$|^1\.0+$ && "$fraction_y" =~ ^0\.[0-9]+$|^1\.0+$ ]] || return 1
+	read -r width height <<<"$(flight_chess_surface_size "$serial")" || return 1
+	point="$(ruby -e 'width, height, x, y = ARGV.map(&:to_f); puts "#{(width * x).round} #{(height * y).round}"' \
+		"$width" "$height" "$fraction_x" "$fraction_y")" || return 1
+	read -r x y <<<"$point"
+	adb_for "$serial" shell input tap "$x" "$y" >/dev/null
+}
+
+tap_flight_chess_target() {
+	local serial="$1" name="$2" marker
+	marker="$(flight_chess_targets_for_serial "$serial")" || return 1
+	tap_flight_chess_marker_target "$serial" "$name" "$marker"
+}
+
+tap_flight_chess_roll() {
+	tap_flight_chess_target "$1" roll
+}
+
+tap_flight_chess_hangar_plane() {
+	local serial="$1" color="$2"
+	if [[ "$color" == black ]]; then
+		tap_flight_chess_target "$serial" red0
+	elif [[ "$color" == white ]]; then
+		tap_flight_chess_target "$serial" yellow0
+	else
+		return 2
+	fi
+}
+
+tap_flight_chess_resign() {
+	local serial="$1" marker
+	tap_flight_chess_target "$serial" menu || return 1
+	marker="$(wait_for_flight_chess_confirm_target "$serial" "$FLIGHT_MATCH_ID" MENU)" || return 1
+	tap_flight_chess_marker_target "$serial" resign "$marker"
+}
+
+tap_flight_chess_confirm_move() {
+	local serial="$1" marker
+	marker="$(wait_for_flight_chess_confirm_target "$serial" "$FLIGHT_MATCH_ID" SELECTION)" || return 1
+	tap_flight_chess_marker_target "$serial" confirm "$marker"
+}
+
+tap_flight_chess_confirm_resign() {
+	local serial="$1" marker
+	marker="$(wait_for_flight_chess_confirm_target "$serial" "$FLIGHT_MATCH_ID")" || return 1
+	tap_flight_chess_marker_target "$serial" confirm "$marker"
+}
+
+refresh_game_log_boundaries flight-chess-create \
+	|| fail "could not establish Flight Chess log boundaries"
+tap_identifier_after_scroll "$SERIAL_A" flight-chess-choose-opponent \
+	|| fail "A could not open the Flight Chess opponent list"
+flight_opponent_identifier="$(wait_for_flight_chess_opponent_identifier "$SERIAL_A")" \
+	|| fail "A did not expose exactly one enabled Flight Chess opponent"
+FLIGHT_USER_ID_B="${flight_opponent_identifier#flight-chess-opponent-}"
+[[ "$FLIGHT_USER_ID_B" =~ $uuid_pattern ]] \
+	|| fail "Flight Chess opponent identifier did not contain B's canonical user ID"
+tap_identifier "$SERIAL_A" "$flight_opponent_identifier"
+FLIGHT_MATCH_ID="$(wait_for_new_flight_chess_ready_match_id "$SERIAL_A")" \
+	|| fail "A did not launch the new Flight Chess match"
+[[ "$FLIGHT_MATCH_ID" =~ $uuid_pattern ]] \
+	|| fail "Flight Chess ready marker did not contain a canonical match ID"
+
+flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" 0 active)" \
+	|| fail "Flight Chess initial match was not readable"
+FLIGHT_BLACK_USER_ID="$(jq -er '.players[] | select(.color == "black") | .userId' <<<"$flight_snapshot")"
+FLIGHT_WHITE_USER_ID="$(jq -er '.players[] | select(.color == "white") | .userId' <<<"$flight_snapshot")"
+FLIGHT_USER_ID_A="$(jq -er --arg userB "$FLIGHT_USER_ID_B" '.players[] | select(.userId != $userB) | .userId' <<<"$flight_snapshot")"
+if [[ "$FLIGHT_BLACK_USER_ID" == "$FLIGHT_USER_ID_A" && "$FLIGHT_WHITE_USER_ID" == "$FLIGHT_USER_ID_B" ]]; then
+	FLIGHT_BLACK_SERIAL="$SERIAL_A"
+	FLIGHT_WHITE_SERIAL="$SERIAL_B"
+elif [[ "$FLIGHT_BLACK_USER_ID" == "$FLIGHT_USER_ID_B" && "$FLIGHT_WHITE_USER_ID" == "$FLIGHT_USER_ID_A" ]]; then
+	FLIGHT_BLACK_SERIAL="$SERIAL_B"
+	FLIGHT_WHITE_SERIAL="$SERIAL_A"
+else
+	fail "Flight Chess colors did not map to both registered users"
+fi
+jq -e '
+	.gameId == "flight_chess" and .revision == 0 and .status == "active"
+	and .phase == "awaiting_roll" and .nextColor == "black"
+	and (.pieces.black | length == 4) and (.pieces.white | length == 4)
+	and ([.pieces.black[], .pieces.white[] | select(.zone == "hangar")] | length == 8)
+' <<<"$flight_snapshot" >/dev/null \
+	|| fail "Flight Chess initial authoritative state was malformed"
+
+wait_for_identifier_after_scroll "$SERIAL_B" flight-chess-continue-match >/dev/null \
+	|| fail "B did not expose the active Flight Chess match"
+tap_identifier_after_scroll "$SERIAL_B" flight-chess-continue-match \
+	|| fail "B could not launch the active Flight Chess match"
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_READY_MARKER game=flight_chess match=$FLIGHT_MATCH_ID" \
+		|| fail "$serial did not render the Flight Chess scene"
+	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=0 status=active connection=connected" \
+		|| fail "$serial did not render the initial authoritative Flight Chess state"
+done
+FLIGHT_TARGETS_A="$(wait_for_flight_chess_targets "$SERIAL_A" "$FLIGHT_MATCH_ID")" \
+	|| fail "A did not expose responsive Flight Chess touch targets"
+FLIGHT_TARGETS_B="$(wait_for_flight_chess_targets "$SERIAL_B" "$FLIGHT_MATCH_ID")" \
+	|| fail "B did not expose responsive Flight Chess touch targets"
+gamebox_e2e_visual_gate flight-ready "$FLIGHT_BLACK_SERIAL"
+
+refresh_game_log_boundary "$FLIGHT_BLACK_SERIAL" flight-chess-pending-roll \
+	|| fail "could not establish the Flight Chess pending-roll boundary"
+pause_e2e_server || fail "could not pause the server before the Flight Chess roll"
+tap_flight_chess_roll "$FLIGHT_BLACK_SERIAL" || fail "black player could not submit the Flight Chess roll"
+wait_for_log_marker "$FLIGHT_BLACK_SERIAL" "GAMEBOX_FLIGHT_CHESS_PENDING match=$FLIGHT_MATCH_ID revision=0 pending=true" \
+	|| fail "Flight Chess roll did not remain pending before authority"
+[[ "$(jq -r '.revision' <<<"$(flight_chess_match_show "$FLIGHT_MATCH_ID")")" == 0 ]] \
+	|| fail "pending Flight Chess roll advanced authoritative revision"
+gamebox_e2e_visual_gate flight-roll-pending "$FLIGHT_BLACK_SERIAL"
+resume_e2e_server || fail "could not resume the server after the Flight Chess roll"
+flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" 1 active)" \
+	|| fail "Flight Chess first roll did not commit"
+
+flight_revision=1
+flight_roll_attempts=1
+while [[ "$(jq -r '.phase' <<<"$flight_snapshot")" != awaiting_move ]]; do
+	((flight_roll_attempts < 40)) || fail "Flight Chess did not produce a launch roll within 40 authoritative rolls"
+	for serial in "$SERIAL_A" "$SERIAL_B"; do
+		wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
+			|| fail "$serial did not render Flight Chess roll revision $flight_revision before the next turn"
+	done
+	flight_color="$(jq -er '.nextColor' <<<"$flight_snapshot")"
+	if [[ "$flight_color" == black ]]; then
+		flight_serial="$FLIGHT_BLACK_SERIAL"
+	else
+		flight_serial="$FLIGHT_WHITE_SERIAL"
+	fi
+	tap_flight_chess_roll "$flight_serial" || fail "$flight_color player could not roll in Flight Chess"
+	flight_revision=$((flight_revision + 1))
+	flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" "$flight_revision" active)" \
+		|| fail "Flight Chess roll $flight_revision did not commit"
+	flight_roll_attempts=$((flight_roll_attempts + 1))
+done
+
+flight_color="$(jq -er '.nextColor' <<<"$flight_snapshot")"
+flight_die="$(jq -er '.dice' <<<"$flight_snapshot")"
+[[ "$flight_die" == 6 ]] || fail "Flight Chess hangar launch was unlocked by a non-six roll"
+if [[ "$flight_color" == black ]]; then
+	flight_serial="$FLIGHT_BLACK_SERIAL"
+else
+	flight_serial="$FLIGHT_WHITE_SERIAL"
+fi
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
+		|| fail "$serial did not render the authoritative Flight Chess roll"
+done
+gamebox_e2e_visual_gate flight-rolled "$flight_serial"
+
+refresh_game_log_boundary "$flight_serial" flight-chess-pending-move \
+	|| fail "could not establish the Flight Chess pending-move boundary"
+pause_e2e_server || fail "could not pause the server before the Flight Chess move"
+tap_flight_chess_hangar_plane "$flight_serial" "$flight_color" \
+	|| fail "$flight_color player could not select a Flight Chess plane"
+tap_flight_chess_confirm_move "$flight_serial" \
+	|| fail "$flight_color player could not confirm the selected Flight Chess plane"
+wait_for_log_marker "$flight_serial" "GAMEBOX_FLIGHT_CHESS_PENDING match=$FLIGHT_MATCH_ID revision=$flight_revision pending=true" \
+	|| fail "Flight Chess move did not remain pending before authority"
+[[ "$(jq -r '.revision' <<<"$(flight_chess_match_show "$FLIGHT_MATCH_ID")")" == "$flight_revision" ]] \
+	|| fail "pending Flight Chess move advanced authoritative revision"
+resume_e2e_server || fail "could not resume the server after the Flight Chess move"
+flight_revision=$((flight_revision + 1))
+flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" "$flight_revision" active)" \
+	|| fail "Flight Chess launch move did not commit"
+if ! jq -e --arg color "$flight_color" '
+	.phase == "awaiting_roll" and .dice == null and .nextColor == $color
+	and ([.pieces[$color][] | select(.zone == "launch")] | length == 1)
+	and ([.pieces[$color][] | select(.zone == "hangar")] | length == 3)
+' <<<"$flight_snapshot" >/dev/null; then
+	flight_launch_diagnostic="$(jq -c --arg color "$flight_color" \
+		'{phase,dice,nextColor,zones:[.pieces[$color][] | .zone]}' <<<"$flight_snapshot" 2>/dev/null || printf unavailable)"
+	fail "Flight Chess accepted launch or six extra turn was wrong: $flight_launch_diagnostic"
+fi
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
+		|| fail "$serial did not render the accepted Flight Chess launch"
+done
+
+refresh_game_log_boundary "$flight_serial" flight-chess-recovery \
+	|| fail "could not establish the Flight Chess recovery boundary"
+adb_for "$flight_serial" shell am force-stop "$PACKAGE" >/dev/null \
+	|| fail "could not force-stop the Flight Chess client"
+start_flutter "$flight_serial"
+wait_for_identifier_after_scroll "$flight_serial" flight-chess-continue-match >/dev/null \
+	|| fail "Flight Chess player did not retain the active match"
+tap_identifier_after_scroll "$flight_serial" flight-chess-continue-match \
+	|| fail "Flight Chess player could not resume the match"
+wait_for_log_marker "$flight_serial" "$GAMEBOX_READY_MARKER game=flight_chess match=$FLIGHT_MATCH_ID" \
+	|| fail "Flight Chess did not relaunch after force-stop"
+wait_for_log_marker "$flight_serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
+	|| fail "Flight Chess reconnect did not restore the accepted launch"
+
+return_to_lobby_via_android_back "$flight_serial" \
+	|| fail "Flight Chess Back could not return to the lobby"
+wait_for_identifier_after_scroll "$flight_serial" flight-chess-continue-match >/dev/null \
+	|| fail "Flight Chess Back destroyed the active match"
+[[ "$(jq -r '.revision' <<<"$(flight_chess_match_show "$FLIGHT_MATCH_ID")")" == "$flight_revision" ]] \
+	|| fail "Flight Chess Back mutated the match"
+
+refresh_game_log_boundary "$flight_serial" flight-chess-resign \
+	|| fail "could not establish the Flight Chess resignation boundary"
+tap_identifier_after_scroll "$flight_serial" flight-chess-continue-match \
+	|| fail "Flight Chess player could not reopen before resignation"
+wait_for_log_marker "$flight_serial" "$GAMEBOX_READY_MARKER game=flight_chess match=$FLIGHT_MATCH_ID" \
+	|| fail "Flight Chess did not reopen before resignation"
+tap_flight_chess_resign "$flight_serial" || fail "Flight Chess resignation action could not open"
+sleep 0.5
+gamebox_e2e_visual_gate flight-resign "$flight_serial"
+tap_flight_chess_confirm_resign "$flight_serial" || fail "Flight Chess resignation could not be confirmed"
+flight_revision=$((flight_revision + 1))
+flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" "$flight_revision" finished)" \
+	|| fail "Flight Chess resignation did not finish authoritatively"
+[[ "$(jq -r '.result' <<<"$flight_snapshot")" == resignation ]] \
+	|| fail "Flight Chess resignation result was wrong"
+for serial in "$SERIAL_A" "$SERIAL_B"; do
+	wait_for_log_marker "$serial" "$GAMEBOX_RESULT_MARKER match=$FLIGHT_MATCH_ID result=resignation" \
+		|| fail "$serial did not render the authoritative Flight Chess result"
+done
+gamebox_e2e_visual_gate flight-result "$flight_serial"
+
+return_to_lobby_via_android_back "$SERIAL_A" || fail "A could not leave the Flight Chess result"
+return_to_lobby_via_android_back "$SERIAL_B" || fail "B could not leave the Flight Chess result"
+wait_for_identifier_after_scroll "$SERIAL_A" flight-chess-choose-opponent >/dev/null \
+	|| fail "A Flight Chess slot was not released"
+wait_for_identifier_after_scroll "$SERIAL_B" flight-chess-choose-opponent >/dev/null \
+	|| fail "B Flight Chess slot was not released"
+gamebox_e2e_record_scenario_result flight-chess-network "$(jq -n \
+	--arg matchId "$FLIGHT_MATCH_ID" --argjson revision "$flight_revision" \
+	'{
+		match:{id:$matchId,revision:$revision,status:"finished",result:"resignation",slotsReleased:true},
+		assertions:[
+			"flight-chess-server-dice","flight-chess-pending-before-authority",
+			"flight-chess-authoritative-launch","flight-chess-six-extra-turn",
+			"flight-chess-force-stop-resume","flight-chess-back-non-destructive",
+			"flight-chess-authoritative-resignation"
+		]
+	}')"
+fi
 
 if gamebox_e2e_scenario_enabled chinese-checkers-network; then
 gamebox_e2e_enter_phase scenario:chinese-checkers-network

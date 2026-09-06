@@ -184,10 +184,10 @@ void main() {
         reason: 'register must survive the keyboard shrinking the viewport',
       );
       final registerRect = tester.getRect(register);
-      final logicalHeight = tester.view.physicalSize.height /
-          tester.view.devicePixelRatio;
-      final logicalInset = tester.view.viewInsets.bottom /
-          tester.view.devicePixelRatio;
+      final logicalHeight =
+          tester.view.physicalSize.height / tester.view.devicePixelRatio;
+      final logicalInset =
+          tester.view.viewInsets.bottom / tester.view.devicePixelRatio;
       expect(
         registerRect.bottom,
         lessThanOrEqualTo(logicalHeight - logicalInset),
@@ -599,5 +599,5 @@ final class _NoopGameLauncher implements GameLauncher {
   Future<void> launch(GameLaunchRequest request) async {}
 
   @override
-  Future<void> launchHostSmoke() async {}
+  Future<void> launchHostSmoke({String? previewGame}) async {}
 }

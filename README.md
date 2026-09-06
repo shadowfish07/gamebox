@@ -245,7 +245,7 @@ Release builds require these GitHub Actions secrets:
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-The [debug workflow](.github/workflows/debug.yml) uploads branch and pull-request builds as short-lived workflow artifacts with read-only repository permissions. Pull requests opened or reopened by `shadowfish07` from branches in this repository use the stable signing secrets, so those artifacts can replace previous debug installs; all other non-default refs use an ephemeral Android debug key. Trusted builds from the default branch publish the stable-signed package to the rolling `debug-latest` prerelease. Stable and debug packages have different application IDs, so both can be installed on one device.
+The [debug workflow](.github/workflows/debug.yml) saves builds as short-lived workflow artifacts with read-only repository permissions. PR builds run on opening or reopening a matching PR and do not publish a release. They use stable signing secrets only when both the PR author and triggering actor are `shadowfish07` and the branch belongs to this repository; other PR builds use an ephemeral Android debug key. Pushes to `main` and manual dispatches from any selected branch also publish a stable-signed package to the rolling `debug-latest` prerelease. This channel can therefore contain an unmerged branch build: the download command below selects the newest APK asset, not necessarily a build from `main`. Check the release notes and asset identity for the source ref, commit SHA, build time and run before installing. Stable and debug packages have different application IDs, so both can be installed on one device.
 
 Because release assets keep immutable provenance names, resolve the newest APK from release metadata instead of guessing a filename:
 

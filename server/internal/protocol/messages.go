@@ -26,6 +26,12 @@ const (
 	TypeChineseCheckersMoveAccepted    = "chinese_checkers.move.accepted"
 	TypeChineseCheckersResignRequested = "chinese_checkers.resign.requested"
 	TypeChineseCheckersResigned        = "chinese_checkers.resigned"
+	TypeFlightChessRollRequested       = "flight_chess.roll.requested"
+	TypeFlightChessRollAccepted        = "flight_chess.roll.accepted"
+	TypeFlightChessMoveRequested       = "flight_chess.move.requested"
+	TypeFlightChessMoveAccepted        = "flight_chess.move.accepted"
+	TypeFlightChessResignRequested     = "flight_chess.resign.requested"
+	TypeFlightChessResigned            = "flight_chess.resigned"
 	TypeGomokuMoveRequested            = "gomoku.move.requested"
 	TypeGomokuMoveAccepted             = "gomoku.move.accepted"
 	TypeGomokuResignRequested          = "gomoku.resign.requested"
@@ -53,6 +59,12 @@ var knownTypes = map[string]struct{}{
 	TypeChineseCheckersMoveAccepted:    {},
 	TypeChineseCheckersResignRequested: {},
 	TypeChineseCheckersResigned:        {},
+	TypeFlightChessRollRequested:       {},
+	TypeFlightChessRollAccepted:        {},
+	TypeFlightChessMoveRequested:       {},
+	TypeFlightChessMoveAccepted:        {},
+	TypeFlightChessResignRequested:     {},
+	TypeFlightChessResigned:            {},
 	TypeGomokuMoveRequested:            {},
 	TypeGomokuMoveAccepted:             {},
 	TypeGomokuResignRequested:          {},
@@ -66,7 +78,9 @@ var knownTypes = map[string]struct{}{
 
 func isClientAction(messageType string) bool {
 	switch messageType {
-	case TypeChineseCheckersMoveRequested, TypeChineseCheckersResignRequested, TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
+	case TypeChineseCheckersMoveRequested, TypeChineseCheckersResignRequested,
+		TypeFlightChessRollRequested, TypeFlightChessMoveRequested, TypeFlightChessResignRequested,
+		TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
 		return true
 	default:
 		return false
@@ -175,6 +189,28 @@ func validateClientMessage(envelope Envelope) error {
 			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
+	case TypeFlightChessRollRequested, TypeFlightChessResignRequested:
+		if err := validateClientBinding(envelope, true); err != nil {
+			return err
+		}
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{})
+		if err != nil || len(fields) != 0 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		return nil
+	case TypeFlightChessMoveRequested:
+		if err := validateClientBinding(envelope, true); err != nil {
+			return err
+		}
+		fields, err := exactPayloadFields(envelope.Payload, map[string]struct{}{"pieceIndex": {}})
+		if err != nil || len(fields) != 1 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		pieceIndex, err := strictInteger(fields["pieceIndex"])
+		if err != nil || pieceIndex < 0 || pieceIndex >= 4 {
+			return protocolFailure(codeInvalidEnvelope)
+		}
+		return nil
 	case TypeGomokuResignRequested:
 		if err := validateClientBinding(envelope, true); err != nil {
 			return err
@@ -216,12 +252,14 @@ func validateClientBinding(envelope Envelope, action bool) error {
 	switch envelope.Type {
 	case TypeChineseCheckersMoveRequested, TypeChineseCheckersResignRequested:
 		expectedGame = "chinese_checkers"
+	case TypeFlightChessRollRequested, TypeFlightChessMoveRequested, TypeFlightChessResignRequested:
+		expectedGame = "flight_chess"
 	case TypeGomokuMoveRequested, TypeGomokuResignRequested:
 		expectedGame = "gomoku"
 	case TypeRpsChoiceRequested, TypeRpsResignRequested:
 		expectedGame = "rps"
 	}
-	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "chinese_checkers" && envelope.GameID != "gomoku" && envelope.GameID != "rps" || !canonicalUUID(envelope.MatchID) {
+	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "chinese_checkers" && envelope.GameID != "flight_chess" && envelope.GameID != "gomoku" && envelope.GameID != "rps" || !canonicalUUID(envelope.MatchID) {
 		return protocolFailure(codeInvalidEnvelope)
 	}
 	if action && !canonicalUUID(envelope.ActionID) {

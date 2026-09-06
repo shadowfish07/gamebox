@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -155,6 +156,10 @@ func (router *router) gomokuHistory(writer http.ResponseWriter, request *http.Re
 
 func (router *router) chineseCheckersHistory(writer http.ResponseWriter, request *http.Request) {
 	router.gameHistory(writer, request, chinesecheckers.GameID)
+}
+
+func (router *router) flightChessHistory(writer http.ResponseWriter, request *http.Request) {
+	router.gameHistory(writer, request, flightchess.GameID)
 }
 
 func (router *router) rpsHistory(writer http.ResponseWriter, request *http.Request) {

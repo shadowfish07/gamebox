@@ -8,6 +8,7 @@ import 'core/api/api_client.dart';
 import 'core/auth/token_store.dart';
 import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
+import 'design_system/generated/gamebox_tokens.g.dart';
 import 'design_system/gamebox_theme.dart';
 import 'features/auth/auth_api.dart';
 import 'features/auth/registration_page.dart';
@@ -31,6 +32,7 @@ class GameboxApp extends StatefulWidget {
     this.matchHistoryApi,
     this.rpsController,
     this.chineseCheckersController,
+    this.flightChessController,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
@@ -46,6 +48,7 @@ class GameboxApp extends StatefulWidget {
   final MatchHistoryApi? matchHistoryApi;
   final RpsController? rpsController;
   final HomeController? chineseCheckersController;
+  final HomeController? flightChessController;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -61,10 +64,12 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   ApiClient? _ownedApiClient;
   HomeController? _homeController;
   HomeController? _chineseCheckersController;
+  HomeController? _flightChessController;
   RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
   var _ownsChineseCheckersController = false;
+  var _ownsFlightChessController = false;
   var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
 
@@ -128,6 +133,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsChineseCheckersController = false;
       } else if (_homeControllerAuthenticated) {
         _chineseCheckersController?.pauseForeground();
+      }
+      if (_ownsFlightChessController) {
+        _flightChessController?.dispose();
+        _flightChessController = null;
+        _ownsFlightChessController = false;
+      } else if (_homeControllerAuthenticated) {
+        _flightChessController?.pauseForeground();
       }
       _homeControllerAuthenticated = false;
       return;
@@ -194,11 +206,37 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsChineseCheckersController = true;
       }
     }
+    if (_flightChessController == null &&
+        (widget.flightChessController != null ||
+            widget.homeController == null)) {
+      final injected = widget.flightChessController;
+      if (injected != null) {
+        _flightChessController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _flightChessController = HomeController(
+          repository: GomokuRepository(
+            api: HttpHomeApi(
+              apiClient,
+              sessionController,
+              gameId: flightChessGameId,
+            ),
+            gameLauncher: widget.gameLauncher,
+            gameId: flightChessGameId,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsFlightChessController = true;
+      }
+    }
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
+    _flightChessController?.resumeForeground();
   }
 
   @override
@@ -209,6 +247,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _homeController?.pauseForeground();
       _rpsController?.pauseForeground();
       _chineseCheckersController?.pauseForeground();
+      _flightChessController?.pauseForeground();
     }
   }
 
@@ -223,6 +262,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
+    _flightChessController?.resumeForeground();
   }
 
   @override
@@ -245,9 +285,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsChineseCheckersController) {
       _chineseCheckersController?.dispose();
     }
+    if (_ownsFlightChessController) {
+      _flightChessController?.dispose();
+    }
     _homeController = null;
     _rpsController = null;
     _chineseCheckersController = null;
+    _flightChessController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     widget.updateController?.dispose();
@@ -258,7 +302,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       RegExp(r'^[A-Za-z0-9_-]{8,64}$')
           .hasMatch(widget.instrumentationCanaryNonce);
 
-  Future<void> _launchHostSmoke() async {
+  Future<void> _launchHostSmoke({String? previewGame}) async {
     if (_isLaunchingHostSmoke) {
       return;
     }
@@ -267,7 +311,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _hostSmokeError = false;
     });
     try {
-      await widget.gameLauncher.launchHostSmoke();
+      await widget.gameLauncher.launchHostSmoke(previewGame: previewGame);
     } on GameLaunchException {
       if (mounted) {
         setState(() => _hostSmokeError = true);
@@ -391,6 +435,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       historyApi: historyApi,
       rpsController: _rpsController,
       chineseCheckersController: _chineseCheckersController,
+      flightChessController: _flightChessController,
       updateController: widget.updateController,
     );
   }
@@ -406,11 +451,30 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
               label: 'host-smoke.launch',
               button: true,
               enabled: !_isLaunchingHostSmoke,
-              onTap: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+              onTap: _isLaunchingHostSmoke ? null : () => _launchHostSmoke(),
               excludeSemantics: true,
               child: FilledButton(
-                onPressed: _isLaunchingHostSmoke ? null : _launchHostSmoke,
+                onPressed: _isLaunchingHostSmoke
+                    ? null
+                    : () => _launchHostSmoke(),
                 child: const Text('启动宿主烟测'),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.compact),
+            Semantics(
+              key: const Key('host-smoke.flight-chess-preview'),
+              label: 'host-smoke.flight-chess-preview',
+              button: true,
+              enabled: !_isLaunchingHostSmoke,
+              onTap: _isLaunchingHostSmoke
+                  ? null
+                  : () => _launchHostSmoke(previewGame: 'flight_chess'),
+              excludeSemantics: true,
+              child: OutlinedButton(
+                onPressed: _isLaunchingHostSmoke
+                    ? null
+                    : () => _launchHostSmoke(previewGame: 'flight_chess'),
+                child: const Text('预览飞行棋横屏'),
               ),
             ),
             if (_canLaunchInstrumentationCanary) ...[

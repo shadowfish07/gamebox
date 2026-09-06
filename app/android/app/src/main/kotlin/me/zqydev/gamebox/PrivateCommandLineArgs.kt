@@ -66,7 +66,10 @@ internal class PrivateCommandLineArgs(
     }
 
     private fun privatizeLaunchTicket() {
-        if (retained.contentEquals(HOST_SMOKE_ARGUMENTS)) {
+        if (
+            retained.contentEquals(HOST_SMOKE_ARGUMENTS) ||
+            retained.contentEquals(FLIGHT_CHESS_PREVIEW_ARGUMENTS)
+        ) {
             return
         }
         if (!hasNormalLaunchShape()) {
@@ -114,6 +117,8 @@ internal class PrivateCommandLineArgs(
         private const val NORMAL_TICKET_VALUE_INDEX = 6
         private val HOST_SMOKE_ARGUMENTS =
             arrayOf("--", "--host-smoke", "--auto-exit-ms", "800")
+        private val FLIGHT_CHESS_PREVIEW_ARGUMENTS =
+            arrayOf("--", "--host-smoke", "--preview-game", "flight_chess")
         const val ERASED_VALUE = ""
     }
 }

@@ -44,6 +44,8 @@ Gamebox 使用 Flutter 宿主、Godot 游戏、Go 服务和 Android 打包。验
 服务和构建生命周期由 harness 统一持有，场景名称由 registry 管理。可用场景：
 
 - `flutter-host`：打包后的 Flutter 注册和宿主更新交互；
+- `chinese-checkers-network`：跳棋直达路径、权威状态、恢复与返回契约；
+- `flight-chess-network`：飞行棋服务端骰点、权威走子、恢复与返回契约；
 - `gomoku-network`：Flutter–Godot bridge、权威 revision、生命周期和恢复；
 - `rps-network`：封存选择、重连、权威完成和 slot 释放；
 - `full`：顺序运行全部场景，仅作为发布级或全局协议/lifecycle gate。

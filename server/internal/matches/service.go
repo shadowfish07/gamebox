@@ -32,6 +32,7 @@ import (
 	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -60,6 +61,7 @@ const (
 	maximumIdentifierBytes    = 128
 	maximumActionPayloadBytes = 1024
 	maximumMatchEvents        = 226
+	maximumFlightChessEvents  = 512
 	cancelledPayloadJSON      = `{}`
 	fullyOfflineAbandonAfter  = 24 * time.Hour
 	launchTicketLifetime      = 60 * time.Second
@@ -904,8 +906,8 @@ WHERE id=?`, matchID).Scan(&gameID, &status, &revision)
 	if queryErr := transaction.QueryRowContext(ctx, `
 SELECT EXISTS(
   SELECT 1 FROM match_events
-  WHERE match_id=? AND event_type IN (?,?,?,?)
-)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed).Scan(&gameplayEvents); queryErr != nil {
+  WHERE match_id=? AND event_type IN (?,?,?,?,?,?)
+)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed, flightchess.RollAccepted, flightchess.MoveAccepted).Scan(&gameplayEvents); queryErr != nil {
 		return Event{}, matchDatabaseError(ctx, queryErr)
 	}
 	if gameplayEvents != 0 {
@@ -1050,13 +1052,27 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	if lookupErr != nil {
 		return Event{}, Snapshot{}, lookupErr
 	}
-	if found {
-		matches, comparisonErr := committedActionMatches(committed, request, semantics, players)
-		if comparisonErr != nil {
-			return Event{}, Snapshot{}, comparisonErr
+	limitRetry := false
+	if !found && match.GameID == flightchess.GameID && match.Status == StatusAbandoned {
+		committed, found, lookupErr = readFlightChessLimitAction(ctx, transaction.Tx, request, semantics)
+		if lookupErr != nil {
+			return Event{}, Snapshot{}, lookupErr
 		}
-		if !matches {
-			return Event{}, Snapshot{}, ErrActionConflict
+		limitRetry = found
+	}
+	if found {
+		if limitRetry {
+			if !playerMember(players, request.ActorUserID) {
+				return Event{}, Snapshot{}, ErrInternal
+			}
+		} else {
+			matches, comparisonErr := committedActionMatches(committed, request, semantics, players)
+			if comparisonErr != nil {
+				return Event{}, Snapshot{}, comparisonErr
+			}
+			if !matches {
+				return Event{}, Snapshot{}, ErrActionConflict
+			}
 		}
 		snapshot, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players)
 		if snapshotErr != nil {
@@ -1099,6 +1115,7 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	var nextGame games.Snapshot
 	var result, winner *string
 	terminal := false
+	terminalStatus := StatusFinished
 	switch request.Type {
 	case chinesecheckers.MoveRequested:
 		// Keep one durable event available for resignation. Chinese Checkers
@@ -1136,6 +1153,56 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			terminal = true
 			result = cloneStringPointer(outcome.Result)
 			winner = cloneStringPointer(outcome.WinnerUserID)
+		}
+	case flightchess.RollRequested, flightchess.MoveRequested:
+		currentSummary, summaryErr := readGameStateSummary(current.Game)
+		if summaryErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		if string(actor.Color) != currentSummary.NextColor {
+			return Event{}, Snapshot{}, flightchess.ErrNotYourTurn
+		}
+		action := games.Action{Type: request.Type, Payload: append(json.RawMessage(nil), request.Payload...)}
+		var produced games.Event
+		var producedSnapshot games.Snapshot
+		var applyErr error
+		if request.Type == flightchess.RollRequested {
+			randomized, ok := rules.(games.RandomizedRules)
+			if !ok {
+				return Event{}, Snapshot{}, ErrInternal
+			}
+			service.randomMu.Lock()
+			produced, producedSnapshot, applyErr = randomized.ApplyRandom(current.Game, request.ActorUserID, action, service.random)
+			service.randomMu.Unlock()
+		} else {
+			produced, producedSnapshot, applyErr = rules.Apply(current.Game, request.ActorUserID, action)
+		}
+		if applyErr != nil {
+			return Event{}, Snapshot{}, safeActionRuleError(applyErr)
+		}
+		if validateErr := validateProducedFlightChess(produced, producedSnapshot, request, semantics, actor.Color, nextRevision); validateErr != nil {
+			return Event{}, Snapshot{}, validateErr
+		}
+		gameEvent, nextGame = produced, producedSnapshot
+		outcome, outcomeErr := readGameStateSummary(nextGame)
+		if outcomeErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		if outcome.Status == StatusFinished {
+			if request.Type != flightchess.MoveRequested || outcome.Result == nil || *outcome.Result != ResultGoal || outcome.WinnerUserID == nil || *outcome.WinnerUserID != request.ActorUserID {
+				return Event{}, Snapshot{}, ErrInternal
+			}
+			terminal = true
+			result = cloneStringPointer(outcome.Result)
+			winner = cloneStringPointer(outcome.WinnerUserID)
+		} else if nextRevision == int64(maximumFlightChessEvents) {
+			// Reserve the last event for a system terminal outcome. Validate the
+			// requested action first, and let a winning move finish normally.
+			// The uncommitted roll/move is replaced by abandonment, preserving
+			// the last authoritative board and the existing client protocol.
+			gameEvent = games.Event{Revision: nextRevision, Type: protocol.TypePlatformMatchAbandoned, Payload: json.RawMessage(cancelledPayloadJSON)}
+			nextGame = cloneGameSnapshot(current.Game)
+			terminal, terminalStatus = true, StatusAbandoned
 		}
 	case gomoku.MoveRequested:
 		acceptedMoves := current.Game.Revision
@@ -1237,6 +1304,26 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		result = &resultValue
 		winner = &winnerID
 		terminal = true
+	case protocol.TypeFlightChessResignRequested:
+		if current.Game.Revision == 0 {
+			return Event{}, Snapshot{}, ErrInvalidRequest
+		}
+		winnerID := opponent.UserID
+		payload, marshalErr := json.Marshal(resignedPayload{UserID: actor.UserID, WinnerUserID: winnerID})
+		if marshalErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
+		}
+		gameEvent = games.Event{
+			Revision: nextRevision,
+			Type:     protocol.TypeFlightChessResigned,
+			ActorID:  actor.UserID,
+			Payload:  append(json.RawMessage(nil), payload...),
+		}
+		nextGame = cloneGameSnapshot(current.Game)
+		resultValue := ResultResignation
+		result = &resultValue
+		winner = &winnerID
+		terminal = true
 	case protocol.TypeRpsResignRequested:
 		if current.Game.Revision == 0 {
 			return Event{}, Snapshot{}, ErrInvalidRequest
@@ -1265,9 +1352,13 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			return Event{}, Snapshot{}, slotsErr
 		}
 	}
+	actionID, actorID := stringPointer(request.ActionID), stringPointer(request.ActorUserID)
+	if terminalStatus == StatusAbandoned {
+		actionID, actorID = nil, nil
+	}
 	resultExec, insertErr := transaction.ExecContext(ctx, `
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
-VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionID, request.ActorUserID, string(gameEvent.Payload), nowMillis)
+VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, actionID, actorID, string(gameEvent.Payload), nowMillis)
 	if insertErr != nil {
 		return Event{}, Snapshot{}, matchDatabaseError(ctx, insertErr)
 	}
@@ -1275,11 +1366,22 @@ VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionI
 		return Event{}, Snapshot{}, ErrInternal
 	}
 
+	if terminalStatus == StatusAbandoned {
+		pieceIndex := -1
+		if request.Type == flightchess.MoveRequested {
+			pieceIndex = semantics.pieceIndex
+		}
+		if _, insertErr := transaction.ExecContext(ctx, `
+INSERT INTO flight_chess_limit_actions(match_id,event_revision,actor_user_id,action_id,request_type,piece_index)
+VALUES (?,?,?,?,?,?)`, match.ID, nextRevision, request.ActorUserID, request.ActionID, request.Type, pieceIndex); insertErr != nil {
+			return Event{}, Snapshot{}, matchDatabaseError(ctx, insertErr)
+		}
+	}
 	if terminal {
 		resultExec, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
 SET status=?,revision=?,updated_at=?,finished_at=?,result=?,winner_user_id=?,both_offline_since=NULL
-WHERE id=? AND status=? AND revision=?`, StatusFinished, nextRevision, nowMillis, nowMillis, valueOrNil(result), valueOrNil(winner), match.ID, StatusActive, match.Revision)
+WHERE id=? AND status=? AND revision=?`, terminalStatus, nextRevision, nowMillis, nowMillis, valueOrNil(result), valueOrNil(winner), match.ID, StatusActive, match.Revision)
 		if updateErr != nil {
 			return Event{}, Snapshot{}, matchDatabaseError(ctx, updateErr)
 		}
@@ -1322,10 +1424,9 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 		return Event{}, Snapshot{}, matchDatabaseError(ctx, commitErr)
 	}
 
-	actionID, actorID := request.ActionID, request.ActorUserID
 	committedEvent := Event{
 		MatchID: match.ID, Revision: nextRevision, Type: gameEvent.Type,
-		ActionID: &actionID, ActorUserID: &actorID,
+		ActionID: actionID, ActorUserID: actorID,
 		Payload: append(json.RawMessage(nil), gameEvent.Payload...), CreatedAt: now,
 	}
 	match.Revision = nextRevision
@@ -1333,7 +1434,7 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 	match.Result = cloneStringPointer(result)
 	match.WinnerUserID = cloneStringPointer(winner)
 	if terminal {
-		match.Status = StatusFinished
+		match.Status = terminalStatus
 		match.FinishedAt = &now
 	}
 	return committedEvent, cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: nextGame}), nil
@@ -1638,10 +1739,11 @@ WHERE status=? AND both_offline_since IS NULL`, nowMillis, StatusActive); update
 }
 
 type actionSemantics struct {
-	x      int
-	y      int
-	choice string
-	path   []int
+	x          int
+	y          int
+	pieceIndex int
+	choice     string
+	path       []int
 }
 
 type resignedPayload struct {
@@ -1675,6 +1777,22 @@ func validateActionRequest(ctx context.Context, request ActionRequest) (actionSe
 			return actionSemantics{}, ErrInvalidRequest
 		}
 		return actionSemantics{}, nil
+	case flightchess.RollRequested, protocol.TypeFlightChessResignRequested:
+		fields, err := strictJSONObject(request.Payload, map[string]struct{}{})
+		if err != nil || len(fields) != 0 {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		return actionSemantics{}, nil
+	case flightchess.MoveRequested:
+		fields, err := strictJSONObject(request.Payload, map[string]struct{}{"pieceIndex": {}})
+		if err != nil || len(fields) != 1 {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		pieceIndex, err := strictJSONInteger(fields["pieceIndex"])
+		if err != nil || pieceIndex < 0 || pieceIndex >= flightchess.PieceCount {
+			return actionSemantics{}, ErrInvalidRequest
+		}
+		return actionSemantics{pieceIndex: pieceIndex}, nil
 	case gomoku.MoveRequested:
 		x, y, err := decodeMoveRequest(request.Payload)
 		if err != nil {
@@ -1908,11 +2026,12 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 	if rulesErr != nil {
 		return Snapshot{}, rulesErr
 	}
-	events, err := readMatchEvents(ctx, transaction, match.ID)
+	eventLimit := maximumMatchEventsFor(match.GameID)
+	events, err := readMatchEvents(ctx, transaction, match.ID, eventLimit)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if match.Revision != int64(len(events)) || len(events) > maximumMatchEvents {
+	if match.Revision != int64(len(events)) || len(events) > eventLimit {
 		return Snapshot{}, ErrInternal
 	}
 	if match.GameID == rps.GameID {
@@ -1920,6 +2039,9 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 	}
 	if match.GameID == chinesecheckers.GameID {
 		return service.rebuildChineseCheckersSnapshot(ctx, transaction, match, players, rules, events)
+	}
+	if match.GameID == flightchess.GameID {
+		return service.rebuildFlightChessSnapshot(ctx, transaction, match, players, rules, events)
 	}
 	if match.GameID != gomoku.GameID {
 		return Snapshot{}, ErrInternal
@@ -2008,6 +2130,91 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 		if summary.NextColor != wantNext {
 			return Snapshot{}, ErrInternal
 		}
+	}
+	if lifecycleErr := validateLifecycle(match, summary, terminalType, players, events); lifecycleErr != nil {
+		return Snapshot{}, lifecycleErr
+	}
+	playerIDs := [2]string{players[0].UserID, players[1].UserID}
+	expectActiveSlots := match.Status == StatusActive && singleActiveMatch(rules)
+	if slotsErr := validateCompleteActiveSlotSet(ctx, transaction, match.GameID, match.ID, playerIDs, expectActiveSlots); slotsErr != nil {
+		return Snapshot{}, slotsErr
+	}
+	return cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: gameSnapshot}), nil
+}
+
+func (service *Service) rebuildFlightChessSnapshot(ctx context.Context, transaction *sql.Tx, match Match, players []Player, rules games.Rules, events []Event) (Snapshot, error) {
+	black, white, ok := coloredPlayers(players)
+	if !ok {
+		return Snapshot{}, ErrInternal
+	}
+	accepted := make([]games.Event, 0, len(events))
+	terminalType := ""
+	for index, event := range events {
+		if event.Revision != int64(index+1) || event.MatchID != match.ID {
+			return Snapshot{}, ErrInternal
+		}
+		switch event.Type {
+		case flightchess.RollAccepted:
+			payload, decodeErr := decodeAcceptedFlightChessRoll(event.Payload)
+			if terminalType != "" || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil || decodeErr != nil || payload.UserID != *event.ActorUserID {
+				return Snapshot{}, ErrInternal
+			}
+			actor, _, member := actionPlayers(players, *event.ActorUserID)
+			if !member || payload.Color != string(actor.Color) {
+				return Snapshot{}, ErrInternal
+			}
+			accepted = append(accepted, games.Event{Revision: event.Revision, Type: event.Type, ActorID: *event.ActorUserID, Payload: append(json.RawMessage(nil), event.Payload...)})
+		case flightchess.MoveAccepted:
+			payload, decodeErr := decodeAcceptedFlightChessMove(event.Payload)
+			if terminalType != "" || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil || decodeErr != nil || payload.UserID != *event.ActorUserID {
+				return Snapshot{}, ErrInternal
+			}
+			actor, _, member := actionPlayers(players, *event.ActorUserID)
+			if !member || payload.Color != string(actor.Color) {
+				return Snapshot{}, ErrInternal
+			}
+			accepted = append(accepted, games.Event{Revision: event.Revision, Type: event.Type, ActorID: *event.ActorUserID, Payload: append(json.RawMessage(nil), event.Payload...)})
+		case protocol.TypeFlightChessResigned:
+			if index != len(events)-1 || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
+				return Snapshot{}, ErrInternal
+			}
+			actor, opponent, member := actionPlayers(players, *event.ActorUserID)
+			payload, decodeErr := decodeResignedPayload(event.Payload)
+			if !member || decodeErr != nil || payload.UserID != actor.UserID || payload.WinnerUserID != opponent.UserID {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		case protocol.TypePlatformMatchCancelled:
+			if index != len(events)-1 || len(accepted) != 0 || event.ActionID != nil || event.ActorUserID == nil || !playerMember(players, *event.ActorUserID) || !isStrictEmptyObject(event.Payload) {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		case protocol.TypePlatformMatchAbandoned:
+			if index != len(events)-1 || event.ActionID != nil || event.ActorUserID != nil || !isStrictEmptyObject(event.Payload) {
+				return Snapshot{}, ErrInternal
+			}
+			terminalType = event.Type
+		default:
+			return Snapshot{}, ErrInternal
+		}
+	}
+	gameSnapshot, rebuildErr := rules.Rebuild(accepted)
+	if rebuildErr != nil || gameSnapshot.Revision != int64(len(accepted)) {
+		return Snapshot{}, ErrInternal
+	}
+	summary, summaryErr := readGameStateSummary(gameSnapshot)
+	if summaryErr != nil || summary.NextColor != string(ColorBlack) && summary.NextColor != string(ColorWhite) {
+		return Snapshot{}, ErrInternal
+	}
+	if len(accepted) == 0 {
+		if summary.BlackUserID != nil || summary.WhiteUserID != nil || summary.NextColor != string(ColorBlack) {
+			return Snapshot{}, ErrInternal
+		}
+	} else if summary.BlackUserID == nil || *summary.BlackUserID != black.UserID {
+		return Snapshot{}, ErrInternal
+	}
+	if summary.WhiteUserID != nil && *summary.WhiteUserID != white.UserID {
+		return Snapshot{}, ErrInternal
 	}
 	if lifecycleErr := validateLifecycle(match, summary, terminalType, players, events); lifecycleErr != nil {
 		return Snapshot{}, lifecycleErr
@@ -2210,7 +2417,7 @@ func (service *Service) rebuildRpsSnapshot(ctx context.Context, transaction *sql
 }
 
 func validateLifecycle(match Match, game gameStateSummary, terminalType string, players []Player, events []Event) error {
-	if match.Revision > maximumMatchEvents {
+	if match.Revision > int64(maximumMatchEventsFor(match.GameID)) {
 		return ErrInternal
 	}
 	switch match.Status {
@@ -2229,7 +2436,7 @@ func validateLifecycle(match Match, game gameStateSummary, terminalType string, 
 				return ErrInternal
 			}
 		case ResultGoal:
-			if match.GameID != chinesecheckers.GameID || terminalType != "" || game.Status != StatusFinished || game.Result == nil || *game.Result != ResultGoal ||
+			if match.GameID != chinesecheckers.GameID && match.GameID != flightchess.GameID || terminalType != "" || game.Status != StatusFinished || game.Result == nil || *game.Result != ResultGoal ||
 				match.WinnerUserID == nil || game.WinnerUserID == nil || *match.WinnerUserID != *game.WinnerUserID || !playerMember(players, *match.WinnerUserID) {
 				return ErrInternal
 			}
@@ -2241,6 +2448,8 @@ func validateLifecycle(match Match, game gameStateSummary, terminalType string, 
 			expectedTerminal := protocol.TypeGomokuResigned
 			if match.GameID == chinesecheckers.GameID {
 				expectedTerminal = protocol.TypeChineseCheckersResigned
+			} else if match.GameID == flightchess.GameID {
+				expectedTerminal = protocol.TypeFlightChessResigned
 			}
 			if terminalType != expectedTerminal || game.Status != StatusActive || game.Result != nil || game.WinnerUserID != nil || match.WinnerUserID == nil || !playerMember(players, *match.WinnerUserID) || len(events) == 0 {
 				return ErrInternal
@@ -2267,7 +2476,7 @@ func validateLifecycle(match Match, game gameStateSummary, terminalType string, 
 	return nil
 }
 
-func readMatchEvents(ctx context.Context, transaction *sql.Tx, matchID string) ([]Event, error) {
+func readMatchEvents(ctx context.Context, transaction *sql.Tx, matchID string, eventLimit int) ([]Event, error) {
 	rows, err := transaction.QueryContext(ctx, `
 SELECT revision,event_type,action_id,actor_user_id,payload_json,created_at
 FROM match_events
@@ -2279,7 +2488,7 @@ ORDER BY revision`, matchID)
 	defer rows.Close()
 	events := make([]Event, 0, 16)
 	for rows.Next() {
-		if len(events) >= maximumMatchEvents+1 {
+		if len(events) >= eventLimit+1 {
 			return nil, ErrInternal
 		}
 		var event Event
@@ -2304,6 +2513,13 @@ ORDER BY revision`, matchID)
 		return nil, matchDatabaseError(ctx, rowsErr)
 	}
 	return events, nil
+}
+
+func maximumMatchEventsFor(gameID string) int {
+	if gameID == flightchess.GameID {
+		return maximumFlightChessEvents
+	}
+	return maximumMatchEvents
 }
 
 func readActionEvent(ctx context.Context, transaction *sql.Tx, matchID, actorID, actionID string) (Event, bool, error) {
@@ -2334,6 +2550,38 @@ WHERE match_id=? AND actor_user_id=? AND action_id=?`, matchID, actorID, actionI
 	return event, true, nil
 }
 
+// Limit outcomes retain request identity only in storage, never in the platform
+// event. A new Service can therefore answer retries without consuming entropy.
+func readFlightChessLimitAction(ctx context.Context, transaction *sql.Tx, request ActionRequest, semantics actionSemantics) (Event, bool, error) {
+	var event Event
+	var requestType, payload string
+	var pieceIndex int
+	var createdAt int64
+	var eventActionID, eventActorID sql.NullString
+	err := transaction.QueryRowContext(ctx, `
+SELECT d.request_type,d.piece_index,e.revision,e.event_type,e.payload_json,e.created_at,e.action_id,e.actor_user_id
+FROM flight_chess_limit_actions d
+JOIN match_events e ON e.match_id=d.match_id AND e.revision=d.event_revision
+WHERE d.match_id=? AND d.actor_user_id=? AND d.action_id=?`, request.MatchID, request.ActorUserID, request.ActionID).
+		Scan(&requestType, &pieceIndex, &event.Revision, &event.Type, &payload, &createdAt, &eventActionID, &eventActorID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Event{}, false, nil
+	}
+	if err != nil {
+		return Event{}, false, matchDatabaseError(ctx, err)
+	}
+	if event.Type != protocol.TypePlatformMatchAbandoned || event.Revision != maximumFlightChessEvents || eventActionID.Valid || eventActorID.Valid || !isStrictEmptyObject(json.RawMessage(payload)) {
+		return Event{}, false, ErrInternal
+	}
+	if requestType != request.Type || requestType == flightchess.MoveRequested && pieceIndex != semantics.pieceIndex {
+		return Event{}, false, ErrActionConflict
+	}
+	event.MatchID = request.MatchID
+	event.Payload = json.RawMessage(payload)
+	event.CreatedAt = time.UnixMilli(createdAt).UTC()
+	return event, true, nil
+}
+
 func committedActionMatches(event Event, request ActionRequest, semantics actionSemantics, players []Player) (bool, error) {
 	if event.ActionID == nil || *event.ActionID != request.ActionID || event.ActorUserID == nil || *event.ActorUserID != request.ActorUserID || !canonicalUUID(*event.ActionID) {
 		return false, ErrInternal
@@ -2354,6 +2602,36 @@ func committedActionMatches(event Event, request ActionRequest, semantics action
 		return slices.Equal(move.path, semantics.path), nil
 	case protocol.TypeChineseCheckersResignRequested:
 		if event.Type != protocol.TypeChineseCheckersResigned {
+			return false, nil
+		}
+		payload, err := decodeResignedPayload(event.Payload)
+		actor, opponent, member := actionPlayers(players, request.ActorUserID)
+		if err != nil || !member || payload.UserID != actor.UserID || payload.WinnerUserID != opponent.UserID {
+			return false, ErrInternal
+		}
+		return true, nil
+	case flightchess.RollRequested:
+		if event.Type != flightchess.RollAccepted {
+			return false, nil
+		}
+		payload, err := decodeAcceptedFlightChessRoll(event.Payload)
+		actor, _, member := actionPlayers(players, request.ActorUserID)
+		if err != nil || !member || payload.UserID != request.ActorUserID || payload.Color != string(actor.Color) {
+			return false, ErrInternal
+		}
+		return true, nil
+	case flightchess.MoveRequested:
+		if event.Type != flightchess.MoveAccepted {
+			return false, nil
+		}
+		payload, err := decodeAcceptedFlightChessMove(event.Payload)
+		actor, _, member := actionPlayers(players, request.ActorUserID)
+		if err != nil || !member || payload.UserID != request.ActorUserID || payload.Color != string(actor.Color) {
+			return false, ErrInternal
+		}
+		return payload.PieceIndex == semantics.pieceIndex, nil
+	case protocol.TypeFlightChessResignRequested:
+		if event.Type != protocol.TypeFlightChessResigned {
 			return false, nil
 		}
 		payload, err := decodeResignedPayload(event.Payload)
@@ -2430,6 +2708,64 @@ type acceptedChineseCheckersMove struct {
 	userID string
 }
 
+type acceptedFlightChessRoll struct {
+	Color               string `json:"color"`
+	UserID              string `json:"userId"`
+	Value               int    `json:"value"`
+	MovablePieceIndices []int  `json:"movablePieceIndices"`
+}
+
+type acceptedFlightChessMove struct {
+	Color                string            `json:"color"`
+	UserID               string            `json:"userId"`
+	PieceIndex           int               `json:"pieceIndex"`
+	Roll                 int               `json:"roll"`
+	From                 flightchess.Piece `json:"from"`
+	To                   flightchess.Piece `json:"to"`
+	Effect               string            `json:"effect"`
+	CapturedPieceIndices []int             `json:"capturedPieceIndices"`
+}
+
+func decodeAcceptedFlightChessRoll(payload json.RawMessage) (acceptedFlightChessRoll, error) {
+	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}}
+	fields, err := strictJSONObject(payload, allowed)
+	if err != nil || len(fields) != len(allowed) {
+		return acceptedFlightChessRoll{}, ErrInternal
+	}
+	var value acceptedFlightChessRoll
+	if json.Unmarshal(payload, &value) != nil || value.Color != string(ColorBlack) && value.Color != string(ColorWhite) ||
+		!validIdentifier(value.UserID) || value.Value < 1 || value.Value > 6 || !validFlightChessIndices(value.MovablePieceIndices) {
+		return acceptedFlightChessRoll{}, ErrInternal
+	}
+	return value, nil
+}
+
+func decodeAcceptedFlightChessMove(payload json.RawMessage) (acceptedFlightChessMove, error) {
+	allowed := map[string]struct{}{"color": {}, "userId": {}, "pieceIndex": {}, "roll": {}, "from": {}, "to": {}, "effect": {}, "capturedPieceIndices": {}}
+	fields, err := strictJSONObject(payload, allowed)
+	if err != nil || len(fields) != len(allowed) {
+		return acceptedFlightChessMove{}, ErrInternal
+	}
+	var value acceptedFlightChessMove
+	if json.Unmarshal(payload, &value) != nil || value.Color != string(ColorBlack) && value.Color != string(ColorWhite) ||
+		!validIdentifier(value.UserID) || value.PieceIndex < 0 || value.PieceIndex >= flightchess.PieceCount || value.Roll < 1 || value.Roll > 6 ||
+		!validFlightChessIndices(value.CapturedPieceIndices) {
+		return acceptedFlightChessMove{}, ErrInternal
+	}
+	return value, nil
+}
+
+func validFlightChessIndices(values []int) bool {
+	seen := map[int]bool{}
+	for _, value := range values {
+		if value < 0 || value >= flightchess.PieceCount || seen[value] {
+			return false
+		}
+		seen[value] = true
+	}
+	return true
+}
+
 func decodeAcceptedChineseCheckersMove(payload json.RawMessage) (acceptedChineseCheckersMove, error) {
 	fields, err := strictJSONObject(payload, map[string]struct{}{"path": {}, "color": {}, "userId": {}})
 	if err != nil || len(fields) != 3 {
@@ -2498,6 +2834,33 @@ func validateProducedChineseCheckersMove(event games.Event, snapshot games.Snaps
 	}
 	move, err := decodeAcceptedChineseCheckersMove(event.Payload)
 	if err != nil || !slices.Equal(move.path, semantics.path) || move.color != string(color) || move.userID != request.ActorUserID {
+		return ErrInternal
+	}
+	return nil
+}
+
+func validateProducedFlightChess(event games.Event, snapshot games.Snapshot, request ActionRequest, semantics actionSemantics, color Color, revision int64) error {
+	if event.Revision != revision || snapshot.Revision != revision || event.ActorID != request.ActorUserID {
+		return ErrInternal
+	}
+	switch request.Type {
+	case flightchess.RollRequested:
+		if event.Type != flightchess.RollAccepted {
+			return ErrInternal
+		}
+		payload, err := decodeAcceptedFlightChessRoll(event.Payload)
+		if err != nil || payload.UserID != request.ActorUserID || payload.Color != string(color) {
+			return ErrInternal
+		}
+	case flightchess.MoveRequested:
+		if event.Type != flightchess.MoveAccepted {
+			return ErrInternal
+		}
+		payload, err := decodeAcceptedFlightChessMove(event.Payload)
+		if err != nil || payload.UserID != request.ActorUserID || payload.Color != string(color) || payload.PieceIndex != semantics.pieceIndex {
+			return ErrInternal
+		}
+	default:
 		return ErrInternal
 	}
 	return nil
@@ -2580,6 +2943,14 @@ func safeActionRuleError(err error) error {
 		return chinesecheckers.ErrNotYourTurn
 	case errors.Is(err, chinesecheckers.ErrInvalidPath):
 		return chinesecheckers.ErrInvalidPath
+	case errors.Is(err, flightchess.ErrNotYourTurn):
+		return flightchess.ErrNotYourTurn
+	case errors.Is(err, flightchess.ErrInvalidMove):
+		return flightchess.ErrInvalidMove
+	case errors.Is(err, flightchess.ErrInvalidPhase):
+		return flightchess.ErrInvalidPhase
+	case errors.Is(err, flightchess.ErrRandomUnavailable):
+		return ErrInternal
 	case errors.Is(err, gomoku.ErrNotYourTurn):
 		return gomoku.ErrNotYourTurn
 	case errors.Is(err, gomoku.ErrCellOccupied):

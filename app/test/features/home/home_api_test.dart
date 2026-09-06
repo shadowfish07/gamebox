@@ -20,7 +20,7 @@ void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
 
   test('catalog exposes immutable built-in game descriptors', () {
-    expect(gameCatalog, hasLength(3));
+    expect(gameCatalog, hasLength(4));
     expect(
       gameCatalog.first,
       const GameDescriptor(id: 'gomoku', title: '五子棋', playerCount: 2),
@@ -31,6 +31,10 @@ void main() {
     );
     expect(
       gameCatalog[2],
+      const GameDescriptor(id: 'flight_chess', title: '飞行棋', playerCount: 2),
+    );
+    expect(
+      gameCatalog[3],
       const GameDescriptor(id: 'rps', title: '石头剪刀布', playerCount: 2),
     );
     expect(

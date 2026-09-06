@@ -12,6 +12,19 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class HostSmokeClickTest {
     @Test
+    fun launchFlightChessPreview() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val button = device.wait(
+            Until.findObject(By.pkg(APP_PACKAGE).desc(FLIGHT_CHESS_PREVIEW_DESCRIPTION)),
+            SELECTOR_TIMEOUT_MS,
+        )
+
+        assertNotNull("Missing accessibility selector: $FLIGHT_CHESS_PREVIEW_DESCRIPTION", button)
+        button.click()
+        device.waitForIdle()
+    }
+
+    @Test
     fun clickHostSmokeLaunchByAccessibilityDescription() {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val button = findLaunchButton(device)
@@ -69,6 +82,7 @@ class HostSmokeClickTest {
 
     private companion object {
         const val APP_PACKAGE = "me.zqydev.gamebox"
+        const val FLIGHT_CHESS_PREVIEW_DESCRIPTION = "host-smoke.flight-chess-preview"
         const val HOST_SMOKE_DESCRIPTION = "host-smoke.launch"
         const val NORMAL_CANARY_DESCRIPTION = "host-smoke.normal-canary"
         const val COLLISION_CANARY_DESCRIPTION = "host-smoke.collision-canary"

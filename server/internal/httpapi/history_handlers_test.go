@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 )
@@ -204,6 +205,23 @@ func TestChineseCheckersHistoryReturnsTurnOrderAndAcceptedMoveCount(t *testing.T
 	want := `{"statistics":{"validMatches":1,"wins":1,"losses":0,"draws":0,"winRate":1},"matches":[{"id":"11111111-1111-4111-8111-111111111111","outcome":"win","opponentNickname":"Bob","color":"black","finishedAt":1787623200000,"moveCount":2}],"nextCursor":null}` + "\n"
 	if response.Code != http.StatusOK || response.Body.String() != want {
 		t.Fatalf("Chinese Checkers history=(%d,%s), want 200/%s", response.Code, response.Body.String(), want)
+	}
+}
+
+func TestFlightChessHistoryReturnsTurnOrderAndAcceptedMoveCount(t *testing.T) {
+	fixture := newAPIFixture(t)
+	alice := fixture.register(t, "flight-history-a", "Alice")
+	bob := fixture.register(t, "flight-history-b", "Bob")
+	seedHTTPFlightChessHistoryMatch(
+		t, fixture.db, historyCursorMatchID,
+		alice.Session.User.ID, bob.Session.User.ID, alice.Session.User.ID,
+		historyCursorMillis, 3,
+	)
+
+	response := fixture.request(t, http.MethodGet, "/v1/games/flight_chess/history", "", alice.Session.AccessToken)
+	want := `{"statistics":{"validMatches":1,"wins":1,"losses":0,"draws":0,"winRate":1},"matches":[{"id":"11111111-1111-4111-8111-111111111111","outcome":"win","opponentNickname":"Bob","color":"black","finishedAt":1787623200000,"moveCount":3}],"nextCursor":null}` + "\n"
+	if response.Code != http.StatusOK || response.Body.String() != want {
+		t.Fatalf("Flight Chess history=(%d,%s), want 200/%s", response.Code, response.Body.String(), want)
 	}
 }
 
@@ -413,6 +431,31 @@ VALUES (?,'chinese_checkers','finished',0,'goal',?,?,?,?)`, matchID, winnerUserI
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
 VALUES (?,?,?,?,?,'{}',?)`, matchID, revision, chinesecheckers.MoveAccepted, fmt.Sprintf("action-%d", revision), currentUserID, finishedAt-int64(acceptedMoves-revision)); err != nil {
 			t.Fatalf("insert Chinese Checkers history event %s/%d: %v", matchID, revision, err)
+		}
+	}
+}
+
+func seedHTTPFlightChessHistoryMatch(
+	t *testing.T,
+	db *sql.DB,
+	matchID, currentUserID, opponentUserID, winnerUserID string,
+	finishedAt int64,
+	acceptedMoves int,
+) {
+	t.Helper()
+	if _, err := db.Exec(`
+INSERT INTO matches(id,game_id,status,revision,result,winner_user_id,created_at,updated_at,finished_at)
+VALUES (?,'flight_chess','finished',0,'goal',?,?,?,?)`, matchID, winnerUserID, finishedAt-1_000, finishedAt, finishedAt); err != nil {
+		t.Fatalf("insert Flight Chess history match %s: %v", matchID, err)
+	}
+	if _, err := db.Exec(`INSERT INTO match_players(match_id,user_id,seat,color) VALUES (?,?,0,'black'),(?,?,1,'white')`, matchID, currentUserID, matchID, opponentUserID); err != nil {
+		t.Fatalf("insert Flight Chess history players %s: %v", matchID, err)
+	}
+	for revision := 1; revision <= acceptedMoves; revision++ {
+		if _, err := db.Exec(`
+INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
+VALUES (?,?,?,?,?,'{}',?)`, matchID, revision, flightchess.MoveAccepted, fmt.Sprintf("action-%d", revision), currentUserID, finishedAt-int64(acceptedMoves-revision)); err != nil {
+			t.Fatalf("insert Flight Chess history event %s/%d: %v", matchID, revision, err)
 		}
 	}
 }

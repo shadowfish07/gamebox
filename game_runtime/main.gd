@@ -2,6 +2,7 @@ extends Control
 
 const LaunchConfig = preload("res://core/launch_config.gd")
 const GameRegistry = preload("res://core/game_registry.gd")
+const FlightChessPreview = preload("res://games/flight_chess/flight_chess_scene.tscn")
 const SAFE_LAUNCH_ERROR := "Unable to launch game. Please return to Gamebox and try again."
 const HOST_SMOKE_MAX_DELAY_MS := 60000
 const HOST_SMOKE_EXITING_MARKER := "GAMEBOX_GODOT_EXITING"
@@ -92,6 +93,12 @@ func _start_host_smoke(args: PackedStringArray) -> void:
 		_show_launch_error("invalid_host_smoke_arguments")
 		return
 
+	if result.get("preview_game", "") == "flight_chess":
+		$ReadyLabel.hide()
+		add_child(FlightChessPreview.instantiate())
+		print("GAMEBOX_GODOT_READY game=flight_chess_preview")
+		return
+
 	$ReadyLabel.text = "GAMEBOX_GODOT_READY"
 	print("GAMEBOX_GODOT_READY")
 	var auto_exit_ms: int = result.get("auto_exit_ms", 0)
@@ -107,7 +114,9 @@ func _controlled_host_smoke_exit() -> void:
 func _parse_host_smoke_args(args: PackedStringArray) -> Dictionary:
 	var has_smoke := false
 	var has_auto_exit := false
+	var has_preview_game := false
 	var auto_exit_ms := 0
+	var preview_game := ""
 	var index := 0
 	while index < args.size():
 		var key := args[index]
@@ -125,9 +134,17 @@ func _parse_host_smoke_args(args: PackedStringArray) -> Dictionary:
 			has_auto_exit = true
 			auto_exit_ms = value.to_int()
 			index += 2
+		elif key == "--preview-game":
+			if has_preview_game or index + 1 >= args.size():
+				return {"ok": false}
+			preview_game = args[index + 1]
+			if preview_game != "flight_chess":
+				return {"ok": false}
+			has_preview_game = true
+			index += 2
 		else:
 			return {"ok": false}
-	return {"ok": has_smoke, "auto_exit_ms": auto_exit_ms}
+	return {"ok": has_smoke, "auto_exit_ms": auto_exit_ms, "preview_game": preview_game}
 
 
 func _is_valid_host_smoke_delay(value: String) -> bool:

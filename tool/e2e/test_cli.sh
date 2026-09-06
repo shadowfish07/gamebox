@@ -12,7 +12,7 @@ fail() {
 scenario_output="$(bash "$runner" --list-scenarios)"
 grep -F 'full' <<<"$scenario_output" >/dev/null \
   || fail 'full scenario is missing from the registry'
-for scenario in flutter-host chinese-checkers-network gomoku-network rps-network; do
+for scenario in flutter-host chinese-checkers-network flight-chess-network gomoku-network rps-network; do
   grep -F "$scenario" <<<"$scenario_output" >/dev/null \
     || fail "$scenario is missing from the registry"
 done

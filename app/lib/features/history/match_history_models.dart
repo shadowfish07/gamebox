@@ -8,6 +8,7 @@ enum MatchOutcome { win, loss, draw, abandoned }
 
 enum MatchHistoryGame {
   chineseCheckers('chinese_checkers', '跳棋', '手'),
+  flightChess('flight_chess', '飞行棋', '次'),
   gomoku('gomoku', '五子棋', '手'),
   rps('rps', '石头剪刀布', '局');
 

@@ -18,6 +18,7 @@ static func cases() -> Array:
 		{"name": "launch config rejects invalid websocket urls", "run": _rejects_invalid_websocket_urls},
 		{"name": "launch config accepts ws websocket urls", "run": _accepts_ws_websocket_urls},
 		{"name": "launch config accepts chinese checkers", "run": _accepts_chinese_checkers},
+		{"name": "launch config accepts flight chess", "run": _accepts_flight_chess},
 		{"name": "launch config preserves opaque tickets beginning with dashes", "run": _preserves_dash_prefixed_ticket},
 		{"name": "launch config validates websocket hosts and ports", "run": _validates_websocket_hosts_and_ports},
 	]
@@ -113,6 +114,14 @@ static func _accepts_chinese_checkers() -> bool:
 	var result: Dictionary = LaunchConfig.parse(args)
 	return _check(result.get("ok", false), "expected Chinese Checkers game ID to be accepted") \
 		and _check(result.get("config", {}).get("game_id", "") == "chinese_checkers", "expected exact Chinese Checkers game ID")
+
+
+static func _accepts_flight_chess() -> bool:
+	var args := _valid_args()
+	args[args.find("--game-id") + 1] = "flight_chess"
+	var result: Dictionary = LaunchConfig.parse(args)
+	return _check(result.get("ok", false), "expected Flight Chess game ID to be accepted") \
+		and _check(result.get("config", {}).get("game_id", "") == "flight_chess", "expected exact Flight Chess game ID")
 
 
 static func _preserves_dash_prefixed_ticket() -> bool:

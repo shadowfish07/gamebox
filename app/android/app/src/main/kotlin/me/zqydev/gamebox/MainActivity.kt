@@ -41,6 +41,14 @@ class MainActivity : FlutterActivity() {
                     launch(GameLaunchArgs.hostSmoke(), result)
                 }
 
+                "launchFlightChessPreview" -> {
+                    if (call.arguments != null) {
+                        result.error(INVALID_ARGUMENTS_CODE, INVALID_ARGUMENTS_MESSAGE, null)
+                        return@setMethodCallHandler
+                    }
+                    launch(GameLaunchArgs.flightChessPreview(), result)
+                }
+
                 else -> result.notImplemented()
             }
         }

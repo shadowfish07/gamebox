@@ -2,6 +2,7 @@ import '../../core/api/strict_json.dart';
 
 const gomokuGameId = 'gomoku';
 const chineseCheckersGameId = 'chinese_checkers';
+const flightChessGameId = 'flight_chess';
 
 enum GomokuColor { black, white }
 

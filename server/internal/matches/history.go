@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
+	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/games/rps"
 )
@@ -141,6 +142,11 @@ func matchHistoryGameSpec(gameID string) (historyGameSpec, bool) {
 		return historyGameSpec{
 			decisiveResult:   ResultGoal,
 			countedEventType: chinesecheckers.MoveAccepted,
+		}, true
+	case flightchess.GameID:
+		return historyGameSpec{
+			decisiveResult:   ResultGoal,
+			countedEventType: flightchess.MoveAccepted,
 		}, true
 	case gomoku.GameID:
 		return historyGameSpec{
