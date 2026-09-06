@@ -906,8 +906,8 @@ WHERE id=?`, matchID).Scan(&gameID, &status, &revision)
 	if queryErr := transaction.QueryRowContext(ctx, `
 SELECT EXISTS(
   SELECT 1 FROM match_events
-  WHERE match_id=? AND event_type IN (?,?,?,?)
-)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed).Scan(&gameplayEvents); queryErr != nil {
+  WHERE match_id=? AND event_type IN (?,?,?,?,?,?)
+)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed, flightchess.RollAccepted, flightchess.MoveAccepted).Scan(&gameplayEvents); queryErr != nil {
 		return Event{}, matchDatabaseError(ctx, queryErr)
 	}
 	if gameplayEvents != 0 {
@@ -1101,6 +1101,7 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	var nextGame games.Snapshot
 	var result, winner *string
 	terminal := false
+	terminalStatus := StatusFinished
 	switch request.Type {
 	case chinesecheckers.MoveRequested:
 		// Keep one durable event available for resignation. Chinese Checkers
@@ -1140,9 +1141,6 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			winner = cloneStringPointer(outcome.WinnerUserID)
 		}
 	case flightchess.RollRequested, flightchess.MoveRequested:
-		if match.Revision >= int64(maximumMatchEventsFor(match.GameID)-1) {
-			return Event{}, Snapshot{}, ErrInvalidRequest
-		}
 		currentSummary, summaryErr := readGameStateSummary(current.Game)
 		if summaryErr != nil {
 			return Event{}, Snapshot{}, ErrInternal
@@ -1183,6 +1181,14 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			terminal = true
 			result = cloneStringPointer(outcome.Result)
 			winner = cloneStringPointer(outcome.WinnerUserID)
+		} else if nextRevision == int64(maximumFlightChessEvents) {
+			// Reserve the last event for a system terminal outcome. Validate the
+			// requested action first, and let a winning move finish normally.
+			// The uncommitted roll/move is replaced by abandonment, preserving
+			// the last authoritative board and the existing client protocol.
+			gameEvent = games.Event{Revision: nextRevision, Type: protocol.TypePlatformMatchAbandoned, Payload: json.RawMessage(cancelledPayloadJSON)}
+			nextGame = cloneGameSnapshot(current.Game)
+			terminal, terminalStatus = true, StatusAbandoned
 		}
 	case gomoku.MoveRequested:
 		acceptedMoves := current.Game.Revision
@@ -1332,9 +1338,13 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			return Event{}, Snapshot{}, slotsErr
 		}
 	}
+	actionID, actorID := stringPointer(request.ActionID), stringPointer(request.ActorUserID)
+	if terminalStatus == StatusAbandoned {
+		actionID, actorID = nil, nil
+	}
 	resultExec, insertErr := transaction.ExecContext(ctx, `
 INSERT INTO match_events(match_id,revision,event_type,action_id,actor_user_id,payload_json,created_at)
-VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionID, request.ActorUserID, string(gameEvent.Payload), nowMillis)
+VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, actionID, actorID, string(gameEvent.Payload), nowMillis)
 	if insertErr != nil {
 		return Event{}, Snapshot{}, matchDatabaseError(ctx, insertErr)
 	}
@@ -1346,7 +1356,7 @@ VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, request.ActionI
 		resultExec, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
 SET status=?,revision=?,updated_at=?,finished_at=?,result=?,winner_user_id=?,both_offline_since=NULL
-WHERE id=? AND status=? AND revision=?`, StatusFinished, nextRevision, nowMillis, nowMillis, valueOrNil(result), valueOrNil(winner), match.ID, StatusActive, match.Revision)
+WHERE id=? AND status=? AND revision=?`, terminalStatus, nextRevision, nowMillis, nowMillis, valueOrNil(result), valueOrNil(winner), match.ID, StatusActive, match.Revision)
 		if updateErr != nil {
 			return Event{}, Snapshot{}, matchDatabaseError(ctx, updateErr)
 		}
@@ -1389,10 +1399,9 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 		return Event{}, Snapshot{}, matchDatabaseError(ctx, commitErr)
 	}
 
-	actionID, actorID := request.ActionID, request.ActorUserID
 	committedEvent := Event{
 		MatchID: match.ID, Revision: nextRevision, Type: gameEvent.Type,
-		ActionID: &actionID, ActorUserID: &actorID,
+		ActionID: actionID, ActorUserID: actorID,
 		Payload: append(json.RawMessage(nil), gameEvent.Payload...), CreatedAt: now,
 	}
 	match.Revision = nextRevision
@@ -1400,7 +1409,7 @@ WHERE id=? AND status=? AND revision=?`, nextRevision, nowMillis, match.ID, Stat
 	match.Result = cloneStringPointer(result)
 	match.WinnerUserID = cloneStringPointer(winner)
 	if terminal {
-		match.Status = StatusFinished
+		match.Status = terminalStatus
 		match.FinishedAt = &now
 	}
 	return committedEvent, cloneMatchSnapshot(Snapshot{Match: match, Players: players, Game: nextGame}), nil

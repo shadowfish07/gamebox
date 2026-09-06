@@ -52,6 +52,15 @@ movement `effect`, and `capturedPieceIndices`. The client applies only accepted
 events in contiguous revision order; a gap requests a fresh authoritative
 snapshot.
 
+Flight Chess cancellation is allowed only before the first accepted roll or move.
+A match has a 512-event storage budget. At revision 511, a valid roll or move
+that would leave the game active instead commits `platform.match.abandoned`
+at revision 512, with an empty payload and no action/actor ID. This is a system
+void outcome with no winner, not an accepted gameplay action; the previous
+board state is preserved and active slots and credentials are released atomically.
+A winning move or resignation at that revision still finishes normally.
+Clients handle the existing abandonment event and snapshot lifecycle as usual.
+
 Apart from the three revisionless client control messages above and an unbound
 handshake `platform.error`, match-bound server messages carry `revision`.
 

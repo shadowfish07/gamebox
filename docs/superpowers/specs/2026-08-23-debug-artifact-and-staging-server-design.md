@@ -1,15 +1,15 @@
 # Debug 包滚动发布 + Staging 服务端设计
 
 Date: 2026-08-23
-Status: Validated
+Status: Validated (publication behavior updated 2026-09-06)
 
 ## Goal
 
 为 Gamebox 建立一条 debug 包的分发链路：
 
-1. 每次 push 到任意分支或更新 PR 时自动构建一个**独立包名**的 debug APK。
-   不受信 ref 只产出短期 workflow artifact；默认分支的受信构建才使用稳定签名并更新
-   固定的滚动 pre-release。测试者通过 release 元数据解析最新 APK。
+1. 推送到 `main`、创建或重新打开符合路径过滤的 PR，以及手动运行时构建一个**独立包名**的 debug APK。
+   PR 只产出短期 workflow artifact；默认分支 push 和任意选定分支的手动运行使用稳定签名并更新
+   固定的滚动 pre-release。测试者通过 release 元数据解析最新 APK；该包可能来自尚未合入的分支。
 2. 单独部署一个 **staging 服务端**，与正式服同机并存、数据与密钥完全隔离，
    debug 包指向它，避免 debug 流量污染正式服数据。
 3. debug 包名与正式版互不冲突，可在同一台设备上并存安装。
@@ -18,7 +18,7 @@ Status: Validated
 
 | 问题 | 决策 |
 |---|---|
-| Debug 包发布方式 | 任意分支/PR 产出 14 天 workflow artifact，不读取签名密钥且仅有只读仓库权限；默认分支的受信构建更新滚动 pre-release（固定 tag `debug-latest`；APK/校验文件按完整 SHA、run ID 和 attempt 使用不可变资产名）。README 中的下载命令从 release API 选取 `created_at` 最新的 APK，形成稳定入口。 |
+| Debug 包发布方式 | PR 产出 14 天 workflow artifact，仅有只读仓库权限；白名单同仓库 PR 使用稳定签名，其余 PR 使用临时签名。默认分支 push 和任意选定分支的手动运行更新滚动 pre-release（固定 tag `debug-latest`；APK/校验文件按构建时间、完整 SHA、run ID 和 attempt 使用不可变资产名）。README 中的下载命令从 release API 选取 `created_at` 最新的 APK，形成稳定入口，但不保证资产来自默认分支；安装前核对来源 ref、SHA 和运行记录。 |
 | 包名后缀范围 | 仅 CI 发布的包加 `.debug`（通过 `GAMEBOX_DEBUG_ARTIFACT` 环境变量控制），本地 `flutter run`、`verify.sh`、smoke/E2E 脚本零影响 |
 | Staging 部署机制 | `deploy/macos/install-staging.sh` 手动脚本，在 Mac 上运行；需要更新服务端代码时 `git pull` 后重跑 |
 | Staging 域名 | `staging-gamebox.zqydev.me`（DNS 记录已由 cloudflared 创建） |
@@ -30,12 +30,13 @@ Status: Validated
 
 新增 `.github/workflows/debug.yml`：
 
-- 触发：push 到任意分支、pull request（`paths` 过滤到 `app/**`、
+- 触发：push 到 `main`、pull request 的 opened/reopened（`paths` 过滤到 `app/**`、
   `game_runtime/**`、`tool/**`和 workflow 本身）+ `workflow_dispatch`（`api_base_url` 输入可覆盖，默认
   `https://staging-gamebox.zqydev.me`）。
 - `build` job 只有 `contents: read`，checkout 不保留 Git 凭据，使用 Android 临时
-  debug key 构建并上传 14 天 artifact；它不读取稳定签名 secrets，也不能写 release。
-- `publish` job 仅在 push 或手动运行的 ref 等于仓库默认分支时进入，在该 job
+  debug key 构建并上传 14 天 artifact；当 PR 作者与触发者均为 `shadowfish07` 且来源为同仓库分支时，
+  使用稳定签名 secrets，使该 PR artifact 可覆盖已有调试安装。此 job 不能写 release。
+- `publish` job 在默认分支 push 或任意选定分支的手动运行时进入，在该 job
   内单独获得 `contents: write` 和稳定签名 secrets。发布使用固定 concurrency group
   且不取消进行中的 run；其他 ref 只取消自己的过期构建。
 - 工具链对齐现有 CI/release：Java 17、Flutter 3.47.1、Godot 4.7.0、接受 Android
@@ -46,7 +47,7 @@ Status: Validated
   - `--build-name="<pubspec版本>-dev.<sha7>"`、`--build-number=${GITHUB_RUN_NUMBER}`
   - `--dart-define="GAMEBOX_API_BASE_URL=<staging 或输入值>"`
 - 校验：`aapt dump badging` 断言 `package name` 为 `me.zqydev.gamebox.debug`。
-- 发布：首次用默认分支创建 `debug-latest` release/tag → 上传包含完整 SHA、run ID 和
+- 发布：首次用所选 ref 创建 `debug-latest` release/tag → 上传包含构建时间、完整 SHA、run ID 和
   attempt 的不可变 APK/校验文件，再用 `gh release edit` 更新说明（标注构建身份、版本和
   当前资产名）；tag 保持稳定，旧资产保留，不使用 destructive `--clobber`。
   pre-release，不参与 `releases/latest`。
@@ -60,7 +61,7 @@ Status: Validated
 - `buildTypes.debug` 在 `GAMEBOX_DEBUG_ARTIFACT=true` 时：
   - `applicationIdSuffix = ".debug"` → 应用 ID 变为 `me.zqydev.gamebox.debug`
   - `manifestPlaceholders["appLabel"] = "gamebox debug"`（桌面图标名可区分）
-  - 普通分支/PR artifact 使用 Android 临时 debug key；仅受信的 `publish` job 在
+  - 普通 PR artifact 使用 Android 临时 debug key；白名单同仓库 PR 构建与 `publish` job 在
     `GAMEBOX_REQUIRE_RELEASE_SIGNING=true` 时读取 `key.properties` 和 `ANDROID_*`
     secrets，确保 rolling build 可覆盖安装。
 - `AndroidManifest.xml` 的 `android:label="gamebox"` 改为
