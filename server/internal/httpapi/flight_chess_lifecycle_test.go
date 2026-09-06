@@ -87,11 +87,17 @@ func TestFlightChessLimitBroadcastsTerminalToBothClients(t *testing.T) {
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("cancel after gameplay status=%d", response.StatusCode)
 	}
-	writeWS(t, bobWS, fmt.Sprintf(`{"protocolVersion":1,"gameId":"flight_chess","matchId":%s,"expectedRevision":511,"type":"flight_chess.roll.requested","actionId":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","payload":{}}`, quote(created.ID)))
+	rollMessage := fmt.Sprintf(`{"protocolVersion":1,"gameId":"flight_chess","matchId":%s,"expectedRevision":511,"type":"flight_chess.roll.requested","actionId":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","payload":{}}`, quote(created.ID))
+	writeWS(t, bobWS, rollMessage)
 	for _, connection := range []*websocket.Conn{aliceWS, bobWS} {
 		event := readWSEnvelope(t, connection)
 		if event.Type != protocol.TypePlatformMatchAbandoned || event.Revision == nil || *event.Revision != 512 || event.ActionID != "" || string(event.Payload) != `{}` {
 			t.Fatalf("terminal event=%+v", event)
+		}
+		if connection == bobWS {
+			// A retry must not enqueue invalid_request or a duplicate terminal
+			// event; the following explicit snapshot remains the next message.
+			writeWS(t, connection, rollMessage)
 		}
 		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"gameId":"flight_chess","matchId":%s,"type":"platform.snapshot.requested","payload":{"currentRevision":512}}`, quote(created.ID)))
 		snapshot := readWSEnvelope(t, connection)

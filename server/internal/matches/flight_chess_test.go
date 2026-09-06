@@ -180,6 +180,24 @@ func TestFlightChessEventLimitEndsMatchAndPreservesHistory(t *testing.T) {
 					t.Fatalf("nonmember: %v", err)
 				}
 			}
+			if finalType == flightchess.RollRequested {
+				if _, err := fixture.db.Exec(`CREATE TRIGGER fail_limit_metadata BEFORE INSERT ON flight_chess_limit_actions BEGIN SELECT RAISE(ABORT, 'fixture failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+				failed, _, err := service.ApplyAction(ctx, request)
+				if !errors.Is(err, ErrInternal) || failed.Revision != 0 {
+					t.Fatalf("metadata failure=(%+v,%v)", failed, err)
+				}
+				if intact, err := service.Snapshot(ctx, created.ID); err != nil || intact.Match.Status != StatusActive || intact.Match.Revision != before.Match.Revision {
+					t.Fatalf("rollback=(%+v,%v)", intact.Match, err)
+				}
+				assertTableCount(t, fixture.db, "match_events", maximumFlightChessEvents-1)
+				assertTableCount(t, fixture.db, "flight_chess_limit_actions", 0)
+				assertTableCount(t, fixture.db, "active_game_slots", 2)
+				if _, err := fixture.db.Exec(`DROP TRIGGER fail_limit_metadata`); err != nil {
+					t.Fatal(err)
+				}
+			}
 			event, finished, err := service.ApplyAction(ctx, request)
 			if err != nil {
 				t.Fatalf("last action: %v", err)
@@ -197,6 +215,30 @@ func TestFlightChessEventLimitEndsMatchAndPreservesHistory(t *testing.T) {
 			rebuilt, err := service.Snapshot(ctx, created.ID)
 			if err != nil || rebuilt.Match.Status != wantStatus || rebuilt.Match.Revision != maximumFlightChessEvents || rebuilt.Game.Revision != before.Game.Revision || !bytes.Equal(rebuilt.Game.State, before.Game.State) {
 				t.Fatalf("rebuilt=(%+v,%v)", rebuilt, err)
+			}
+			// Retry through a fresh service with no entropy: the outcome must be
+			// loaded durably, without rerolling or committing another event.
+			restarted := fixture.service(t, bytes.NewReader(nil))
+			retried, retrySnapshot, retryErr := restarted.ApplyAction(ctx, request)
+			if retryErr != nil || retried.Type != event.Type || retried.Revision != event.Revision || !retried.CreatedAt.Equal(event.CreatedAt) || retrySnapshot.Match.Status != wantStatus || retrySnapshot.Match.Revision != maximumFlightChessEvents {
+				t.Fatalf("retry=(%+v,%+v,%v)", retried, retrySnapshot.Match, retryErr)
+			}
+			if finalType != protocol.TypeFlightChessResignRequested {
+				if retried.ActionID != nil || retried.ActorUserID != nil {
+					t.Fatalf("retry exposed request metadata: %+v", retried)
+				}
+				conflict := request
+				conflict.Type, conflict.Payload = protocol.TypeFlightChessResignRequested, json.RawMessage(`{}`)
+				if _, _, err := restarted.ApplyAction(ctx, conflict); !errors.Is(err, ErrActionConflict) {
+					t.Fatalf("changed type retry: %v", err)
+				}
+				if finalType == flightchess.MoveRequested {
+					conflict = request
+					conflict.Payload = json.RawMessage(`{"pieceIndex":1}`)
+					if _, _, err := restarted.ApplyAction(ctx, conflict); !errors.Is(err, ErrActionConflict) {
+						t.Fatalf("changed piece retry: %v", err)
+					}
+				}
 			}
 			assertTableCount(t, fixture.db, "active_game_slots", 0)
 			assertTableCount(t, fixture.db, "match_events", maximumFlightChessEvents)

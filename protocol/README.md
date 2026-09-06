@@ -58,6 +58,9 @@ that would leave the game active instead commits `platform.match.abandoned`
 at revision 512, with an empty payload and no action/actor ID. This is a system
 void outcome with no winner, not an accepted gameplay action; the previous
 board state is preserved and active slots and credentials are released atomically.
+The triggering request identity and move semantics are stored separately in the
+same transaction, so an identical retry returns the original actorless event and
+current snapshot; changed semantics under the same action ID are rejected.
 A winning move or resignation at that revision still finishes normally.
 Clients handle the existing abandonment event and snapshot lifecycle as usual.
 

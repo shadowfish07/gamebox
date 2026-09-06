@@ -1052,13 +1052,27 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	if lookupErr != nil {
 		return Event{}, Snapshot{}, lookupErr
 	}
-	if found {
-		matches, comparisonErr := committedActionMatches(committed, request, semantics, players)
-		if comparisonErr != nil {
-			return Event{}, Snapshot{}, comparisonErr
+	limitRetry := false
+	if !found && match.GameID == flightchess.GameID && match.Status == StatusAbandoned {
+		committed, found, lookupErr = readFlightChessLimitAction(ctx, transaction.Tx, request, semantics)
+		if lookupErr != nil {
+			return Event{}, Snapshot{}, lookupErr
 		}
-		if !matches {
-			return Event{}, Snapshot{}, ErrActionConflict
+		limitRetry = found
+	}
+	if found {
+		if limitRetry {
+			if !playerMember(players, request.ActorUserID) {
+				return Event{}, Snapshot{}, ErrInternal
+			}
+		} else {
+			matches, comparisonErr := committedActionMatches(committed, request, semantics, players)
+			if comparisonErr != nil {
+				return Event{}, Snapshot{}, comparisonErr
+			}
+			if !matches {
+				return Event{}, Snapshot{}, ErrActionConflict
+			}
 		}
 		snapshot, snapshotErr := service.rebuildSnapshot(ctx, transaction.Tx, match, players)
 		if snapshotErr != nil {
@@ -1352,6 +1366,17 @@ VALUES (?,?,?,?,?,?,?)`, match.ID, nextRevision, gameEvent.Type, actionID, actor
 		return Event{}, Snapshot{}, ErrInternal
 	}
 
+	if terminalStatus == StatusAbandoned {
+		pieceIndex := -1
+		if request.Type == flightchess.MoveRequested {
+			pieceIndex = semantics.pieceIndex
+		}
+		if _, insertErr := transaction.ExecContext(ctx, `
+INSERT INTO flight_chess_limit_actions(match_id,event_revision,actor_user_id,action_id,request_type,piece_index)
+VALUES (?,?,?,?,?,?)`, match.ID, nextRevision, request.ActorUserID, request.ActionID, request.Type, pieceIndex); insertErr != nil {
+			return Event{}, Snapshot{}, matchDatabaseError(ctx, insertErr)
+		}
+	}
 	if terminal {
 		resultExec, updateErr := transaction.ExecContext(ctx, `
 UPDATE matches
@@ -2521,6 +2546,38 @@ WHERE match_id=? AND actor_user_id=? AND action_id=?`, matchID, actorID, actionI
 		event.ActorUserID = stringPointer(storedActorID.String)
 	}
 	event.Payload = append(json.RawMessage(nil), payload...)
+	event.CreatedAt = time.UnixMilli(createdAt).UTC()
+	return event, true, nil
+}
+
+// Limit outcomes retain request identity only in storage, never in the platform
+// event. A new Service can therefore answer retries without consuming entropy.
+func readFlightChessLimitAction(ctx context.Context, transaction *sql.Tx, request ActionRequest, semantics actionSemantics) (Event, bool, error) {
+	var event Event
+	var requestType, payload string
+	var pieceIndex int
+	var createdAt int64
+	var eventActionID, eventActorID sql.NullString
+	err := transaction.QueryRowContext(ctx, `
+SELECT d.request_type,d.piece_index,e.revision,e.event_type,e.payload_json,e.created_at,e.action_id,e.actor_user_id
+FROM flight_chess_limit_actions d
+JOIN match_events e ON e.match_id=d.match_id AND e.revision=d.event_revision
+WHERE d.match_id=? AND d.actor_user_id=? AND d.action_id=?`, request.MatchID, request.ActorUserID, request.ActionID).
+		Scan(&requestType, &pieceIndex, &event.Revision, &event.Type, &payload, &createdAt, &eventActionID, &eventActorID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Event{}, false, nil
+	}
+	if err != nil {
+		return Event{}, false, matchDatabaseError(ctx, err)
+	}
+	if event.Type != protocol.TypePlatformMatchAbandoned || event.Revision != maximumFlightChessEvents || eventActionID.Valid || eventActorID.Valid || !isStrictEmptyObject(json.RawMessage(payload)) {
+		return Event{}, false, ErrInternal
+	}
+	if requestType != request.Type || requestType == flightchess.MoveRequested && pieceIndex != semantics.pieceIndex {
+		return Event{}, false, ErrActionConflict
+	}
+	event.MatchID = request.MatchID
+	event.Payload = json.RawMessage(payload)
 	event.CreatedAt = time.UnixMilli(createdAt).UTC()
 	return event, true, nil
 }
