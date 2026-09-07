@@ -26,7 +26,8 @@ final class ScratchPlayer {
         name.trim().isEmpty ||
         name.length > 100 ||
         raw is! List ||
-        raw.length != scratchCollectibles.length ||
+        (raw.length != scratchLegacyCatalogSize &&
+            raw.length != scratchCollectibles.length) ||
         raw.any((v) => v is! int || v < 0 || v > 1000000000) ||
         time is! int ||
         time < 0 ||
@@ -36,7 +37,10 @@ final class ScratchPlayer {
     return ScratchPlayer(
       userId: id,
       nickname: name,
-      counts: List<int>.unmodifiable(raw.cast<int>()),
+      counts: List<int>.unmodifiable([
+        ...raw.cast<int>(),
+        ...List.filled(scratchCollectibles.length - raw.length, 0),
+      ]),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(time),
     );
   }
@@ -50,7 +54,7 @@ final class ScratchPlayerPage {
 
 abstract interface class ScratchSocialApi {
   bool get canSync;
-  Future<ScratchPlayerPage> list([String after = '']);
+  Future<ScratchPlayerPage> list([String after = '', int? card]);
   Future<void> sync(List<int> counts);
 }
 
@@ -61,10 +65,17 @@ final class HttpScratchSocialApi implements ScratchSocialApi {
   @override
   bool get canSync => session?.accessToken != null;
   @override
-  Future<ScratchPlayerPage> list([String after = '']) async {
-    final json = await client.getJson(
-      '/v1/scratch/collections${after.isEmpty ? '' : '?after=${Uri.encodeQueryComponent(after)}'}',
-    );
+  Future<ScratchPlayerPage> list([String after = '', int? card]) async {
+    final query = <String, String>{
+      'catalogSize': '${scratchCollectibles.length}',
+      if (after.isNotEmpty) 'after': after,
+      if (card != null) 'card': '$card',
+    };
+    final path = Uri(
+      path: '/v1/scratch/collections',
+      queryParameters: query.isEmpty ? null : query,
+    ).toString();
+    final json = await client.getJson(path);
     try {
       final raw = json['players'], cursor = json['nextCursor'];
       if (raw is! List ||
@@ -78,7 +89,8 @@ final class HttpScratchSocialApi implements ScratchSocialApi {
             (v) => ScratchPlayer.fromJson(Map<String, Object?>.from(v as Map)),
           )
           .toList();
-      if (players.map((p) => p.userId).toSet().length != players.length ||
+      if ((card != null && players.any((p) => p.counts[card] <= 0)) ||
+          players.map((p) => p.userId).toSet().length != players.length ||
           (cursor.isNotEmpty &&
               (players.isEmpty ||
                   cursor != players.last.userId ||

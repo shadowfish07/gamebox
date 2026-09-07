@@ -1,3 +1,5 @@
+import 'scratch_social_test.dart' show FakeSocial;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
@@ -21,7 +23,10 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             theme: GameboxTheme.light(),
-            home: ScratchPage(controller: controller),
+            home: ScratchPage(
+              controller: controller,
+              socialApi: FakeSocial()..canSync = false,
+            ),
           ),
         );
         expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
@@ -56,7 +61,10 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: GameboxTheme.light(),
-          home: ScratchPage(controller: controller),
+          home: ScratchPage(
+            controller: controller,
+            socialApi: FakeSocial()..canSync = false,
+          ),
         ),
       );
       expect(find.byType(ScratchSurface), findsOneWidget);
@@ -94,7 +102,10 @@ void main() {
           await tester.pumpWidget(
             MaterialApp(
               theme: dark ? GameboxTheme.dark() : GameboxTheme.light(),
-              home: ScratchPage(controller: controller),
+              home: ScratchPage(
+                controller: controller,
+                socialApi: FakeSocial()..canSync = false,
+              ),
             ),
           );
           await tester.pumpAndSettle();
@@ -152,7 +163,10 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: GameboxTheme.light(),
-          home: ScratchPage(controller: controller),
+          home: ScratchPage(
+            controller: controller,
+            socialApi: FakeSocial()..canSync = false,
+          ),
         ),
       );
       await tester.pumpAndSettle();

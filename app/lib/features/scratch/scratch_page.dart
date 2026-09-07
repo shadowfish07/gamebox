@@ -12,6 +12,7 @@ import 'scratch_players_page.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
 import 'scratch_collectible_card.dart';
+import 'scratch_card_owners.dart';
 
 class ScratchEntry extends StatelessWidget {
   const ScratchEntry({super.key, this.socialApi});
@@ -724,6 +725,13 @@ class _ScratchPageState extends State<ScratchPage> {
                       ),
                     ),
                   SizedBox(height: GameboxTokens.spacing.compact),
+                  ScratchCardOwners(
+                    key: ValueKey('scratch-owners-${cat.index}'),
+                    api: socialApi,
+                    card: cat.index,
+                    beforeLoad: collectionSync.sync,
+                  ),
+                  SizedBox(height: GameboxTokens.spacing.layout),
                   if (!owned)
                     FilledButton(
                       onPressed: () {

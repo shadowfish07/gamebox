@@ -24,7 +24,7 @@ class FakeSocial implements ScratchSocialApi {
   int calls = 0;
   Completer<void>? pending;
   @override
-  Future<ScratchPlayerPage> list([String after = '']) async {
+  Future<ScratchPlayerPage> list([String after = '', int? card]) async {
     calls++;
     await pending?.future;
     if (fail) throw const ApiError(code: 'network_error', message: '连接失败');

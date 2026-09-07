@@ -6,19 +6,30 @@ import (
 	"me.zqydev/gamebox/server/internal/scratch"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 func (router *router) listScratchCollections(w http.ResponseWriter, r *http.Request) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || len(query) > 1 || len(query["after"]) > 1 {
+	if err != nil || len(query) > 3 || len(query["after"]) > 1 || len(query["card"]) > 1 || len(query["catalogSize"]) > 1 {
 		writeAPIError(w, 400, "invalid_request")
 		return
 	}
 	for key := range query {
-		if key != "after" {
+		if key != "after" && key != "card" && key != "catalogSize" {
 			writeAPIError(w, 400, "invalid_request")
 			return
 		}
+	}
+	// Keep the 24-entry response contract for installed cat-only clients.
+	catalogSize := scratch.LegacyCatalogSize
+	if values, ok := query["catalogSize"]; ok {
+		size, parseErr := strconv.Atoi(values[0])
+		if parseErr != nil || (size != scratch.LegacyCatalogSize && size != scratch.CatalogSize) || strconv.Itoa(size) != values[0] {
+			writeAPIError(w, 400, "invalid_request")
+			return
+		}
+		catalogSize = size
 	}
 	after := query.Get("after")
 	if after != "" {
@@ -28,10 +39,22 @@ func (router *router) listScratchCollections(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	page, err := router.scratch.List(r.Context(), after)
+	var card *int
+	if values, ok := query["card"]; ok {
+		index, err := strconv.Atoi(values[0])
+		if err != nil || index < 0 || index >= catalogSize || strconv.Itoa(index) != values[0] {
+			writeAPIError(w, 400, "invalid_request")
+			return
+		}
+		card = &index
+	}
+	page, err := router.scratch.List(r.Context(), after, card)
 	if err != nil {
 		writeAPIError(w, 500, "internal_error")
 		return
+	}
+	for i := range page.Players {
+		page.Players[i].Counts = page.Players[i].Counts[:catalogSize]
 	}
 	writeJSON(w, 200, page)
 }

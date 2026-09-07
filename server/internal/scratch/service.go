@@ -7,12 +7,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"me.zqydev/gamebox/server/internal/clock"
 )
 
 var ErrInvalid = errors.New("invalid collection")
 
-const CatalogSize = 24
+const LegacyCatalogSize = 24
+const CatalogSize = 48
 
 type Service struct {
 	db    *sql.DB
@@ -33,7 +35,7 @@ type Page struct {
 }
 
 func (s *Service) Publish(ctx context.Context, userID string, counts []int) error {
-	if len(counts) != CatalogSize {
+	if len(counts) != CatalogSize && len(counts) != LegacyCatalogSize {
 		return ErrInvalid
 	}
 	for _, count := range counts {
@@ -41,16 +43,38 @@ func (s *Service) Publish(ctx context.Context, userID string, counts []int) erro
 			return ErrInvalid
 		}
 	}
-	raw, err := json.Marshal(counts)
+	legacy := len(counts) == LegacyCatalogSize
+	normalized := make([]int, CatalogSize)
+	copy(normalized, counts)
+	update := "excluded.counts_json"
+	if legacy {
+		// A cat-only client must not erase dogs published by a newer client.
+		update = "json_set(excluded.counts_json"
+		for i := LegacyCatalogSize; i < CatalogSize; i++ {
+			update += fmt.Sprintf(", '$[%d]', COALESCE(json_extract(scratch_collections.counts_json, '$[%d]'), 0)", i, i)
+		}
+		update += ")"
+	}
+	raw, err := json.Marshal(normalized)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO scratch_collections(user_id,counts_json,updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET counts_json=excluded.counts_json, updated_at=excluded.updated_at`, userID, string(raw), s.clock.Now().UnixMilli())
+	_, err = s.db.ExecContext(ctx, `INSERT INTO scratch_collections(user_id,counts_json,updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET counts_json=`+update+`, updated_at=excluded.updated_at`, userID, string(raw), s.clock.Now().UnixMilli())
 	return err
 }
-func (s *Service) List(ctx context.Context, after string) (Page, error) {
+func (s *Service) List(ctx context.Context, after string, card *int) (Page, error) {
 	result := Page{Players: []Player{}}
-	rows, err := s.db.QueryContext(ctx, `SELECT u.id,u.nickname,COALESCE(c.counts_json,'null'),COALESCE(c.updated_at,0) FROM users u LEFT JOIN scratch_collections c ON u.id=c.user_id WHERE u.enabled=1 AND u.id>? ORDER BY u.id LIMIT 31`, after)
+	query := `SELECT u.id,u.nickname,COALESCE(c.counts_json,'null'),COALESCE(c.updated_at,0) FROM users u LEFT JOIN scratch_collections c ON u.id=c.user_id WHERE u.enabled=1 AND u.id>? `
+	args := []any{after}
+	if card != nil {
+		if *card < 0 || *card >= CatalogSize {
+			return result, ErrInvalid
+		}
+		query += " AND json_extract(c.counts_json, ?) > 0"
+		args = append(args, fmt.Sprintf("$[%d]", *card))
+	}
+	query += " ORDER BY u.id LIMIT 31"
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return result, err
 	}
@@ -64,9 +88,9 @@ func (s *Service) List(ctx context.Context, after string) (Page, error) {
 		if err = json.Unmarshal([]byte(raw), &p.Counts); err != nil {
 			return result, err
 		}
-		if p.Counts == nil {
-			p.Counts = make([]int, CatalogSize)
-		}
+		normalized := make([]int, CatalogSize)
+		copy(normalized, p.Counts)
+		p.Counts = normalized
 		result.Players = append(result.Players, p)
 	}
 	if err = rows.Err(); err != nil {

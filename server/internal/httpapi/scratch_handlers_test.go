@@ -72,12 +72,21 @@ func TestScratchCollectionPaginationAndBounds(t *testing.T) {
 		}
 
 	}
+	// Filtered pagination must run over owners, including later pages.
+	for i := 0; i < 32; i++ {
+		id := fmt.Sprintf("%08d-1111-4111-8111-111111111111", i)
+		counts[13] = i + 1
+		raw, _ := json.Marshal(counts)
+		if _, err := f.db.Exec(`INSERT INTO scratch_collections(user_id,counts_json,updated_at) VALUES(?,?,?)`, id, string(raw), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var first, second scratch.Page
-	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections", "", ""), &first)
+	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections?card=13", "", ""), &first)
 	if len(first.Players) != 30 || first.NextCursor != first.Players[29].UserID {
 		t.Fatalf("first page size=%d cursor=%s", len(first.Players), first.NextCursor)
 	}
-	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections?after="+first.NextCursor, "", ""), &second)
+	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections?card=13&after="+first.NextCursor, "", ""), &second)
 	if len(second.Players) != 2 || second.NextCursor != "" || second.Players[0].UserID <= first.NextCursor {
 		t.Fatal("invalid second page")
 	}
@@ -93,5 +102,38 @@ func TestScratchCollectionPaginationAndBounds(t *testing.T) {
 		if got := f.request(t, "POST", "/v1/scratch/collections/me", string(body), alice.Session.AccessToken).Code; got != 400 {
 			t.Fatalf("invalid count status %d", got)
 		}
+	}
+}
+
+func TestScratchCardOwners(t *testing.T) {
+	f := newAPIFixture(t)
+	alice := f.register(t, "owners-alice", "Alice")
+	bob := f.register(t, "owners-bob", "Bob")
+	counts := make([]int, 24)
+	counts[13] = 7
+	body, _ := json.Marshal(map[string]any{"counts": counts})
+	f.request(t, "POST", "/v1/scratch/collections/me", string(body), alice.Session.AccessToken)
+	counts[13] = 0
+	counts[0] = 2
+	body, _ = json.Marshal(map[string]any{"counts": counts})
+	f.request(t, "POST", "/v1/scratch/collections/me", string(body), bob.Session.AccessToken)
+	var page scratch.Page
+	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections?card=13", "", ""), &page)
+	if len(page.Players) != 1 || page.Players[0].UserID != alice.Session.User.ID || page.Players[0].Counts[13] != 7 {
+		t.Fatalf("incorrect owners %+v", page)
+	}
+	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections?card=23", "", ""), &page)
+	if len(page.Players) != 0 {
+		t.Fatal("unowned card has owners")
+	}
+	for _, query := range []string{"card=24", "card=-1", "card=x", "card=", "card=01", "card=1&card=2"} {
+		if got := f.request(t, "GET", "/v1/scratch/collections?"+query, "", "").Code; got != 400 {
+			t.Fatalf("invalid filter %s: %d", query, got)
+		}
+	}
+	f.db.Exec(`UPDATE users SET enabled=0 WHERE id=?`, alice.Session.User.ID)
+	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections?card=13", "", ""), &page)
+	if len(page.Players) != 0 {
+		t.Fatal("disabled owner visible")
 	}
 }
