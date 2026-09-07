@@ -13,6 +13,7 @@ import 'scratch_controller.dart';
 import 'scratch_surface.dart';
 import 'scratch_collectible_card.dart';
 import 'scratch_card_owners.dart';
+import 'scratch_reveal_effect.dart';
 
 class ScratchEntry extends StatelessWidget {
   const ScratchEntry({super.key, this.socialApi});
@@ -460,7 +461,16 @@ class _ScratchPageState extends State<ScratchPage> {
               ),
             ),
           ),
-          SizedBox(width: portraitSize, height: portraitSize, child: portrait),
+          SizedBox(
+            width: portraitSize,
+            height: portraitSize,
+            child: ScratchRevealEffect(
+              key: ValueKey('scratch-reveal-${controller.serial}'),
+              revealed: result,
+              rarity: controller.cat.rarity,
+              child: portrait,
+            ),
+          ),
           SizedBox(
             height:
                 GameboxTokens.components.minimumTouchTarget +
