@@ -30,7 +30,7 @@ void main() {
       await c.load();
       await tester.pump();
       expect(api.snapshots.length, 1);
-      await c.revealAll();
+      await c.draw();
       await tester.pump();
       expect(api.snapshots.last, c.counts);
       expect(api.snapshots.last.reduce((a, b) => a + b), 1);
@@ -52,7 +52,7 @@ void main() {
       api.upload = Completer<void>();
       await tester.pump(const Duration(seconds: 2));
       expect(api.snapshots.length, 2);
-      await c.revealAll();
+      await c.draw();
       expect(api.snapshots.length, 2);
       api.upload!.complete();
       await tester.pump();

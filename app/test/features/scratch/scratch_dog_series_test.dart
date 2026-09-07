@@ -8,7 +8,8 @@ import 'package:gamebox/features/scratch/scratch_page.dart';
 import 'package:gamebox/features/scratch/scratch_social_api.dart';
 import 'package:gamebox/features/scratch/scratch_surface.dart';
 
-import 'scratch_controller_test.dart' show MemoryScratchStore;
+import 'scratch_controller_test.dart'
+    show MemoryScratchStore, legacyScratchSave;
 import 'scratch_social_test.dart' show FakeSocial;
 
 void main() {
@@ -58,35 +59,25 @@ void main() {
     '24-entry save retains cats, current ticket, dates, and adds empty dogs',
     () async {
       final store = MemoryScratchStore();
-      final original = ScratchController(store: store, random: () => 0);
-      await original.load();
-      await original.revealAll();
-      original.favorites.add(0);
-      await original.next();
-      original.masks[0].erase(.1, .1, .8, .1);
-      await original.persist();
-      final legacy = jsonDecode(store.value!) as Map<String, dynamic>;
-      legacy['counts'] = (legacy['counts'] as List).take(24).toList();
-      legacy['firstFound'] = (legacy['firstFound'] as List).take(24).toList();
+      final legacy = legacyScratchSave(size: 24);
       store.value = jsonEncode(legacy);
       final restored = ScratchController(store: store);
       await restored.load();
       expect(restored.error, isNull);
-      expect(restored.counts.take(24), original.counts.take(24));
+      expect(restored.counts.take(24), [1, ...List.filled(23, 0)]);
       expect(restored.counts.skip(24), everyElement(0));
-      expect(restored.firstFound, original.firstFound);
+      expect(restored.firstFound[0], DateTime(2026).toIso8601String());
       expect(restored.favorites, [0]);
       expect(restored.cat.index, 0);
       expect(restored.claimed, isFalse);
-      expect(restored.serial, original.serial);
-      expect(restored.masks[0].coverage, original.masks[0].coverage);
-      await restored.revealAll();
+      expect(restored.serial, 7);
+      await restored.draw();
       expect(restored.counts[0], 2);
       final reloaded = ScratchController(store: store);
       await reloaded.load();
       expect(reloaded.error, isNull);
       expect(reloaded.counts, restored.counts);
-      for (final c in [original, restored, reloaded]) {
+      for (final c in [restored, reloaded]) {
         c.dispose();
       }
     },
@@ -95,7 +86,7 @@ void main() {
   test(
     'dog prize persists, restores and repeated claims award only once',
     () async {
-      final values = [0.0, .995, .75].iterator;
+      final values = [.995, .75].iterator;
       final store = MemoryScratchStore();
       final c = ScratchController(
         store: store,
@@ -106,15 +97,13 @@ void main() {
       );
       await c.load();
       expect(c.cat.index, 47);
-      await c.revealAll();
-      await c.revealAll();
+      await c.draw();
       final restored = ScratchController(store: store);
       await restored.load();
       expect(restored.error, isNull);
       expect(restored.cat.index, 47);
       expect(restored.counts[47], 1);
       expect(restored.firstFound[47], c.firstFound[47]);
-      await restored.revealAll();
       expect(restored.total, 1);
       c.dispose();
       restored.dispose();
@@ -189,7 +178,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text('史诗'));
         await tester.pumpAndSettle();
-        expect(find.text('还没有藏品，去刮一张吧'), findsOneWidget);
+        expect(find.text('还没有藏品，去抽一张吧'), findsOneWidget);
         await tester.tap(find.text('已拥有'));
         await tester.pumpAndSettle();
         expect(find.byKey(const ValueKey('scratch-cat-43')), findsOneWidget);

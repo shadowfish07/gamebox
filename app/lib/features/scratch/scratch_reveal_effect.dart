@@ -13,11 +13,16 @@ class ScratchRevealEffect extends StatefulWidget {
     required this.revealed,
     required this.rarity,
     required this.child,
+    this.enabled = true,
+    this.playOnMount = false,
+    this.duration,
   });
 
   final bool revealed;
   final int rarity;
   final Widget child;
+  final bool enabled, playOnMount;
+  final Duration? duration;
 
   @override
   State<ScratchRevealEffect> createState() => _ScratchRevealEffectState();
@@ -31,14 +36,26 @@ class _ScratchRevealEffectState extends State<ScratchRevealEffect>
     });
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.playOnMount && widget.enabled && widget.revealed) _play();
+  }
+
+  void _play() {
+    _animation.duration =
+        widget.duration ??
+        GameboxTokens.motion.slow * [2, 4, 6, 9][widget.rarity];
+    _animation.forward(from: 0);
+  }
+
+  @override
   void didUpdateWidget(ScratchRevealEffect oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.revealed) {
+    if (!widget.revealed || !widget.enabled) {
       _animation.reset();
     } else if (!oldWidget.revealed) {
       // Build longer game-art sequences from the shared motion beat.
-      _animation.duration = GameboxTokens.motion.slow * [2, 4, 6, 9][widget.rarity];
-      _animation.forward(from: 0);
+      _play();
     }
   }
 

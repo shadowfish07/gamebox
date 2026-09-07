@@ -32,7 +32,10 @@ class FakeSocial implements ScratchSocialApi {
       ScratchPlayer(
         userId: '11111111-1111-4111-8111-111111111111',
         nickname: '玩家甲',
-        counts: List.generate(scratchCollectibles.length, (i) => i == 13 ? 2 : 0),
+        counts: List.generate(
+          scratchCollectibles.length,
+          (i) => i == 13 ? 2 : 0,
+        ),
         updatedAt: DateTime(2026, 9, 7),
       ),
     ], '');
@@ -58,7 +61,7 @@ void main() {
         random: () => 0,
       );
       await collection.load();
-      await collection.revealAll();
+      await collection.draw();
       await tester.pumpWidget(
         MaterialApp(
           theme: dark ? GameboxTheme.dark() : GameboxTheme.light(),

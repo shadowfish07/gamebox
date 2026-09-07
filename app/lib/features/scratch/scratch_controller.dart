@@ -34,41 +34,17 @@ ScratchCollectible drawScratchCollectible(double Function() random) {
   return pool[(random() * pool.length).floor()];
 }
 
-final class ScratchMask extends ChangeNotifier {
-  final List<List<double>> strokes = [];
-  final _cells = List.filled(1024, false);
-  var _covered = 0;
-  double get coverage => _covered / 1024;
-  void erase(
-    double x0,
-    double y0,
-    double x1,
-    double y1, {
-    double radius = .085,
-  }) {
-    final before = _covered;
-    final dx = x1 - x0, dy = y1 - y0;
-    final length = dx * dx + dy * dy;
-    for (var y = 0; y < 32; y++) {
-      for (var x = 0; x < 32; x++) {
-        final i = y * 32 + x;
-        if (_cells[i]) continue;
-        final px = (x + .5) / 32, py = (y + .5) / 32;
-        final t = length == 0
-            ? 0.0
-            : (((px - x0) * dx + (py - y0) * dy) / length).clamp(0.0, 1.0);
-        final ax = px - x0 - t * dx, ay = py - y0 - t * dy;
-        if (ax * ax + ay * ay <= radius * radius) {
-          _cells[i] = true;
-          _covered++;
-        }
-      }
-    }
-    if (_covered > before) {
-      strokes.add([x0, y0, x1, y1, radius]);
-      notifyListeners();
-    }
-  }
+/// Immutable presentation receipt; quantities reflect this draw, not a later one.
+final class CardDrawResult {
+  const CardDrawResult({
+    required this.card,
+    required this.serial,
+    required this.isNew,
+    required this.count,
+  });
+  final ScratchCollectible card;
+  final int serial, count;
+  final bool isNew;
 }
 
 final class ScratchController extends ChangeNotifier {
@@ -78,11 +54,8 @@ final class ScratchController extends ChangeNotifier {
   final double Function() random;
   final counts = List.filled(scratchCollectibles.length, 0);
   final firstFound = List<String?>.filled(scratchCollectibles.length, null);
-  // Retained only to round-trip old saves; the showcase UI was removed.
+  // Retained to round-trip legacy collections, though the showcase was removed.
   final favorites = <int>[];
-  final opened = <int>{};
-  List<ScratchMask> masks = List.generate(4, (_) => ScratchMask());
-  bool winning = true;
   ScratchCollectible cat = scratchCollectibles.first;
   bool claimed = false,
       isNew = false,
@@ -95,6 +68,14 @@ final class ScratchController extends ChangeNotifier {
   int get total => counts.fold(0, (a, b) => a + b);
   int get collected => counts.where((count) => count > 0).length;
   bool get interactive => !loading && !saving && error == null;
+  CardDrawResult? get lastResult => claimed
+      ? CardDrawResult(
+          card: cat,
+          serial: serial,
+          isNew: isNew,
+          count: counts[cat.index],
+        )
+      : null;
   Future<void> _writes = Future.value();
   int _revision = 0;
 
@@ -109,13 +90,10 @@ final class ScratchController extends ChangeNotifier {
     try {
       final raw = await store.read();
       if (_disposed) return;
-      if (raw != null) {
-        _restore(raw);
-      } else {
-        _drawTicket();
-      }
+      final migrated = raw != null ? _restore(raw) : false;
+      if (raw == null) cat = drawScratchCollectible(random);
       loading = false;
-      if (raw == null) {
+      if (raw == null || migrated) {
         await persist();
       } else {
         _changed();
@@ -129,56 +107,44 @@ final class ScratchController extends ChangeNotifier {
   }
 
   Map<String, Object?> _snapshot() => {
-    'version': 1,
+    'version': 2,
     'counts': counts,
     'firstFound': firstFound,
     'favorites': favorites,
     'cat': cat.index,
-    'mode': 0, // Retained for version-1 save compatibility.
-    'winning': winning,
     'claimed': claimed,
     'isNew': isNew,
     'serial': serial,
-    'opened': opened.toList(),
-    'strokes': masks.map((mask) => mask.strokes).toList(),
   };
 
-  void _restore(String raw) {
+  bool _restore(String raw) {
     final data = jsonDecode(raw) as Map<String, dynamic>;
+    final version = data['version'];
     final savedCounts = (data['counts'] as List).cast<int>();
     final savedFirst = (data['firstFound'] as List).cast<String?>();
     final savedFavorites = (data['favorites'] as List).cast<int>();
-    final savedOpened = (data['opened'] as List).cast<int>().toSet();
-    final catIndex = data['cat'] as int, modeIndex = data['mode'] as int;
+    final catIndex = data['cat'] as int;
     final savedClaimed = data['claimed'] as bool;
-    final savedWinning = data['winning'] == null
-        ? true
-        : data['winning'] as bool;
-    if (data['version'] != 1 ||
+    final savedWinning = version == 1
+        ? (data['winning'] as bool? ?? true)
+        : true;
+    if ((version != 1 && version != 2) ||
         (savedCounts.length != scratchLegacyCatalogSize &&
             savedCounts.length != scratchCollectibles.length) ||
         savedFirst.length != savedCounts.length ||
         savedCounts.any((v) => v < 0) ||
         catIndex < 0 ||
         catIndex >= savedCounts.length ||
-        modeIndex < 0 ||
-        modeIndex >= 3 ||
         savedFavorites.length > 6 ||
         savedFavorites.toSet().length != savedFavorites.length ||
         savedFavorites.any(
           (i) => i < 0 || i >= savedCounts.length || savedCounts[i] == 0,
         ) ||
-        savedOpened.any((i) => i < 0 || i >= [1, 4, 2][modeIndex]) ||
-        (modeIndex == 2 &&
-            savedOpened.contains(1) &&
-            !savedOpened.contains(0)) ||
-        (savedClaimed &&
-            ((savedWinning && savedCounts[catIndex] == 0) ||
-                savedOpened.length != [1, 4, 2][modeIndex])) ||
+        (savedClaimed && savedWinning && savedCounts[catIndex] == 0) ||
         data['serial'] is! int ||
         (data['serial'] as int) < 1 ||
         data['isNew'] is! bool) {
-      throw const FormatException('Invalid scratch collection');
+      throw const FormatException('Invalid collection');
     }
     for (var i = 0; i < savedCounts.length; i++) {
       if (savedCounts[i] > 0 &&
@@ -187,43 +153,8 @@ final class ScratchController extends ChangeNotifier {
         throw const FormatException('Invalid collection date');
       }
     }
-    final rawMasks = data['strokes'] as List;
-    if (rawMasks.length != 4) throw const FormatException('Invalid masks');
-    final restoredMasks = List.generate(4, (_) => ScratchMask());
-    try {
-      for (var i = 0; i < 4; i++) {
-        final segments = rawMasks[i] as List;
-        if (segments.length > 1024) {
-          throw const FormatException('Too many strokes');
-        }
-        for (final item in segments) {
-          final segment = (item as List)
-              .cast<num>()
-              .map((n) => n.toDouble())
-              .toList();
-          if (segment.length != 5 ||
-              segment.any((n) => !n.isFinite || n < 0 || n > 1)) {
-            throw const FormatException('Invalid stroke');
-          }
-          restoredMasks[i].erase(
-            segment[0],
-            segment[1],
-            segment[2],
-            segment[3],
-            radius: segment[4],
-          );
-        }
-      }
-    } catch (_) {
-      for (final mask in restoredMasks) {
-        mask.dispose();
-      }
-      rethrow;
-    }
-    for (final mask in masks) {
-      mask.dispose();
-    }
-    masks = restoredMasks;
+    if (version == 1) _validateLegacySurface(data, savedClaimed);
+    // Apply only after the entire save validates. A corrupt save is never overwritten.
     counts.fillRange(0, counts.length, 0);
     counts.setAll(0, savedCounts);
     firstFound.fillRange(0, firstFound.length, null);
@@ -231,18 +162,40 @@ final class ScratchController extends ChangeNotifier {
     favorites
       ..clear()
       ..addAll(savedFavorites);
-    opened
-      ..clear()
-      ..addAll(savedOpened);
     cat = scratchCollectibles[catIndex];
-    winning = savedWinning;
-    if (modeIndex != 0) {
-      _clearMasks();
-      if (savedClaimed) opened.add(0);
-    }
-    claimed = savedClaimed;
-    isNew = data['isNew'] as bool;
+    claimed = savedClaimed && savedWinning;
+    isNew = claimed && data['isNew'] as bool;
     serial = data['serial'] as int;
+    // Retire an already revealed empty ticket; its stored candidate becomes the
+    // next guaranteed draw, awarded only on an explicit draw action.
+    if (savedClaimed && !savedWinning) serial++;
+    return version == 1 || savedCounts.length != counts.length;
+  }
+
+  void _validateLegacySurface(Map<String, dynamic> data, bool savedClaimed) {
+    final mode = data['mode'] as int;
+    final opened = (data['opened'] as List).cast<int>().toSet();
+    if (mode < 0 ||
+        mode > 2 ||
+        opened.any((i) => i < 0 || i >= [1, 4, 2][mode]) ||
+        (mode == 2 && opened.contains(1) && !opened.contains(0)) ||
+        (savedClaimed && opened.length != [1, 4, 2][mode])) {
+      throw const FormatException('Invalid legacy reveal');
+    }
+    final masks = data['strokes'] as List;
+    if (masks.length != 4) throw const FormatException('Invalid legacy masks');
+    for (final mask in masks) {
+      final segments = mask as List;
+      if (segments.length > 1024)
+        throw const FormatException('Too many strokes');
+      for (final stroke in segments) {
+        final values = (stroke as List).cast<num>();
+        if (values.length != 5 ||
+            values.any((v) => !v.isFinite || v < 0 || v > 1)) {
+          throw const FormatException('Invalid legacy stroke');
+        }
+      }
+    }
   }
 
   Future<void> persist() {
@@ -274,61 +227,26 @@ final class ScratchController extends ChangeNotifier {
 
   Future<void> retry() => unsaved ? persist() : load();
 
-  void _clearMasks() {
-    // Keep notifier identities stable while their painters unmount/rebuild.
-    for (final mask in masks) {
-      mask.strokes.clear();
-      mask._cells.fillRange(0, 1024, false);
-      mask._covered = 0;
+  /// Commits exactly one guaranteed card. The caller must check [unsaved] before
+  /// presenting success; retry saves this same receipt without another award.
+  Future<CardDrawResult?> draw() async {
+    if (!interactive || _disposed) return null;
+    if (claimed) {
+      cat = drawScratchCollectible(random);
+      serial++;
     }
-    opened.clear();
-  }
-
-  Future<void> next() async {
-    if (!interactive || !claimed) return;
-    _drawTicket();
-    serial++;
-    claimed = false;
-    isNew = false;
-    _clearMasks();
-    await persist();
-  }
-
-  void _drawTicket() {
-    winning = random() < .2;
-    cat = drawScratchCollectible(random);
-  }
-
-  Future<void> open(int region) async {
-    if (loading ||
-        error != null ||
-        claimed ||
-        region < 0 ||
-        region >= 1 ||
-        opened.contains(region)) {
-      return;
-    }
-    opened.add(region);
     claimed = true;
-    if (winning) {
-      isNew = counts[cat.index] == 0;
-      counts[cat.index]++;
-      firstFound[cat.index] ??= DateTime.now().toIso8601String();
-    }
+    isNew = counts[cat.index] == 0;
+    counts[cat.index]++;
+    firstFound[cat.index] ??= DateTime.now().toIso8601String();
+    final receipt = lastResult!;
     await persist();
-  }
-
-  Future<void> revealAll() async {
-    if (!interactive || claimed) return;
-    await open(0);
+    return receipt;
   }
 
   @override
   void dispose() {
     _disposed = true;
-    for (final mask in masks) {
-      mask.dispose();
-    }
     super.dispose();
   }
 }
