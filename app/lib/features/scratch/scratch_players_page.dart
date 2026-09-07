@@ -86,18 +86,7 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('看看大家收集了什么', style: Theme.of(context).textTheme.titleMedium),
-              SizedBox(height: gap),
-              Text(
-                '这里展示玩家主动公开的收藏。',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
               if (widget.api.canPublish) ...[
-                SizedBox(height: gap),
-                Text(
-                  '公开你的昵称、藏品与数量；新收获需再次更新。',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
                 Row(
                   children: [
                     Expanded(
@@ -119,14 +108,7 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
                     ),
                   ],
                 ),
-              ] else
-                Padding(
-                  padding: EdgeInsets.only(top: gap),
-                  child: Text(
-                    '登录后可公开自己的收藏；现在可以浏览其他玩家。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
+              ],
               if (notice.isNotEmpty) Text(notice),
               if (error.isNotEmpty)
                 Text(
