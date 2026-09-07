@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'card_draw_flow.dart';
+import 'blank_draw_card.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
 import 'scratch_reveal_effect.dart';
@@ -530,37 +531,11 @@ class _CardDrawStageState extends State<CardDrawStage>
     );
   }
 
-  Widget _miss(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      key: const Key('draw-empty-result'),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(GameboxTokens.spacing.compact),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.air,
-              color: scheme.onSurfaceVariant,
-              size: GameboxTokens.spacing.section,
-            ),
-            SizedBox(height: GameboxTokens.spacing.layout),
-            Text(
-              '这次没有抽中',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleSmall
-                  ?.copyWith(color: scheme.onSurface),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _miss(BuildContext context) => BlankDrawCard(
+    key: const Key('draw-empty-result'),
+    serial: widget.result!.serial,
+    reveal: widget.playing ? _reveal.value : 1,
+  );
 
   Widget _back(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;

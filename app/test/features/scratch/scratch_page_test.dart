@@ -26,7 +26,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('scratch-primary')));
     await tester.pumpAndSettle();
-    expect(find.text('这次没有抽中'), findsOneWidget);
+    expect(find.text('空白卡'), findsOneWidget);
     expect(find.text('NEW'), findsNothing);
     expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
     expect(find.textContaining('每抽必得'), findsNothing);
