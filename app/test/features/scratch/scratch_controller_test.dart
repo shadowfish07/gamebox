@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/features/scratch/scratch_controller.dart';
@@ -18,6 +19,31 @@ class MemoryScratchStore implements ScratchStore {
 }
 
 void main() {
+  for (final roll in [0.19999, 0.2, 0.999]) {
+    test(
+      'winning boundary $roll persists miss and never adds a collectible',
+      () async {
+        final store = MemoryScratchStore();
+        final controller = ScratchController(store: store, random: () => roll);
+        await controller.load();
+        expect(controller.winning, roll < .2);
+        final restored = ScratchController(store: store, random: () => 0);
+        await restored.load();
+        expect(restored.winning, controller.winning);
+        await restored.revealAll();
+        await restored.revealAll();
+        expect(restored.total, roll < .2 ? 1 : 0);
+        final result = ScratchController(store: store);
+        await result.load();
+        expect(result.claimed, isTrue);
+        expect(result.winning, roll < .2);
+        expect(result.total, restored.total);
+        controller.dispose();
+        restored.dispose();
+        result.dispose();
+      },
+    );
+  }
   test(
     'finishing a stroke while a prior save is pending still claims once',
     () async {
@@ -41,7 +67,7 @@ void main() {
     },
   );
   test('all rarity boundaries and 24 members are reachable', () {
-    expect(scratchCats.length, 24);
+    expect(scratchCollectibles.length, 24);
     for (final (roll, tier) in [
       (0.0, 0),
       (.69999, 0),
@@ -54,7 +80,7 @@ void main() {
     ]) {
       final values = [roll, .99].iterator;
       expect(
-        drawScratchCat(() {
+        drawScratchCollectible(() {
           values.moveNext();
           return values.current;
         }).rarity,
@@ -84,31 +110,58 @@ void main() {
     restored.dispose();
   });
 
-  test('changing mode keeps reward; career requires clue and paws require all regions', () async {
-    final controller = ScratchController(
-      store: MemoryScratchStore(),
-      random: () => 0,
-    );
-    await controller.load();
-    final cat = controller.cat;
-    await controller.changeMode(ScratchMode.career);
-    expect(controller.cat, cat);
-    await controller.open(1);
-    expect(controller.opened, isEmpty);
-    await controller.open(0);
-    expect(controller.claimed, isFalse);
-    await controller.open(1);
-    expect(controller.total, 1);
-    await controller.next();
-    await controller.changeMode(ScratchMode.paws);
-    for (var i = 0; i < 3; i++) {
-      await controller.open(i);
+  for (final legacyMode in [0, 1, 2]) {
+    for (final claimed in [false, true]) {
+      test(
+        'legacy mode $legacyMode claimed=$claimed preserves collection and prize',
+        () async {
+          final store = MemoryScratchStore();
+          final original = ScratchController(store: store, random: () => 0);
+          await original.load();
+          await original.revealAll();
+          await original.favorite(0);
+          if (!claimed) await original.next();
+          final data = jsonDecode(store.value!) as Map<String, dynamic>;
+          data.remove('winning');
+          data['mode'] = legacyMode;
+          data['opened'] = claimed
+              ? List.generate([1, 4, 2][legacyMode], (i) => i)
+              : legacyMode == 0
+              ? []
+              : [0];
+          data['strokes'] = List.generate(
+            4,
+            (_) => [
+              [.1, .1, .8, .1, .085],
+            ],
+          );
+          store.value = jsonEncode(data);
+          final restored = ScratchController(store: store, random: () => .999);
+          await restored.load();
+          expect(restored.error, isNull);
+          expect(restored.cat.index, 0);
+          expect(restored.total, 1);
+          expect(restored.favorites, [0]);
+          expect(restored.firstFound, original.firstFound);
+          expect(restored.serial, original.serial);
+          expect(restored.claimed, claimed);
+          expect(
+            restored.masks[0].coverage,
+            legacyMode == 0 ? greaterThan(0) : 0,
+          );
+          await restored.revealAll();
+          expect(restored.total, claimed ? 1 : 2);
+          final reloaded = ScratchController(store: store);
+          await reloaded.load();
+          expect(reloaded.error, isNull);
+          expect(reloaded.total, restored.total);
+          original.dispose();
+          restored.dispose();
+          reloaded.dispose();
+        },
+      );
     }
-    expect(controller.claimed, isFalse);
-    await controller.open(3);
-    expect(controller.total, 2);
-    controller.dispose();
-  });
+  }
 
   test(
     'failed write keeps one award pending and retry never awards again',
@@ -141,7 +194,7 @@ void main() {
       await controller.load();
       expect(controller.error, isNotNull);
       expect(store.value, '{bad');
-      expect(await controller.favorite(0), '先通过刮奖获得这只猫猫');
+      expect(await controller.favorite(0), '先通过刮奖获得这件藏品');
       controller.dispose();
     },
   );

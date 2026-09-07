@@ -12,9 +12,10 @@ void main() {
     testWidgets(
       'rarity $tier appears only after claiming and clears on next ticket',
       (tester) async {
+        var draw = 0;
         final controller = ScratchController(
           store: MemoryScratchStore(),
-          random: () => roll,
+          random: () => draw++ % 3 == 0 ? 0 : roll,
         );
         await controller.load();
         await tester.pumpWidget(
@@ -24,11 +25,7 @@ void main() {
           ),
         );
         expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
-        await controller.changeMode(ScratchMode.career);
         await controller.open(0);
-        await tester.pumpAndSettle();
-        expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
-        await controller.open(1);
         await tester.pumpAndSettle();
         final banner = tester.widget<DecoratedBox>(
           find.byKey(const Key('scratch-rarity-banner')),
@@ -48,10 +45,42 @@ void main() {
     );
   }
 
+  testWidgets(
+    'miss reveals without rarity or detail and can start another ticket',
+    (tester) async {
+      final controller = ScratchController(
+        store: MemoryScratchStore(),
+        random: () => .8,
+      );
+      await controller.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GameboxTheme.light(),
+          home: ScratchPage(controller: controller),
+        ),
+      );
+      expect(find.byType(ScratchSurface), findsOneWidget);
+      await tester.tap(find.byKey(const Key('scratch-primary')));
+      await tester.pumpAndSettle();
+      expect(find.text('这张没有中奖'), findsOneWidget);
+      expect(find.byType(ScratchSurface), findsNothing);
+      expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
+      expect(find.byKey(const Key('scratch-detail')), findsNothing);
+      expect(controller.total, 0);
+      await tester.tap(find.byKey(const Key('scratch-primary')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ScratchSurface), findsOneWidget);
+      expect(find.text('这张没有中奖'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    },
+  );
+
   for (final size in [const Size(360, 640), const Size(412, 891)]) {
     for (final dark in [false, true]) {
       testWidgets(
-        'phone $size dark=$dark keeps ticket and action visible in all modes',
+        'phone $size dark=$dark keeps ticket and action visible with a single traditional surface',
         (tester) async {
           tester.view.physicalSize = size;
           tester.view.devicePixelRatio = 1;
@@ -69,22 +98,21 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          for (final mode in ScratchMode.values) {
-            await tester.tap(find.text(mode.label));
-            await tester.pumpAndSettle();
-            expect(tester.takeException(), isNull);
-            final button = tester.getRect(
-              find.byKey(const Key('scratch-primary')),
-            );
-            expect(button.top, greaterThan(24));
-            expect(button.bottom, lessThan(size.height - 24));
-            final surface = tester.getRect(find.byType(ScratchSurface).first);
-            expect(surface.top, greaterThan(24));
-            expect(surface.bottom, lessThan(button.top));
-            if (mode == ScratchMode.career) {
-              expect(surface.width, greaterThanOrEqualTo(100));
-            }
+          for (final label in ['拍立得', '四枚爪印', '职业证']) {
+            expect(find.text(label), findsNothing);
           }
+          expect(find.text('刮刮收藏'), findsOneWidget);
+          expect(find.textContaining('猫猫百业'), findsNothing);
+          expect(find.text('全部分组'), findsNothing);
+          expect(find.byType(ScratchSurface), findsOneWidget);
+          final button = tester.getRect(
+            find.byKey(const Key('scratch-primary')),
+          );
+          final surface = tester.getRect(find.byType(ScratchSurface));
+          expect(button.bottom, lessThan(size.height - 24));
+          expect(surface.top, greaterThan(24));
+          expect(surface.bottom, lessThan(button.top));
+          expect(surface.width, greaterThanOrEqualTo(100));
           await tester.tap(find.byKey(const Key('scratch-primary')));
           await tester.pumpAndSettle();
           expect(controller.total, 1);
@@ -100,6 +128,11 @@ void main() {
           await tester.tap(find.byKey(const Key('scratch-tab-album')));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
+          expect(find.text('全部分组'), findsOneWidget);
+          expect(find.text('猫猫百业 1/24'), findsOneWidget);
+          await tester.tap(find.text('猫猫百业 1/24'));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const ValueKey('scratch-cat-0')), findsOneWidget);
           await tester.tap(find.byKey(const Key('scratch-tab-showcase')));
           await tester.pumpAndSettle();
           expect(find.text('面包师'), findsOneWidget);

@@ -7,16 +7,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'scratch_catalog.dart';
 export 'scratch_catalog.dart';
 
-enum ScratchMode {
-  photo('拍立得', 1),
-  paws('四枚爪印', 4),
-  career('职业证', 2);
-
-  const ScratchMode(this.label, this.regions);
-  final String label;
-  final int regions;
-}
-
 abstract interface class ScratchStore {
   Future<String?> read();
   Future<void> write(String value);
@@ -31,7 +21,7 @@ final class SecureScratchStore implements ScratchStore {
   Future<void> write(String value) => _storage.write(key: _key, value: value);
 }
 
-ScratchCat drawScratchCat(double Function() random) {
+ScratchCollectible drawScratchCollectible(double Function() random) {
   final roll = random();
   final tier = roll < .7
       ? 0
@@ -40,7 +30,7 @@ ScratchCat drawScratchCat(double Function() random) {
       : roll < .995
       ? 2
       : 3;
-  final pool = scratchCats.where((cat) => cat.rarity == tier).toList();
+  final pool = scratchCollectibles.where((cat) => cat.rarity == tier).toList();
   return pool[(random() * pool.length).floor()];
 }
 
@@ -86,13 +76,13 @@ final class ScratchController extends ChangeNotifier {
     : random = random ?? Random.secure().nextDouble;
   final ScratchStore store;
   final double Function() random;
-  final counts = List.filled(24, 0);
-  final firstFound = List<String?>.filled(24, null);
+  final counts = List.filled(scratchCollectibles.length, 0);
+  final firstFound = List<String?>.filled(scratchCollectibles.length, null);
   final favorites = <int>[];
   final opened = <int>{};
   List<ScratchMask> masks = List.generate(4, (_) => ScratchMask());
-  ScratchMode mode = ScratchMode.photo;
-  ScratchCat cat = scratchCats.first;
+  bool winning = true;
+  ScratchCollectible cat = scratchCollectibles.first;
   bool claimed = false,
       isNew = false,
       loading = true,
@@ -121,7 +111,7 @@ final class ScratchController extends ChangeNotifier {
       if (raw != null) {
         _restore(raw);
       } else {
-        cat = drawScratchCat(random);
+        _drawTicket();
       }
       loading = false;
       if (raw == null) {
@@ -143,7 +133,8 @@ final class ScratchController extends ChangeNotifier {
     'firstFound': firstFound,
     'favorites': favorites,
     'cat': cat.index,
-    'mode': mode.index,
+    'mode': 0, // Retained for version-1 save compatibility.
+    'winning': winning,
     'claimed': claimed,
     'isNew': isNew,
     'serial': serial,
@@ -159,6 +150,9 @@ final class ScratchController extends ChangeNotifier {
     final savedOpened = (data['opened'] as List).cast<int>().toSet();
     final catIndex = data['cat'] as int, modeIndex = data['mode'] as int;
     final savedClaimed = data['claimed'] as bool;
+    final savedWinning = data['winning'] == null
+        ? true
+        : data['winning'] as bool;
     if (data['version'] != 1 ||
         savedCounts.length != 24 ||
         savedFirst.length != 24 ||
@@ -170,15 +164,13 @@ final class ScratchController extends ChangeNotifier {
         savedFavorites.length > 6 ||
         savedFavorites.toSet().length != savedFavorites.length ||
         savedFavorites.any((i) => i < 0 || i >= 24 || savedCounts[i] == 0) ||
-        savedOpened.any(
-          (i) => i < 0 || i >= ScratchMode.values[modeIndex].regions,
-        ) ||
+        savedOpened.any((i) => i < 0 || i >= [1, 4, 2][modeIndex]) ||
         (modeIndex == 2 &&
             savedOpened.contains(1) &&
             !savedOpened.contains(0)) ||
         (savedClaimed &&
-            (savedCounts[catIndex] == 0 ||
-                savedOpened.length != ScratchMode.values[modeIndex].regions)) ||
+            ((savedWinning && savedCounts[catIndex] == 0) ||
+                savedOpened.length != [1, 4, 2][modeIndex])) ||
         data['serial'] is! int ||
         (data['serial'] as int) < 1 ||
         data['isNew'] is! bool) {
@@ -236,8 +228,12 @@ final class ScratchController extends ChangeNotifier {
     opened
       ..clear()
       ..addAll(savedOpened);
-    cat = scratchCats[catIndex];
-    mode = ScratchMode.values[modeIndex];
+    cat = scratchCollectibles[catIndex];
+    winning = savedWinning;
+    if (modeIndex != 0) {
+      _clearMasks();
+      if (savedClaimed) opened.add(0);
+    }
     claimed = savedClaimed;
     isNew = data['isNew'] as bool;
     serial = data['serial'] as int;
@@ -284,7 +280,7 @@ final class ScratchController extends ChangeNotifier {
 
   Future<void> next() async {
     if (!interactive || !claimed) return;
-    cat = drawScratchCat(random);
+    _drawTicket();
     serial++;
     claimed = false;
     isNew = false;
@@ -292,17 +288,9 @@ final class ScratchController extends ChangeNotifier {
     await persist();
   }
 
-  Future<void> changeMode(ScratchMode value) async {
-    if (!interactive || value == mode) return;
-    mode = value;
-    if (claimed) {
-      cat = drawScratchCat(random);
-      serial++;
-      claimed = false;
-      isNew = false;
-    }
-    _clearMasks();
-    await persist();
+  void _drawTicket() {
+    winning = random() < .2;
+    cat = drawScratchCollectible(random);
   }
 
   Future<void> open(int region) async {
@@ -310,16 +298,13 @@ final class ScratchController extends ChangeNotifier {
         error != null ||
         claimed ||
         region < 0 ||
-        region >= mode.regions ||
+        region >= 1 ||
         opened.contains(region)) {
       return;
     }
-    if (mode == ScratchMode.career && region == 1 && !opened.contains(0)) {
-      return;
-    }
     opened.add(region);
-    if (opened.length == mode.regions) {
-      claimed = true;
+    claimed = true;
+    if (winning) {
       isNew = counts[cat.index] == 0;
       counts[cat.index]++;
       firstFound[cat.index] ??= DateTime.now().toIso8601String();
@@ -329,21 +314,18 @@ final class ScratchController extends ChangeNotifier {
 
   Future<void> revealAll() async {
     if (!interactive || claimed) return;
-    for (var i = 0; i < mode.regions; i++) {
-      await open(i);
-      if (error != null) break;
-    }
+    await open(0);
   }
 
   Future<String> favorite(int index) async {
-    if (index < 0 || index >= 24 || counts[index] == 0) return '先通过刮奖获得这只猫猫';
+    if (index < 0 || index >= 24 || counts[index] == 0) return '先通过刮奖获得这件藏品';
     if (!interactive) return '请等待收藏保存完成';
     if (favorites.contains(index)) {
       favorites.remove(index);
       await persist();
       return '已从展柜取下';
     }
-    if (favorites.length == 6) return '展柜已满，请先取下一只猫猫';
+    if (favorites.length == 6) return '展柜已满，请先取下一件藏品';
     favorites.add(index);
     await persist();
     return '已放入展柜';

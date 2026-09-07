@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -19,7 +17,7 @@ abstract final class ScratchArt {
     GameboxTokens.gameColors.scratchLegendary,
   ];
   static const rarityIcons = [
-    Icons.pets,
+    Icons.circle_outlined,
     Icons.auto_awesome,
     Icons.diamond_outlined,
     Icons.workspace_premium,
@@ -53,14 +51,14 @@ class ScratchRarityLabel extends StatelessWidget {
   );
 }
 
-class CatArtwork extends StatelessWidget {
-  const CatArtwork({super.key, required this.cat, this.badge = false});
-  final ScratchCat cat;
+class CollectibleArtwork extends StatelessWidget {
+  const CollectibleArtwork({super.key, required this.cat, this.badge = false});
+  final ScratchCollectible cat;
   final bool badge;
   @override
   Widget build(BuildContext context) {
     const rows = [0, 304, 576, 838, 1096, 1319, 1536];
-    final row = cat.index ~/ 4;
+    final row = cat.artIndex ~/ 4;
     final height = rows[row + 1] - rows[row];
     final image = AspectRatio(
       aspectRatio: 1,
@@ -71,16 +69,16 @@ class CatArtwork extends StatelessWidget {
             child: Stack(
               children: [
                 Positioned(
-                  left: -(cat.index % 4) * width,
+                  left: -(cat.artIndex % 4) * width,
                   top: -rows[row] / height * width,
                   width: width * 4,
                   height: 1536 / height * width,
                   child: Image.asset(
-                    'assets/scratch/cat-atlas.webp',
+                    cat.imageAsset,
                     fit: BoxFit.fill,
                     errorBuilder: (_, error, stack) => ColoredBox(
                       color: ScratchArt.paper,
-                      child: Center(child: Icon(Icons.pets)),
+                      child: Center(child: Icon(Icons.image_outlined)),
                     ),
                   ),
                 ),
@@ -116,12 +114,11 @@ class ScratchSurface extends StatefulWidget {
     required this.mask,
     required this.onComplete,
     required this.onEnd,
-    this.clue = false,
     this.enabled = true,
   });
   final ScratchMask mask;
   final VoidCallback onComplete, onEnd;
-  final bool clue, enabled;
+  final bool enabled;
   @override
   State<ScratchSurface> createState() => _ScratchSurfaceState();
 }
@@ -144,7 +141,7 @@ class _ScratchSurfaceState extends State<ScratchSurface> {
       previous.dy,
       point.dx,
       point.dy,
-      radius: widget.clue ? .16 : .085,
+      radius: .085,
     );
     _last = point;
     if (widget.mask.coverage >= .65) {
@@ -177,10 +174,10 @@ class _ScratchSurfaceState extends State<ScratchSurface> {
     onPointerCancel: _end,
     child: Semantics(
       container: true,
-      label: widget.clue ? '职业线索涂层' : '猫猫照片涂层',
+      label: '猫猫照片涂层',
       child: RepaintBoundary(
         child: CustomPaint(
-          painter: _FoilPainter(widget.mask, widget.clue),
+          painter: _FoilPainter(widget.mask),
           size: Size.infinite,
         ),
       ),
@@ -189,9 +186,8 @@ class _ScratchSurfaceState extends State<ScratchSurface> {
 }
 
 class _FoilPainter extends CustomPainter {
-  _FoilPainter(this.mask, this.clue) : super(repaint: mask);
+  _FoilPainter(this.mask) : super(repaint: mask);
   final ScratchMask mask;
-  final bool clue;
   @override
   void paint(Canvas canvas, Size size) {
     final bounds = Offset.zero & size;
@@ -219,43 +215,12 @@ class _FoilPainter extends CustomPainter {
         hatch,
       );
     }
-    if (!clue) {
-      final scale = math.min(size.width, size.height) / 140;
-      canvas.save();
-      canvas.translate(size.width / 2, size.height * .42);
-      canvas.scale(scale);
-      final paw = Paint()..color = GameboxTokens.gameColors.scratchPaw;
-      for (final center in [
-        const Offset(-18, -8),
-        const Offset(-7, -18),
-        const Offset(8, -18),
-        const Offset(20, -6),
-      ]) {
-        canvas.drawOval(
-          Rect.fromCenter(center: center, width: 12, height: 17),
-          paw,
-        );
-      }
-      canvas.drawOval(
-        Rect.fromCenter(center: const Offset(0, 12), width: 32, height: 27),
-        paw,
-      );
-      canvas.restore();
-    }
     final text = TextPainter(
       text: TextSpan(
-        text: clue
-            ? '先刮开职业线索'
-            : size.width < 150
-            ? '刮一刮'
-            : '好运，藏在这里',
+        text: size.width < 150 ? '刮一刮' : '好运，藏在这里',
         style: TextStyle(
           color: GameboxTokens.gameColors.scratchFoilInk,
-          fontSize: clue
-              ? 12
-              : size.width < 150
-              ? 11
-              : 15,
+          fontSize: GameboxTokens.typography.labelLarge.fontSize,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -265,7 +230,7 @@ class _FoilPainter extends CustomPainter {
       canvas,
       Offset(
         (size.width - text.width) / 2,
-        (clue ? size.height / 2 : size.height * .73) - text.height / 2,
+        (size.height * .73) - text.height / 2,
       ),
     );
     text.dispose();

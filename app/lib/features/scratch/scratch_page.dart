@@ -14,9 +14,12 @@ class ScratchEntry extends StatelessWidget {
   Widget build(BuildContext context) => Card(
     child: ListTile(
       key: const Key('open-cat-scratch'),
-      leading: Icon(Icons.pets, color: Theme.of(context).colorScheme.primary),
-      title: const Text('猫猫刮奖'),
-      subtitle: const Text('单人 · 免费畅刮 · 收藏职业猫猫'),
+      leading: Icon(
+        Icons.confirmation_number_outlined,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+      title: const Text('刮刮收藏'),
+      subtitle: const Text('单人 · 免费畅刮 · 收集惊喜'),
       trailing: const Icon(Icons.chevron_right),
       onTap: () => Navigator.of(context)
           .push<void>(MaterialPageRoute(builder: (_) => const ScratchPage())),
@@ -35,6 +38,7 @@ class _ScratchPageState extends State<ScratchPage> {
   late final ScratchController controller;
   int tab = 0;
   int? filter;
+  String? groupFilter;
   bool ownedOnly = false;
   bool _leaving = false;
 
@@ -115,7 +119,7 @@ class _ScratchPageState extends State<ScratchPage> {
             tooltip: '返回',
             icon: const Icon(Icons.arrow_back),
           ),
-          title: Text(['猫猫刮奖', '猫猫图鉴', '我的展柜'][tab]),
+          title: Text(['刮刮收藏', '收藏图鉴', '我的展柜'][tab]),
           actions: [
             IconButton(
               key: const Key('scratch-rules'),
@@ -203,33 +207,14 @@ class _ScratchPageState extends State<ScratchPage> {
                 size: 20,
               ),
               SizedBox(width: GameboxTokens.spacing.compact),
-              Text('猫猫百业 · 第一册', style: text.labelLarge),
+              Text('收藏进度', style: text.labelLarge),
               const Spacer(),
               Text(
-                '${controller.collected} / 24',
+                '${controller.collected} / ${scratchCollectibles.length}',
                 key: const Key('scratch-progress'),
                 style: text.titleMedium?.copyWith(color: scheme.primary),
               ),
             ],
-          ),
-        ),
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: GameboxTokens.spacing.page),
-          child: SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<ScratchMode>(
-              showSelectedIcon: false,
-              segments: ScratchMode.values
-                  .map(
-                    (mode) =>
-                        ButtonSegment(value: mode, label: Text(mode.label)),
-                  )
-                  .toList(),
-              selected: {controller.mode},
-              onSelectionChanged: controller.interactive
-                  ? (value) => controller.changeMode(value.single)
-                  : null,
-            ),
           ),
         ),
         Expanded(
@@ -244,9 +229,7 @@ class _ScratchPageState extends State<ScratchPage> {
               ),
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final extra = controller.mode == ScratchMode.career
-                      ? 160.0
-                      : 104.0;
+                  const extra = 104.0;
                   final width = math
                       .min(
                         340.0,
@@ -265,10 +248,7 @@ class _ScratchPageState extends State<ScratchPage> {
                           80.0,
                           math.min(
                             constraints.maxHeight - 116,
-                            (ticketWidth - 24) *
-                                (controller.mode == ScratchMode.career
-                                    ? .55
-                                    : 1),
+                            ticketWidth - 24,
                           ),
                         )
                       : width - 24;
@@ -277,8 +257,6 @@ class _ScratchPageState extends State<ScratchPage> {
                       context,
                       ticketWidth,
                       portraitSize: portraitSize,
-                      horizontalCareer:
-                          compact && controller.mode == ScratchMode.career,
                     ),
                   );
                 },
@@ -295,14 +273,14 @@ class _ScratchPageState extends State<ScratchPage> {
           child: Row(
             children: [
               Expanded(
-                child: controller.claimed
+                child: controller.claimed && controller.winning
                     ? OutlinedButton(
                         key: const Key('scratch-detail'),
                         onPressed: () => _detail(controller.cat),
-                        child: const Text('看看这只猫'),
+                        child: const Text('查看藏品'),
                       )
                     : Text(
-                        '用手指慢慢刮开\n每张都有猫猫',
+                        controller.claimed ? '这次没中，再试试吧' : '用手指慢慢刮开\n试试今天的手气',
                         style: text.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -342,36 +320,10 @@ class _ScratchPageState extends State<ScratchPage> {
     BuildContext context,
     double width, {
     required double portraitSize,
-    required bool horizontalCareer,
   }) {
     final text = Theme.of(context).textTheme;
-    final result = controller.claimed;
+    final result = controller.claimed && controller.winning;
     final rarityColor = ScratchArt.rarityColors[controller.cat.rarity];
-    final clue = Stack(
-      fit: StackFit.expand,
-      children: [
-        ColoredBox(
-          color: GameboxTokens.gameColors.scratchCluePaper,
-          child: Center(
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: GameboxTokens.spacing.layout,
-              ),
-              child: ExcludeSemantics(
-                excluding: !controller.opened.contains(0),
-                child: Text(
-                  controller.cat.clue,
-                  maxLines: horizontalCareer ? 4 : 2,
-                  textAlign: TextAlign.center,
-                  style: text.labelSmall?.copyWith(color: ScratchArt.ink),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (!controller.opened.contains(0)) _surface(0, clue: true),
-      ],
-    );
     final portrait = AspectRatio(
       aspectRatio: 1,
       child: ClipRRect(
@@ -379,54 +331,37 @@ class _ScratchPageState extends State<ScratchPage> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            ExcludeSemantics(child: CatArtwork(cat: controller.cat)),
-            if (!result &&
-                controller.mode == ScratchMode.career &&
-                !controller.opened.contains(0))
+            if (controller.winning)
+              ExcludeSemantics(child: CollectibleArtwork(cat: controller.cat))
+            else
               ColoredBox(
-                color: ScratchArt.foil,
+                color: ScratchArt.paper,
                 child: Center(
-                  child: Icon(
-                    Icons.lock_outline,
-                    color: GameboxTokens.gameColors.scratchLockedInk,
-                    size: 32,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.mail_outline,
+                        color: ScratchArt.ink,
+                        size: GameboxTokens.components.minimumTouchTarget,
+                      ),
+                      SizedBox(height: GameboxTokens.spacing.layout),
+                      Text(
+                        '谢谢惠顾',
+                        style: text.titleLarge?.copyWith(color: ScratchArt.ink),
+                      ),
+                    ],
                   ),
                 ),
-              )
-            else if (!result && controller.mode == ScratchMode.paws)
-              Column(
-                children: [
-                  for (var y = 0; y < 2; y++)
-                    Expanded(
-                      child: Row(
-                        children: [
-                          for (var x = 0; x < 2; x++)
-                            Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.all(
-                                  GameboxTokens.spacing.base,
-                                ),
-                                child: controller.opened.contains(y * 2 + x)
-                                    ? const SizedBox.expand()
-                                    : _surface(y * 2 + x),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                ],
-              )
-            else if (!result)
-              _surface(controller.mode == ScratchMode.career ? 1 : 0),
+              ),
+            if (!controller.claimed) _surface(0),
           ],
         ),
       ),
     );
     return AnimatedContainer(
       duration: GameboxTokens.motion.slow,
-      key: ValueKey(
-        'scratch-ticket-${controller.serial}-${controller.mode.name}',
-      ),
+      key: ValueKey('scratch-ticket-${controller.serial}'),
       width: width,
       padding: EdgeInsets.all(GameboxTokens.spacing.compact),
       foregroundDecoration: BoxDecoration(
@@ -491,7 +426,7 @@ class _ScratchPageState extends State<ScratchPage> {
                         child: Text(
                           result
                               ? '${scratchRarities[controller.cat.rarity]}收藏'
-                              : '猫 猫 百 业',
+                              : '刮 刮 收 藏',
                           maxLines: 1,
                           style: text.labelLarge?.copyWith(
                             color: result
@@ -512,31 +447,7 @@ class _ScratchPageState extends State<ScratchPage> {
               ),
             ),
           ),
-          if (horizontalCareer)
-            SizedBox(
-              height: portraitSize,
-              child: Row(
-                children: [
-                  Expanded(child: clue),
-                  SizedBox(width: GameboxTokens.spacing.layout),
-                  SizedBox(width: portraitSize, child: portrait),
-                ],
-              ),
-            )
-          else ...[
-            if (controller.mode == ScratchMode.career) ...[
-              SizedBox(
-                height: GameboxTokens.components.minimumTouchTarget,
-                child: clue,
-              ),
-              SizedBox(height: GameboxTokens.spacing.layout),
-            ],
-            SizedBox(
-              width: portraitSize,
-              height: portraitSize,
-              child: portrait,
-            ),
-          ],
+          SizedBox(width: portraitSize, height: portraitSize, child: portrait),
           SizedBox(
             height:
                 GameboxTokens.components.minimumTouchTarget +
@@ -545,13 +456,17 @@ class _ScratchPageState extends State<ScratchPage> {
               child: AnimatedSwitcher(
                 duration: GameboxTokens.motion.standard,
                 child: Column(
-                  key: ValueKey('$result-${controller.cat.index}'),
+                  key: ValueKey(
+                    '${controller.claimed}-$result-${controller.cat.index}',
+                  ),
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       result
                           ? '${controller.cat.job} · ${controller.cat.name}'
-                          : '刮开，遇见新朋友',
+                          : controller.claimed
+                          ? '这张没有中奖'
+                          : '刮开，发现小惊喜',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: text.titleSmall?.copyWith(
@@ -562,11 +477,10 @@ class _ScratchPageState extends State<ScratchPage> {
                     Text(
                       result
                           ? (controller.isNew
-                                ? '新朋友，已收入图鉴'
+                                ? '新藏品，已收入图鉴'
                                 : '又见面啦 ×${controller.counts[controller.cat.index]}')
-                          : controller.mode == ScratchMode.career &&
-                                controller.opened.contains(0)
-                          ? '有头绪了吗？刮开身份照'
+                          : controller.claimed
+                          ? '再试一张吧'
                           : '免费无限刮 · 一张一份小惊喜',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -582,12 +496,9 @@ class _ScratchPageState extends State<ScratchPage> {
     );
   }
 
-  Widget _surface(int region, {bool clue = false}) => ScratchSurface(
-    key: ValueKey(
-      'scratch-region-${controller.serial}-${controller.mode.name}-$region',
-    ),
+  Widget _surface(int region) => ScratchSurface(
+    key: ValueKey('scratch-region-${controller.serial}-$region'),
     mask: controller.masks[region],
-    clue: clue,
     enabled: !controller.loading && controller.error == null,
     onComplete: () => controller.open(region),
     onEnd: () {
@@ -598,9 +509,10 @@ class _ScratchPageState extends State<ScratchPage> {
   );
 
   Widget _album(BuildContext context) {
-    final cats = scratchCats
+    final cats = scratchCollectibles
         .where(
           (cat) =>
+              (groupFilter == null || cat.groupId == groupFilter) &&
               (filter == null || cat.rarity == filter) &&
               (!ownedOnly || controller.counts[cat.index] > 0),
         )
@@ -612,7 +524,7 @@ class _ScratchPageState extends State<ScratchPage> {
           child: Row(
             children: [
               Text(
-                '已相遇 ${controller.collected} / 24',
+                '已相遇 ${controller.collected} / ${scratchCollectibles.length}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const Spacer(),
@@ -621,6 +533,34 @@ class _ScratchPageState extends State<ScratchPage> {
                 selected: ownedOnly,
                 onSelected: (value) => setState(() => ownedOnly = value),
               ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height:
+              GameboxTokens.components.minimumTouchTarget +
+              GameboxTokens.spacing.layout,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.symmetric(
+              horizontal: GameboxTokens.spacing.page,
+            ),
+            children: [
+              for (final group in <ScratchGroup?>[null, ...scratchGroups])
+                Padding(
+                  padding: EdgeInsets.only(
+                    right: GameboxTokens.spacing.compact,
+                  ),
+                  child: ChoiceChip(
+                    label: Text(
+                      group == null
+                          ? '全部分组'
+                          : '${group.title} ${scratchCollectibles.where((item) => item.groupId == group.id && controller.counts[item.index] > 0).length}/${scratchCollectibles.where((item) => item.groupId == group.id).length}',
+                    ),
+                    selected: groupFilter == group?.id,
+                    onSelected: (_) => setState(() => groupFilter = group?.id),
+                  ),
+                ),
             ],
           ),
         ),
@@ -650,7 +590,7 @@ class _ScratchPageState extends State<ScratchPage> {
         ),
         Expanded(
           child: cats.isEmpty
-              ? const Center(child: Text('还没有猫猫，去刮一张吧'))
+              ? const Center(child: Text('还没有藏品，去刮一张吧'))
               : GridView.builder(
                   key: const Key('scratch-album-grid'),
                   padding: EdgeInsets.all(GameboxTokens.spacing.page),
@@ -672,7 +612,11 @@ class _ScratchPageState extends State<ScratchPage> {
     );
   }
 
-  Widget _catCell(BuildContext context, ScratchCat cat, {required bool owned}) {
+  Widget _catCell(
+    BuildContext context,
+    ScratchCollectible cat, {
+    required bool owned,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return Card(
@@ -713,14 +657,14 @@ class _ScratchPageState extends State<ScratchPage> {
                   child: AspectRatio(
                     aspectRatio: 1,
                     child: owned
-                        ? CatArtwork(cat: cat, badge: true)
+                        ? CollectibleArtwork(cat: cat, badge: true)
                         : DecoratedBox(
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: scheme.surfaceContainerHighest,
                             ),
                             child: Icon(
-                              Icons.pets_outlined,
+                              Icons.confirmation_number_outlined,
                               color: scheme.outline,
                               size: 30,
                             ),
@@ -754,7 +698,7 @@ class _ScratchPageState extends State<ScratchPage> {
           children: [
             Expanded(
               child: Text(
-                '把喜欢的猫猫摆在一起',
+                '把喜欢的藏品摆在一起',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -775,7 +719,7 @@ class _ScratchPageState extends State<ScratchPage> {
           itemBuilder: (context, i) => i < controller.favorites.length
               ? _catCell(
                   context,
-                  scratchCats[controller.favorites[i]],
+                  scratchCollectibles[controller.favorites[i]],
                   owned: true,
                 )
               : Card(
@@ -785,6 +729,7 @@ class _ScratchPageState extends State<ScratchPage> {
                       tab = 1;
                       ownedOnly = true;
                       filter = null;
+                      groupFilter = null;
                     }),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -804,14 +749,14 @@ class _ScratchPageState extends State<ScratchPage> {
       Padding(
         padding: EdgeInsets.all(GameboxTokens.spacing.layout),
         child: Text(
-          '收藏进度 ${controller.collected}/24 · 已刮开 ${controller.total} 张',
+          '收藏进度 ${controller.collected}/${scratchCollectibles.length} · 已收藏 ${controller.total} 件',
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ),
     ],
   );
 
-  Future<void> _detail(ScratchCat cat) => showModalBottomSheet<void>(
+  Future<void> _detail(ScratchCollectible cat) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
@@ -849,6 +794,13 @@ class _ScratchPageState extends State<ScratchPage> {
                       ),
                     ],
                   ),
+                  Text(
+                    scratchGroups
+                        .firstWhere((group) => group.id == cat.groupId)
+                        .title,
+                    style: text.labelLarge,
+                  ),
+                  SizedBox(height: GameboxTokens.spacing.layout),
                   Center(
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
@@ -861,7 +813,7 @@ class _ScratchPageState extends State<ScratchPage> {
                         borderRadius: BorderRadius.circular(
                           GameboxTokens.shape.card,
                         ),
-                        child: CatArtwork(cat: cat),
+                        child: CollectibleArtwork(cat: cat),
                       ),
                     ),
                   ),
@@ -938,14 +890,13 @@ class _ScratchPageState extends State<ScratchPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                '每一种刮法，同一个奖池',
-                style: Theme.of(context).textTheme.titleLarge,
+              Text('刮奖规则', style: Theme.of(context).textTheme.titleLarge),
+              SizedBox(height: GameboxTokens.spacing.layout),
+              const Text(
+                '中奖 20% · 未中奖 80%\n中奖后：普通 70% · 稀有 24% · 史诗 5.5% · 传说 0.5%',
               ),
               SizedBox(height: GameboxTokens.spacing.layout),
-              const Text('普通 70% · 稀有 24% · 史诗 5.5% · 传说 0.5%'),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              const Text('同一档内每只猫概率相同，每张独立随机，无保底。每张完全刮开后自动入册，重复获得只增加持有数量。'),
+              const Text('同一档内每件藏品概率相同，每张独立随机，无保底。中奖并完全刮开后自动入册，重复获得只增加持有数量。'),
               SizedBox(height: GameboxTokens.spacing.layout),
               const Text('免费无限刮。收藏保存在此设备，卸载或清除应用数据后可能丢失，暂不支持账号同步。'),
               SizedBox(height: GameboxTokens.spacing.layout),
