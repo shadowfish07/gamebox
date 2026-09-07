@@ -19,7 +19,7 @@
 ## 收藏卡片内容
 
 新增收藏系列、生成卡片或改写故事前，读取并遵守
-[收藏卡片内容生成规范](docs/design/collection-content-standard.md)。按稀有度增加具体经历、
+项目 Skill [gamebox-collection-content](.agents/skills/gamebox-collection-content/SKILL.md)。按稀有度增加具体经历、
 人物动机和故事完整度，并核对原画、跨卡关系与稳定编号；不要只靠加长文案体现稀有度。
 
 <!-- ai-rules:routing:start -->
