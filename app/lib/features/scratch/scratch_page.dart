@@ -346,6 +346,7 @@ class _ScratchPageState extends State<ScratchPage> {
   }) {
     final text = Theme.of(context).textTheme;
     final result = controller.claimed;
+    final rarityColor = ScratchArt.rarityColors[controller.cat.rarity];
     final clue = Stack(
       fit: StackFit.expand,
       children: [
@@ -421,20 +422,39 @@ class _ScratchPageState extends State<ScratchPage> {
         ),
       ),
     );
-    return Container(
+    return AnimatedContainer(
+      duration: GameboxTokens.motion.slow,
       key: ValueKey(
         'scratch-ticket-${controller.serial}-${controller.mode.name}',
       ),
       width: width,
       padding: EdgeInsets.all(GameboxTokens.spacing.compact),
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(GameboxTokens.shape.input),
+        border: Border.all(
+          color: result ? rarityColor : ScratchArt.paper,
+          width: GameboxTokens.spacing.base,
+        ),
+      ),
       decoration: BoxDecoration(
-        color: ScratchArt.paper,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            ScratchArt.paper,
+            Color.lerp(ScratchArt.paper, rarityColor, result ? .22 : 0)!,
+          ],
+        ),
         borderRadius: BorderRadius.circular(GameboxTokens.shape.input),
         boxShadow: [
           BoxShadow(
-            color: GameboxTokens.lightColorScheme.shadow.withValues(
-              alpha: GameboxTokens.gameColors.boardSideCampAlpha,
-            ),
+            color: result
+                ? rarityColor.withValues(
+                    alpha: GameboxTokens.gameColors.pieceShadowAlpha,
+                  )
+                : GameboxTokens.lightColorScheme.shadow.withValues(
+                    alpha: GameboxTokens.gameColors.boardSideCampAlpha,
+                  ),
             blurRadius: 16,
             offset: Offset(0, 5),
           ),
@@ -445,20 +465,51 @@ class _ScratchPageState extends State<ScratchPage> {
         children: [
           Padding(
             padding: EdgeInsets.only(bottom: GameboxTokens.spacing.layout),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '猫 猫 百 业',
-                    maxLines: 1,
-                    style: text.labelLarge?.copyWith(color: ScratchArt.ink),
+            child: DecoratedBox(
+              key: result ? const Key('scratch-rarity-banner') : null,
+              decoration: BoxDecoration(
+                color: result ? rarityColor : ScratchArt.paper,
+                borderRadius: BorderRadius.circular(GameboxTokens.shape.input),
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: GameboxTokens.spacing.layout,
+                ),
+                child: SizedBox(
+                  height: GameboxTokens.spacing.section,
+                  child: Row(
+                    children: [
+                      if (result) ...[
+                        Icon(
+                          ScratchArt.rarityIcons[controller.cat.rarity],
+                          size: GameboxTokens.spacing.page,
+                          color: ScratchArt.onRarity,
+                        ),
+                        SizedBox(width: GameboxTokens.spacing.base),
+                      ],
+                      Expanded(
+                        child: Text(
+                          result
+                              ? '${scratchRarities[controller.cat.rarity]}收藏'
+                              : '猫 猫 百 业',
+                          maxLines: 1,
+                          style: text.labelLarge?.copyWith(
+                            color: result
+                                ? ScratchArt.onRarity
+                                : ScratchArt.ink,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'NO.${controller.serial.toString().padLeft(3, '0')}',
+                        style: text.labelSmall?.copyWith(
+                          color: result ? ScratchArt.onRarity : ScratchArt.ink,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  'NO.${controller.serial.toString().padLeft(3, '0')}',
-                  style: text.labelSmall?.copyWith(color: ScratchArt.ink),
-                ),
-              ],
+              ),
             ),
           ),
           if (horizontalCareer)
@@ -503,12 +554,16 @@ class _ScratchPageState extends State<ScratchPage> {
                           : '刮开，遇见新朋友',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: text.titleSmall?.copyWith(color: ScratchArt.ink),
+                      style: text.titleSmall?.copyWith(
+                        color: result ? rarityColor : ScratchArt.ink,
+                      ),
                     ),
                     SizedBox(height: GameboxTokens.spacing.base),
                     Text(
                       result
-                          ? '${scratchRarities[controller.cat.rarity]} · ${controller.isNew ? '新朋友，已收入图鉴' : '又见面啦 ×${controller.counts[controller.cat.index]}'}'
+                          ? (controller.isNew
+                                ? '新朋友，已收入图鉴'
+                                : '又见面啦 ×${controller.counts[controller.cat.index]}')
                           : controller.mode == ScratchMode.career &&
                                 controller.opened.contains(0)
                           ? '有头绪了吗？刮开身份照'
@@ -622,7 +677,21 @@ class _ScratchPageState extends State<ScratchPage> {
     final text = Theme.of(context).textTheme;
     return Card(
       margin: EdgeInsets.zero,
-      color: scheme.surfaceContainerLow,
+      color: owned
+          ? Color.lerp(
+              scheme.surfaceContainerLow,
+              ScratchArt.rarityColors[cat.rarity],
+              .12,
+            )
+          : scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
+        side: BorderSide(
+          color: ScratchArt.rarityColors[cat.rarity].withValues(
+            alpha: owned ? .6 : .2,
+          ),
+        ),
+      ),
       child: InkWell(
         key: ValueKey('scratch-cat-${cat.index}'),
         onTap: () => _detail(cat),
@@ -666,13 +735,9 @@ class _ScratchPageState extends State<ScratchPage> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              Text(
-                owned
-                    ? '${scratchRarities[cat.rarity]} · ×${controller.counts[cat.index]}'
-                    : scratchRarities[cat.rarity],
-                style: text.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+              ScratchRarityLabel(
+                rarity: cat.rarity,
+                suffix: owned ? ' · ×${controller.counts[cat.index]}' : '',
               ),
             ],
           ),
@@ -803,9 +868,15 @@ class _ScratchPageState extends State<ScratchPage> {
                   SizedBox(height: GameboxTokens.spacing.page),
                   Text('${cat.job} · ${cat.name}', style: text.headlineSmall),
                   SizedBox(height: GameboxTokens.spacing.compact),
-                  Text(
-                    '${scratchRarities[cat.rarity]} · NO.${(cat.index + 1).toString().padLeft(3, '0')}',
-                    style: text.labelLarge,
+                  Row(
+                    children: [
+                      ScratchRarityLabel(rarity: cat.rarity),
+                      SizedBox(width: GameboxTokens.spacing.layout),
+                      Text(
+                        'NO.${(cat.index + 1).toString().padLeft(3, '0')}',
+                        style: text.labelLarge,
+                      ),
+                    ],
                   ),
                   SizedBox(height: GameboxTokens.spacing.compact),
                   Text(cat.story, style: text.bodyMedium),

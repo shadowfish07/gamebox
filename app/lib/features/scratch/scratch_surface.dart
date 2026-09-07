@@ -18,6 +18,39 @@ abstract final class ScratchArt {
     GameboxTokens.gameColors.scratchEpic,
     GameboxTokens.gameColors.scratchLegendary,
   ];
+  static const rarityIcons = [
+    Icons.pets,
+    Icons.auto_awesome,
+    Icons.diamond_outlined,
+    Icons.workspace_premium,
+  ];
+  static Color get onRarity => GameboxTokens.lightColorScheme.onPrimary;
+}
+
+/// Shared collectible tier identity across the result, album and details.
+class ScratchRarityLabel extends StatelessWidget {
+  const ScratchRarityLabel({super.key, required this.rarity, this.suffix = ''});
+  final int rarity;
+  final String suffix;
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: ScratchArt.rarityColors[rarity],
+      borderRadius: BorderRadius.circular(GameboxTokens.shape.input),
+    ),
+    child: Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: GameboxTokens.spacing.layout,
+        vertical: GameboxTokens.spacing.base,
+      ),
+      child: Text(
+        '${scratchRarities[rarity]}$suffix',
+        maxLines: 1,
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: ScratchArt.onRarity),
+      ),
+    ),
+  );
 }
 
 class CatArtwork extends StatelessWidget {

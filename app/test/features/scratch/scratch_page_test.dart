@@ -8,6 +8,46 @@ import 'package:gamebox/features/scratch/scratch_surface.dart';
 import 'scratch_controller_test.dart' show MemoryScratchStore;
 
 void main() {
+  for (final (roll, tier) in [(0.0, 0), (.8, 1), (.96, 2), (.999, 3)]) {
+    testWidgets(
+      'rarity $tier appears only after claiming and clears on next ticket',
+      (tester) async {
+        final controller = ScratchController(
+          store: MemoryScratchStore(),
+          random: () => roll,
+        );
+        await controller.load();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GameboxTheme.light(),
+            home: ScratchPage(controller: controller),
+          ),
+        );
+        expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
+        await controller.changeMode(ScratchMode.career);
+        await controller.open(0);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
+        await controller.open(1);
+        await tester.pumpAndSettle();
+        final banner = tester.widget<DecoratedBox>(
+          find.byKey(const Key('scratch-rarity-banner')),
+        );
+        expect(
+          (banner.decoration as BoxDecoration).color,
+          ScratchArt.rarityColors[tier],
+        );
+        expect(find.text('${scratchRarities[tier]}收藏'), findsOneWidget);
+        await controller.next();
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        controller.dispose();
+      },
+    );
+  }
+
   for (final size in [const Size(360, 640), const Size(412, 891)]) {
     for (final dark in [false, true]) {
       testWidgets(
