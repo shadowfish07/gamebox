@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name":"flight chess captures at each landing before continuing", "run":_captures_at_landings},
 		{"name":"flight chess menu actions receive pointer input above player cards", "run":_menu_pointer_input},
 		{"name":"flight chess responsive HUD keeps cards and confirmation controls inside rails", "run":_responsive_hud_bounds},
 		{"name":"flight chess selection cancels and rejected moves retain the die", "run":_selection_recovery},
@@ -633,3 +634,36 @@ static func _menu_pointer_input() -> bool:
 		return _network_cleanup(scene)
 	await _click_control(scene.get_node("ResignDialog/Dialog/Content/Actions/CancelButton"))
 	return _network_cleanup(scene,_check(client.resign_requests == 0 and not scene.get_node("ResignDialog").visible,"cancel target did not preserve the match"))
+
+
+static func _captures_at_landings() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	var snapshot := _network_snapshot(10)
+	snapshot.payload.phase = "awaiting_move"
+	snapshot.payload.dice = 4
+	snapshot.payload.pieces.black[0] = {"zone":"main","index":35}
+	snapshot.payload.pieces.white[0] = {"zone":"main","index":39}
+	snapshot.payload.pieces.white[1] = {"zone":"main","index":43}
+	snapshot.payload.pieces.white[2] = {"zone":"main","index":3}
+	client.accept_snapshot(snapshot)
+	var event := _network_move(11, 0)
+	event.payload.from = {"zone":"main","index":35}
+	event.payload.to = {"zone":"main","index":3}
+	event.payload.roll = 4
+	event.payload.effect = "jump_shortcut"
+	event.payload.capturedPieceIndices = [0,1,2]
+	client.accept_event(event)
+	var board = scene.get_node("Board")
+	var result := _check(scene._bounce_playing and board._captured_flights.size() == 3, "capture animation missing")
+	for index in 3:
+		result = _check(board._captured_flights[index].origin == board.MAIN_PATH[[39,43,3][index]], "capture origin teleported") and result
+	board._bounce_tween.pause()
+	board._bounce_tween.custom_step(0.56 + 0.42)
+	result = _check(board._captured_flights[0].point.is_equal_approx(board.HANGAR_SLOTS.yellow[0]), "initial landing capture did not finish before jump") and result
+	result = _check(board._captured_flights[1].point.is_equal_approx(board.MAIN_PATH[43]), "next landing captured early") and result
+	board._bounce_tween.custom_step(10.0)
+	result = _check(scene.piece_state("yellow", 0).zone == "hangar" and not scene._bounce_playing, "capture did not finish") and result
+	_network_cleanup(scene)
+	return result

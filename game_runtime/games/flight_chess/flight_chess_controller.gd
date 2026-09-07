@@ -76,6 +76,7 @@ var _event_queue: Array[Dictionary] = []
 var _event_visuals := {}
 var _moving_visuals := {}
 var _moving_card_pieces := {}
+var _capture_origins := {}
 var _moving_color := ""
 var _menu_open := false
 var _bounce_roll := 0
@@ -601,6 +602,17 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 
 
 func _on_event_received(envelope: Dictionary) -> void:
+	var capture_payload: Variant = envelope.get("payload")
+	if _state != null and envelope.get("type") == "flight_chess.move.accepted" and capture_payload is Dictionary and capture_payload.get("color") in ["black", "white"] and FlightChessState._valid_indices(capture_payload.get("capturedPieceIndices")) and not _capture_origins.has(envelope.revision) and int(envelope.revision) > _last_presented_event_revision:
+		var before: Dictionary = _pieces if not _bounce_playing else _moving_visuals
+		if not _event_queue.is_empty():
+			before = _event_visuals.get(_event_queue[-1].revision, before)
+		var enemy := "yellow" if envelope.payload.color == "black" else "red"
+		var origins := {}
+		for index in envelope.payload.capturedPieceIndices:
+			if before.has(enemy) and index < before[enemy].size():
+				origins[index] = before[enemy][index].duplicate(true)
+		_capture_origins[envelope.revision] = origins
 	if _bounce_playing:
 		if int(envelope.get("revision",-1)) > _last_presented_event_revision and not _event_queue.any(func(item: Dictionary) -> bool: return item.revision == envelope.revision):
 			_event_queue.append(envelope.duplicate(true))
@@ -645,14 +657,15 @@ func _on_event_received(envelope: Dictionary) -> void:
 		_moving_card_pieces[_moving_color][payload.pieceIndex] = payload.from.duplicate(true)
 		var captured_color := "yellow" if _moving_color == "red" else "red"
 		for index in payload.capturedPieceIndices:
-			_moving_card_pieces[captured_color][index] = payload.to.duplicate(true)
+			_moving_card_pieces[captured_color][index] = _capture_origins[envelope.revision][index].duplicate(true)
 		var from: Dictionary = payload.from
 		_animation_copy = "超点反弹" if from.zone == "home" and from.index + payload.roll > FlightChessState.HOME_CELL_COUNT else "抵达终点" if payload.to.zone == "finished" else "撞机 · %d 架回库" % payload.capturedPieceIndices.size() if not payload.capturedPieceIndices.is_empty() else "飞行中"
 	_sync_ui()
 	if moving:
 		var color := "red" if payload.color == "black" else "yellow"
 		var segments := Motion.segments(color,payload.pieceIndex,payload.from,payload.roll,payload.effect)
-		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished")
+		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished", _capture_origins.get(envelope.revision, {}))
+		_capture_origins.erase(envelope.revision)
 		animation.finished.connect(func() -> void:
 			_bounce_playing = false
 			if not _event_queue.is_empty():
@@ -670,6 +683,7 @@ func _cancel_home_bounce(clear_queue: bool = true) -> void:
 	if clear_queue:
 		_event_queue.clear()
 		_event_visuals.clear()
+		_capture_origins.clear()
 	_bounce_playing = false
 	$Board.cancel_home_bounce()
 

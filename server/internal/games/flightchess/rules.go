@@ -146,7 +146,12 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 			if marshalErr != nil {
 				return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
 			}
-			produced, next, err = rules.Apply(snapshot, persisted.ActorID, gameapi.Action{Type: MoveRequested, Payload: payload})
+			action := gameapi.Action{Type: MoveRequested, Payload: payload}
+			produced, next, err = rules.Apply(snapshot, persisted.ActorID, action)
+			if err == nil && !bytes.Equal(produced.Payload, persisted.Payload) {
+				// Persisted moves used to capture only at the final destination.
+				produced, next, err = rules.applyMove(snapshot, persisted.ActorID, action, false)
+			}
 		default:
 			return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
 		}
@@ -173,6 +178,10 @@ func (rules *Rules) ApplyRandom(snapshot gameapi.Snapshot, actorID string, actio
 }
 
 func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action gameapi.Action) (gameapi.Event, gameapi.Snapshot, error) {
+	return rules.applyMove(snapshot, actorID, action, true)
+}
+
+func (rules *Rules) applyMove(snapshot gameapi.Snapshot, actorID string, action gameapi.Action, captureLandings bool) (gameapi.Event, gameapi.Snapshot, error) {
 	if action.Type != MoveRequested || !validActorID(actorID) {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
 	}
@@ -201,7 +210,11 @@ func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action game
 	color := state.NextColor
 	roll := state.Dice
 	state.Pieces[color][pieceIndex] = resolution.to
-	captured := captureAt(&state, color, resolution.to)
+	destinations := []Piece{resolution.to}
+	if captureLandings {
+		destinations = landingCells(resolution)
+	}
+	captured := captureAt(&state, color, destinations)
 	state.Dice = 0
 	state.Phase = PhaseAwaitingRoll
 	if allFinished(state.Pieces[color]) {
@@ -385,16 +398,37 @@ func movablePieces(color string, pieces []Piece, roll int) []int {
 	return result
 }
 
-func captureAt(state *snapshotState, color string, destination Piece) []int {
-	if destination.Zone != ZoneMain {
-		return []int{}
+// landingCells excludes cells merely passed over by the die move or shortcut.
+func landingCells(resolution moveResolution) []Piece {
+	if resolution.to.Zone != ZoneMain {
+		return nil
 	}
+	offsets := []int{0}
+	switch resolution.effect {
+	case EffectJump:
+		offsets = []int{4, 0}
+	case EffectShortcut:
+		offsets = []int{12, 0}
+	case EffectJumpShortcut:
+		offsets = []int{16, 12, 0}
+	}
+	cells := make([]Piece, 0, len(offsets))
+	for _, offset := range offsets {
+		cells = append(cells, Piece{Zone: ZoneMain, Index: (resolution.to.Index - offset + MainCellCount) % MainCellCount})
+	}
+	return cells
+}
+
+func captureAt(state *snapshotState, color string, destinations []Piece) []int {
 	opponent := opposite(color)
 	captured := make([]int, 0, PieceCount)
 	for index, piece := range state.Pieces[opponent] {
-		if piece == destination {
-			state.Pieces[opponent][index] = Piece{Zone: ZoneHangar, Index: index}
-			captured = append(captured, index)
+		for _, destination := range destinations {
+			if piece.Zone == ZoneMain && piece == destination {
+				state.Pieces[opponent][index] = Piece{Zone: ZoneHangar, Index: index}
+				captured = append(captured, index)
+				break
+			}
 		}
 	}
 	return captured

@@ -116,17 +116,20 @@ static func _applies_jump_shortcut_capture() -> bool:
 	var pieces := _initial_pieces()
 	pieces["black"][0] = {"zone": "main", "index": 35}
 	pieces["white"][0] = {"zone": "main", "index": 3}
-	pieces["white"][1] = {"zone": "main", "index": 3}
+	pieces["white"][1] = {"zone": "main", "index": 39}
+	pieces["white"][2] = {"zone": "main", "index": 43}
+	pieces["white"][3] = {"zone": "main", "index": 37}
 	if not state.apply_snapshot(_snapshot(10, "awaiting_move", "black", 4, pieces)).get("ok", false):
 		return _check(false, "setup snapshot rejected")
 	var applied := state.apply_event(_event(11, "flight_chess.move.accepted", {
 		"color": "black", "userId": BLACK_ID, "pieceIndex": 0, "roll": 4,
 		"from": {"zone": "main", "index": 35}, "to": {"zone": "main", "index": 3},
-		"effect": "jump_shortcut", "capturedPieceIndices": [0, 1],
+		"effect": "jump_shortcut", "capturedPieceIndices": [0, 1, 2],
 	}, ACTION_ID))
 	return _check(applied.get("ok", false), "jump shortcut event rejected") \
 		and _check(state.pieces["black"][0]["index"] == 3, "plane missed shortcut destination") \
-		and _check(state.pieces["white"][0]["zone"] == "hangar" and state.pieces["white"][1]["zone"] == "hangar", "captured stack did not return")
+		and _check(state.pieces["white"][0]["zone"] == "hangar" and state.pieces["white"][1]["zone"] == "hangar", "captured stack did not return") \
+		and _check(state.pieces["white"][2]["zone"] == "hangar" and state.pieces["white"][3]["index"] == 37, "intermediate landing or passed cell capture incorrect")
 
 
 static func _rejects_invalid_events() -> bool:

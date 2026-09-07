@@ -646,30 +646,38 @@ func _draw_route_preview() -> void:
 		draw_arc(_logical_to_pixel(point),24*_scale(),0,TAU,40,PLAYER_DARK.get(_selectable_color,BOARD_INK),3*_scale(),true)
 
 
-func animate_move(color: String, index: int, segments: Array, captured: Array, finished: bool) -> Tween:
+func animate_move(color: String, index: int, segments: Array, captured: Array, finished: bool, origins: Dictionary = {}) -> Tween:
 	cancel_home_bounce()
 	_route_preview.clear()
 	_bounce = {"color":color,"index":index,"point":segments[0].from,"scale":1.0}
 	var enemy := "yellow" if color == "red" else "red"
 	var target: Vector2 = segments[-1].to
 	for captured_index in captured:
-		_captured_flights.append({"color":enemy,"index":captured_index,"point":target})
+		var origin: Vector2 = MAIN_PATH[int(origins[captured_index].index)] if origins.has(captured_index) else target
+		_captured_flights.append({"color":enemy,"index":captured_index,"point":origin,"origin":origin,"hit":false})
 	_bounce_tween = create_tween()
 	for segment in segments:
 		_bounce_tween.tween_method(func(t: float) -> void:
 			_bounce.point = segment.from.lerp(segment.to,t)+Vector2(0,-sin(t*PI)*segment.lift)
 			queue_redraw()
 		,0.0,1.0,segment.duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_bounce_tween.tween_method(func(t: float) -> void:
-		_impact = {"point":target,"color":color,"phase":t}
-		queue_redraw()
-	,0.0,1.0,0.22)
-	if not captured.is_empty():
+		var landing_captures: Array = _captured_flights.filter(func(flight: Dictionary) -> bool: return not flight.hit and flight.origin.is_equal_approx(segment.to))
+		if not landing_captures.is_empty():
+			for flight in landing_captures:
+				flight.hit = true
+			_bounce_tween.tween_method(func(t: float) -> void:
+				_impact = {"point":segment.to,"color":color,"phase":t}
+				for flight in landing_captures:
+					flight.point = flight.origin.lerp(HANGAR_SLOTS[enemy][flight.index],t)+Vector2(0,-sin(t*PI)*40)
+				queue_redraw()
+			,0.0,1.0,0.42)
+
+	if captured.is_empty():
 		_bounce_tween.tween_method(func(t: float) -> void:
-			for flight in _captured_flights:
-				flight.point = target.lerp(HANGAR_SLOTS[enemy][flight.index],t)+Vector2(0,-sin(t*PI)*40)
+			_impact = {"point":target,"color":color,"phase":t}
 			queue_redraw()
-		,0.0,1.0,0.42)
+		,0.0,1.0,0.22)
+
 	if finished:
 		_bounce_tween.tween_method(func(t: float) -> void:
 			_bounce.scale = 1-t

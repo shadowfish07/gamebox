@@ -78,7 +78,7 @@ static func _move_event(state: Variant, match_id: String) -> Dictionary:
 	var opponent := WHITE if color == BLACK else BLACK
 	if resolution["to"]["zone"] == "main":
 		for opponent_index in 4:
-			if pieces[opponent][opponent_index] == resolution["to"]:
+			if pieces[opponent][opponent_index] in FlightChessState._landing_cells(resolution):
 				captured.append(opponent_index)
 	return {
 		"protocolVersion": 1,
