@@ -665,12 +665,16 @@ func animate_move(color: String, index: int, segments: Array, captured: Array, f
 		if not landing_captures.is_empty():
 			for flight in landing_captures:
 				flight.hit = true
+			_bounce_tween.tween_callback($CaptureSound.play)
 			_bounce_tween.tween_method(func(t: float) -> void:
 				_impact = {"point":segment.to,"color":color,"phase":t}
 				for flight in landing_captures:
 					flight.point = flight.origin.lerp(HANGAR_SLOTS[enemy][flight.index],t)+Vector2(0,-sin(t*PI)*40)
 				queue_redraw()
 			,0.0,1.0,0.42)
+
+	if finished:
+		_bounce_tween.tween_callback($FinishSound.play)
 
 	if captured.is_empty():
 		_bounce_tween.tween_method(func(t: float) -> void:
