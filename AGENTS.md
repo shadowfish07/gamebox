@@ -16,6 +16,12 @@
 - Fixed test, smoke, and E2E scripts do not capture screenshots for UI acceptance. Screenshot capture and inspection belong to the implementing agent's UI development workflow.
 - Gamebox-specific commands, device leases, markers, state matrices, and protocol invariants remain in this repository rather than shared rules.
 
+## 收藏卡片内容
+
+新增收藏系列、生成卡片或改写故事前，读取并遵守
+[收藏卡片内容生成规范](docs/design/collection-content-standard.md)。按稀有度增加具体经历、
+人物动机和故事完整度，并核对原画、跨卡关系与稳定编号；不要只靠加长文案体现稀有度。
+
 <!-- ai-rules:routing:start -->
 ## Shared rule routing
 
