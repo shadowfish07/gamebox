@@ -20,7 +20,14 @@ readonly final_path="${backup_dir}/gamebox-${timestamp}.db"
 temporary_path="$(/usr/bin/mktemp "${backup_dir}/.gamebox-backup.XXXXXX")"
 trap '/bin/rm -f "${temporary_path}"' EXIT
 
-"${sqlite_bin}" "${database_path}" ".backup '${temporary_path}'"
+# Match the server's persistent-WAL policy: closing an administrative
+# connection must never unlink sidecars still held by the running server.
+wal_mode="$("${sqlite_bin}" -bail "${database_path}" \
+  '.filectrl persist_wal 1' ".backup '${temporary_path}'")"
+if [[ "${wal_mode}" != "1" ]]; then
+  print -u2 -- "Gamebox backup could not enable persistent WAL"
+  exit 1
+fi
 integrity="$("${sqlite_bin}" "${temporary_path}" 'PRAGMA integrity_check;')"
 if [[ "${integrity}" != "ok" ]]; then
   print -u2 -- "Gamebox backup integrity check failed"
