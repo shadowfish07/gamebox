@@ -112,11 +112,6 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.collections_bookmark_outlined,
-                  color: theme.colorScheme.primary,
-                ),
-                SizedBox(width: GameboxTokens.spacing.layout),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -137,28 +132,31 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
                 SizedBox(width: GameboxTokens.spacing.compact),
                 if (count > 0)
                   Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '$count',
-                              style:
-                                  (count < 1000000
-                                          ? theme.textTheme.headlineLarge
-                                          : theme.textTheme.titleLarge)
-                                      ?.copyWith(
-                                        color: theme.colorScheme.primary,
-                                      ),
-                            ),
-                            TextSpan(
-                              text: ' 张',
-                              style: theme.textTheme.titleMedium,
-                            ),
-                          ],
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '$count',
+                                style:
+                                    (count < 1000000
+                                            ? theme.textTheme.headlineLarge
+                                            : theme.textTheme.titleLarge)
+                                        ?.copyWith(
+                                          color: theme.colorScheme.primary,
+                                        ),
+                              ),
+                              TextSpan(
+                                text: ' 张',
+                                style: theme.textTheme.titleMedium,
+                              ),
+                            ],
+                          ),
+                          key: const Key('scratch-owned-count'),
                         ),
-                        key: const Key('scratch-owned-count'),
                       ),
                     ),
                   )
@@ -171,14 +169,18 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
             SizedBox(height: GameboxTokens.spacing.compact),
             TextButton(
               key: const Key('scratch-view-owners'),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                  vertical: GameboxTokens.spacing.compact,
+                ),
+                iconSize: IconTheme.of(context).size,
+              ),
               onPressed: () => setState(() {
                 _ownersOpened = true;
                 _showOwners = true;
               }),
               child: Row(
                 children: [
-                  const Icon(Icons.people_outline),
-                  SizedBox(width: GameboxTokens.spacing.compact),
                   const Expanded(child: Text('查看持有玩家')),
                   const Icon(Icons.chevron_right),
                 ],

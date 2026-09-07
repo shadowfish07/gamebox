@@ -51,6 +51,24 @@ void main() {
       final entry = find.byKey(const Key('scratch-view-owners'));
       await tester.ensureVisible(entry);
       await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.text('查看持有玩家')).dx,
+        tester.getTopLeft(find.text('我的收藏')).dx,
+      );
+      expect(find.byIcon(Icons.collections_bookmark_outlined), findsNothing);
+      expect(find.byIcon(Icons.people_outline), findsNothing);
+      expect(
+        tester.getRect(find.byKey(const Key('scratch-owned-count'))).right,
+        tester.getRect(entry).right,
+      );
+      expect(
+        tester.getRect(find.byIcon(Icons.chevron_right)).right,
+        tester.getRect(entry).right,
+      );
+      expect(
+        tester.getCenter(find.byIcon(Icons.chevron_right)).dy,
+        tester.getCenter(find.text('查看持有玩家')).dy,
+      );
       final before = tester.getTopLeft(entry);
       await tester.tap(entry);
       await tester.pumpAndSettle();
