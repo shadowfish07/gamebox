@@ -11,6 +11,7 @@ import 'core/platform/game_launcher.dart';
 import 'design_system/generated/gamebox_tokens.g.dart';
 import 'design_system/gamebox_theme.dart';
 import 'features/auth/auth_api.dart';
+import 'features/scratch/scratch_social_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
 import 'features/gomoku/gomoku_models.dart';
@@ -396,6 +397,10 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       ),
       SessionStatus.unauthenticated ||
       SessionStatus.submitting => RegistrationPage(
+        scratchApi: HttpScratchSocialApi(
+          _ownedApiClient ??= ApiClient(),
+          controller,
+        ),
         controller: controller,
         updateController: widget.updateController,
       ),
@@ -429,6 +434,10 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       historyApi = HttpMatchHistoryApi(apiClient, controller);
     }
     return HomePage(
+      scratchApi: HttpScratchSocialApi(
+        _ownedApiClient ??= ApiClient(),
+        controller,
+      ),
       controller: homeController,
       currentUserId: session.user.id,
       nickname: session.user.nickname,

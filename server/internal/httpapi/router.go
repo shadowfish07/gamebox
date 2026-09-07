@@ -24,6 +24,7 @@ import (
 	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/matches"
+	"me.zqydev/gamebox/server/internal/scratch"
 	"me.zqydev/gamebox/server/internal/users"
 )
 
@@ -38,6 +39,7 @@ type requestIDGenerator func() (string, error)
 // must return a fresh opaque identifier and must not derive it from request
 // credentials or bodies.
 type RouterConfig struct {
+	Scratch    *scratch.Service
 	Auth       *auth.Service
 	Matches    *matches.Service
 	Games      *games.Registry
@@ -48,6 +50,7 @@ type RouterConfig struct {
 }
 
 type router struct {
+	scratch   *scratch.Service
 	auth      *auth.Service
 	matches   *matches.Service
 	games     *games.Registry
@@ -61,10 +64,17 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 		return nil, ErrInvalidConfiguration
 	}
 	router := &router{
-		auth: config.Auth, matches: config.Matches, games: config.Games,
+		scratch: config.Scratch, auth: config.Auth, matches: config.Matches, games: config.Games,
 		publisher: config.Publisher, hub: config.Hub, logger: config.Logger,
 	}
 	mux := http.NewServeMux()
+	if router.scratch != nil {
+		mux.HandleFunc("GET /v1/scratch/collections", router.listScratchCollections)
+		mux.Handle("POST /v1/scratch/collections/me", router.authenticated(http.HandlerFunc(router.publishScratchCollection)))
+		mux.Handle("DELETE /v1/scratch/collections/me", router.authenticated(http.HandlerFunc(router.removeScratchCollection)))
+		registerMethodFallback(mux, "/v1/scratch/collections", http.MethodGet)
+		registerMethodFallback(mux, "/v1/scratch/collections/me", "POST, DELETE")
+	}
 
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("POST /v1/auth/register", router.register)
@@ -315,7 +325,7 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
+	case "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
 	}
 	const launchPrefix = "/v1/matches/"

@@ -119,7 +119,8 @@ void main() {
           final original = ScratchController(store: store, random: () => 0);
           await original.load();
           await original.revealAll();
-          await original.favorite(0);
+          original.favorites.add(0);
+          await original.persist();
           if (!claimed) await original.next();
           final data = jsonDecode(store.value!) as Map<String, dynamic>;
           data.remove('winning');
@@ -186,18 +187,14 @@ void main() {
     },
   );
 
-  test(
-    'corrupt saves are preserved; unowned cats cannot enter showcase',
-    () async {
-      final store = MemoryScratchStore()..value = '{bad';
-      final controller = ScratchController(store: store);
-      await controller.load();
-      expect(controller.error, isNotNull);
-      expect(store.value, '{bad');
-      expect(await controller.favorite(0), '先通过刮奖获得这件藏品');
-      controller.dispose();
-    },
-  );
+  test('corrupt saves are preserved', () async {
+    final store = MemoryScratchStore()..value = '{bad';
+    final controller = ScratchController(store: store);
+    await controller.load();
+    expect(controller.error, isNotNull);
+    expect(store.value, '{bad');
+    controller.dispose();
+  });
 
   test('coverage counts unique erased area, and normal strokes can finish', () {
     final mask = ScratchMask();

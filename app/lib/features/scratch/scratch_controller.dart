@@ -78,6 +78,7 @@ final class ScratchController extends ChangeNotifier {
   final double Function() random;
   final counts = List.filled(scratchCollectibles.length, 0);
   final firstFound = List<String?>.filled(scratchCollectibles.length, null);
+  // Retained only to round-trip old saves; the showcase UI was removed.
   final favorites = <int>[];
   final opened = <int>{};
   List<ScratchMask> masks = List.generate(4, (_) => ScratchMask());
@@ -315,20 +316,6 @@ final class ScratchController extends ChangeNotifier {
   Future<void> revealAll() async {
     if (!interactive || claimed) return;
     await open(0);
-  }
-
-  Future<String> favorite(int index) async {
-    if (index < 0 || index >= 24 || counts[index] == 0) return '先通过刮奖获得这件藏品';
-    if (!interactive) return '请等待收藏保存完成';
-    if (favorites.contains(index)) {
-      favorites.remove(index);
-      await persist();
-      return '已从展柜取下';
-    }
-    if (favorites.length == 6) return '展柜已满，请先取下一件藏品';
-    favorites.add(index);
-    await persist();
-    return '已放入展柜';
   }
 
   @override

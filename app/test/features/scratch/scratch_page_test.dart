@@ -120,9 +120,6 @@ void main() {
           await tester.tap(find.byKey(const Key('scratch-detail')));
           await tester.pumpAndSettle();
           expect(find.text('面包师 · 小麦'), findsNWidgets(2));
-          await tester.tap(find.byKey(const Key('scratch-favorite')));
-          await tester.pumpAndSettle();
-          expect(controller.favorites, [0]);
           await tester.tap(find.byTooltip('关闭详情'));
           await tester.pumpAndSettle();
           await tester.tap(find.byKey(const Key('scratch-tab-album')));
@@ -133,10 +130,9 @@ void main() {
           await tester.tap(find.text('猫猫百业 1/24'));
           await tester.pumpAndSettle();
           expect(find.byKey(const ValueKey('scratch-cat-0')), findsOneWidget);
-          await tester.tap(find.byKey(const Key('scratch-tab-showcase')));
-          await tester.pumpAndSettle();
-          expect(find.text('面包师'), findsOneWidget);
-          expect(tester.takeException(), isNull);
+          expect(find.byKey(const Key('scratch-rules')), findsNothing);
+          expect(find.text('展柜'), findsNothing);
+          expect(find.text('玩家'), findsOneWidget);
           await tester.pumpWidget(const SizedBox.shrink());
           controller.dispose();
         },

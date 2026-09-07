@@ -5,11 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../design_system/generated/gamebox_tokens.g.dart';
+import '../../core/api/api_client.dart';
+import 'scratch_social_api.dart';
+import 'scratch_players_page.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
 
 class ScratchEntry extends StatelessWidget {
-  const ScratchEntry({super.key});
+  const ScratchEntry({super.key, this.socialApi});
+  final ScratchSocialApi? socialApi;
   @override
   Widget build(BuildContext context) => Card(
     child: ListTile(
@@ -21,14 +25,16 @@ class ScratchEntry extends StatelessWidget {
       title: const Text('刮刮收藏'),
       subtitle: const Text('单人 · 免费畅刮 · 收集惊喜'),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () => Navigator.of(context)
-          .push<void>(MaterialPageRoute(builder: (_) => const ScratchPage())),
+      onTap: () => Navigator.of(context).push<void>(
+        MaterialPageRoute(builder: (_) => ScratchPage(socialApi: socialApi)),
+      ),
     ),
   );
 }
 
 class ScratchPage extends StatefulWidget {
-  const ScratchPage({super.key, this.controller});
+  const ScratchPage({super.key, this.controller, this.socialApi});
+  final ScratchSocialApi? socialApi;
   final ScratchController? controller;
   @override
   State<ScratchPage> createState() => _ScratchPageState();
@@ -36,6 +42,8 @@ class ScratchPage extends StatefulWidget {
 
 class _ScratchPageState extends State<ScratchPage> {
   late final ScratchController controller;
+  ApiClient? _ownedSocialClient;
+  late final ScratchSocialApi socialApi;
   int tab = 0;
   int? filter;
   String? groupFilter;
@@ -45,6 +53,9 @@ class _ScratchPageState extends State<ScratchPage> {
   @override
   void initState() {
     super.initState();
+    socialApi =
+        widget.socialApi ??
+        HttpScratchSocialApi(_ownedSocialClient = ApiClient());
     controller =
         widget.controller ?? ScratchController(store: SecureScratchStore());
     controller.addListener(_changed);
@@ -57,6 +68,7 @@ class _ScratchPageState extends State<ScratchPage> {
 
   @override
   void dispose() {
+    _ownedSocialClient?.close();
     controller.removeListener(_changed);
     if (widget.controller == null) controller.dispose();
     super.dispose();
@@ -72,7 +84,7 @@ class _ScratchPageState extends State<ScratchPage> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('离开并放弃未保存的进度？'),
-          content: const Text('之前保存的收藏仍会保留。本次尚未保存的刮奖和展柜变化会丢失。'),
+          content: const Text('之前保存的收藏仍会保留。本次尚未保存的刮奖进度会丢失。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -119,15 +131,7 @@ class _ScratchPageState extends State<ScratchPage> {
             tooltip: '返回',
             icon: const Icon(Icons.arrow_back),
           ),
-          title: Text(['刮刮收藏', '收藏图鉴', '我的展柜'][tab]),
-          actions: [
-            IconButton(
-              key: const Key('scratch-rules'),
-              onPressed: _rules,
-              tooltip: '掉落规则',
-              icon: const Icon(Icons.info_outline),
-            ),
-          ],
+          title: Text(['刮刮收藏', '收藏图鉴', '玩家收藏'][tab]),
         ),
         body: SafeArea(
           bottom: false,
@@ -153,7 +157,10 @@ class _ScratchPageState extends State<ScratchPage> {
                     : switch (tab) {
                         0 => _play(context),
                         1 => _album(context),
-                        _ => _showcase(context),
+                        _ => ScratchPlayersPage(
+                          api: socialApi,
+                          collection: controller,
+                        ),
                       },
               ),
             ],
@@ -178,10 +185,10 @@ class _ScratchPageState extends State<ScratchPage> {
               label: '图鉴',
             ),
             NavigationDestination(
-              key: Key('scratch-tab-showcase'),
-              icon: Icon(Icons.workspace_premium_outlined),
-              selectedIcon: Icon(Icons.workspace_premium),
-              label: '展柜',
+              key: Key('scratch-tab-players'),
+              icon: Icon(Icons.people_outline),
+              selectedIcon: Icon(Icons.people),
+              label: '玩家',
             ),
           ],
         ),
@@ -481,7 +488,7 @@ class _ScratchPageState extends State<ScratchPage> {
                                 : '又见面啦 ×${controller.counts[controller.cat.index]}')
                           : controller.claimed
                           ? '再试一张吧'
-                          : '免费无限刮 · 一张一份小惊喜',
+                          : '免费无限刮 · 每张独立随机',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: text.labelSmall?.copyWith(color: ScratchArt.ink),
@@ -690,72 +697,6 @@ class _ScratchPageState extends State<ScratchPage> {
     );
   }
 
-  Widget _showcase(BuildContext context) => Column(
-    children: [
-      Padding(
-        padding: EdgeInsets.all(GameboxTokens.spacing.page),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '把喜欢的藏品摆在一起',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            Text('${controller.favorites.length} / 6'),
-          ],
-        ),
-      ),
-      Expanded(
-        child: GridView.builder(
-          padding: EdgeInsets.symmetric(horizontal: GameboxTokens.spacing.page),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: GameboxTokens.spacing.compact,
-            mainAxisSpacing: GameboxTokens.spacing.compact,
-            childAspectRatio: 1,
-          ),
-          itemCount: 6,
-          itemBuilder: (context, i) => i < controller.favorites.length
-              ? _catCell(
-                  context,
-                  scratchCollectibles[controller.favorites[i]],
-                  owned: true,
-                )
-              : Card(
-                  margin: EdgeInsets.zero,
-                  child: InkWell(
-                    onTap: () => setState(() {
-                      tab = 1;
-                      ownedOnly = true;
-                      filter = null;
-                      groupFilter = null;
-                    }),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.add,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        SizedBox(height: GameboxTokens.spacing.layout),
-                        const Text('从图鉴挑一只'),
-                      ],
-                    ),
-                  ),
-                ),
-        ),
-      ),
-      Padding(
-        padding: EdgeInsets.all(GameboxTokens.spacing.layout),
-        child: Text(
-          '收藏进度 ${controller.collected}/${scratchCollectibles.length} · 已收藏 ${controller.total} 件',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-      ),
-    ],
-  );
-
   Future<void> _detail(ScratchCollectible cat) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -843,71 +784,20 @@ class _ScratchPageState extends State<ScratchPage> {
                       ),
                     ),
                   SizedBox(height: GameboxTokens.spacing.compact),
-                  FilledButton(
-                    key: const Key('scratch-favorite'),
-                    onPressed: !owned
-                        ? () {
-                            Navigator.pop(context);
-                            setState(() => tab = 0);
-                          }
-                        : controller.interactive
-                        ? () async {
-                            final message = await controller.favorite(
-                              cat.index,
-                            );
-                            _message(controller.error ?? message);
-                          }
-                        : null,
-                    child: Text(
-                      !owned
-                          ? '去刮一张'
-                          : controller.saving
-                          ? '正在保存'
-                          : controller.favorites.contains(cat.index)
-                          ? '从展柜取下'
-                          : '放入我的展柜',
+                  if (!owned)
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        setState(() => tab = 0);
+                      },
+                      child: const Text('去刮一张'),
                     ),
-                  ),
                 ],
               ),
             ),
           ),
         );
       },
-    ),
-  );
-
-  Future<void> _rules() => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    useSafeArea: true,
-    builder: (context) => SafeArea(
-      top: false,
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: EdgeInsets.all(GameboxTokens.spacing.page),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('刮奖规则', style: Theme.of(context).textTheme.titleLarge),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              const Text(
-                '中奖 20% · 未中奖 80%\n中奖后：普通 70% · 稀有 24% · 史诗 5.5% · 传说 0.5%',
-              ),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              const Text('同一档内每件藏品概率相同，每张独立随机，无保底。中奖并完全刮开后自动入册，重复获得只增加持有数量。'),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              const Text('免费无限刮。收藏保存在此设备，卸载或清除应用数据后可能丢失，暂不支持账号同步。'),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('知道啦'),
-              ),
-            ],
-          ),
-        ),
-      ),
     ),
   );
 }

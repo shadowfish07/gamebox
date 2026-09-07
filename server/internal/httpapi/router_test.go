@@ -33,6 +33,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/gomoku"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/protocol"
+	"me.zqydev/gamebox/server/internal/scratch"
 	"me.zqydev/gamebox/server/internal/store"
 )
 
@@ -144,6 +145,7 @@ func newAPIFixtureWithHubConfig(t *testing.T, hubConfig matches.HubConfig) apiFi
 	}
 	publisher := &recordingPublisher{hub: hub}
 	handler, err := NewRouter(RouterConfig{
+		Scratch:    scratch.New(db, testClock),
 		Auth:       authService,
 		Matches:    matchService,
 		Games:      games.NewRegistry(),
