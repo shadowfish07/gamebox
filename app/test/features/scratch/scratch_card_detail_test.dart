@@ -47,6 +47,17 @@ void main() {
       await tester.tap(find.text('打开详情'));
       await tester.pumpAndSettle();
       expect(api.queries, isEmpty);
+      final story = find.text(scratchCollectibles[13].story);
+      expect(story, findsOneWidget);
+      expect(
+        tester.getTopLeft(story).dy,
+        lessThan(tester.getTopLeft(find.text('我的收藏')).dy),
+      );
+      expect(
+        tester.getTopLeft(story).dy,
+        lessThan(tester.getRect(find.byType(ScratchCardDetail)).bottom),
+      );
+
       expect(find.text('1000000000 张'), findsOneWidget);
       final entry = find.byKey(const Key('scratch-view-owners'));
       await tester.ensureVisible(entry);
@@ -117,6 +128,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('尚未收藏'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text(scratchCollectibles.first.story)).dy,
+      lessThan(tester.getTopLeft(find.text('我的收藏')).dy),
+    );
+
     expect(find.textContaining('首次相遇'), findsNothing);
     await tester.ensureVisible(find.text('去抽一张'));
     await tester.tap(find.text('去抽一张'));

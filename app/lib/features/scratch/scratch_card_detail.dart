@@ -106,7 +106,10 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
     return Card.filled(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: EdgeInsets.all(GameboxTokens.spacing.page),
+        padding: EdgeInsets.symmetric(
+          horizontal: GameboxTokens.spacing.page,
+          vertical: GameboxTokens.spacing.layout,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -118,7 +121,7 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
                     children: [
                       Text('我的收藏', style: theme.textTheme.labelLarge),
                       if (count > 0 && first != null) ...[
-                        SizedBox(height: GameboxTokens.spacing.compact),
+                        SizedBox(height: GameboxTokens.spacing.base),
                         Text(
                           '首次相遇 ${first.substring(0, 10)}',
                           style: theme.textTheme.bodySmall?.copyWith(
@@ -166,12 +169,11 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
             ),
             SizedBox(height: GameboxTokens.spacing.layout),
             const Divider(height: 1),
-            SizedBox(height: GameboxTokens.spacing.compact),
             TextButton(
               key: const Key('scratch-view-owners'),
               style: TextButton.styleFrom(
                 padding: EdgeInsets.symmetric(
-                  vertical: GameboxTokens.spacing.compact,
+                  vertical: GameboxTokens.spacing.layout,
                 ),
                 iconSize: IconTheme.of(context).size,
               ),
@@ -296,9 +298,9 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
                 ],
               ),
               SizedBox(height: GameboxTokens.spacing.page),
-              _ownership(context),
-              SizedBox(height: GameboxTokens.spacing.page),
               Text(widget.cat.story, style: text.bodyMedium),
+              SizedBox(height: GameboxTokens.spacing.page),
+              _ownership(context),
               SizedBox(height: GameboxTokens.spacing.layout),
               if (!owned)
                 FilledButton(
