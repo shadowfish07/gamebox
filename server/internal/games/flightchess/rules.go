@@ -149,8 +149,13 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 			action := gameapi.Action{Type: MoveRequested, Payload: payload}
 			produced, next, err = rules.Apply(snapshot, persisted.ActorID, action)
 			if err == nil && !bytes.Equal(produced.Payload, persisted.Payload) {
-				// Persisted moves used to capture only at the final destination.
-				produced, next, err = rules.applyMove(snapshot, persisted.ActorID, action, false)
+				// Replay both older landing-only and final-destination-only captures.
+				for _, captureLandings := range []bool{true, false} {
+					produced, next, err = rules.applyMove(snapshot, persisted.ActorID, action, captureLandings)
+					if err == nil && bytes.Equal(produced.Payload, persisted.Payload) {
+						break
+					}
+				}
 			}
 		default:
 			return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
@@ -178,10 +183,14 @@ func (rules *Rules) ApplyRandom(snapshot gameapi.Snapshot, actorID string, actio
 }
 
 func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action gameapi.Action) (gameapi.Event, gameapi.Snapshot, error) {
-	return rules.applyMove(snapshot, actorID, action, true)
+	return rules.applyMoveWithCrossing(snapshot, actorID, action, true, true)
 }
 
 func (rules *Rules) applyMove(snapshot gameapi.Snapshot, actorID string, action gameapi.Action, captureLandings bool) (gameapi.Event, gameapi.Snapshot, error) {
+	return rules.applyMoveWithCrossing(snapshot, actorID, action, captureLandings, false)
+}
+
+func (rules *Rules) applyMoveWithCrossing(snapshot gameapi.Snapshot, actorID string, action gameapi.Action, captureLandings, captureCrossing bool) (gameapi.Event, gameapi.Snapshot, error) {
 	if action.Type != MoveRequested || !validActorID(actorID) {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
 	}
@@ -210,9 +219,16 @@ func (rules *Rules) applyMove(snapshot gameapi.Snapshot, actorID string, action 
 	color := state.NextColor
 	roll := state.Dice
 	state.Pieces[color][pieceIndex] = resolution.to
-	destinations := []Piece{resolution.to}
+	var destinations []Piece
+	if resolution.to.Zone == ZoneMain {
+		destinations = []Piece{resolution.to}
+	}
 	if captureLandings {
 		destinations = landingCells(resolution)
+	}
+	if captureCrossing && (resolution.effect == EffectShortcut || resolution.effect == EffectJumpShortcut) {
+		// The third home cell is crossed by the opposite colour's shortcut.
+		destinations = append(destinations, Piece{Zone: ZoneHome, Index: 2})
 	}
 	captured := captureAt(&state, color, destinations)
 	state.Dice = 0
@@ -424,7 +440,7 @@ func captureAt(state *snapshotState, color string, destinations []Piece) []int {
 	captured := make([]int, 0, PieceCount)
 	for index, piece := range state.Pieces[opponent] {
 		for _, destination := range destinations {
-			if piece.Zone == ZoneMain && piece == destination {
+			if (piece.Zone == ZoneMain || piece.Zone == ZoneHome) && piece == destination {
 				state.Pieces[opponent][index] = Piece{Zone: ZoneHangar, Index: index}
 				captured = append(captured, index)
 				break

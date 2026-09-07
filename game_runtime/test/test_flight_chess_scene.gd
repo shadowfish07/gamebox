@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess captures home stacks at the shortcut crossing before continuing", "run": _captures_home_crossing},
 		{"name":"flight chess player cards share presence text and state colors", "run":_player_presence_status},
 		{"name":"flight chess captures at each landing before continuing", "run":_captures_at_landings},
 		{"name":"flight chess menu actions receive pointer input above player cards", "run":_menu_pointer_input},
@@ -707,4 +708,46 @@ static func _player_presence_status() -> bool:
 	result = _check(local_dot.get_theme_stylebox("panel").bg_color != online_color, "reconnecting player retained online color") and result
 	client.connection_state_changed.emit("failed")
 	result = _check(local.text == "离线", "failed connection did not show local offline state") and result
+	return _network_cleanup(scene, result)
+
+
+static func _captures_home_crossing() -> bool:
+	var harness: Dictionary = await _network_scene_harness(WHITE_ID)
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	var snapshot := _network_snapshot(10)
+	snapshot.payload.nextColor = "white"
+	snapshot.payload.phase = "awaiting_move"
+	snapshot.payload.dice = 2
+	snapshot.payload.pieces.white[0] = {"zone": "main", "index": 15}
+	snapshot.payload.pieces.black[0] = {"zone": "home", "index": 2}
+	snapshot.payload.pieces.black[1] = {"zone": "home", "index": 2}
+	snapshot.payload.pieces.black[2] = {"zone": "home", "index": 1}
+	client.accept_snapshot(snapshot)
+	var event := _network_move(11, 0)
+	event.payload.color = "white"
+	event.payload.userId = WHITE_ID
+	event.payload.from = {"zone": "main", "index": 15}
+	event.payload.to = {"zone": "main", "index": 29}
+	event.payload.roll = 2
+	event.payload.effect = "shortcut"
+	event.payload.capturedPieceIndices = [0, 1]
+	client.accept_event(event)
+	var board = scene.get_node("Board")
+	if not _check(scene._bounce_playing and board._captured_flights.size() == 2, "home stack capture animation missing"):
+		return _network_cleanup(scene)
+	var crossing: Vector2 = board.HOME_STRETCHES.red[2]
+	var result := true
+	for flight in board._captured_flights:
+		result = _check(flight.origin.is_equal_approx(crossing), "home victim started on main route") and result
+	board._bounce_tween.pause()
+	board._bounce_tween.custom_step(0.28 + 0.32)
+	result = _check(board._bounce.point.is_equal_approx(crossing), "shortcut did not pass through home crossing") and result
+	for flight in board._captured_flights:
+		result = _check(flight.point.is_equal_approx(crossing), "victim returned before crossing") and result
+	board._bounce_tween.custom_step(0.42)
+	for flight in board._captured_flights:
+		result = _check(flight.point.is_equal_approx(board.HANGAR_SLOTS.red[flight.index]), "home stack did not return before flight continued") and result
+	board._bounce_tween.custom_step(10.0)
+	result = _check(not scene._bounce_playing and scene.piece_state("yellow", 0) == {"zone": "main", "index": 29} and scene.piece_state("red", 2) == {"zone": "home", "index": 1}, "shortcut destination or adjacent home plane incorrect") and result
 	return _network_cleanup(scene, result)

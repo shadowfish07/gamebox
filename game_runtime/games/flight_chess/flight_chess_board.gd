@@ -105,10 +105,10 @@ const SHORTCUTS := {
 	"blue": Vector2i(4, 16),
 }
 const SHORTCUT_LINES := {
-	"yellow": [Vector2(418, 236), Vector2(418, 364)],
-	"green": [Vector2(364, 418), Vector2(236, 418)],
-	"red": [Vector2(182, 364), Vector2(182, 236)],
-	"blue": [Vector2(236, 182), Vector2(364, 182)],
+	"yellow": [Vector2(422, 236), Vector2(422, 364)],
+	"green": [Vector2(364, 422), Vector2(236, 422)],
+	"red": [Vector2(178, 364), Vector2(178, 236)],
+	"blue": [Vector2(236, 178), Vector2(364, 178)],
 }
 
 var selected_piece_index: int:
@@ -653,7 +653,7 @@ func animate_move(color: String, index: int, segments: Array, captured: Array, f
 	var enemy := "yellow" if color == "red" else "red"
 	var target: Vector2 = segments[-1].to
 	for captured_index in captured:
-		var origin: Vector2 = MAIN_PATH[int(origins[captured_index].index)] if origins.has(captured_index) else target
+		var origin: Vector2 = _logical_piece_center(enemy, origins[captured_index]) if origins.has(captured_index) else target
 		_captured_flights.append({"color":enemy,"index":captured_index,"point":origin,"origin":origin,"hit":false})
 	_bounce_tween = create_tween()
 	for segment in segments:

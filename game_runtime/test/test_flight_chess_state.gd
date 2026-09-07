@@ -10,6 +10,7 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess validates shortcut home crossing captures", "run": _crossing_captures},
 		{"name": "flight chess bounces all home rolls and validates authority", "run": _bounces_home_rolls},
 		{"name": "flight chess restores an authoritative roll snapshot", "run": _restores_snapshot},
 		{"name": "flight chess confirms roll then selected move", "run": _confirms_roll_and_move},
@@ -226,5 +227,36 @@ static func _bounces_home_rolls() -> bool:
 				if not _check((state.status == "finished") == (target == FlightChessState.HOME_CELL_COUNT), "passing finish must not win"):
 					return false
 				if target != FlightChessState.HOME_CELL_COUNT and not _check(state.next_color == (color if roll == 6 else ("white" if color == "black" else "black")), "bounce turn incorrect"):
+					return false
+	return true
+
+
+static func _crossing_captures() -> bool:
+	for color in ["black", "white"]:
+		var opponent := "white" if color == "black" else "black"
+		var start := 26 if color == "black" else 0
+		for spec in [[16, 2, true], [10, 4, true], [1, 1, false], [2, 1, false]]:
+			var pieces := _initial_pieces()
+			pieces[color][0] = {"zone": "main", "index": (start + spec[0] - 1) % 52}
+			for i in 4:
+				pieces[opponent][i] = {"zone": "home", "index": [2, 1, 2, 3][i]}
+			var state = FlightChessState.new(MATCH_ID)
+			if not state.apply_snapshot(_snapshot(10, "awaiting_move", color, spec[1], pieces)).get("ok", false):
+				return _check(false, "crossing snapshot rejected")
+			var resolution := FlightChessState._resolve_move(color, pieces[color][0], spec[1])
+			var event := _event(11, "flight_chess.move.accepted", {
+				"color": color, "userId": BLACK_ID if color == "black" else WHITE_ID,
+				"pieceIndex": 0, "roll": spec[1], "from": pieces[color][0], "to": resolution.to,
+				"effect": resolution.effect, "capturedPieceIndices": [0, 2] if spec[2] else [],
+			}, ACTION_ID)
+			var forged := event.duplicate(true)
+			forged.payload.capturedPieceIndices = [0, 1, 2]
+			if not _check(not state.apply_event(forged).get("ok", false) and state.revision == 10, "incorrect crossing capture mutated authority"):
+				return false
+			if not _check(state.apply_event(event).get("ok", false), "valid crossing event rejected"):
+				return false
+			for i in 4:
+				var expected: Dictionary = {"zone": "hangar", "index": i} if spec[2] and i in [0, 2] else pieces[opponent][i]
+				if not _check(state.pieces[opponent][i] == expected, "crossing or adjacent home piece incorrect"):
 					return false
 	return true

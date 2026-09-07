@@ -42,7 +42,9 @@ static func segments(color: String, index: int, from: Dictionary, roll: int, eff
 		previous = target
 	if effect in ["shortcut","jump_shortcut"]:
 		var corners: Array = Board.SHORTCUT_LINES[color]
-		for target in [corners[0],corners[1],point(color,30,index)]:
-			result.append({"from":previous,"to":target,"duration":0.64/3.0,"lift":0.0})
+		var enemy: String = Board.PLAYER_ORDER[(Board.PLAYER_ORDER.find(color) + 2) % 4]
+		var crossing: Vector2 = Board.HOME_STRETCHES[enemy][2]
+		for target in [corners[0],crossing,corners[1],point(color,30,index)]:
+			result.append({"from":previous,"to":target,"duration":0.64/4.0,"lift":0.0})
 			previous = target
 	return result
