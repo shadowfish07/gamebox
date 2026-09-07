@@ -58,7 +58,7 @@ void main() {
     api.wait!.complete();
     await tester.pumpAndSettle();
     expect(find.text('玩家甲'), findsOneWidget);
-    expect(find.text('×7'), findsOneWidget);
+    expect(find.text('7 张'), findsOneWidget);
     await tester.tap(find.text('查看更多玩家'));
     await tester.pumpAndSettle();
     expect(api.queries.last, '13:11111111-1111-4111-8111-111111111111');
@@ -77,7 +77,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('还没有玩家获得这张卡'), findsOneWidget);
+    expect(find.text('暂无持有玩家记录'), findsOneWidget);
     expect(find.text('查看更多玩家'), findsNothing);
   });
 }

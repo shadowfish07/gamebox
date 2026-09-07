@@ -56,19 +56,21 @@ class _ScratchCardOwnersState extends State<ScratchCardOwners> {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const Divider(),
-      Text('拥有这张卡的玩家', style: Theme.of(context).textTheme.titleMedium),
       SizedBox(height: GameboxTokens.spacing.compact),
       for (final player in _players)
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.person_outline),
+          leading: CircleAvatar(
+            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+            foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+            child: const Icon(Icons.person_outline),
+          ),
           title: Text(player.nickname),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '×${player.counts[widget.card]}',
+                '${player.counts[widget.card]} 张',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const Icon(Icons.chevron_right),
@@ -89,7 +91,7 @@ class _ScratchCardOwnersState extends State<ScratchCardOwners> {
           ],
         )
       else if (!_loading && _players.isEmpty)
-        const Text('还没有玩家获得这张卡')
+        const Text('暂无持有玩家记录')
       else if (!_loading && _cursor.isNotEmpty)
         TextButton(onPressed: _load, child: const Text('查看更多玩家')),
     ],

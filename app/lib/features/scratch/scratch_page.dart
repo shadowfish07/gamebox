@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -9,9 +8,8 @@ import 'scratch_social_api.dart';
 import 'scratch_collection_sync.dart';
 import 'scratch_players_page.dart';
 import 'scratch_controller.dart';
-import 'scratch_surface.dart';
 import 'scratch_collectible_card.dart';
-import 'scratch_card_owners.dart';
+import 'scratch_card_detail.dart';
 import 'card_draw_flow.dart';
 import 'card_draw_play.dart';
 
@@ -360,109 +358,18 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
       isScrollControlled: true,
       showDragHandle: true,
       useSafeArea: true,
-      builder: (context) => ListenableBuilder(
-        listenable: controller,
-        builder: (context, _) {
-          final owned = controller.counts[cat.index] > 0;
-          final text = Theme.of(context).textTheme;
-          return SafeArea(
-            top: false,
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: GameboxTokens.spacing.page,
-                  right: GameboxTokens.spacing.page,
-                  bottom: GameboxTokens.spacing.page,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            owned ? '已收藏 · 徽章与原画' : '收藏预览 · 尚未获得',
-                            style: text.labelLarge,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          tooltip: '关闭详情',
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      scratchGroups
-                          .firstWhere((group) => group.id == cat.groupId)
-                          .title,
-                      style: text.labelLarge,
-                    ),
-                    SizedBox(height: GameboxTokens.spacing.layout),
-                    Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: math.min(
-                            320,
-                            MediaQuery.sizeOf(context).height * .37,
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(
-                            GameboxTokens.shape.card,
-                          ),
-                          child: CollectibleArtwork(cat: cat),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: GameboxTokens.spacing.page),
-                    Text('${cat.job} · ${cat.name}', style: text.headlineSmall),
-                    SizedBox(height: GameboxTokens.spacing.compact),
-                    Row(
-                      children: [
-                        ScratchRarityLabel(rarity: cat.rarity),
-                        SizedBox(width: GameboxTokens.spacing.layout),
-                        Text(
-                          'NO.${(cat.index + 1).toString().padLeft(3, '0')}',
-                          style: text.labelLarge,
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: GameboxTokens.spacing.compact),
-                    Text(cat.story, style: text.bodyMedium),
-                    if (owned)
-                      Padding(
-                        padding: EdgeInsets.symmetric(
-                          vertical: GameboxTokens.spacing.layout,
-                        ),
-                        child: Text(
-                          '首次相遇 ${controller.firstFound[cat.index]!.substring(0, 10)} · 拥有 ×${controller.counts[cat.index]}',
-                          style: text.bodySmall,
-                        ),
-                      ),
-                    SizedBox(height: GameboxTokens.spacing.compact),
-                    ScratchCardOwners(
-                      key: ValueKey('scratch-owners-${cat.index}'),
-                      api: socialApi,
-                      card: cat.index,
-                      beforeLoad: collectionSync.sync,
-                    ),
-                    SizedBox(height: GameboxTokens.spacing.layout),
-                    if (!owned)
-                      FilledButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          setState(() => tab = 0);
-                        },
-                        child: const Text('去抽一张'),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+      builder: (context) => SafeArea(
+        top: false,
+        child: ScratchCardDetail(
+          cat: cat,
+          controller: controller,
+          api: socialApi,
+          beforeLoad: collectionSync.sync,
+          onDraw: () {
+            Navigator.pop(context);
+            setState(() => tab = 0);
+          },
+        ),
       ),
     );
     if (mounted && tab == 0) drawFlow.resume();
