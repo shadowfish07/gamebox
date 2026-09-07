@@ -923,6 +923,16 @@ func _local_board_color() -> String:
 	return "red" if _local_platform_color() == "black" else "yellow" if _local_platform_color() == "white" else ""
 
 
+func _local_presence_text() -> String:
+	if not _started or _connection_state == "connected":
+		return "在线"
+	if _connection_state == "reconnecting":
+		return "重连中"
+	if _connection_state in ["failed", "closed"]:
+		return "离线"
+	return "连接中"
+
+
 func _opponent_presence_text() -> String:
 	if _connection_state != "connected" or _awaiting_snapshot:
 		return "状态未知"
@@ -1088,7 +1098,7 @@ func _refresh_hud() -> void:
 		local_turn = _moving_color == local_color
 	var card_pieces: Dictionary = _moving_card_pieces if _bounce_playing and not _moving_card_pieces.is_empty() else _pieces
 	var paused: bool = _started and (_state == null or _state.revision < 0 or (_state.status != "active" and not _bounce_playing) or _awaiting_snapshot or _connection_state != "connected" or _resign_submitted)
-	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, "已连接" if not _started or _connection_state == "connected" else "连接中", card_pieces.get(local_color, []))
+	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, _local_presence_text(), card_pieces.get(local_color, []))
 	HUD.present_card(self, "OpponentCard", opponent_color, not local_turn and not paused, _opponent_presence_text() if _started and _state != null else "在线", card_pieces.get(opponent_color, []))
 	if paused:
 		$LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge.text = "暂停"

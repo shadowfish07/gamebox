@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name":"flight chess player cards share presence text and state colors", "run":_player_presence_status},
 		{"name":"flight chess captures at each landing before continuing", "run":_captures_at_landings},
 		{"name":"flight chess menu actions receive pointer input above player cards", "run":_menu_pointer_input},
 		{"name":"flight chess responsive HUD keeps cards and confirmation controls inside rails", "run":_responsive_hud_bounds},
@@ -477,6 +478,7 @@ class FakeMatchClient:
 	var move_requests: Array = []
 	var resign_requests := 0
 	var dispose_calls := 0
+	var opponent_online := true
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant, game_id: String) -> bool:
 		state = game_state
@@ -506,7 +508,7 @@ class FakeMatchClient:
 		return true
 
 	func is_player_online(_user_id: String) -> bool:
-		return true
+		return opponent_online
 
 	func dispose() -> void:
 		dispose_calls += 1
@@ -598,6 +600,19 @@ static func _responsive_hud_bounds() -> bool:
 			if not _check(rail.get_global_rect().grow(0.01).encloses(child.get_global_rect()),"responsive HUD overflow: %s at %s rail=%s child=%s" % [pair[1],dimensions,rail.get_global_rect(),child.get_global_rect()]):
 				scene.free()
 				return false
+		var opponent_card: Control = scene.get_node("LeftRail/Content/OpponentCard")
+		var local_card: Control = scene.get_node("LeftRail/Content/LocalCard")
+		var versus: Label = scene.get_node("LeftRail/Content/Versus")
+		var gap_center := (opponent_card.get_global_rect().end.y + local_card.global_position.y) / 2.0
+		if not _check(is_equal_approx(versus.get_global_rect().get_center().y, gap_center) and versus.vertical_alignment == VERTICAL_ALIGNMENT_CENTER, "VS is not centered between player cards"):
+			scene.free()
+			return false
+		for card in [opponent_card, local_card]:
+			var role: Label = card.get_node("Content/Role")
+			var badge: Label = card.get_node("BadgeOverlay/TurnBadge")
+			if not _check(card.get_global_rect().encloses(badge.get_global_rect()) and absf(role.get_global_rect().get_center().y - badge.get_global_rect().get_center().y) < 1.0, "turn badge does not align with player header"):
+				scene.free()
+				return false
 		var action: Control = scene.get_node("RightRail/Content/RollButton")
 		var cancel: Control = scene.get_node("RightRail/Content/CancelSelection")
 		if not _check(action.get_global_rect().end.y <= cancel.global_position.y,"confirm and cancel overlap"):
@@ -667,3 +682,29 @@ static func _captures_at_landings() -> bool:
 	result = _check(scene.piece_state("yellow", 0).zone == "hangar" and not scene._bounce_playing, "capture did not finish") and result
 	_network_cleanup(scene)
 	return result
+
+
+static func _player_presence_status() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	client.accept_snapshot(_network_snapshot(0))
+	var local: Label = scene.get_node("LeftRail/Content/LocalCard/Content/Name")
+	var opponent: Label = scene.get_node("LeftRail/Content/OpponentCard/Content/Name")
+	var result := _check(local.text == "在线" and opponent.text == local.text, "online player cards use different presence copy")
+	if not local.has_node("PresenceDot") or not opponent.has_node("PresenceDot"):
+		return _network_cleanup(scene, _check(false, "player presence has no independently colored indicator"))
+	var local_dot: Panel = local.get_node("PresenceDot")
+	var opponent_dot: Panel = opponent.get_node("PresenceDot")
+	var online_color: Color = local_dot.get_theme_stylebox("panel").bg_color
+	result = _check(online_color == opponent_dot.get_theme_stylebox("panel").bg_color, "online players have different indicator colors") and result
+	client.opponent_online = false
+	client.player_presence_changed.emit(WHITE_ID, false)
+	result = _check(opponent.text == "离线" and local.text == "在线", "opponent presence did not update independently") and result
+	result = _check(opponent_dot.get_theme_stylebox("panel").bg_color != online_color, "offline player retained online color") and result
+	client.connection_state_changed.emit("reconnecting")
+	result = _check(local.text == "重连中" and opponent.text == "状态未知", "reconnect retained stale online presence") and result
+	result = _check(local_dot.get_theme_stylebox("panel").bg_color != online_color, "reconnecting player retained online color") and result
+	client.connection_state_changed.emit("failed")
+	result = _check(local.text == "离线", "failed connection did not show local offline state") and result
+	return _network_cleanup(scene, result)
