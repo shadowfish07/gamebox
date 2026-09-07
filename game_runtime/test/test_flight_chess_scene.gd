@@ -225,6 +225,10 @@ static func _rolls_before_selection() -> bool:
 
 
 static func _waits_for_authoritative_actions() -> bool:
+	return await _checks_launch_turn(5) and await _checks_launch_turn(6)
+
+
+static func _checks_launch_turn(value: int) -> bool:
 	var harness: Dictionary = await _network_scene_harness()
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
@@ -237,8 +241,10 @@ static func _waits_for_authoritative_actions() -> bool:
 	if not _check(client.roll_requests == 1, "roll action was not submitted") \
 		or not _check(scene.dice_value == 0 and board.selectable_piece_indices.is_empty(), "roll changed the board optimistically"):
 		return _network_cleanup(scene)
-	client.accept_event(_network_roll(1))
-	if not _check(scene.dice_value == 6 and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
+	var roll := _network_roll(1)
+	roll.payload.value = value
+	client.accept_event(roll)
+	if not _check(scene.dice_value == value and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
 		return _network_cleanup(scene)
 	scene._on_piece_pressed("red", 1)
 	if not _check(client.move_requests.is_empty() and not board._route_preview.is_empty(), "selection submitted instead of previewing"):
@@ -248,14 +254,16 @@ static func _waits_for_authoritative_actions() -> bool:
 	if not _check(client.move_requests == [1], "selected plane was not submitted") \
 		or not _check(scene.piece_state("red", 1)["zone"] == "hangar", "plane moved before server confirmation"):
 		return _network_cleanup(scene)
-	client.accept_event(_network_move(2, 1))
+	var move := _network_move(2, 1)
+	move.payload.roll = value
+	client.accept_event(move)
 	if not _check(roll_button.disabled and scene._bounce_playing, "accepted move did not lock animation"):
 		return _network_cleanup(scene)
 	board._bounce_tween.custom_step(5.0)
 	return _network_cleanup(
 		scene,
 		_check(scene.piece_state("red", 1)["zone"] == "launch", "accepted plane did not launch") \
-			and _check(not roll_button.disabled, "accepted six did not enable the extra roll"),
+			and _check(roll_button.disabled == (value == 5), "launch did not apply the correct next turn"),
 	)
 
 

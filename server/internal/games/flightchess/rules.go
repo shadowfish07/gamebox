@@ -128,9 +128,14 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 			}
 			produced, next, err = rules.applyRollValue(snapshot, persisted.ActorID, accepted.Value)
 			if err == nil && !bytes.Equal(produced.Payload, persisted.Payload) {
-				// Historical rolls excluded overshoots. Replay their original turn
-				// transition without changing the rule for newly requested rolls.
-				produced, next, err = rules.applyRollValueWithBounce(snapshot, persisted.ActorID, accepted.Value, false)
+				// Historical rolls excluded overshoots or five-point launches.
+				// Replay their original turn transition without changing new rolls.
+				for _, options := range [][2]bool{{true, false}, {false, true}, {false, false}} {
+					produced, next, err = rules.applyRollValueWithOptions(snapshot, persisted.ActorID, accepted.Value, options[0], options[1])
+					if err == nil && bytes.Equal(produced.Payload, persisted.Payload) {
+						break
+					}
+				}
 			}
 		case MoveAccepted:
 			accepted, decodeErr := decodeAcceptedMove(persisted.Payload)
@@ -225,10 +230,10 @@ func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action game
 }
 
 func (rules *Rules) applyRollValue(snapshot gameapi.Snapshot, actorID string, value int) (gameapi.Event, gameapi.Snapshot, error) {
-	return rules.applyRollValueWithBounce(snapshot, actorID, value, true)
+	return rules.applyRollValueWithOptions(snapshot, actorID, value, true, true)
 }
 
-func (rules *Rules) applyRollValueWithBounce(snapshot gameapi.Snapshot, actorID string, value int, allowBounce bool) (gameapi.Event, gameapi.Snapshot, error) {
+func (rules *Rules) applyRollValueWithOptions(snapshot gameapi.Snapshot, actorID string, value int, allowBounce, allowFiveLaunch bool) (gameapi.Event, gameapi.Snapshot, error) {
 	if value < 1 || value > 6 || !validActorID(actorID) {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
 	}
@@ -244,11 +249,12 @@ func (rules *Rules) applyRollValueWithBounce(snapshot gameapi.Snapshot, actorID 
 	}
 	color := state.NextColor
 	movable := movablePieces(color, state.Pieces[color], value)
-	if !allowBounce {
+	if !allowBounce || !allowFiveLaunch {
 		legacyMovable := make([]int, 0, len(movable))
 		for _, index := range movable {
 			piece := state.Pieces[color][index]
-			if piece.Zone != ZoneHome || piece.Index+value <= HomeCellCount {
+			if (allowBounce || piece.Zone != ZoneHome || piece.Index+value <= HomeCellCount) &&
+				(allowFiveLaunch || value != 5 || piece.Zone != ZoneHangar) {
 				legacyMovable = append(legacyMovable, index)
 			}
 		}
@@ -306,7 +312,7 @@ func resolveMove(color string, piece Piece, roll int) (moveResolution, bool) {
 	}
 	switch piece.Zone {
 	case ZoneHangar:
-		if roll != 6 {
+		if roll != 5 && roll != 6 {
 			return moveResolution{}, false
 		}
 		return moveResolution{to: Piece{Zone: ZoneLaunch, Index: 0}, effect: EffectNone}, true

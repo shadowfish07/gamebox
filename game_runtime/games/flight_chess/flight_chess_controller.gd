@@ -41,7 +41,7 @@ var _selectable_indices: Array = []
 var _selected_index := -1
 var _status_text := "你的回合"
 var _turn_text := "先掷骰子"
-var _hint_text := "掷出 6 后，再选择一架飞机起飞"
+var _hint_text := "掷出 5 或 6 后，选择一架飞机起飞"
 var _preview_state := "ready"
 var _preview_dark: Variant = null
 var _preview_safe_insets := Vector4.ZERO
@@ -365,7 +365,7 @@ func _reset_demo() -> void:
 	_selected_index = -1
 	_status_text = "你的回合"
 	_turn_text = "先掷骰子"
-	_hint_text = "掷出 6 后，再选择一架飞机起飞"
+	_hint_text = "掷出 5 或 6 后，选择一架飞机起飞"
 
 
 func _apply_preview_state() -> void:
@@ -1080,7 +1080,7 @@ func _refresh_hud() -> void:
 		$LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge.text = "暂停"
 		$LeftRail/Content/OpponentCard/BadgeOverlay/TurnBadge.text = "暂停"
 	$RightRail/Content/DiceLabel.text = "骰点 %d" % _dice_value if _dice_value > 0 else "等待掷骰"
-	$RightRail/Content/RuleLabel.text = "i  路线预览，确认后移动" if _selected_index >= 0 else "i  每次只移动一架飞机" if _dice_value > 0 else "i  掷出 6：可起飞，并再掷一次"
+	$RightRail/Content/RuleLabel.text = "i  路线预览，确认后移动" if _selected_index >= 0 else "i  每次只移动一架飞机" if _dice_value > 0 else "i  5、6 可起飞；6 可再掷"
 	var confirmed: bool = not _started or (_state != null and _state.revision >= 0)
 	$Board.modulate.a = 1.0 if confirmed else 0.35
 	for name in ["LocalCard", "OpponentCard"]:
@@ -1108,7 +1108,7 @@ func _refresh_hud() -> void:
 		$RightRail/Content/RuleLabel.text = "i  恢复同步后继续对局"
 	elif _turn_feedback == "无棋可走":
 		$BoardStatus.text = "无法移动 · 已换手"
-		$RightRail/Content/RuleLabel.text = "i  非 6 不能从机库起飞"
+		$RightRail/Content/RuleLabel.text = "i  掷出 5 或 6 才能起飞"
 	$RightRail/Content/CancelSelection.visible = _selected_index >= 0 and (not _started or _can_select_piece())
 	var route: Array = []
 	if _selected_index >= 0 and _pieces.has(local_color):
@@ -1178,7 +1178,7 @@ func _show_rules() -> void:
 	title.add_theme_font_size_override("font_size",roundi(22*unit))
 	content.add_child(title)
 	var copy := Label.new()
-	copy.text = "掷出 6 可起飞，并可再掷一次。\n落到同色格跳 4 格，飞行点沿捷径前进。\n撞到对手飞机，对方整组返回机库。\n归家超点走到尽头后原路退回。\n精确抵达终点，四架全部抵达获胜。"
+	copy.text = "掷出 5 或 6 可起飞。5 起飞后换手，6 可再掷一次。\n落到同色格跳 4 格，飞行点沿捷径前进。\n撞到对手飞机，对方整组返回机库。\n归家超点走到尽头后原路退回。\n精确抵达终点，四架全部抵达获胜。"
 	copy.add_theme_font_size_override("font_size",roundi(13*unit))
 	copy.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(copy)

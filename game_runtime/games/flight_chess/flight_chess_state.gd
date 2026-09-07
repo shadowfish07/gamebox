@@ -434,7 +434,7 @@ static func _resolve_move(color: String, piece: Dictionary, roll: int) -> Dictio
 		return {"ok": false}
 	match piece["zone"]:
 		ZONE_HANGAR:
-			if roll != 6:
+			if roll != 5 and roll != 6:
 				return {"ok": false}
 			return {"ok": true, "to": {"zone": ZONE_LAUNCH, "index": 0}, "effect": "none"}
 		ZONE_LAUNCH:
