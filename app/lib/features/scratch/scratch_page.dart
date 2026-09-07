@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../../core/api/api_client.dart';
 import 'scratch_social_api.dart';
+import 'scratch_collection_sync.dart';
 import 'scratch_players_page.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
@@ -44,6 +45,7 @@ class _ScratchPageState extends State<ScratchPage> {
   late final ScratchController controller;
   ApiClient? _ownedSocialClient;
   late final ScratchSocialApi socialApi;
+  late final ScratchCollectionSync collectionSync;
   int tab = 0;
   int? filter;
   String? groupFilter;
@@ -58,6 +60,7 @@ class _ScratchPageState extends State<ScratchPage> {
         HttpScratchSocialApi(_ownedSocialClient = ApiClient());
     controller =
         widget.controller ?? ScratchController(store: SecureScratchStore());
+    collectionSync = ScratchCollectionSync(controller, socialApi);
     controller.addListener(_changed);
     if (controller.loading) unawaited(controller.load());
   }
@@ -68,6 +71,7 @@ class _ScratchPageState extends State<ScratchPage> {
 
   @override
   void dispose() {
+    collectionSync.dispose();
     _ownedSocialClient?.close();
     controller.removeListener(_changed);
     if (widget.controller == null) controller.dispose();
@@ -159,7 +163,7 @@ class _ScratchPageState extends State<ScratchPage> {
                         1 => _album(context),
                         _ => ScratchPlayersPage(
                           api: socialApi,
-                          collection: controller,
+                          beforeLoad: collectionSync.sync,
                         ),
                       },
               ),

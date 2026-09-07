@@ -71,9 +71,8 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	if router.scratch != nil {
 		mux.HandleFunc("GET /v1/scratch/collections", router.listScratchCollections)
 		mux.Handle("POST /v1/scratch/collections/me", router.authenticated(http.HandlerFunc(router.publishScratchCollection)))
-		mux.Handle("DELETE /v1/scratch/collections/me", router.authenticated(http.HandlerFunc(router.removeScratchCollection)))
 		registerMethodFallback(mux, "/v1/scratch/collections", http.MethodGet)
-		registerMethodFallback(mux, "/v1/scratch/collections/me", "POST, DELETE")
+		registerMethodFallback(mux, "/v1/scratch/collections/me", http.MethodPost)
 	}
 
 	mux.HandleFunc("GET /healthz", router.health)

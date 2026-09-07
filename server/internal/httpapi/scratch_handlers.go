@@ -61,15 +61,3 @@ func (router *router) publishScratchCollection(w http.ResponseWriter, r *http.Re
 		Published bool `json:"published"`
 	}{true})
 }
-func (router *router) removeScratchCollection(w http.ResponseWriter, r *http.Request) {
-	user, ok := authenticatedUser(r)
-	if !ok {
-		writeAPIError(w, 401, "unauthorized")
-		return
-	}
-	if err := router.scratch.Remove(r.Context(), user.ID); err != nil {
-		writeAPIError(w, 500, "internal_error")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}

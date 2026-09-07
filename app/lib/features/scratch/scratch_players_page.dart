@@ -7,21 +7,17 @@ import 'scratch_social_api.dart';
 import 'scratch_surface.dart';
 
 class ScratchPlayersPage extends StatefulWidget {
-  const ScratchPlayersPage({
-    super.key,
-    required this.api,
-    required this.collection,
-  });
+  const ScratchPlayersPage({super.key, required this.api, this.beforeLoad});
   final ScratchSocialApi api;
-  final ScratchController collection;
+  final Future<void> Function()? beforeLoad;
   @override
   State<ScratchPlayersPage> createState() => _ScratchPlayersPageState();
 }
 
 class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
   final players = <ScratchPlayer>[];
-  String cursor = '', error = '', notice = '';
-  bool loading = false, writing = false;
+  String cursor = '', error = '';
+  bool loading = false;
   @override
   void initState() {
     super.initState();
@@ -35,6 +31,7 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
       error = '';
     });
     try {
+      await widget.beforeLoad?.call();
       final page = await widget.api.list(more ? cursor : '');
       if (!mounted) return;
       setState(() {
@@ -53,32 +50,8 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
   }
 
   String _error(Object e) => e is ApiError ? e.message : '暂时无法连接，请重试';
-  Future<void> _publish(bool remove) async {
-    if (writing || loading) return;
-    setState(() {
-      writing = true;
-      error = '';
-      notice = '';
-    });
-    try {
-      if (remove) {
-        await widget.api.remove();
-      } else {
-        await widget.api.publish(List.of(widget.collection.counts));
-      }
-      if (!mounted) return;
-      setState(() => notice = remove ? '已取消公开' : '已更新公开收藏');
-      await _load();
-    } catch (e) {
-      if (mounted) setState(() => error = _error(e));
-    } finally {
-      if (mounted) setState(() => writing = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final gap = GameboxTokens.spacing.layout;
     return Column(
       children: [
         Padding(
@@ -86,30 +59,6 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (widget.api.canPublish) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton(
-                        key: const Key('scratch-publish'),
-                        onPressed:
-                            writing || loading || !widget.collection.interactive
-                            ? null
-                            : () => _publish(false),
-                        child: Text(writing ? '正在保存' : '公开 / 更新我的收藏'),
-                      ),
-                    ),
-                    SizedBox(width: gap),
-                    TextButton(
-                      onPressed: writing || loading
-                          ? null
-                          : () => _publish(true),
-                      child: const Text('取消公开'),
-                    ),
-                  ],
-                ),
-              ],
-              if (notice.isNotEmpty) Text(notice),
               if (error.isNotEmpty)
                 Text(
                   error,
@@ -118,7 +67,7 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
-                  onPressed: loading || writing ? null : () => _load(),
+                  onPressed: loading ? null : () => _load(),
                   icon: const Icon(Icons.refresh),
                   label: Text(error.isEmpty ? '刷新' : '重试'),
                 ),
@@ -135,7 +84,7 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
                         ? '正在读取收藏'
                         : error.isNotEmpty
                         ? '收藏暂时不可用'
-                        : '还没有玩家公开收藏',
+                        : '暂无玩家',
                   ),
                 )
               : ListView.builder(
@@ -157,7 +106,7 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
                         leading: const Icon(Icons.person_outline),
                         title: Text(player.nickname),
                         subtitle: Text(
-                          '已收集 ${player.collected}/${scratchCollectibles.length} · ${player.updatedAt.toLocal().toIso8601String().substring(0, 10)} 更新',
+                          '已收集 ${player.collected}/${scratchCollectibles.length}',
                         ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.push(

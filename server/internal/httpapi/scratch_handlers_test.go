@@ -21,6 +21,11 @@ func TestScratchPublicCollections(t *testing.T) {
 	if got := f.request(t, "GET", "/v1/scratch/collections", "", ""); got.Code != 200 {
 		t.Fatalf("list %d %s", got.Code, got.Body)
 	}
+	var initial scratch.Page
+	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections", "", ""), &initial)
+	if len(initial.Players) != 2 || len(initial.Players[0].Counts) != 24 || initial.Players[0].Counts[13] != 0 {
+		t.Fatalf("all registered users should be visible before sync: %+v", initial)
+	}
 	for _, token := range []string{alice.Session.AccessToken, bob.Session.AccessToken} {
 		if got := f.request(t, "POST", "/v1/scratch/collections/me", string(body), token); got.Code != 200 {
 			t.Fatalf("publish %d %s", got.Code, got.Body)
@@ -43,16 +48,16 @@ func TestScratchPublicCollections(t *testing.T) {
 			t.Fatalf("invalid body %d", got)
 		}
 	}
-	if got := f.request(t, "DELETE", "/v1/scratch/collections/me", "", alice.Session.AccessToken).Code; got != http.StatusNoContent {
+	if got := f.request(t, "DELETE", "/v1/scratch/collections/me", "", alice.Session.AccessToken).Code; got != http.StatusMethodNotAllowed {
 		t.Fatalf("delete %d", got)
 	}
 	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections", "", ""), &page)
-	if len(page.Players) != 1 || page.Players[0].UserID != bob.Session.User.ID {
-		t.Fatalf("delete touched another player %+v", page)
+	if len(page.Players) != 2 {
+		t.Fatalf("removed collection despite default public policy %+v", page)
 	}
 	f.db.Exec(`UPDATE users SET enabled=0 WHERE id=?`, bob.Session.User.ID)
 	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections", "", ""), &page)
-	if len(page.Players) != 0 {
+	if len(page.Players) != 1 || page.Players[0].UserID != alice.Session.User.ID {
 		t.Fatal("disabled player exposed")
 	}
 }
@@ -60,15 +65,12 @@ func TestScratchPublicCollections(t *testing.T) {
 func TestScratchCollectionPaginationAndBounds(t *testing.T) {
 	f := newAPIFixture(t)
 	counts := make([]int, 24)
-	raw, _ := json.Marshal(counts)
 	for i := 0; i < 32; i++ {
 		id := fmt.Sprintf("%08d-1111-4111-8111-111111111111", i)
 		if _, err := f.db.Exec(`INSERT INTO users(id,nickname,normalized_nickname,created_at,updated_at) VALUES(?,?,?,?,?)`, id, id, id, 1, 1); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.db.Exec(`INSERT INTO scratch_collections(user_id,counts_json,updated_at) VALUES(?,?,?)`, id, string(raw), 1); err != nil {
-			t.Fatal(err)
-		}
+
 	}
 	var first, second scratch.Page
 	decodeResponse(t, f.request(t, "GET", "/v1/scratch/collections", "", ""), &first)

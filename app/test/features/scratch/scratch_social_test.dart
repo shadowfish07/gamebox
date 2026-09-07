@@ -16,12 +16,12 @@ import 'package:gamebox/features/scratch/scratch_surface.dart';
 
 import 'scratch_controller_test.dart' show MemoryScratchStore;
 
-final class FakeSocial implements ScratchSocialApi {
+class FakeSocial implements ScratchSocialApi {
   @override
-  bool canPublish = true;
+  bool canSync = true;
   bool fail = false;
   List<int>? published;
-  int deletes = 0, calls = 0;
+  int calls = 0;
   Completer<void>? pending;
   @override
   Future<ScratchPlayerPage> list([String after = '']) async {
@@ -39,82 +39,67 @@ final class FakeSocial implements ScratchSocialApi {
   }
 
   @override
-  Future<void> publish(List<int> counts) async {
+  Future<void> sync(List<int> counts) async {
     published = counts;
-  }
-
-  @override
-  Future<void> remove() async {
-    deletes++;
   }
 }
 
 void main() {
   for (final dark in [false, true]) {
-    testWidgets(
-      'players loading error retry inspect publish remove dark=$dark',
-      (tester) async {
-        tester.view.physicalSize = const Size(360, 640);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        final api = FakeSocial()..fail = true;
-        final collection = ScratchController(
-          store: MemoryScratchStore(),
-          random: () => 0,
-        );
-        await collection.load();
-        await collection.revealAll();
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: dark ? GameboxTheme.dark() : GameboxTheme.light(),
-            home: Scaffold(
-              body: ScratchPlayersPage(api: api, collection: collection),
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(find.text('连接失败'), findsOneWidget);
-        api.fail = false;
-        api.pending = Completer<void>();
-        await tester.tap(find.text('重试'));
-        await tester.pump();
-        expect(find.byType(LinearProgressIndicator), findsOneWidget);
-        api.pending!.complete();
-        await tester.pumpAndSettle();
-        expect(find.text('玩家甲'), findsOneWidget);
-        await tester.tap(find.text('玩家甲'));
-        await tester.pumpAndSettle();
-        expect(find.text('玩家甲的收藏'), findsOneWidget);
-        expect(find.text('已收集 1/24'), findsOneWidget);
-        expect(find.text('猫猫百业 · 1/24'), findsOneWidget);
-        expect(find.text('魔术师 · 墨墨'), findsOneWidget);
-        final art = tester.getSize(find.byType(CollectibleArtwork));
-        expect(art.width, art.height);
-        expect(find.text('稀有 · ×2'), findsOneWidget);
-        await tester.pageBack();
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('scratch-publish')));
-        await tester.pumpAndSettle();
-        expect(api.published, collection.counts);
-        await tester.tap(find.text('取消公开'));
-        await tester.pumpAndSettle();
-        expect(api.deletes, 1);
-        expect(find.text('已取消公开'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
-        collection.dispose();
-      },
-    );
+    testWidgets('players loading error retry inspect dark=$dark', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final api = FakeSocial()..fail = true;
+      final collection = ScratchController(
+        store: MemoryScratchStore(),
+        random: () => 0,
+      );
+      await collection.load();
+      await collection.revealAll();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: dark ? GameboxTheme.dark() : GameboxTheme.light(),
+          home: Scaffold(body: ScratchPlayersPage(api: api)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('连接失败'), findsOneWidget);
+      api.fail = false;
+      api.pending = Completer<void>();
+      await tester.tap(find.text('重试'));
+      await tester.pump();
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      api.pending!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('玩家甲'), findsOneWidget);
+      await tester.tap(find.text('玩家甲'));
+      await tester.pumpAndSettle();
+      expect(find.text('玩家甲的收藏'), findsOneWidget);
+      expect(find.text('已收集 1/24'), findsOneWidget);
+      expect(find.text('猫猫百业 · 1/24'), findsOneWidget);
+      expect(find.text('魔术师 · 墨墨'), findsOneWidget);
+      final art = tester.getSize(find.byType(CollectibleArtwork));
+      expect(art.width, art.height);
+      expect(find.text('稀有 · ×2'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('scratch-publish')), findsNothing);
+      expect(find.text('取消公开'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      collection.dispose();
+    });
   }
   testWidgets('guest can browse but cannot publish', (tester) async {
-    final api = FakeSocial()..canPublish = false;
+    final api = FakeSocial()..canSync = false;
     final collection = ScratchController(store: MemoryScratchStore());
     await collection.load();
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: ScratchPlayersPage(api: api, collection: collection),
-        ),
+        home: Scaffold(body: ScratchPlayersPage(api: api)),
       ),
     );
     await tester.pumpAndSettle();

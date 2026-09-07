@@ -49,10 +49,9 @@ final class ScratchPlayerPage {
 }
 
 abstract interface class ScratchSocialApi {
-  bool get canPublish;
+  bool get canSync;
   Future<ScratchPlayerPage> list([String after = '']);
-  Future<void> publish(List<int> counts);
-  Future<void> remove();
+  Future<void> sync(List<int> counts);
 }
 
 final class HttpScratchSocialApi implements ScratchSocialApi {
@@ -60,7 +59,7 @@ final class HttpScratchSocialApi implements ScratchSocialApi {
   final ApiClient client;
   final SessionController? session;
   @override
-  bool get canPublish => session?.accessToken != null;
+  bool get canSync => session?.accessToken != null;
   @override
   Future<ScratchPlayerPage> list([String after = '']) async {
     final json = await client.getJson(
@@ -93,7 +92,7 @@ final class HttpScratchSocialApi implements ScratchSocialApi {
   }
 
   @override
-  Future<void> publish(List<int> counts) async {
+  Future<void> sync(List<int> counts) async {
     await client.postJson(
       '/v1/scratch/collections/me',
       {'counts': counts},
@@ -101,11 +100,4 @@ final class HttpScratchSocialApi implements ScratchSocialApi {
       onUnauthorized: session?.refresh,
     );
   }
-
-  @override
-  Future<void> remove() => client.deleteEmpty(
-    '/v1/scratch/collections/me',
-    accessToken: () => session?.accessToken,
-    onUnauthorized: session?.refresh,
-  );
 }
