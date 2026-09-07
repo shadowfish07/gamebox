@@ -16,7 +16,7 @@ const ZONE_HOME := "home"
 const ZONE_FINISHED := "finished"
 const PIECE_COUNT := 4
 const MAIN_CELL_COUNT := 52
-const HOME_CELL_COUNT := 6
+const HOME_CELL_COUNT := 5
 const START_INDICES := {BLACK: 26, WHITE: 0}
 
 var revision: int:
@@ -287,7 +287,7 @@ func _apply_move(envelope: Dictionary) -> Dictionary:
 	var expected_captured: Array = []
 	if resolution["to"]["zone"] == ZONE_MAIN:
 		for opponent_index in PIECE_COUNT:
-			if next_pieces[opponent][opponent_index] == resolution["to"]:
+			if next_pieces[opponent][opponent_index] in _capture_cells(resolution):
 				next_pieces[opponent][opponent_index] = {"zone": ZONE_HANGAR, "index": opponent_index}
 				expected_captured.append(opponent_index)
 	if payload["capturedPieceIndices"] != expected_captured:
@@ -434,7 +434,7 @@ static func _resolve_move(color: String, piece: Dictionary, roll: int) -> Dictio
 		return {"ok": false}
 	match piece["zone"]:
 		ZONE_HANGAR:
-			if roll != 6:
+			if roll != 5 and roll != 6:
 				return {"ok": false}
 			return {"ok": true, "to": {"zone": ZONE_LAUNCH, "index": 0}, "effect": "none"}
 		ZONE_LAUNCH:
@@ -579,3 +579,15 @@ static func _exact_keys(value: Dictionary, expected: Array) -> bool:
 
 static func _failure(code: String) -> Dictionary:
 	return {"ok": false, "code": code}
+
+
+static func _capture_cells(resolution: Dictionary) -> Array:
+	if resolution.to.zone != ZONE_MAIN:
+		return []
+	var offsets: Array = {"none": [0], "jump": [4, 0], "shortcut": [12, 0], "jump_shortcut": [16, 12, 0]}[resolution.effect]
+	var cells: Array = []
+	for offset in offsets:
+		cells.append({"zone": ZONE_MAIN, "index": posmod(int(resolution.to.index) - int(offset), MAIN_CELL_COUNT)})
+	if resolution.effect in ["shortcut", "jump_shortcut"]:
+		cells.append({"zone": ZONE_HOME, "index": 2})
+	return cells

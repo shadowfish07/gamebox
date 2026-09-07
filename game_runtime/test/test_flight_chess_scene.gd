@@ -12,6 +12,9 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess captures home stacks at the shortcut crossing before continuing", "run": _captures_home_crossing},
+		{"name":"flight chess player cards share presence text and state colors", "run":_player_presence_status},
+		{"name":"flight chess captures at each landing before continuing", "run":_captures_at_landings},
 		{"name":"flight chess menu actions receive pointer input above player cards", "run":_menu_pointer_input},
 		{"name":"flight chess responsive HUD keeps cards and confirmation controls inside rails", "run":_responsive_hud_bounds},
 		{"name":"flight chess selection cancels and rejected moves retain the die", "run":_selection_recovery},
@@ -225,6 +228,10 @@ static func _rolls_before_selection() -> bool:
 
 
 static func _waits_for_authoritative_actions() -> bool:
+	return await _checks_launch_turn(5) and await _checks_launch_turn(6)
+
+
+static func _checks_launch_turn(value: int) -> bool:
 	var harness: Dictionary = await _network_scene_harness()
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
@@ -237,8 +244,10 @@ static func _waits_for_authoritative_actions() -> bool:
 	if not _check(client.roll_requests == 1, "roll action was not submitted") \
 		or not _check(scene.dice_value == 0 and board.selectable_piece_indices.is_empty(), "roll changed the board optimistically"):
 		return _network_cleanup(scene)
-	client.accept_event(_network_roll(1))
-	if not _check(scene.dice_value == 6 and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
+	var roll := _network_roll(1)
+	roll.payload.value = value
+	client.accept_event(roll)
+	if not _check(scene.dice_value == value and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
 		return _network_cleanup(scene)
 	scene._on_piece_pressed("red", 1)
 	if not _check(client.move_requests.is_empty() and not board._route_preview.is_empty(), "selection submitted instead of previewing"):
@@ -248,14 +257,16 @@ static func _waits_for_authoritative_actions() -> bool:
 	if not _check(client.move_requests == [1], "selected plane was not submitted") \
 		or not _check(scene.piece_state("red", 1)["zone"] == "hangar", "plane moved before server confirmation"):
 		return _network_cleanup(scene)
-	client.accept_event(_network_move(2, 1))
+	var move := _network_move(2, 1)
+	move.payload.roll = value
+	client.accept_event(move)
 	if not _check(roll_button.disabled and scene._bounce_playing, "accepted move did not lock animation"):
 		return _network_cleanup(scene)
 	board._bounce_tween.custom_step(5.0)
 	return _network_cleanup(
 		scene,
 		_check(scene.piece_state("red", 1)["zone"] == "launch", "accepted plane did not launch") \
-			and _check(not roll_button.disabled, "accepted six did not enable the extra roll"),
+			and _check(roll_button.disabled == (value == 5), "launch did not apply the correct next turn"),
 	)
 
 
@@ -417,11 +428,11 @@ static func _bounce_lifecycle() -> bool:
 	var snapshot := _network_snapshot(10)
 	snapshot["payload"]["phase"] = "awaiting_move"
 	snapshot["payload"]["dice"] = 6
-	snapshot["payload"]["pieces"]["black"][0] = {"zone": "home", "index": 5}
+	snapshot["payload"]["pieces"]["black"][0] = {"zone": "home", "index": 4}
 	client.accept_snapshot(snapshot)
 	var move := _network_move(11, 0)
-	move["payload"]["from"] = {"zone": "home", "index": 5}
-	move["payload"]["to"] = {"zone": "home", "index": 1}
+	move["payload"]["from"] = {"zone": "home", "index": 4}
+	move["payload"]["to"] = {"zone": "home", "index": 0}
 	client.accept_event(move)
 	var board: Control = scene.get_node("Board")
 	if not _check(scene._bounce_playing and scene.get_node("RightRail/Content/RollButton").disabled, "bounce did not lock next roll"):
@@ -468,6 +479,7 @@ class FakeMatchClient:
 	var move_requests: Array = []
 	var resign_requests := 0
 	var dispose_calls := 0
+	var opponent_online := true
 
 	func start(_ws_url: String, _match_id: String, _ticket: String, game_state: Variant, game_id: String) -> bool:
 		state = game_state
@@ -497,7 +509,7 @@ class FakeMatchClient:
 		return true
 
 	func is_player_online(_user_id: String) -> bool:
-		return true
+		return opponent_online
 
 	func dispose() -> void:
 		dispose_calls += 1
@@ -560,7 +572,7 @@ static func _animation_queue() -> bool:
 	snapshot.payload.dice = 1
 	for i in 4:
 		snapshot.payload.pieces.black[i] = {"zone":"finished","index":0}
-	snapshot.payload.pieces.black[0] = {"zone":"home","index":5}
+	snapshot.payload.pieces.black[0] = {"zone":"home","index":4}
 	client.accept_snapshot(snapshot)
 	client.accept_event(FlightChessFullGameDriver.next_event(client.state,MATCH_ID))
 	if not _check(client.state.status == "finished" and not scene.get_node("ResultPanel").visible,"goal result appeared before arrival animation"):
@@ -587,6 +599,19 @@ static func _responsive_hud_bounds() -> bool:
 			var rail: Control = scene.get_node(pair[0])
 			var child: Control = rail.get_node(pair[1])
 			if not _check(rail.get_global_rect().grow(0.01).encloses(child.get_global_rect()),"responsive HUD overflow: %s at %s rail=%s child=%s" % [pair[1],dimensions,rail.get_global_rect(),child.get_global_rect()]):
+				scene.free()
+				return false
+		var opponent_card: Control = scene.get_node("LeftRail/Content/OpponentCard")
+		var local_card: Control = scene.get_node("LeftRail/Content/LocalCard")
+		var versus: Label = scene.get_node("LeftRail/Content/Versus")
+		var gap_center := (opponent_card.get_global_rect().end.y + local_card.global_position.y) / 2.0
+		if not _check(is_equal_approx(versus.get_global_rect().get_center().y, gap_center) and versus.vertical_alignment == VERTICAL_ALIGNMENT_CENTER, "VS is not centered between player cards"):
+			scene.free()
+			return false
+		for card in [opponent_card, local_card]:
+			var role: Label = card.get_node("Content/Role")
+			var badge: Label = card.get_node("BadgeOverlay/TurnBadge")
+			if not _check(card.get_global_rect().encloses(badge.get_global_rect()) and absf(role.get_global_rect().get_center().y - badge.get_global_rect().get_center().y) < 1.0, "turn badge does not align with player header"):
 				scene.free()
 				return false
 		var action: Control = scene.get_node("RightRail/Content/RollButton")
@@ -625,3 +650,104 @@ static func _menu_pointer_input() -> bool:
 		return _network_cleanup(scene)
 	await _click_control(scene.get_node("ResignDialog/Dialog/Content/Actions/CancelButton"))
 	return _network_cleanup(scene,_check(client.resign_requests == 0 and not scene.get_node("ResignDialog").visible,"cancel target did not preserve the match"))
+
+
+static func _captures_at_landings() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	var snapshot := _network_snapshot(10)
+	snapshot.payload.phase = "awaiting_move"
+	snapshot.payload.dice = 4
+	snapshot.payload.pieces.black[0] = {"zone":"main","index":35}
+	snapshot.payload.pieces.white[0] = {"zone":"main","index":39}
+	snapshot.payload.pieces.white[1] = {"zone":"main","index":43}
+	snapshot.payload.pieces.white[2] = {"zone":"main","index":3}
+	client.accept_snapshot(snapshot)
+	var event := _network_move(11, 0)
+	event.payload.from = {"zone":"main","index":35}
+	event.payload.to = {"zone":"main","index":3}
+	event.payload.roll = 4
+	event.payload.effect = "jump_shortcut"
+	event.payload.capturedPieceIndices = [0,1,2]
+	client.accept_event(event)
+	var board = scene.get_node("Board")
+	var result := _check(scene._bounce_playing and board._captured_flights.size() == 3, "capture animation missing")
+	for index in 3:
+		result = _check(board._captured_flights[index].origin == board.MAIN_PATH[[39,43,3][index]], "capture origin teleported") and result
+	board._bounce_tween.pause()
+	board._bounce_tween.custom_step(0.56 + 0.42)
+	result = _check(board._captured_flights[0].point.is_equal_approx(board.HANGAR_SLOTS.yellow[0]), "initial landing capture did not finish before jump") and result
+	result = _check(board._captured_flights[1].point.is_equal_approx(board.MAIN_PATH[43]), "next landing captured early") and result
+	board._bounce_tween.custom_step(10.0)
+	result = _check(scene.piece_state("yellow", 0).zone == "hangar" and not scene._bounce_playing, "capture did not finish") and result
+	_network_cleanup(scene)
+	return result
+
+
+static func _player_presence_status() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	client.accept_snapshot(_network_snapshot(0))
+	var local: Label = scene.get_node("LeftRail/Content/LocalCard/Content/Name")
+	var opponent: Label = scene.get_node("LeftRail/Content/OpponentCard/Content/Name")
+	var result := _check(local.text == "在线" and opponent.text == local.text, "online player cards use different presence copy")
+	if not local.has_node("PresenceDot") or not opponent.has_node("PresenceDot"):
+		return _network_cleanup(scene, _check(false, "player presence has no independently colored indicator"))
+	var local_dot: Panel = local.get_node("PresenceDot")
+	var opponent_dot: Panel = opponent.get_node("PresenceDot")
+	var online_color: Color = local_dot.get_theme_stylebox("panel").bg_color
+	result = _check(online_color == opponent_dot.get_theme_stylebox("panel").bg_color, "online players have different indicator colors") and result
+	client.opponent_online = false
+	client.player_presence_changed.emit(WHITE_ID, false)
+	result = _check(opponent.text == "离线" and local.text == "在线", "opponent presence did not update independently") and result
+	result = _check(opponent_dot.get_theme_stylebox("panel").bg_color != online_color, "offline player retained online color") and result
+	client.connection_state_changed.emit("reconnecting")
+	result = _check(local.text == "重连中" and opponent.text == "状态未知", "reconnect retained stale online presence") and result
+	result = _check(local_dot.get_theme_stylebox("panel").bg_color != online_color, "reconnecting player retained online color") and result
+	client.connection_state_changed.emit("failed")
+	result = _check(local.text == "离线", "failed connection did not show local offline state") and result
+	return _network_cleanup(scene, result)
+
+
+static func _captures_home_crossing() -> bool:
+	var harness: Dictionary = await _network_scene_harness(WHITE_ID)
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	var snapshot := _network_snapshot(10)
+	snapshot.payload.nextColor = "white"
+	snapshot.payload.phase = "awaiting_move"
+	snapshot.payload.dice = 2
+	snapshot.payload.pieces.white[0] = {"zone": "main", "index": 15}
+	snapshot.payload.pieces.black[0] = {"zone": "home", "index": 2}
+	snapshot.payload.pieces.black[1] = {"zone": "home", "index": 2}
+	snapshot.payload.pieces.black[2] = {"zone": "home", "index": 1}
+	client.accept_snapshot(snapshot)
+	var event := _network_move(11, 0)
+	event.payload.color = "white"
+	event.payload.userId = WHITE_ID
+	event.payload.from = {"zone": "main", "index": 15}
+	event.payload.to = {"zone": "main", "index": 29}
+	event.payload.roll = 2
+	event.payload.effect = "shortcut"
+	event.payload.capturedPieceIndices = [0, 1]
+	client.accept_event(event)
+	var board = scene.get_node("Board")
+	if not _check(scene._bounce_playing and board._captured_flights.size() == 2, "home stack capture animation missing"):
+		return _network_cleanup(scene)
+	var crossing: Vector2 = board.HOME_STRETCHES.red[2]
+	var result := true
+	for flight in board._captured_flights:
+		result = _check(flight.origin.is_equal_approx(crossing), "home victim started on main route") and result
+	board._bounce_tween.pause()
+	board._bounce_tween.custom_step(0.28 + 0.32)
+	result = _check(board._bounce.point.is_equal_approx(crossing), "shortcut did not pass through home crossing") and result
+	for flight in board._captured_flights:
+		result = _check(flight.point.is_equal_approx(crossing), "victim returned before crossing") and result
+	board._bounce_tween.custom_step(0.42)
+	for flight in board._captured_flights:
+		result = _check(flight.point.is_equal_approx(board.HANGAR_SLOTS.red[flight.index]), "home stack did not return before flight continued") and result
+	board._bounce_tween.custom_step(10.0)
+	result = _check(not scene._bounce_playing and scene.piece_state("yellow", 0) == {"zone": "main", "index": 29} and scene.piece_state("red", 2) == {"zone": "home", "index": 1}, "shortcut destination or adjacent home plane incorrect") and result
+	return _network_cleanup(scene, result)

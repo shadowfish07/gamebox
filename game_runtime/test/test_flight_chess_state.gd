@@ -10,9 +10,11 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess validates shortcut home crossing captures", "run": _crossing_captures},
 		{"name": "flight chess bounces all home rolls and validates authority", "run": _bounces_home_rolls},
 		{"name": "flight chess restores an authoritative roll snapshot", "run": _restores_snapshot},
 		{"name": "flight chess confirms roll then selected move", "run": _confirms_roll_and_move},
+		{"name": "flight chess five launches and ends turn", "run": _five_launches},
 		{"name": "flight chess keeps repeated sixes without penalty", "run": _keeps_repeated_sixes},
 		{"name": "flight chess applies jump shortcut capture", "run": _applies_jump_shortcut_capture},
 		{"name": "flight chess rejects malformed or out-of-order events", "run": _rejects_invalid_events},
@@ -57,6 +59,31 @@ static func _confirms_roll_and_move() -> bool:
 		and _check(state.next_color == "black" and state.phase == "awaiting_roll", "six did not preserve the turn")
 
 
+static func _five_launches() -> bool:
+	var state = FlightChessState.new(MATCH_ID)
+	if not state.apply_snapshot(_snapshot(0, "awaiting_roll", "black", 0, _initial_pieces())).get("ok", false):
+		return _check(false, "initial snapshot rejected")
+	if not state.mark_pending_roll(ACTION_ID, BLACK_ID):
+		return _check(false, "roll was not marked pending")
+	var rolled := state.apply_event(_event(1, "flight_chess.roll.accepted", {
+		"color": "black", "userId": BLACK_ID, "value": 5,
+		"movablePieceIndices": [0, 1, 2, 3],
+	}, ACTION_ID))
+	if not rolled.get("ok", false) or not state.pending_action.is_empty() or state.phase != "awaiting_move":
+		return _check(false, "accepted roll did not unlock selection")
+	var move_action := "55555555-5555-4555-8555-555555555555"
+	if not state.mark_pending_move(move_action, 1, BLACK_ID):
+		return _check(false, "move was not marked pending")
+	var moved := state.apply_event(_event(2, "flight_chess.move.accepted", {
+		"color": "black", "userId": BLACK_ID, "pieceIndex": 1, "roll": 5,
+		"from": {"zone": "hangar", "index": 1}, "to": {"zone": "launch", "index": 0},
+		"effect": "none", "capturedPieceIndices": [],
+	}, move_action))
+	return _check(moved.get("ok", false), "accepted launch was rejected") \
+		and _check(state.pieces["black"][1] == {"zone": "launch", "index": 0}, "launch did not update the plane") \
+		and _check(state.next_color == "white" and state.phase == "awaiting_roll", "five did not end the turn") \
+		and _check(not state.can_request_roll(BLACK_ID) and state.can_request_roll(WHITE_ID), "five granted an extra roll")
+
 static func _keeps_repeated_sixes() -> bool:
 	var state = FlightChessState.new(MATCH_ID)
 	if not state.apply_snapshot(_snapshot(0, "awaiting_roll", "black", 0, _initial_pieces())).get("ok", false):
@@ -90,17 +117,20 @@ static func _applies_jump_shortcut_capture() -> bool:
 	var pieces := _initial_pieces()
 	pieces["black"][0] = {"zone": "main", "index": 35}
 	pieces["white"][0] = {"zone": "main", "index": 3}
-	pieces["white"][1] = {"zone": "main", "index": 3}
+	pieces["white"][1] = {"zone": "main", "index": 39}
+	pieces["white"][2] = {"zone": "main", "index": 43}
+	pieces["white"][3] = {"zone": "main", "index": 37}
 	if not state.apply_snapshot(_snapshot(10, "awaiting_move", "black", 4, pieces)).get("ok", false):
 		return _check(false, "setup snapshot rejected")
 	var applied := state.apply_event(_event(11, "flight_chess.move.accepted", {
 		"color": "black", "userId": BLACK_ID, "pieceIndex": 0, "roll": 4,
 		"from": {"zone": "main", "index": 35}, "to": {"zone": "main", "index": 3},
-		"effect": "jump_shortcut", "capturedPieceIndices": [0, 1],
+		"effect": "jump_shortcut", "capturedPieceIndices": [0, 1, 2],
 	}, ACTION_ID))
 	return _check(applied.get("ok", false), "jump shortcut event rejected") \
 		and _check(state.pieces["black"][0]["index"] == 3, "plane missed shortcut destination") \
-		and _check(state.pieces["white"][0]["zone"] == "hangar" and state.pieces["white"][1]["zone"] == "hangar", "captured stack did not return")
+		and _check(state.pieces["white"][0]["zone"] == "hangar" and state.pieces["white"][1]["zone"] == "hangar", "captured stack did not return") \
+		and _check(state.pieces["white"][2]["zone"] == "hangar" and state.pieces["white"][3]["index"] == 37, "intermediate landing or passed cell capture incorrect")
 
 
 static func _rejects_invalid_events() -> bool:
@@ -169,15 +199,15 @@ static func _check(condition: bool, message: String) -> bool:
 
 static func _bounces_home_rolls() -> bool:
 	for color in ["black", "white"]:
-		for index in 6:
+		for index in FlightChessState.HOME_CELL_COUNT:
 			for roll in range(1, 7):
 				var target: int = index
 				var direction := 1
 				for _step in roll:
 					target += direction
-					if target == 6:
+					if target == FlightChessState.HOME_CELL_COUNT:
 						direction = -1
-				var expected := {"zone": "finished", "index": 0} if target == 6 else {"zone": "home", "index": target}
+				var expected := {"zone": "finished", "index": 0} if target == FlightChessState.HOME_CELL_COUNT else {"zone": "home", "index": target}
 				var pieces := _initial_pieces()
 				pieces[color][0] = {"zone": "home", "index": index}
 				for finished_index in range(1, 4):
@@ -194,8 +224,39 @@ static func _bounces_home_rolls() -> bool:
 				}, ACTION_ID)
 				if not _check(state.apply_event(event).get("ok", false), "authoritative home move rejected"):
 					return false
-				if not _check((state.status == "finished") == (target == 6), "passing finish must not win"):
+				if not _check((state.status == "finished") == (target == FlightChessState.HOME_CELL_COUNT), "passing finish must not win"):
 					return false
-				if target != 6 and not _check(state.next_color == (color if roll == 6 else ("white" if color == "black" else "black")), "bounce turn incorrect"):
+				if target != FlightChessState.HOME_CELL_COUNT and not _check(state.next_color == (color if roll == 6 else ("white" if color == "black" else "black")), "bounce turn incorrect"):
+					return false
+	return true
+
+
+static func _crossing_captures() -> bool:
+	for color in ["black", "white"]:
+		var opponent := "white" if color == "black" else "black"
+		var start := 26 if color == "black" else 0
+		for spec in [[16, 2, true], [10, 4, true], [1, 1, false], [2, 1, false]]:
+			var pieces := _initial_pieces()
+			pieces[color][0] = {"zone": "main", "index": (start + spec[0] - 1) % 52}
+			for i in 4:
+				pieces[opponent][i] = {"zone": "home", "index": [2, 1, 2, 3][i]}
+			var state = FlightChessState.new(MATCH_ID)
+			if not state.apply_snapshot(_snapshot(10, "awaiting_move", color, spec[1], pieces)).get("ok", false):
+				return _check(false, "crossing snapshot rejected")
+			var resolution := FlightChessState._resolve_move(color, pieces[color][0], spec[1])
+			var event := _event(11, "flight_chess.move.accepted", {
+				"color": color, "userId": BLACK_ID if color == "black" else WHITE_ID,
+				"pieceIndex": 0, "roll": spec[1], "from": pieces[color][0], "to": resolution.to,
+				"effect": resolution.effect, "capturedPieceIndices": [0, 2] if spec[2] else [],
+			}, ACTION_ID)
+			var forged := event.duplicate(true)
+			forged.payload.capturedPieceIndices = [0, 1, 2]
+			if not _check(not state.apply_event(forged).get("ok", false) and state.revision == 10, "incorrect crossing capture mutated authority"):
+				return false
+			if not _check(state.apply_event(event).get("ok", false), "valid crossing event rejected"):
+				return false
+			for i in 4:
+				var expected: Dictionary = {"zone": "hangar", "index": i} if spec[2] and i in [0, 2] else pieces[opponent][i]
+				if not _check(state.pieces[opponent][i] == expected, "crossing or adjacent home piece incorrect"):
 					return false
 	return true

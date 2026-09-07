@@ -41,7 +41,7 @@ var _selectable_indices: Array = []
 var _selected_index := -1
 var _status_text := "你的回合"
 var _turn_text := "先掷骰子"
-var _hint_text := "掷出 6 后，再选择一架飞机起飞"
+var _hint_text := "掷出 5 或 6 后，选择一架飞机起飞"
 var _preview_state := "ready"
 var _preview_dark: Variant = null
 var _preview_safe_insets := Vector4.ZERO
@@ -76,6 +76,7 @@ var _event_queue: Array[Dictionary] = []
 var _event_visuals := {}
 var _moving_visuals := {}
 var _moving_card_pieces := {}
+var _capture_origins := {}
 var _moving_color := ""
 var _menu_open := false
 var _bounce_roll := 0
@@ -365,7 +366,7 @@ func _reset_demo() -> void:
 	_selected_index = -1
 	_status_text = "你的回合"
 	_turn_text = "先掷骰子"
-	_hint_text = "掷出 6 后，再选择一架飞机起飞"
+	_hint_text = "掷出 5 或 6 后，选择一架飞机起飞"
 
 
 func _apply_preview_state() -> void:
@@ -601,6 +602,17 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 
 
 func _on_event_received(envelope: Dictionary) -> void:
+	var capture_payload: Variant = envelope.get("payload")
+	if _state != null and envelope.get("type") == "flight_chess.move.accepted" and capture_payload is Dictionary and capture_payload.get("color") in ["black", "white"] and FlightChessState._valid_indices(capture_payload.get("capturedPieceIndices")) and not _capture_origins.has(envelope.revision) and int(envelope.revision) > _last_presented_event_revision:
+		var before: Dictionary = _pieces if not _bounce_playing else _moving_visuals
+		if not _event_queue.is_empty():
+			before = _event_visuals.get(_event_queue[-1].revision, before)
+		var enemy := "yellow" if envelope.payload.color == "black" else "red"
+		var origins := {}
+		for index in envelope.payload.capturedPieceIndices:
+			if before.has(enemy) and index < before[enemy].size():
+				origins[index] = before[enemy][index].duplicate(true)
+		_capture_origins[envelope.revision] = origins
 	if _bounce_playing:
 		if int(envelope.get("revision",-1)) > _last_presented_event_revision and not _event_queue.any(func(item: Dictionary) -> bool: return item.revision == envelope.revision):
 			_event_queue.append(envelope.duplicate(true))
@@ -645,14 +657,15 @@ func _on_event_received(envelope: Dictionary) -> void:
 		_moving_card_pieces[_moving_color][payload.pieceIndex] = payload.from.duplicate(true)
 		var captured_color := "yellow" if _moving_color == "red" else "red"
 		for index in payload.capturedPieceIndices:
-			_moving_card_pieces[captured_color][index] = payload.to.duplicate(true)
+			_moving_card_pieces[captured_color][index] = _capture_origins[envelope.revision][index].duplicate(true)
 		var from: Dictionary = payload.from
-		_animation_copy = "超点反弹" if from.zone == "home" and from.index + payload.roll > 6 else "抵达终点" if payload.to.zone == "finished" else "撞机 · %d 架回库" % payload.capturedPieceIndices.size() if not payload.capturedPieceIndices.is_empty() else "飞行中"
+		_animation_copy = "超点反弹" if from.zone == "home" and from.index + payload.roll > FlightChessState.HOME_CELL_COUNT else "抵达终点" if payload.to.zone == "finished" else "撞机 · %d 架回库" % payload.capturedPieceIndices.size() if not payload.capturedPieceIndices.is_empty() else "飞行中"
 	_sync_ui()
 	if moving:
 		var color := "red" if payload.color == "black" else "yellow"
 		var segments := Motion.segments(color,payload.pieceIndex,payload.from,payload.roll,payload.effect)
-		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished")
+		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished", _capture_origins.get(envelope.revision, {}))
+		_capture_origins.erase(envelope.revision)
 		animation.finished.connect(func() -> void:
 			_bounce_playing = false
 			if not _event_queue.is_empty():
@@ -670,6 +683,7 @@ func _cancel_home_bounce(clear_queue: bool = true) -> void:
 	if clear_queue:
 		_event_queue.clear()
 		_event_visuals.clear()
+		_capture_origins.clear()
 	_bounce_playing = false
 	$Board.cancel_home_bounce()
 
@@ -909,6 +923,16 @@ func _local_board_color() -> String:
 	return "red" if _local_platform_color() == "black" else "yellow" if _local_platform_color() == "white" else ""
 
 
+func _local_presence_text() -> String:
+	if not _started or _connection_state == "connected":
+		return "在线"
+	if _connection_state == "reconnecting":
+		return "重连中"
+	if _connection_state in ["failed", "closed"]:
+		return "离线"
+	return "连接中"
+
+
 func _opponent_presence_text() -> String:
 	if _connection_state != "connected" or _awaiting_snapshot:
 		return "状态未知"
@@ -1074,13 +1098,13 @@ func _refresh_hud() -> void:
 		local_turn = _moving_color == local_color
 	var card_pieces: Dictionary = _moving_card_pieces if _bounce_playing and not _moving_card_pieces.is_empty() else _pieces
 	var paused: bool = _started and (_state == null or _state.revision < 0 or (_state.status != "active" and not _bounce_playing) or _awaiting_snapshot or _connection_state != "connected" or _resign_submitted)
-	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, "已连接" if not _started or _connection_state == "connected" else "连接中", card_pieces.get(local_color, []))
+	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, _local_presence_text(), card_pieces.get(local_color, []))
 	HUD.present_card(self, "OpponentCard", opponent_color, not local_turn and not paused, _opponent_presence_text() if _started and _state != null else "在线", card_pieces.get(opponent_color, []))
 	if paused:
 		$LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge.text = "暂停"
 		$LeftRail/Content/OpponentCard/BadgeOverlay/TurnBadge.text = "暂停"
 	$RightRail/Content/DiceLabel.text = "骰点 %d" % _dice_value if _dice_value > 0 else "等待掷骰"
-	$RightRail/Content/RuleLabel.text = "i  路线预览，确认后移动" if _selected_index >= 0 else "i  每次只移动一架飞机" if _dice_value > 0 else "i  掷出 6：可起飞，并再掷一次"
+	$RightRail/Content/RuleLabel.text = "i  路线预览，确认后移动" if _selected_index >= 0 else "i  每次只移动一架飞机" if _dice_value > 0 else "i  5、6 可起飞；6 可再掷"
 	var confirmed: bool = not _started or (_state != null and _state.revision >= 0)
 	$Board.modulate.a = 1.0 if confirmed else 0.35
 	for name in ["LocalCard", "OpponentCard"]:
@@ -1089,7 +1113,7 @@ func _refresh_hud() -> void:
 		content.get_node("Meta").visible = not confirmed
 		if not confirmed:
 			content.get_node("Meta").text = "等待同步"
-	$BoardStatus.text = _animation_copy if _bounce_playing else "棋盘已同步 · 等待掷骰" if _selectable_indices.is_empty() else "选择飞机 · 查看路线"
+	$BoardStatus.text = _animation_copy if _bounce_playing else "" if _selectable_indices.is_empty() else "选择飞机 · 查看路线"
 	if not confirmed:
 		$BoardStatus.text = "正在同步棋盘"
 		$RightRail/Content/DiceLabel.text = "等待同步"
@@ -1108,7 +1132,7 @@ func _refresh_hud() -> void:
 		$RightRail/Content/RuleLabel.text = "i  恢复同步后继续对局"
 	elif _turn_feedback == "无棋可走":
 		$BoardStatus.text = "无法移动 · 已换手"
-		$RightRail/Content/RuleLabel.text = "i  非 6 不能从机库起飞"
+		$RightRail/Content/RuleLabel.text = "i  掷出 5 或 6 才能起飞"
 	$RightRail/Content/CancelSelection.visible = _selected_index >= 0 and (not _started or _can_select_piece())
 	var route: Array = []
 	if _selected_index >= 0 and _pieces.has(local_color):
@@ -1178,7 +1202,7 @@ func _show_rules() -> void:
 	title.add_theme_font_size_override("font_size",roundi(22*unit))
 	content.add_child(title)
 	var copy := Label.new()
-	copy.text = "掷出 6 可起飞，并可再掷一次。\n落到同色格跳 4 格，飞行点沿捷径前进。\n撞到对手飞机，对方整组返回机库。\n归家超点走到尽头后原路退回。\n精确抵达终点，四架全部抵达获胜。"
+	copy.text = "掷出 5 或 6 可起飞。5 起飞后换手，6 可再掷一次。\n落到同色格跳 4 格，飞行点沿捷径前进。\n撞到对手飞机，对方整组返回机库。\n归家超点走到尽头后原路退回。\n精确抵达终点，四架全部抵达获胜。"
 	copy.add_theme_font_size_override("font_size",roundi(13*unit))
 	copy.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(copy)

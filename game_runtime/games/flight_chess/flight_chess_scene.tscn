@@ -102,7 +102,7 @@ text = "你 · 红方"
 [node name="Name" type="Label" parent="LeftRail/Content/LocalCard/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessPlayerName"
-text = "已连接"
+text = "在线"
 
 [node name="Meta" type="Label" parent="LeftRail/Content/LocalCard/Content"]
 layout_mode = 2
@@ -144,7 +144,7 @@ autowrap_mode = 3
 [node name="HintLabel" type="Label" parent="RightRail/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessHint"
-text = "掷出 6 后，再选择一架飞机起飞"
+text = "掷出 5 或 6 后，选择一架飞机起飞"
 horizontal_alignment = 1
 autowrap_mode = 3
 
@@ -169,7 +169,7 @@ script = ExtResource("3_dice")
 [node name="RuleLabel" type="Label" parent="RightRail/Content"]
 layout_mode = 2
 theme_type_variation = &"FlightChessRule"
-text = "掷 6 起飞 · 掷 6 再投"
+text = "5、6 起飞 · 6 再投"
 horizontal_alignment = 1
 autowrap_mode = 3
 
