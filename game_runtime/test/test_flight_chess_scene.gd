@@ -417,11 +417,11 @@ static func _bounce_lifecycle() -> bool:
 	var snapshot := _network_snapshot(10)
 	snapshot["payload"]["phase"] = "awaiting_move"
 	snapshot["payload"]["dice"] = 6
-	snapshot["payload"]["pieces"]["black"][0] = {"zone": "home", "index": 5}
+	snapshot["payload"]["pieces"]["black"][0] = {"zone": "home", "index": 4}
 	client.accept_snapshot(snapshot)
 	var move := _network_move(11, 0)
-	move["payload"]["from"] = {"zone": "home", "index": 5}
-	move["payload"]["to"] = {"zone": "home", "index": 1}
+	move["payload"]["from"] = {"zone": "home", "index": 4}
+	move["payload"]["to"] = {"zone": "home", "index": 0}
 	client.accept_event(move)
 	var board: Control = scene.get_node("Board")
 	if not _check(scene._bounce_playing and scene.get_node("RightRail/Content/RollButton").disabled, "bounce did not lock next roll"):
@@ -560,7 +560,7 @@ static func _animation_queue() -> bool:
 	snapshot.payload.dice = 1
 	for i in 4:
 		snapshot.payload.pieces.black[i] = {"zone":"finished","index":0}
-	snapshot.payload.pieces.black[0] = {"zone":"home","index":5}
+	snapshot.payload.pieces.black[0] = {"zone":"home","index":4}
 	client.accept_snapshot(snapshot)
 	client.accept_event(FlightChessFullGameDriver.next_event(client.state,MATCH_ID))
 	if not _check(client.state.status == "finished" and not scene.get_node("ResultPanel").visible,"goal result appeared before arrival animation"):

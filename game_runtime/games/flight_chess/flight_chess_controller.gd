@@ -647,7 +647,7 @@ func _on_event_received(envelope: Dictionary) -> void:
 		for index in payload.capturedPieceIndices:
 			_moving_card_pieces[captured_color][index] = payload.to.duplicate(true)
 		var from: Dictionary = payload.from
-		_animation_copy = "超点反弹" if from.zone == "home" and from.index + payload.roll > 6 else "抵达终点" if payload.to.zone == "finished" else "撞机 · %d 架回库" % payload.capturedPieceIndices.size() if not payload.capturedPieceIndices.is_empty() else "飞行中"
+		_animation_copy = "超点反弹" if from.zone == "home" and from.index + payload.roll > FlightChessState.HOME_CELL_COUNT else "抵达终点" if payload.to.zone == "finished" else "撞机 · %d 架回库" % payload.capturedPieceIndices.size() if not payload.capturedPieceIndices.is_empty() else "飞行中"
 	_sync_ui()
 	if moving:
 		var color := "red" if payload.color == "black" else "yellow"

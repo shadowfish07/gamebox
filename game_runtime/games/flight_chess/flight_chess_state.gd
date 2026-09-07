@@ -16,7 +16,7 @@ const ZONE_HOME := "home"
 const ZONE_FINISHED := "finished"
 const PIECE_COUNT := 4
 const MAIN_CELL_COUNT := 52
-const HOME_CELL_COUNT := 6
+const HOME_CELL_COUNT := 5
 const START_INDICES := {BLACK: 26, WHITE: 0}
 
 var revision: int:

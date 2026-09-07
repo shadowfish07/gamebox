@@ -8,7 +8,7 @@ static func progress(color: String, piece: Dictionary) -> int:
 		"launch": return 0
 		"main": return posmod(int(piece.index)-int(Board.PATH_STARTS[color]),52)+1
 		"home": return 51+int(piece.index)
-	return 57
+	return 56
 
 static func point(color: String, value: int, index: int) -> Vector2:
 	if value == -1:
@@ -17,7 +17,7 @@ static func point(color: String, value: int, index: int) -> Vector2:
 		return Board.LAUNCH_POINTS[color]
 	if value <= 50:
 		return Board.MAIN_PATH[(Board.PATH_STARTS[color]+value-1)%52]
-	if value <= 56:
+	if value <= 55:
 		return Board.HOME_STRETCHES[color][value-51]
 	return Board.FINISH_POINTS[color]
 
@@ -29,8 +29,8 @@ static func segments(color: String, index: int, from: Dictionary, roll: int, eff
 		return [{"from":previous,"to":point(color,0,index),"duration":0.42,"lift":25.0}]
 	for step in range(1,roll+1):
 		var value := start+step
-		if value > 57:
-			value = 114-value
+		if value > 56:
+			value = 112-value
 		var target := point(color,value,index)
 		result.append({"from":previous,"to":target,"duration":0.14,"lift":5.0})
 		previous = target

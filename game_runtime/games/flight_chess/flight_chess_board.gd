@@ -62,10 +62,10 @@ const BASE_ROUTE_CELL_POLYGONS := [
 ]
 
 const HOME_STRETCHES := {
-	"yellow": [Vector2(114, 300), Vector2(146, 300), Vector2(178, 300), Vector2(210, 300), Vector2(242, 300), Vector2(270, 300)],
-	"green": [Vector2(300, 114), Vector2(300, 146), Vector2(300, 178), Vector2(300, 210), Vector2(300, 242), Vector2(300, 270)],
-	"red": [Vector2(486, 300), Vector2(454, 300), Vector2(422, 300), Vector2(390, 300), Vector2(358, 300), Vector2(330, 300)],
-	"blue": [Vector2(300, 486), Vector2(300, 454), Vector2(300, 422), Vector2(300, 390), Vector2(300, 358), Vector2(300, 330)],
+	"yellow": [Vector2(114, 300), Vector2(146, 300), Vector2(178, 300), Vector2(210, 300), Vector2(242, 300)],
+	"green": [Vector2(300, 114), Vector2(300, 146), Vector2(300, 178), Vector2(300, 210), Vector2(300, 242)],
+	"red": [Vector2(486, 300), Vector2(454, 300), Vector2(422, 300), Vector2(390, 300), Vector2(358, 300)],
+	"blue": [Vector2(300, 486), Vector2(300, 454), Vector2(300, 422), Vector2(300, 390), Vector2(300, 358)],
 }
 
 const HANGAR_RECTS := {
@@ -90,10 +90,10 @@ const LAUNCH_POINTS := {
 }
 
 const FINISH_POINTS := {
-	"yellow": Vector2(288, 300),
-	"green": Vector2(300, 288),
-	"red": Vector2(312, 300),
-	"blue": Vector2(300, 312),
+	"yellow": Vector2(272, 300),
+	"green": Vector2(300, 272),
+	"red": Vector2(328, 300),
+	"blue": Vector2(300, 328),
 }
 
 const PATH_STARTS := {"yellow": 0, "green": 13, "red": 26, "blue": 39}
@@ -430,13 +430,12 @@ func _draw_finish_center() -> void:
 	for color in PLAYER_ORDER:
 		var turns: int = PLAYER_ORDER.find(color)
 		var points := PackedVector2Array()
-		for source in [Vector2(300,300),Vector2(279,279),Vector2(279,321)]:
+		for source in [Vector2(300,300),Vector2(258,258),Vector2(258,342)]:
 			var point: Vector2 = source
 			for _turn in turns:
 				point = Vector2(600-point.y,point.x)
 			points.append(_logical_to_pixel(point))
 		draw_colored_polygon(points,PLAYER_COLORS[color])
-	_draw_board_text(Vector2(300,355), "顺时针 · 精确归家", 10, Color(BOARD_INK,GameboxTokens.GAME["pending_overlay_alpha"]))
 
 
 func _draw_launch_pad(color: String) -> void:
@@ -564,7 +563,7 @@ static func _valid_piece(piece: Variant) -> bool:
 		"hangar": return index >= 0 and index < 4
 		"launch", "finished": return index == 0
 		"main": return index >= 0 and index < 52
-		"home": return index >= 0 and index < 6
+		"home": return index >= 0 and index < HOME_STRETCHES["yellow"].size()
 	return false
 
 

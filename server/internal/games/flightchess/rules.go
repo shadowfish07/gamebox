@@ -43,7 +43,7 @@ const (
 
 	PieceCount    = 4
 	MainCellCount = 52
-	HomeCellCount = 6
+	HomeCellCount = 5
 )
 
 var (

@@ -169,15 +169,15 @@ static func _check(condition: bool, message: String) -> bool:
 
 static func _bounces_home_rolls() -> bool:
 	for color in ["black", "white"]:
-		for index in 6:
+		for index in FlightChessState.HOME_CELL_COUNT:
 			for roll in range(1, 7):
 				var target: int = index
 				var direction := 1
 				for _step in roll:
 					target += direction
-					if target == 6:
+					if target == FlightChessState.HOME_CELL_COUNT:
 						direction = -1
-				var expected := {"zone": "finished", "index": 0} if target == 6 else {"zone": "home", "index": target}
+				var expected := {"zone": "finished", "index": 0} if target == FlightChessState.HOME_CELL_COUNT else {"zone": "home", "index": target}
 				var pieces := _initial_pieces()
 				pieces[color][0] = {"zone": "home", "index": index}
 				for finished_index in range(1, 4):
@@ -194,8 +194,8 @@ static func _bounces_home_rolls() -> bool:
 				}, ACTION_ID)
 				if not _check(state.apply_event(event).get("ok", false), "authoritative home move rejected"):
 					return false
-				if not _check((state.status == "finished") == (target == 6), "passing finish must not win"):
+				if not _check((state.status == "finished") == (target == FlightChessState.HOME_CELL_COUNT), "passing finish must not win"):
 					return false
-				if target != 6 and not _check(state.next_color == (color if roll == 6 else ("white" if color == "black" else "black")), "bounce turn incorrect"):
+				if target != FlightChessState.HOME_CELL_COUNT and not _check(state.next_color == (color if roll == 6 else ("white" if color == "black" else "black")), "bounce turn incorrect"):
 					return false
 	return true
