@@ -7,6 +7,7 @@ import '../../design_system/components/gamebox_page_body.dart';
 import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../update/update_action.dart';
+import '../scratch/scratch_page.dart';
 import 'session_controller.dart';
 
 final class RegistrationPage extends StatefulWidget {
@@ -135,6 +136,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
           ),
         ),
         children: [
+          const ScratchEntry(),
           Column(
             children: [
               Icon(

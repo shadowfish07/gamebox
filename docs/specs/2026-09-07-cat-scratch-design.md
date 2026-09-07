@@ -38,39 +38,38 @@
 
 当前单件传说平均 200 次出现一次，仅为期望。若以后传说增至五件而总概率不变，单件为 0.1%，平均 1,000 次，必须重新评估收集负担。
 
-## MVP 实现边界
+## 当前实现：Flutter 手机 MVP
 
-实现目录：[../design/cat-scratch/](../design/cat-scratch/)。本次交付是独立浏览器可玩 MVP，不是已接入 Gamebox 的 Android 游戏。沿用仓库已有 HTML 交互原型的交付位置，目标是确认手感、图鉴和视觉效果。
+用户明确否定 HTML 版本的移动端体验，并要求直接用 Flutter 实现。最终路线采用 Flutter Widgets + CustomPainter，无需 Godot；旧 [HTML 原型](../design/cat-scratch/) 仅保留历史探索，不再作为移动端验收依据。
 
-- 原生 HTML/CSS/ES modules，Canvas 2D 擦除涂层，Pointer Events 支持鼠标与触摸。页面其他区域可正常滚动。
-- 浏览器加密随机数决定档位和成员；纯客户端结果不可用于可信排名。
-- localStorage 保存图鉴、重复数、首次获得时间、展柜、声音/主题偏好和当前票。刮擦轨迹在抬手时保存，切页与缩放保持进度。
-- 每张票只在完全揭晓后入册，重复点击/刷新不能重复领取。首次启动真实空图鉴，不预填拥有的珍稀猫。
-- 存档读写失败明确提示；不可用或损坏的存档不静默覆盖。多标签存档变化要求刷新后继续，防止旧标签覆盖新收藏。
-- 原画使用本次 imagegen 生成的 4×6 图集，每猫一格；MVP 徽章使用同角色插画加珐琅金属框。独立重绘徽章轮廓、每猫独立大尺寸场景原画、精细刮屑粒子和真实设备触感仍属于后续美术打磨。
-- 默认竖屏手机，兼容桌面预览；明暗两套公共语义颜色来自 Gamebox tokens 2.4.0，暖色纸张和稀有度颜色属于游戏美术。
-- 浏览器导航用页内刮奖/图鉴/展柜，切页不丢当前票；详情与规则使用可关闭原生弹层。
-- 声音默认关闭，可开关；采用浏览器合成轻微刮擦声及揭晓音，震动仅在浏览器支持时增强。
-- 展柜可生成并下载本地 PNG 展示卡，含进度、六个位置和各档统计，不上传收藏数据。
+- 生产入口：Gamebox 登录页与大厅的「猫猫刮奖」，免登录、无需后端即可进入。
+- Flutter 原生路由、Material 3 底部导航、详情与规则底部弹层；刮奖操作区按可用高度适配，短屏职业证改为线索与照片并排，主按钮固定在底部导航上方。
+- 真实触摸 Pointer Events 驱动局部 CustomPainter 涂层擦除；只重绘涂层，按唯一覆盖面积达到 65% 自动揭晓，并提供揭晓触感反馈。
+- 刮奖、图鉴、展柜三个页面共用同一收藏状态。图鉴支持稀有度和已获得筛选，详情显示猫猫原画、故事、重复数量和首次获得时间；展柜最多六只。
+- 使用 Dart 安全随机源生成票面奖品，切换未完成票的刮法不更换奖品。完全揭晓才入册，同票只领取一次。
+- 使用现有 FlutterSecureStorage 保存设备内收藏、当前票、刮擦轨迹和展柜。写入串行化，保存中仍可完成刮擦；下一张需等待保存完成。
+- 抬手保存轨迹；切换页保留当前刮擦。读写失败明确提示并可重试，损坏存档不会静默覆盖；有未保存修改时返回需确认放弃。
+- 24 猫插画复用已生成图集，徽章为角色圆形裁切与稀有度装饰框。独立徽章设计、更高清独立原画、刮屑和刮擦音效属于后续打磨。
+- 公共界面沿用 Gamebox 主题与 tokens，随系统明暗切换；奶油票面和稀有度配色属于游戏美术。
 
-### 后续讨论过但暂不实现
+### 后续范围
 
-收藏积分兑换刮具、主题票册解锁、重复合成、交易、账号云同步、好友进度、公共排行榜、Gamebox 大厅入口与 Android/Godot 接入。展示卡为当前比较手段。正式联网版若加入可信榜单，抽取和收藏需由服务端记录，不能信任此客户端存档。
+好友收藏对比、账号云同步、可信排行榜、展示卡图片导出、合成或兑换均未接入 Flutter MVP。当前可在本机展柜展示与查看进度。没有真实货币或付费抽奖。客户端无限抽取不能作为可信榜单依据；联网版需服务端记账。
 
 ## 关键状态与验收
 
-| 需求 / 状态 | 实现证据 | 验证方式 |
+| 需求 / 状态 | Flutter 实现 | 验证层 |
 | --- | --- | --- |
-| 24 猫、四档概率与档内随机 | collection.mjs / CATS、drawCat | Node 边界和全部成员可达测试 |
-| 三种刮法、65% 清理、职业证顺序 | app.mjs / mountScratch，collection.mjs / openRegion | 覆盖率测试；浏览器真实交互 |
-| 同票只领取一次、重复不加种类 | collection.mjs / claimTicket | 领取、重复、切换、刷新测试 |
-| 空图鉴、过滤、解锁、详情原画 | app.mjs / renderAlbum、showCat | 浏览器截图检查 |
-| 六格展柜、增删、满位、导出 | collection.mjs / toggleFavorite，app.mjs / renderShowcase | 单元测试；浏览器导出与截图 |
-| 进度保存、存储不可用、损坏与多标签冲突 | restoreState、app.mjs / save | 负向测试；运行时异常注入 |
-| 默认、刮擦中、线索、揭晓、新/重复、导航 | app.mjs | Agent 独立截图检查 |
-| 360px 窄屏和桌面、明暗模式 | style.css | 实际浏览器视口检查，无横向溢出 |
+| 24 猫、四档概率、同票只领一次 | scratch_catalog.dart、scratch_controller.dart | Dart 单元测试 |
+| 三种刮法、职业证顺序、65% 唯一覆盖 | scratch_controller.dart、scratch_surface.dart | 单元测试与真实手势组件测试 |
+| 连续刮擦遇到异步保存、失败后重试 | scratch_controller.dart | 延迟写入与失败存储测试 |
+| 小屏主按钮、安全区、明暗布局 | scratch_page.dart | 360×640、412×891 组件测试及 Android 运行检查 |
+| 图鉴筛选、原画、展柜增删 | scratch_page.dart | Flutter 组件测试及 Android 运行检查 |
+| 原生入口、返回、重启后的本地存档 | 登录页、大厅入口、SecureScratchStore | 安装实际 Android APK 验证 |
 
-运行与检查命令见 [MVP README](../design/cat-scratch/README.md)。完成证据见同目录验收记录。浏览器证据不证明 Android 宿主、原生 Back 或双设备行为。
+实现目录：`app/lib/features/scratch/`；测试目录：`app/test/features/scratch/`。
+验证命令：`cd app && flutter test test/features/scratch`，仓库门禁 `bash tool/verify.sh`。
+具体 Android 运行结果记在 [Flutter 验收记录](../design/cat-scratch/flutter-acceptance.md)。
 
 ## Web 实现参考
 

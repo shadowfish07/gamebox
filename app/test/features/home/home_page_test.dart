@@ -605,7 +605,11 @@ void main() {
       ),
     );
     await _flushWidget(tester);
-    await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('open-rps-history')),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('石头剪刀布状态加载失败'), findsOneWidget);
@@ -709,7 +713,11 @@ void main() {
       );
       expect(fixture.api.statusCalls, statusCalls);
 
-      await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('open-rps-history')),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-rps-history')));
       await tester.pumpAndSettle();
@@ -757,10 +765,12 @@ void main() {
       matching: find.byWidgetPredicate(
         (widget) =>
             widget is SizedBox &&
+            widget.width == null &&
             widget.height == GameboxTokens.components.sectionSpacing,
       ),
     );
-    expect(sectionGaps, findsNWidgets(3));
+    expect(sectionGaps, findsNWidgets(4));
+    expect(find.byKey(const Key('open-cat-scratch')), findsOneWidget);
     expect(find.byKey(const Key('game-gomoku')), findsOneWidget);
     expect(find.byKey(const Key('game-chinese-checkers')), findsOneWidget);
     expect(find.byKey(const Key('game-rps')), findsOneWidget);
@@ -792,7 +802,11 @@ void main() {
     await _flushWidget(tester);
     final statusCalls = fixture.api.statusCalls;
 
-    await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('open-rps-history')),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('open-rps-history')));
     await tester.pumpAndSettle();
@@ -895,7 +909,11 @@ void main() {
       _app(fixture.controller, aliceId, rpsController: rpsController),
     );
     await _flushWidget(tester);
-    await tester.ensureVisible(find.byKey(const Key('open-rps-history')));
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('open-rps-history')),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('选择赛制和对手'), findsOneWidget);

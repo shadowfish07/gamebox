@@ -15,6 +15,7 @@ import '../rps/rps_controller.dart';
 import '../rps/rps_models.dart';
 import '../rps/rps_opponent_page.dart';
 import '../update/update_action.dart';
+import '../scratch/scratch_page.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
 import 'opponent_page.dart';
@@ -322,6 +323,7 @@ final class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          const ScratchEntry(),
           _buildGomoku(controller),
           if (widget.chineseCheckersController
               case final HomeController chineseCheckersController)

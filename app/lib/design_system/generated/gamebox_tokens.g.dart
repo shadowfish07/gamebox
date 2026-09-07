@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 
 abstract final class GameboxTokens {
-  static const version = '2.4.0';
+  static const version = '2.5.0';
   static const brandSeed = Color(0xFF006B60);
 
   static const lightColorScheme = ColorScheme(
@@ -267,6 +267,22 @@ abstract final class GameboxTokens {
     resultLossContainerLight: Color(0xFFF6E49C),
     resultLossDark: Color(0xFFE4CA72),
     resultLossLight: Color(0xFF745B00),
+    scratchCluePaper: Color(0xFFEEE4D2),
+    scratchCommon: Color(0xFF89775A),
+    scratchEnamelLight: Color(0xFFFFEDB4),
+    scratchEnamelShade: Color(0xFFF4E1BC),
+    scratchEpic: Color(0xFF8560AA),
+    scratchFoil: Color(0xFFCED5CA),
+    scratchFoilGlint: Color(0xFFE2E5DA),
+    scratchFoilInk: Color(0xFF51654F),
+    scratchFoilLight: Color(0xFFDCE0D7),
+    scratchFoilShade: Color(0xFFBDC7BD),
+    scratchInk: Color(0xFF493F32),
+    scratchLegendary: Color(0xFFB48A35),
+    scratchLockedInk: Color(0xFF657866),
+    scratchPaper: Color(0xFFFFF5E3),
+    scratchPaw: Color(0xFF849584),
+    scratchRare: Color(0xFF487463),
     whitePiece: Color(0xFFF8FAFC),
     whitePieceOutline: Color(0xFF667085),
     winningLine: Color(0xFFF4C542),
@@ -467,6 +483,22 @@ final class GameboxGameColors {
     required this.resultLossContainerLight,
     required this.resultLossDark,
     required this.resultLossLight,
+    required this.scratchCluePaper,
+    required this.scratchCommon,
+    required this.scratchEnamelLight,
+    required this.scratchEnamelShade,
+    required this.scratchEpic,
+    required this.scratchFoil,
+    required this.scratchFoilGlint,
+    required this.scratchFoilInk,
+    required this.scratchFoilLight,
+    required this.scratchFoilShade,
+    required this.scratchInk,
+    required this.scratchLegendary,
+    required this.scratchLockedInk,
+    required this.scratchPaper,
+    required this.scratchPaw,
+    required this.scratchRare,
     required this.whitePiece,
     required this.whitePieceOutline,
     required this.winningLine,
@@ -500,6 +532,22 @@ final class GameboxGameColors {
   final Color resultLossContainerLight;
   final Color resultLossDark;
   final Color resultLossLight;
+  final Color scratchCluePaper;
+  final Color scratchCommon;
+  final Color scratchEnamelLight;
+  final Color scratchEnamelShade;
+  final Color scratchEpic;
+  final Color scratchFoil;
+  final Color scratchFoilGlint;
+  final Color scratchFoilInk;
+  final Color scratchFoilLight;
+  final Color scratchFoilShade;
+  final Color scratchInk;
+  final Color scratchLegendary;
+  final Color scratchLockedInk;
+  final Color scratchPaper;
+  final Color scratchPaw;
+  final Color scratchRare;
   final Color whitePiece;
   final Color whitePieceOutline;
   final Color winningLine;
