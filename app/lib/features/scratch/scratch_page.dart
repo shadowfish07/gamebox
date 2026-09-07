@@ -11,6 +11,7 @@ import 'scratch_collection_sync.dart';
 import 'scratch_players_page.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
+import 'scratch_collectible_card.dart';
 
 class ScratchEntry extends StatelessWidget {
   const ScratchEntry({super.key, this.socialApi});
@@ -606,10 +607,10 @@ class _ScratchPageState extends State<ScratchPage> {
                   key: const Key('scratch-album-grid'),
                   padding: EdgeInsets.all(GameboxTokens.spacing.page),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
+                    crossAxisCount: 2,
                     crossAxisSpacing: GameboxTokens.spacing.layout,
                     mainAxisSpacing: GameboxTokens.spacing.layout,
-                    childAspectRatio: .66,
+                    childAspectRatio: .74,
                   ),
                   itemCount: cats.length,
                   itemBuilder: (context, i) {
@@ -628,76 +629,11 @@ class _ScratchPageState extends State<ScratchPage> {
     ScratchCollectible cat, {
     required bool owned,
   }) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-    return Card(
-      margin: EdgeInsets.zero,
-      color: owned
-          ? Color.lerp(
-              scheme.surfaceContainerLow,
-              ScratchArt.rarityColors[cat.rarity],
-              .12,
-            )
-          : scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
-        side: BorderSide(
-          color: ScratchArt.rarityColors[cat.rarity].withValues(
-            alpha: owned ? .6 : .2,
-          ),
-        ),
-      ),
-      child: InkWell(
-        key: ValueKey('scratch-cat-${cat.index}'),
-        onTap: () => _detail(cat),
-        child: Padding(
-          padding: EdgeInsets.all(GameboxTokens.spacing.compact),
-          child: Column(
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '#${(cat.index + 1).toString().padLeft(2, '0')}',
-                  style: text.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: owned
-                        ? CollectibleArtwork(cat: cat, badge: true)
-                        : DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: scheme.surfaceContainerHighest,
-                            ),
-                            child: Icon(
-                              Icons.confirmation_number_outlined,
-                              color: scheme.outline,
-                              size: 30,
-                            ),
-                          ),
-                  ),
-                ),
-              ),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              Text(
-                owned ? cat.job : '等待相遇',
-                style: text.labelMedium,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              ScratchRarityLabel(
-                rarity: cat.rarity,
-                suffix: owned ? ' · ×${controller.counts[cat.index]}' : '',
-              ),
-            ],
-          ),
-        ),
-      ),
+    return ScratchCollectibleCard(
+      key: ValueKey('scratch-cat-${cat.index}'),
+      item: cat,
+      count: owned ? controller.counts[cat.index] : 0,
+      onTap: () => _detail(cat),
     );
   }
 

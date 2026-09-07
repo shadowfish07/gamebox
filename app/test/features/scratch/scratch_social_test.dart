@@ -80,10 +80,11 @@ void main() {
       expect(find.text('玩家甲的收藏'), findsOneWidget);
       expect(find.text('已收集 1/24'), findsOneWidget);
       expect(find.text('猫猫百业 · 1/24'), findsOneWidget);
-      expect(find.text('魔术师 · 墨墨'), findsOneWidget);
+      expect(find.text('魔术师'), findsOneWidget);
       final art = tester.getSize(find.byType(CollectibleArtwork));
       expect(art.width, art.height);
-      expect(find.text('稀有 · ×2'), findsOneWidget);
+      expect(find.text('稀有'), findsOneWidget);
+      expect(find.text('×2'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('scratch-publish')), findsNothing);

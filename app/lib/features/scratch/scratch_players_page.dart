@@ -4,7 +4,7 @@ import '../../core/api/api_error.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'scratch_controller.dart';
 import 'scratch_social_api.dart';
-import 'scratch_surface.dart';
+import 'scratch_collectible_card.dart';
 
 class ScratchPlayersPage extends StatefulWidget {
   const ScratchPlayersPage({super.key, required this.api, this.beforeLoad});
@@ -166,37 +166,14 @@ class ScratchPlayerCollectionPage extends StatelessWidget {
                   crossAxisCount: 2,
                   crossAxisSpacing: GameboxTokens.spacing.layout,
                   mainAxisSpacing: GameboxTokens.spacing.layout,
-                  childAspectRatio: .7,
+                  childAspectRatio: .74,
                 ),
                 itemCount: owned.length,
                 itemBuilder: (context, i) {
                   final item = owned[i];
-                  return Card(
-                    child: Padding(
-                      padding: EdgeInsets.all(GameboxTokens.spacing.compact),
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: Center(
-                              child: AspectRatio(
-                                aspectRatio: 1,
-                                child: CollectibleArtwork(cat: item),
-                              ),
-                            ),
-                          ),
-                          SizedBox(height: GameboxTokens.spacing.compact),
-                          Text(
-                            '${item.job} · ${item.name}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          ScratchRarityLabel(
-                            rarity: item.rarity,
-                            suffix: ' · ×${player.counts[item.index]}',
-                          ),
-                        ],
-                      ),
-                    ),
+                  return ScratchCollectibleCard(
+                    item: item,
+                    count: player.counts[item.index],
                   );
                 },
               ),
