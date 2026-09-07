@@ -1089,7 +1089,7 @@ func _refresh_hud() -> void:
 		content.get_node("Meta").visible = not confirmed
 		if not confirmed:
 			content.get_node("Meta").text = "等待同步"
-	$BoardStatus.text = _animation_copy if _bounce_playing else "棋盘已同步 · 等待掷骰" if _selectable_indices.is_empty() else "选择飞机 · 查看路线"
+	$BoardStatus.text = _animation_copy if _bounce_playing else "" if _selectable_indices.is_empty() else "选择飞机 · 查看路线"
 	if not confirmed:
 		$BoardStatus.text = "正在同步棋盘"
 		$RightRail/Content/DiceLabel.text = "等待同步"
