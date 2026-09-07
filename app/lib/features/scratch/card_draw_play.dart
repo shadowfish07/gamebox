@@ -150,7 +150,9 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                   clipBehavior: Clip.none,
                   fit: StackFit.expand,
                   children: [
-                    if (revealing && flow.current?.card.rarity == 3)
+                    if (revealing &&
+                        flow.current?.winning == true &&
+                        flow.current?.card.rarity == 3)
                       TweenAnimationBuilder<double>(
                         tween: Tween(begin: 0, end: 1),
                         duration: cardRevealDuration(3),
@@ -171,7 +173,9 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                             ? flow.finishReveal
                             : flow.current == null
                             ? flow.primary
-                            : () => widget.onDetail(flow.current!.card),
+                            : flow.current!.winning
+                            ? () => widget.onDetail(flow.current!.card)
+                            : flow.primary,
                         child: SizedBox(
                           key: _stageAnchor,
                           width: width,
@@ -199,7 +203,7 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
             height: GameboxTokens.spacing.section,
             child: Center(
               child: Text(
-                flow.queued ? '已接上下一张' : '每抽必得 · 免费收藏',
+                flow.queued ? '已接上下一张' : '免费抽卡',
                 style: text.labelMedium?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
@@ -282,7 +286,9 @@ class _CardDrawStageState extends State<CardDrawStage>
     with TickerProviderStateMixin {
   late final AnimationController _reveal = AnimationController(
     vsync: this,
-    duration: cardRevealDuration(widget.result?.card.rarity ?? 0),
+    duration: cardRevealDuration(
+      (widget.result?.winning == true ? widget.result!.card.rarity : 0),
+    ),
   );
   late final AnimationController _collect = AnimationController(
     vsync: this,
@@ -293,10 +299,15 @@ class _CardDrawStageState extends State<CardDrawStage>
   void initState() {
     super.initState();
     _reveal.addListener(() {
-      if (!_sounded && widget.playing && _reveal.value >= .5) {
+      if (!_sounded &&
+          widget.playing &&
+          widget.result?.winning == true &&
+          _reveal.value >= .5) {
         _sounded = true;
         SystemSound.play(SystemSoundType.click);
-        switch (widget.result?.card.rarity ?? 0) {
+        switch ((widget.result?.winning == true
+            ? widget.result!.card.rarity
+            : 0)) {
           case 3:
             HapticFeedback.heavyImpact();
           case 2:
@@ -360,13 +371,16 @@ class _CardDrawStageState extends State<CardDrawStage>
                 : null,
             child: Transform.translate(
               offset:
-                  target * flight +
+                  (widget.result?.winning == true
+                      ? target * flight
+                      : Offset(0, 12 * flight)) +
                   Offset(
                     0,
                     math.min(12.0, constraints.maxWidth * .06) * (1 - t),
                   ),
               child: Transform.scale(
-                scale: 1 - flight * .82,
+                scale:
+                    1 - flight * (widget.result?.winning == true ? .82 : .08),
                 child: Opacity(
                   opacity: 1 - flight * .7,
                   child: Transform(
@@ -392,6 +406,7 @@ class _CardDrawStageState extends State<CardDrawStage>
 
   Widget _front(BuildContext context, bool revealed) {
     final result = widget.result!;
+    if (!result.winning) return _miss(context);
     final color = ScratchArt.rarityColors[result.card.rarity];
     final text = Theme.of(context).textTheme;
     return DecoratedBox(
@@ -515,10 +530,44 @@ class _CardDrawStageState extends State<CardDrawStage>
     );
   }
 
+  Widget _miss(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      key: const Key('draw-empty-result'),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.spacing.compact),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.air,
+              color: scheme.onSurfaceVariant,
+              size: GameboxTokens.spacing.section,
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              '这次没有抽中',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleSmall
+                  ?.copyWith(color: scheme.onSurface),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _back(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    final tier = widget.result?.card.rarity;
+    final tier = widget.result?.winning == true
+        ? widget.result!.card.rarity
+        : null;
     final tint = widget.playing && tier != null
         ? ScratchArt.rarityColors[tier]
         : scheme.primary;

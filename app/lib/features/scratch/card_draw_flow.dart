@@ -79,7 +79,7 @@ final class CardDrawFlow extends ChangeNotifier {
       // Give a committed card a readable reveal before consuming the one tap
       // queued during saving. There is no unattended or batch draw mode.
       _timer = Timer(
-        receipt.card.rarity >= 2
+        receipt.winning && receipt.card.rarity >= 2
             ? GameboxTokens.motion.pageEnter * 5
             : GameboxTokens.motion.pageEnter,
         finishReveal,
@@ -119,7 +119,8 @@ final class CardDrawFlow extends ChangeNotifier {
     _timer = Timer(GameboxTokens.motion.standard, () {
       if (_disposed || !_foreground) return;
       if (current case final receipt?) {
-        if (recent.isEmpty || recent.first.serial != receipt.serial) {
+        if (receipt.winning &&
+            (recent.isEmpty || recent.first.serial != receipt.serial)) {
           recent.insert(0, receipt);
           if (recent.length > 6) recent.removeLast();
         }

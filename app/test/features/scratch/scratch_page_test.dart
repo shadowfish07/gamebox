@@ -11,6 +11,33 @@ import 'scratch_controller_test.dart' show MemoryScratchStore;
 import 'scratch_social_test.dart' show FakeSocial;
 
 void main() {
+  testWidgets('miss shows no reward, continues and keeps album unchanged', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final c = ScratchController(store: MemoryScratchStore(), random: () => .9);
+    await c.load();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: ScratchPage(controller: c),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('scratch-primary')));
+    await tester.pumpAndSettle();
+    expect(find.text('这次没有抽中'), findsOneWidget);
+    expect(find.text('NEW'), findsNothing);
+    expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
+    expect(find.textContaining('每抽必得'), findsNothing);
+    expect(c.total, 0);
+    await tester.tap(find.byKey(const Key('scratch-primary')));
+    await tester.pumpAndSettle();
+    expect(c.serial, 2);
+    expect(c.total, 0);
+    expect(find.byKey(const Key('draw-recent')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   for (final (roll, tier) in [(0.0, 0), (.8, 1), (.96, 2), (.999, 3)]) {
     testWidgets('one tap flips tier $tier and next tap draws directly', (
       tester,
@@ -22,7 +49,7 @@ void main() {
       final store = MemoryScratchStore();
       final c = ScratchController(
         store: store,
-        random: () => calls++ % 2 == 0 ? roll : 0,
+        random: () => [0.0, roll, 0.0][calls++ % 3],
       );
       await c.load();
       await tester.pumpWidget(

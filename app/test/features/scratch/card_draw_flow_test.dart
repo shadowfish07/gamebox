@@ -7,6 +7,39 @@ import 'package:gamebox/features/scratch/scratch_controller.dart';
 import 'scratch_controller_test.dart' show MemoryScratchStore;
 
 void main() {
+  testWidgets('miss retry does not reroll and next win alone enters recent', (
+    tester,
+  ) async {
+    var roll = .9;
+    final store = MemoryScratchStore();
+    final c = ScratchController(store: store, random: () => roll);
+    await c.load();
+    final f = CardDrawFlow(c);
+    store.fail = true;
+    f.primary();
+    await tester.pump();
+    expect(f.phase, CardDrawPhase.failed);
+    expect(c.total, 0);
+    roll = 0;
+    store.fail = false;
+    await f.retry();
+    expect(f.current!.winning, isFalse);
+    f.finishReveal();
+    f.primary();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(f.current!.winning, isTrue);
+    expect(f.recent, isEmpty);
+    expect(c.total, 1);
+    f.finishReveal();
+    f.primary();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(f.recent.length, 1);
+    expect(f.recent.single.winning, isTrue);
+    f.dispose();
+    c.dispose();
+  });
   testWidgets(
     'rapid taps queue at most one and never duplicate a pending write',
     (tester) async {

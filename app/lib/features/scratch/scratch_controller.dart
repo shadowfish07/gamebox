@@ -41,10 +41,11 @@ final class CardDrawResult {
     required this.serial,
     required this.isNew,
     required this.count,
+    this.winning = true,
   });
   final ScratchCollectible card;
   final int serial, count;
-  final bool isNew;
+  final bool isNew, winning;
 }
 
 final class ScratchController extends ChangeNotifier {
@@ -57,6 +58,7 @@ final class ScratchController extends ChangeNotifier {
   // Retained to round-trip legacy collections, though the showcase was removed.
   final favorites = <int>[];
   ScratchCollectible cat = scratchCollectibles.first;
+  bool winning = true;
   bool claimed = false,
       isNew = false,
       loading = true,
@@ -73,7 +75,8 @@ final class ScratchController extends ChangeNotifier {
           card: cat,
           serial: serial,
           isNew: isNew,
-          count: counts[cat.index],
+          count: winning ? counts[cat.index] : 0,
+          winning: winning,
         )
       : null;
   Future<void> _writes = Future.value();
@@ -91,7 +94,7 @@ final class ScratchController extends ChangeNotifier {
       final raw = await store.read();
       if (_disposed) return;
       final migrated = raw != null ? _restore(raw) : false;
-      if (raw == null) cat = drawScratchCollectible(random);
+      if (raw == null) _drawTicket();
       loading = false;
       if (raw == null || migrated) {
         await persist();
@@ -107,7 +110,8 @@ final class ScratchController extends ChangeNotifier {
   }
 
   Map<String, Object?> _snapshot() => {
-    'version': 2,
+    'version': 3,
+    'winning': winning,
     'counts': counts,
     'firstFound': firstFound,
     'favorites': favorites,
@@ -125,10 +129,11 @@ final class ScratchController extends ChangeNotifier {
     final savedFavorites = (data['favorites'] as List).cast<int>();
     final catIndex = data['cat'] as int;
     final savedClaimed = data['claimed'] as bool;
-    final savedWinning = version == 1
-        ? (data['winning'] as bool? ?? true)
-        : true;
-    if ((version != 1 && version != 2) ||
+    final savedWinning = version == 2
+        ? (data['claimed'] as bool ? true : random() < .2)
+        : (data['winning'] as bool? ?? true);
+    if ((version != 1 && version != 2 && version != 3) ||
+        (version == 3 && data['winning'] is! bool) ||
         (savedCounts.length != scratchLegacyCatalogSize &&
             savedCounts.length != scratchCollectibles.length) ||
         savedFirst.length != savedCounts.length ||
@@ -163,13 +168,11 @@ final class ScratchController extends ChangeNotifier {
       ..clear()
       ..addAll(savedFavorites);
     cat = scratchCollectibles[catIndex];
-    claimed = savedClaimed && savedWinning;
-    isNew = claimed && data['isNew'] as bool;
+    winning = savedWinning;
+    claimed = savedClaimed;
+    isNew = claimed && winning && data['isNew'] as bool;
     serial = data['serial'] as int;
-    // Retire an already revealed empty ticket; its stored candidate becomes the
-    // next guaranteed draw, awarded only on an explicit draw action.
-    if (savedClaimed && !savedWinning) serial++;
-    return version == 1 || savedCounts.length != counts.length;
+    return version != 3 || savedCounts.length != counts.length;
   }
 
   void _validateLegacySurface(Map<String, dynamic> data, bool savedClaimed) {
@@ -196,6 +199,11 @@ final class ScratchController extends ChangeNotifier {
         }
       }
     }
+  }
+
+  void _drawTicket() {
+    winning = random() < .2;
+    cat = drawScratchCollectible(random);
   }
 
   Future<void> persist() {
@@ -227,18 +235,20 @@ final class ScratchController extends ChangeNotifier {
 
   Future<void> retry() => unsaved ? persist() : load();
 
-  /// Commits exactly one guaranteed card. The caller must check [unsaved] before
+  /// Commits one draw, including an empty result. The caller must check [unsaved] before
   /// presenting success; retry saves this same receipt without another award.
   Future<CardDrawResult?> draw() async {
     if (!interactive || _disposed) return null;
     if (claimed) {
-      cat = drawScratchCollectible(random);
+      _drawTicket();
       serial++;
     }
     claimed = true;
-    isNew = counts[cat.index] == 0;
-    counts[cat.index]++;
-    firstFound[cat.index] ??= DateTime.now().toIso8601String();
+    isNew = winning && counts[cat.index] == 0;
+    if (winning) {
+      counts[cat.index]++;
+      firstFound[cat.index] ??= DateTime.now().toIso8601String();
+    }
     final receipt = lastResult!;
     await persist();
     return receipt;

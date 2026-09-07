@@ -86,7 +86,7 @@ void main() {
   test(
     'dog prize persists, restores and repeated claims award only once',
     () async {
-      final values = [.995, .75].iterator;
+      final values = [0.0, .995, .75].iterator;
       final store = MemoryScratchStore();
       final c = ScratchController(
         store: store,

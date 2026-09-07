@@ -47,6 +47,69 @@ Map<String, Object?> legacyScratchSave({
 };
 
 void main() {
+  for (final (roll, wins) in [
+    (0.0, true),
+    (.199999, true),
+    (.2, false),
+    (.999999, false),
+  ]) {
+    test('20 percent award boundary $roll persists outcome', () async {
+      var calls = 0;
+      final store = MemoryScratchStore();
+      final c = ScratchController(
+        store: store,
+        random: () => calls++ % 3 == 0 ? roll : 0,
+      );
+      await c.load();
+      final result = (await c.draw())!;
+      expect(result.winning, wins);
+      expect(result.isNew, wins);
+      expect(result.count, wins ? 1 : 0);
+      expect(c.total, wins ? 1 : 0);
+      expect(c.firstFound.whereType<String>().length, wins ? 1 : 0);
+      final restored = ScratchController(
+        store: store,
+        random: () => throw StateError('must not reroll'),
+      );
+      await restored.load();
+      expect(restored.error, isNull);
+      expect(restored.lastResult!.winning, wins);
+      expect(restored.serial, c.serial);
+      c.dispose();
+      restored.dispose();
+    });
+  }
+  for (final claimed in [false, true]) {
+    test(
+      'v2 migration preserves awards and restores chance for pending draw $claimed',
+      () async {
+        final store = MemoryScratchStore()
+          ..value = jsonEncode({
+            ...legacyScratchSave(claimed: claimed),
+            'version': 2,
+          });
+        final c = ScratchController(store: store, random: () => .9);
+        await c.load();
+        expect(c.error, isNull);
+        expect(c.total, 1);
+        expect(c.winning, claimed);
+        final restored = ScratchController(
+          store: store,
+          random: () => throw StateError('reroll'),
+        );
+        await restored.load();
+        expect(restored.error, isNull);
+        expect(restored.winning, claimed);
+        if (!claimed) {
+          await restored.draw();
+          expect(restored.total, 1);
+          expect(restored.lastResult!.winning, isFalse);
+        }
+        c.dispose();
+        restored.dispose();
+      },
+    );
+  }
   for (final (roll, tier) in [
     (0.0, 0),
     (.69999, 0),
@@ -57,11 +120,11 @@ void main() {
     (.995, 3),
     (.99999, 3),
   ]) {
-    test('every draw awards one card at rarity boundary $roll', () async {
+    test('winning draw awards one card at rarity boundary $roll', () async {
       var calls = 0;
       final c = ScratchController(
         store: MemoryScratchStore(),
-        random: () => calls++ % 2 == 0 ? roll : .99,
+        random: () => [0.0, roll, .99][calls++ % 3],
       );
       await c.load();
       final result = await c.draw();
@@ -87,7 +150,7 @@ void main() {
     expect(restored.total, 2);
     expect(restored.lastResult!.serial, second.serial);
     expect(restored.lastResult!.isNew, isFalse);
-    expect((jsonDecode(store.value!) as Map)['version'], 2);
+    expect((jsonDecode(store.value!) as Map)['version'], 3);
     c.dispose();
     restored.dispose();
   });
@@ -127,12 +190,14 @@ void main() {
             expect(c.total, 1);
             expect(c.favorites, [0]);
             expect(c.firstFound[0], DateTime(2026).toIso8601String());
-            expect(c.claimed, claimed && winning);
+            expect(c.claimed, claimed);
+            expect(c.winning, winning);
             expect(c.cat.index, 0);
             if (!c.claimed) {
               final result = await c.draw();
               expect(result!.card.index, 0);
-              expect(c.counts[0], 2);
+              expect(result.winning, winning);
+              expect(c.counts[0], winning ? 2 : 1);
             }
             final restored = ScratchController(store: store);
             await restored.load();
