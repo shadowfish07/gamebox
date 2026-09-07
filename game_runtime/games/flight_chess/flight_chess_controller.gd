@@ -472,6 +472,7 @@ func _submit_preview_move() -> void:
 	_hint_text = "移动完成后继续本回合"
 	_sync_ui()
 	var animation: Tween = $Board.animate_move("red",index,Motion.segments("red",index,from,roll,resolution.effect),[],resolution.to.zone == "finished")
+	_play_launch_sound(from)
 	animation.finished.connect(func() -> void:
 		_bounce_playing = false
 		_dice_value = 0
@@ -480,6 +481,11 @@ func _submit_preview_move() -> void:
 		_hint_text = "掷出 6 会奖励额外一次掷骰" if roll == 6 else "选择已起飞的飞机继续航程"
 		_sync_ui()
 	)
+
+
+func _play_launch_sound(from: Dictionary) -> void:
+	if from.zone == "hangar":
+		$LaunchSound.play()
 
 
 func _movable_route_pieces() -> Array:
@@ -665,8 +671,7 @@ func _on_event_received(envelope: Dictionary) -> void:
 		var color := "red" if payload.color == "black" else "yellow"
 		var segments := Motion.segments(color,payload.pieceIndex,payload.from,payload.roll,payload.effect)
 		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished", _capture_origins.get(envelope.revision, {}))
-		if payload.from.zone == "hangar":
-			$LaunchSound.play()
+		_play_launch_sound(payload.from)
 		_capture_origins.erase(envelope.revision)
 		animation.finished.connect(func() -> void:
 			_bounce_playing = false

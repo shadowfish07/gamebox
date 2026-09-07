@@ -104,6 +104,7 @@ static func _keeps_standard_actions_visible() -> bool:
 		and _check(right_rail.get_global_rect().encloses(hint.get_global_rect()), "standard phone hint escapes the right rail")
 	scene._on_piece_pressed("red", 0)
 	scene._on_roll_pressed()
+	result = _check(scene.get_node("LaunchSound").playing, "preview hangar move did not play launch sound") and result
 	scene.get_node("Board")._bounce_tween.custom_step(5.0)
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	await (Engine.get_main_loop() as SceneTree).process_frame
