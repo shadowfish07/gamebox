@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/protocol"
@@ -279,4 +280,38 @@ func TestFlightChessInvalidMoveErrorsKeepDomainRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRejected(5005, 3, flightchess.MoveRequested, `{"pieceIndex":1}`, flightchess.ErrInvalidMove)
+}
+
+func TestFlightChessAbandonsLegacyRollWithoutRewritingHistory(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0, 5}))
+	ctx := context.Background()
+	created, err := service.Create(ctx, flightchess.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, _, err := service.ApplyAction(ctx, flightChessAction(created.ID, initiatorID, 9001, 0, flightchess.RollRequested, `{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := string(event.Payload[:len(event.Payload)-1]) + `,"penalizedPieceIndices":[]}`
+	if _, err := fixture.db.Exec(`UPDATE match_events SET payload_json=? WHERE match_id=? AND revision=1`, legacy, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerOffline(ctx, created.ID, initiatorID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.clock.Advance(24 * time.Hour)
+	events, err := service.AbandonExpired(ctx)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("abandon=(%v,%v)", events, err)
+	}
+	snapshot, err := service.Snapshot(ctx, created.ID)
+	if err != nil || snapshot.Match.Status != StatusAbandoned || snapshot.Match.Revision != 2 {
+		t.Fatalf("snapshot=(%v,%v)", snapshot, err)
+	}
+	var retained string
+	if err := fixture.db.QueryRow(`SELECT payload_json FROM match_events WHERE match_id=? AND revision=1`, created.ID).Scan(&retained); err != nil || retained != legacy {
+		t.Fatalf("history changed: %v", err)
+	}
 }

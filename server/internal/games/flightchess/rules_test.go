@@ -260,3 +260,29 @@ func TestRebuildAcceptsHistoricalOvershootExclusionAndNewBounce(t *testing.T) {
 		t.Fatalf("new bounce could not be replayed: %v", err)
 	}
 }
+
+func TestRebuildLegacyEmptyPenaltyRoll(t *testing.T) {
+	rules := NewRules()
+	event, want, err := rules.ApplyRandom(gameapi.Snapshot{}, blackID, gameapi.Action{Type: RollRequested, Payload: json.RawMessage(`{}`)}, bytes.NewReader([]byte{5}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := append([]byte(nil), event.Payload...)
+	for _, penalty := range []string{"[]", "[0]", "null", "{}", "[9]"} {
+		t.Run(penalty, func(t *testing.T) {
+			legacy := append(append([]byte(nil), current[:len(current)-1]...), []byte(`,"penalizedPieceIndices":`+penalty+`}`)...)
+			event.Payload = legacy
+			got, err := rules.Rebuild([]gameapi.Event{event})
+			if penalty == "[]" {
+				if err != nil || got.Revision != want.Revision || !bytes.Equal(got.State, want.State) {
+					t.Fatalf("legacy replay=(%s,%v)", got.State, err)
+				}
+			} else if !errors.Is(err, gameapi.ErrInvalidEvent) {
+				t.Fatalf("unsafe penalty accepted: %v", err)
+			}
+			if !bytes.Equal(event.Payload, legacy) {
+				t.Fatal("persisted payload changed")
+			}
+		})
+	}
+}
