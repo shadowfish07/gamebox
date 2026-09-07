@@ -257,10 +257,19 @@ static func _checks_launch_turn(value: int) -> bool:
 	if not _check(client.move_requests == [1], "selected plane was not submitted") \
 		or not _check(scene.piece_state("red", 1)["zone"] == "hangar", "plane moved before server confirmation"):
 		return _network_cleanup(scene)
+	var sound := scene.get_node("LaunchSound") as AudioStreamPlayer
+	if not _check(not sound.playing, "unconfirmed launch played sound"):
+		return _network_cleanup(scene)
 	var move := _network_move(2, 1)
 	move.payload.roll = value
 	client.accept_event(move)
 	if not _check(roll_button.disabled and scene._bounce_playing, "accepted move did not lock animation"):
+		return _network_cleanup(scene)
+	if not _check(sound.playing, "confirmed launch did not play sound"):
+		return _network_cleanup(scene)
+	sound.stop()
+	client.accept_event(move)
+	if not _check(not sound.playing, "duplicate launch replayed sound"):
 		return _network_cleanup(scene)
 	board._bounce_tween.custom_step(5.0)
 	return _network_cleanup(
@@ -574,12 +583,23 @@ static func _animation_queue() -> bool:
 		snapshot.payload.pieces.black[i] = {"zone":"finished","index":0}
 	snapshot.payload.pieces.black[0] = {"zone":"home","index":4}
 	client.accept_snapshot(snapshot)
-	client.accept_event(FlightChessFullGameDriver.next_event(client.state,MATCH_ID))
+	var arrival := FlightChessFullGameDriver.next_event(client.state,MATCH_ID)
+	client.accept_event(arrival)
 	if not _check(client.state.status == "finished" and not scene.get_node("ResultPanel").visible,"goal result appeared before arrival animation"):
 		return _network_cleanup(scene)
 	if not _check(scene.get_node("LeftRail/Content/LocalCard/Content/Stats").counts == [1,0,3] and scene.get_node("LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge").text == "当前","arrival updated counters or turn before landing"):
 		return _network_cleanup(scene)
+	var sound := scene.get_node("Board/FinishSound") as AudioStreamPlayer
+	if not _check(not sound.playing, "arrival sound played before landing"):
+		return _network_cleanup(scene)
+	scene.get_node("Board")._bounce_tween.custom_step(0.15)
+	if not _check(sound.playing, "arrival sound missing at final landing"):
+		return _network_cleanup(scene)
+	sound.stop()
 	scene.get_node("Board")._bounce_tween.custom_step(5.0)
+	client.accept_event(arrival)
+	if not _check(not sound.playing, "duplicate arrival replayed sound"):
+		return _network_cleanup(scene)
 	return _network_cleanup(scene,_check(scene.get_node("ResultPanel").visible and scene.get_node("LeftRail/Content/LocalCard/Content/Stats").counts == [0,0,4],"arrival did not finish with the result and icon counters"))
 
 
@@ -672,14 +692,25 @@ static func _captures_at_landings() -> bool:
 	event.payload.capturedPieceIndices = [0,1,2]
 	client.accept_event(event)
 	var board = scene.get_node("Board")
-	var result := _check(scene._bounce_playing and board._captured_flights.size() == 3, "capture animation missing")
+	var sound := board.get_node("CaptureSound") as AudioStreamPlayer
+	var result := _check(not sound.playing, "capture sound played before impact")
+	result = _check(scene._bounce_playing and board._captured_flights.size() == 3, "capture animation missing") and result
 	for index in 3:
 		result = _check(board._captured_flights[index].origin == board.MAIN_PATH[[39,43,3][index]], "capture origin teleported") and result
 	board._bounce_tween.pause()
-	board._bounce_tween.custom_step(0.56 + 0.42)
+	board._bounce_tween.custom_step(0.55)
+	result = _check(not sound.playing, "capture sound played during approach") and result
+	board._bounce_tween.custom_step(0.01 + 0.42)
+	result = _check(sound.playing, "landing capture was silent") and result
+	result = _check(not scene.get_node("LaunchSound").playing, "ordinary move played launch sound") and result
+	sound.stop()
 	result = _check(board._captured_flights[0].point.is_equal_approx(board.HANGAR_SLOTS.yellow[0]), "initial landing capture did not finish before jump") and result
 	result = _check(board._captured_flights[1].point.is_equal_approx(board.MAIN_PATH[43]), "next landing captured early") and result
 	board._bounce_tween.custom_step(10.0)
+	result = _check(sound.playing, "later landing captures were silent") and result
+	sound.stop()
+	client.accept_event(event)
+	result = _check(not sound.playing, "duplicate capture replayed sound") and result
 	result = _check(scene.piece_state("yellow", 0).zone == "hangar" and not scene._bounce_playing, "capture did not finish") and result
 	_network_cleanup(scene)
 	return result

@@ -665,6 +665,8 @@ func _on_event_received(envelope: Dictionary) -> void:
 		var color := "red" if payload.color == "black" else "yellow"
 		var segments := Motion.segments(color,payload.pieceIndex,payload.from,payload.roll,payload.effect)
 		var animation: Tween = $Board.animate_move(color,payload.pieceIndex,segments,payload.capturedPieceIndices,payload.to.zone == "finished", _capture_origins.get(envelope.revision, {}))
+		if payload.from.zone == "hangar":
+			$LaunchSound.play()
 		_capture_origins.erase(envelope.revision)
 		animation.finished.connect(func() -> void:
 			_bounce_playing = false
