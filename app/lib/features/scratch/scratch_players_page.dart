@@ -132,7 +132,13 @@ class ScratchPlayerCollectionPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final owned = scratchCollectibles
-        .where((item) => player.counts[item.index] > 0)
+        .where(
+          (item) =>
+              (item.index < player.counts.length
+                  ? player.counts[item.index]
+                  : 0) >
+              0,
+        )
         .toList();
     return Scaffold(
       appBar: AppBar(title: Text('${player.nickname}的收藏')),
@@ -173,7 +179,9 @@ class ScratchPlayerCollectionPage extends StatelessWidget {
                   final item = owned[i];
                   return ScratchCollectibleCard(
                     item: item,
-                    count: player.counts[item.index],
+                    count: (item.index < player.counts.length
+                        ? player.counts[item.index]
+                        : 0),
                   );
                 },
               ),

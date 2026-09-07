@@ -66,8 +66,8 @@ void main() {
       restored.dispose();
     },
   );
-  test('all rarity boundaries and 24 members are reachable', () {
-    expect(scratchCollectibles.length, 24);
+  test('all rarity boundaries and 48 members are reachable', () {
+    expect(scratchCollectibles.length, 48);
     for (final (roll, tier) in [
       (0.0, 0),
       (.69999, 0),

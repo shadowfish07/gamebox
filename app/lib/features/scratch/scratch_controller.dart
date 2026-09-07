@@ -155,16 +155,19 @@ final class ScratchController extends ChangeNotifier {
         ? true
         : data['winning'] as bool;
     if (data['version'] != 1 ||
-        savedCounts.length != 24 ||
-        savedFirst.length != 24 ||
+        (savedCounts.length != scratchLegacyCatalogSize &&
+            savedCounts.length != scratchCollectibles.length) ||
+        savedFirst.length != savedCounts.length ||
         savedCounts.any((v) => v < 0) ||
         catIndex < 0 ||
-        catIndex >= 24 ||
+        catIndex >= savedCounts.length ||
         modeIndex < 0 ||
         modeIndex >= 3 ||
         savedFavorites.length > 6 ||
         savedFavorites.toSet().length != savedFavorites.length ||
-        savedFavorites.any((i) => i < 0 || i >= 24 || savedCounts[i] == 0) ||
+        savedFavorites.any(
+          (i) => i < 0 || i >= savedCounts.length || savedCounts[i] == 0,
+        ) ||
         savedOpened.any((i) => i < 0 || i >= [1, 4, 2][modeIndex]) ||
         (modeIndex == 2 &&
             savedOpened.contains(1) &&
@@ -177,7 +180,7 @@ final class ScratchController extends ChangeNotifier {
         data['isNew'] is! bool) {
       throw const FormatException('Invalid scratch collection');
     }
-    for (var i = 0; i < 24; i++) {
+    for (var i = 0; i < savedCounts.length; i++) {
       if (savedCounts[i] > 0 &&
           (savedFirst[i] == null ||
               DateTime.tryParse(savedFirst[i]!) == null)) {
@@ -221,7 +224,9 @@ final class ScratchController extends ChangeNotifier {
       mask.dispose();
     }
     masks = restoredMasks;
+    counts.fillRange(0, counts.length, 0);
     counts.setAll(0, savedCounts);
+    firstFound.fillRange(0, firstFound.length, null);
     firstFound.setAll(0, savedFirst);
     favorites
       ..clear()

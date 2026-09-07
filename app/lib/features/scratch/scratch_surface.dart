@@ -57,7 +57,7 @@ class CollectibleArtwork extends StatelessWidget {
   final bool badge;
   @override
   Widget build(BuildContext context) {
-    const rows = [0, 304, 576, 838, 1096, 1319, 1536];
+    final rows = cat.artRows;
     final row = cat.artIndex ~/ 4;
     final height = rows[row + 1] - rows[row];
     final image = AspectRatio(
@@ -72,7 +72,7 @@ class CollectibleArtwork extends StatelessWidget {
                   left: -(cat.artIndex % 4) * width,
                   top: -rows[row] / height * width,
                   width: width * 4,
-                  height: 1536 / height * width,
+                  height: rows.last / height * width,
                   child: Image.asset(
                     cat.imageAsset,
                     fit: BoxFit.fill,

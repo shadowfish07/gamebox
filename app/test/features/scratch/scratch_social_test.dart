@@ -32,7 +32,7 @@ class FakeSocial implements ScratchSocialApi {
       ScratchPlayer(
         userId: '11111111-1111-4111-8111-111111111111',
         nickname: '玩家甲',
-        counts: List.generate(24, (i) => i == 13 ? 2 : 0),
+        counts: List.generate(scratchCollectibles.length, (i) => i == 13 ? 2 : 0),
         updatedAt: DateTime(2026, 9, 7),
       ),
     ], '');
@@ -78,7 +78,7 @@ void main() {
       await tester.tap(find.text('玩家甲'));
       await tester.pumpAndSettle();
       expect(find.text('玩家甲的收藏'), findsOneWidget);
-      expect(find.text('已收集 1/24'), findsOneWidget);
+      expect(find.text('已收集 1/48'), findsOneWidget);
       expect(find.text('猫猫百业 · 1/24'), findsOneWidget);
       expect(find.text('魔术师'), findsOneWidget);
       final art = tester.getSize(find.byType(CollectibleArtwork));
