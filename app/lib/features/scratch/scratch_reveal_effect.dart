@@ -185,37 +185,81 @@ class _RevealPainter extends CustomPainter {
     canvas.restore();
 
     const anchors = [
-      Offset(-.018, .16),
-      Offset(1.02, .28),
-      Offset(.82, -.015),
-      Offset(-.025, .68),
-      Offset(1.024, .82),
-      Offset(.22, 1.01),
-      Offset(.12, -.01),
-      Offset(1.01, .53),
-      Offset(-.02, .4),
-      Offset(.73, 1.015),
+      Offset(0, .16),
+      Offset(1, .28),
+      Offset(.82, 0),
+      Offset(0, .68),
+      Offset(1, .82),
+      Offset(.22, 1),
+      Offset(.12, 0),
+      Offset(1, .53),
+      Offset(0, .4),
+      Offset(.73, 1),
+      Offset(.48, 0),
+      Offset(.48, 1),
+      Offset(0, .88),
+      Offset(1, .1),
+      Offset(0, .05),
+      Offset(1, .95),
+      Offset(.95, 0),
+      Offset(.07, 1),
+      Offset(0, .54),
+      Offset(1, .65),
     ];
-    final count = [0, 3, 6, 10][rarity];
+    final count = [0, 6, 12, 20][rarity];
     // The empty center is a geometric guarantee, not an opacity illusion.
     canvas.save();
     canvas.clipPath(
       Path()
         ..fillType = PathFillType.evenOdd
-        ..addRect(bounds.inflate(24))
+        ..addRect(bounds.inflate(40))
         ..addRRect(frame.deflate(1)),
     );
     for (var i = 0; i < count; i++) {
-      final delay = (i % 3) * .07;
+      final delay = (i % 4) * .045;
       final phase = ((t - delay) / (1 - delay)).clamp(0.0, 1.0);
-      final opacity = math.sin(math.pi * phase);
+      final opacity = math.pow(math.sin(math.pi * phase), .65).toDouble();
       if (opacity <= 0) continue;
       final anchor = anchors[i];
-      final position = Offset(
-        anchor.dx * size.width + (anchor.dx - .5).sign * phase * 4,
-        anchor.dy * size.height - phase * 5,
+      final normal = Offset(
+        anchor.dx == 0
+            ? -1
+            : anchor.dx == 1
+            ? 1
+            : 0,
+        anchor.dy == 0
+            ? -1
+            : anchor.dy == 1
+            ? 1
+            : 0,
       );
-      final radius = (3.0 + i % 3) * opacity;
+      final tangent = Offset(-normal.dy, normal.dx);
+      final travel = Curves.easeOutCubic.transform(phase);
+      final position =
+          Offset(anchor.dx * size.width, anchor.dy * size.height) +
+          normal * (8 + travel * (normal.dy == 0 ? 5 + rarity * 4 : 3)) +
+          tangent * phase * 7;
+      final radius =
+          (4.0 + rarity * 2 + i % 3) *
+          (.6 + .4 * opacity) *
+          (normal.dy == 0 ? 1 : .8);
+      // Short outward trails and a luminous core make the particles readable
+      // at phone scale without lifting the opacity of the whole card halo.
+      canvas.drawLine(
+        position - normal * (3 + rarity * 2),
+        position,
+        Paint()
+          ..strokeWidth = 1.2
+          ..strokeCap = StrokeCap.round
+          ..color = color.withValues(alpha: opacity * .4),
+      );
+      canvas.drawCircle(
+        position,
+        radius * .7,
+        Paint()
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3)
+          ..color = color.withValues(alpha: opacity * .28),
+      );
       final star = Path()
         ..moveTo(position.dx, position.dy - radius)
         ..quadraticBezierTo(
@@ -243,9 +287,11 @@ class _RevealPainter extends CustomPainter {
           position.dy - radius,
         )
         ..close();
-      canvas.drawPath(
-        star,
-        Paint()..color = color.withValues(alpha: opacity * .9),
+      canvas.drawPath(star, Paint()..color = color.withValues(alpha: opacity));
+      canvas.drawCircle(
+        position,
+        radius * .18,
+        Paint()..color = ScratchArt.paper.withValues(alpha: opacity),
       );
     }
     canvas.restore();
