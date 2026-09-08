@@ -14,9 +14,9 @@ import 'scratch_social_test.dart' show FakeSocial;
 Future<void> waitForDrawReady(WidgetTester tester) async {
   for (var i = 0; i < 60; i++) {
     await tester.pump(const Duration(milliseconds: 100));
-    final button = tester.widget<FilledButton>(
-      find.byKey(const Key('scratch-primary')),
-    );
+    final finder = find.byKey(const Key('scratch-primary'));
+    if (finder.evaluate().isEmpty) continue;
+    final button = tester.widget<FilledButton>(finder);
     if (button.onPressed != null) {
       await tester.pumpAndSettle();
       return;
@@ -156,10 +156,15 @@ void main() {
       expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
       expect(find.text('全部刮开'), findsNothing);
       await waitForDrawReady(tester);
+      final buttonRect = tester.getRect(
+        find.byKey(const Key('scratch-primary')),
+      );
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pump();
       await tester.pump(cardRevealDuration(tier) * .45);
       expect(find.byKey(const Key('draw-card-front')), findsOneWidget);
+      expect(find.text('抽取中'), findsOneWidget);
+      expect(find.text('正在翻牌'), findsNothing);
       expect(
         tester
             .widget<FilledButton>(find.byKey(const Key('scratch-primary')))
@@ -172,13 +177,19 @@ void main() {
       await tester.pump(cardRevealDuration(tier));
       await tester.pumpAndSettle();
       expect(find.text('恭喜抽中'), findsOneWidget);
+      expect(find.byKey(const Key('scratch-primary')), findsNothing);
       expect(
-        tester
-            .widget<FilledButton>(find.byKey(const Key('scratch-primary')))
-            .onPressed,
-        isNull,
+        tester.getRect(find.byKey(const Key('draw-congratulations'))),
+        buttonRect,
       );
-      await tester.tap(find.byKey(const Key('scratch-primary')));
+      expect(
+        find.ancestor(
+          of: find.text('恭喜抽中'),
+          matching: find.byType(FilledButton),
+        ),
+        findsNothing,
+      );
+      await tester.tap(find.text('恭喜抽中'));
       expect(c.serial, 1);
       await waitForDrawReady(tester);
       expect(find.text('恭喜抽中'), findsNothing);
@@ -254,6 +265,7 @@ void main() {
           await tester.tap(find.byKey(const Key('scratch-primary')));
           await tester.pumpAndSettle();
         }
+        await waitForDrawReady(tester);
         expect(c.total, 3);
         expect(find.byKey(const Key('draw-recent')), findsOneWidget);
         expect(

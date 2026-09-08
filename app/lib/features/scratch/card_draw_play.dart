@@ -62,14 +62,9 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
     final celebrating = flow.phase == CardDrawPhase.celebrating;
     final returning = flow.phase == CardDrawPhase.returning;
     final enabled = flow.canDraw;
-    final label = busy
-        ? '正在保存'
-        : revealing
-        ? '正在翻牌'
-        : celebrating
-        ? '恭喜抽中'
-        : flow.phase == CardDrawPhase.collecting
-        ? '正在收卡'
+    final drawing = busy || revealing || flow.phase == CardDrawPhase.collecting;
+    final label = drawing
+        ? '抽取中'
         : flow.current == null
         ? '抽一张'
         : '再抽一张';
@@ -239,66 +234,78 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
           ),
           SizedBox(
             width: double.infinity,
-            child: Listener(
-              onPointerDown: (_) {
-                if (widget.flow.canDraw) setState(() => pressed = true);
-              },
-              onPointerUp: (_) => setState(() => pressed = false),
-              onPointerCancel: (_) => setState(() => pressed = false),
-              child: AnimatedScale(
-                scale: pressed && enabled ? .97 : 1,
-                duration: GameboxTokens.motion.fast,
-                child: FilledButton(
-                  key: const Key('scratch-primary'),
-                  onPressed: !enabled
-                      ? null
-                      : () {
-                          HapticFeedback.selectionClick();
-                          flow.primary();
-                        },
-                  style: FilledButton.styleFrom(
-                    animationDuration: GameboxTokens.motion.standard,
-                    disabledBackgroundColor: celebrating
-                        ? scheme.primaryContainer
-                        : returning
-                        ? scheme.primary
-                        : null,
-                    disabledForegroundColor: celebrating
-                        ? scheme.onPrimaryContainer
-                        : returning
-                        ? scheme.onPrimary
-                        : null,
-                  ),
-                  child: AnimatedSwitcher(
-                    duration: GameboxTokens.motion.standard,
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (child, animation) => FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, .25),
-                          end: Offset.zero,
-                        ).animate(animation),
-                        child: child,
-                      ),
-                    ),
-                    child: Row(
-                      key: ValueKey(label),
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          celebrating
-                              ? Icons.auto_awesome
-                              : Icons.style_outlined,
-                        ),
-                        SizedBox(width: GameboxTokens.spacing.compact),
-                        Text(label),
-                      ],
-                    ),
-                  ),
+            height: GameboxTokens.components.minimumTouchTarget,
+            child: AnimatedSwitcher(
+              duration: GameboxTokens.motion.standard,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, .18),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
                 ),
               ),
+              child: celebrating
+                  ? Center(
+                      key: const Key('draw-congratulations'),
+                      child: Text(
+                        '恭喜抽中',
+                        style: text.titleMedium?.copyWith(
+                          color: scheme.primary,
+                        ),
+                      ),
+                    )
+                  : SizedBox.expand(
+                      key: const Key('draw-button'),
+                      child: Listener(
+                        onPointerDown: (_) {
+                          if (widget.flow.canDraw)
+                            setState(() => pressed = true);
+                        },
+                        onPointerUp: (_) => setState(() => pressed = false),
+                        onPointerCancel: (_) => setState(() => pressed = false),
+                        child: AnimatedScale(
+                          scale: pressed && enabled ? .97 : 1,
+                          duration: GameboxTokens.motion.fast,
+                          child: FilledButton(
+                            key: const Key('scratch-primary'),
+                            onPressed: !enabled
+                                ? null
+                                : () {
+                                    HapticFeedback.selectionClick();
+                                    flow.primary();
+                                  },
+                            style: FilledButton.styleFrom(
+                              animationDuration: GameboxTokens.motion.standard,
+                              disabledBackgroundColor: returning
+                                  ? scheme.primary
+                                  : null,
+                              disabledForegroundColor: returning
+                                  ? scheme.onPrimary
+                                  : null,
+                            ),
+                            child: AnimatedSwitcher(
+                              duration: GameboxTokens.motion.standard,
+                              child: Row(
+                                key: ValueKey(label),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.style_outlined),
+                                  SizedBox(
+                                    width: GameboxTokens.spacing.compact,
+                                  ),
+                                  Text(label),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
             ),
           ),
           SizedBox(height: GameboxTokens.spacing.layout),
@@ -677,7 +684,7 @@ class _CardDrawStageState extends State<CardDrawStage>
               ),
               SizedBox(height: GameboxTokens.spacing.section),
               Text(
-                widget.waiting ? '正在保存' : '下一位，会是谁？',
+                widget.waiting ? '抽取中' : '下一位，会是谁？',
                 style: text.labelSmall?.copyWith(
                   color: scheme.onPrimaryContainer,
                 ),
