@@ -27,6 +27,46 @@ Future<void> waitForDrawReady(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('recent story navigation obeys the presentation lock', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 891);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = ScratchController(store: MemoryScratchStore(), random: () => 0);
+    await c.load();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: ScratchPage(controller: c, socialApi: FakeSocial()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scratch-primary')));
+    await waitForDrawReady(tester);
+    await tester.tap(find.byKey(const Key('scratch-primary')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    final recent = find.descendant(
+      of: find.byKey(const Key('draw-recent')),
+      matching: find.byWidgetPredicate(
+        (w) => w is GestureDetector && w.child is AspectRatio,
+      ),
+    );
+    expect(recent, findsOneWidget);
+    expect(tester.widget<GestureDetector>(recent).onTap, isNull);
+    await tester.tap(recent);
+    expect(find.byTooltip('关闭详情'), findsNothing);
+    await waitForDrawReady(tester);
+    expect(tester.widget<GestureDetector>(recent).onTap, isNotNull);
+    await tester.tap(recent);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('关闭详情'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    c.dispose();
+  });
+
   testWidgets('story stays locked through reveal and success transition', (
     tester,
   ) async {

@@ -217,6 +217,10 @@ void main() {
     );
     final api = HttpScratchSocialApi(client);
     expect((await api.list()).players.single.collected, 24);
+    const repeatedCursor = '11111111-1111-4111-8111-111111111111';
+    body['nextCursor'] = repeatedCursor;
+    await expectLater(api.list(repeatedCursor), throwsA(isA<ApiError>()));
+
     body = {
       'players': [
         {

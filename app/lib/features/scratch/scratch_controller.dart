@@ -241,8 +241,16 @@ final class ScratchController extends ChangeNotifier {
   /// presenting success; retry saves this same receipt without another award.
   Future<CardDrawResult?> draw() async {
     if (!interactive || _disposed) return null;
+    final nextWinning = claimed ? random() < .2 : winning;
+    final nextCat = claimed ? drawScratchCollectible(random) : cat;
+    if (nextWinning && counts[nextCat.index] >= 1000000000) {
+      error = '这张卡片已达到收藏上限。';
+      _changed();
+      return null;
+    }
     if (claimed) {
-      _drawTicket();
+      winning = nextWinning;
+      cat = nextCat;
       serial++;
     }
     claimed = true;

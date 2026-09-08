@@ -121,7 +121,9 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                           itemBuilder: (_, i) {
                             final result = flow.recent[i];
                             return GestureDetector(
-                              onTap: () => widget.onDetail(result.card),
+                              onTap: flow.canDraw
+                                  ? () => widget.onDetail(result.card)
+                                  : null,
                               child: AspectRatio(
                                 aspectRatio: .8,
                                 child: DecoratedBox(

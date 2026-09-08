@@ -47,6 +47,31 @@ Map<String, Object?> legacyScratchSave({
 };
 
 void main() {
+  for (final claimed in [false, true]) {
+    test(
+      'count cap refuses draw without changing stored collection claimed=$claimed',
+      () async {
+        final data = legacyScratchSave(claimed: claimed)..['version'] = 3;
+        (data['counts'] as List)[0] = 1000000000;
+        final raw = jsonEncode(data);
+        final store = MemoryScratchStore()..value = raw;
+        final c = ScratchController(store: store, random: () => 0);
+        await c.load();
+        expect(c.error, isNull);
+        expect(await c.draw(), isNull);
+        expect(c.error, isNotNull);
+        expect(c.counts[0], 1000000000);
+        expect(c.serial, 7);
+        expect(c.claimed, claimed);
+        expect(store.value, raw);
+        await c.retry();
+        expect(c.interactive, isTrue);
+        expect(store.value, raw);
+        c.dispose();
+      },
+    );
+  }
+
   for (final version in [1, 3]) {
     for (final invalid in [
       'short',
