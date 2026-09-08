@@ -16,12 +16,14 @@ class ScratchCardDetail extends StatefulWidget {
     required this.api,
     required this.beforeLoad,
     required this.onDraw,
+    required this.onViewGroup,
   });
   final ScratchCollectible cat;
   final ScratchController controller;
   final ScratchSocialApi api;
   final Future<void> Function() beforeLoad;
   final VoidCallback onDraw;
+  final VoidCallback onViewGroup;
 
   @override
   State<ScratchCardDetail> createState() => _ScratchCardDetailState();
@@ -31,6 +33,13 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
   final _detailScroll = ScrollController();
   bool _showOwners = false;
   bool _ownersOpened = false;
+  bool _openingGroup = false;
+
+  void _openGroup() {
+    if (_openingGroup) return;
+    setState(() => _openingGroup = true);
+    widget.onViewGroup();
+  }
 
   @override
   void dispose() {
@@ -258,7 +267,10 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _SeriesTitle(groupId: widget.cat.groupId),
+              _SeriesTitle(
+                groupId: widget.cat.groupId,
+                onPressed: _openingGroup ? null : _openGroup,
+              ),
               SizedBox(height: GameboxTokens.spacing.layout),
               Center(
                 child: ConstrainedBox(
@@ -313,9 +325,10 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
 }
 
 class _SeriesTitle extends StatelessWidget {
-  const _SeriesTitle({required this.groupId});
+  const _SeriesTitle({required this.groupId, required this.onPressed});
 
   final String groupId;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -326,32 +339,44 @@ class _SeriesTitle extends StatelessWidget {
       child: Divider(color: theme.colorScheme.outlineVariant),
     );
     return Center(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          rule(),
-          SizedBox(width: GameboxTokens.spacing.compact),
-          CustomPaint(
-            size: Size.square(GameboxTokens.spacing.section),
-            painter: _SeriesEmblem(
-              groupId: groupId,
-              color: theme.colorScheme.primary,
-            ),
+      child: TextButton(
+        key: const Key('scratch-view-series'),
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          minimumSize: Size(0, GameboxTokens.components.minimumTouchTarget),
+          padding: EdgeInsets.symmetric(
+            horizontal: GameboxTokens.spacing.compact,
           ),
-          SizedBox(width: GameboxTokens.spacing.layout),
-          Flexible(
-            child: Text(
-              group.title,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.labelLarge?.copyWith(
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            rule(),
+            SizedBox(width: GameboxTokens.spacing.compact),
+            CustomPaint(
+              size: Size.square(GameboxTokens.spacing.section),
+              painter: _SeriesEmblem(
+                groupId: groupId,
                 color: theme.colorScheme.primary,
-                fontWeight: FontWeight.w600,
               ),
             ),
-          ),
-          SizedBox(width: GameboxTokens.spacing.compact),
-          rule(),
-        ],
+            SizedBox(width: GameboxTokens.spacing.layout),
+            Flexible(
+              child: Text(
+                group.title,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            SizedBox(width: GameboxTokens.spacing.base),
+            Icon(Icons.chevron_right, size: GameboxTokens.spacing.page),
+            SizedBox(width: GameboxTokens.spacing.compact),
+            rule(),
+          ],
+        ),
       ),
     );
   }

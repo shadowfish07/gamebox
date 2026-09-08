@@ -36,6 +36,7 @@ void main() {
                     api: api,
                     beforeLoad: () async {},
                     onDraw: () {},
+                    onViewGroup: () {},
                   ),
                 ),
                 child: const Text('打开详情'),
@@ -73,11 +74,25 @@ void main() {
         tester.getRect(entry).right,
       );
       expect(
-        tester.getRect(find.byIcon(Icons.chevron_right)).right,
+        tester
+            .getRect(
+              find.descendant(
+                of: entry,
+                matching: find.byIcon(Icons.chevron_right),
+              ),
+            )
+            .right,
         tester.getRect(entry).right,
       );
       expect(
-        tester.getCenter(find.byIcon(Icons.chevron_right)).dy,
+        tester
+            .getCenter(
+              find.descendant(
+                of: entry,
+                matching: find.byIcon(Icons.chevron_right),
+              ),
+            )
+            .dy,
         tester.getCenter(find.text('查看持有玩家')).dy,
       );
       final before = tester.getTopLeft(entry);
@@ -122,6 +137,7 @@ void main() {
             api: OwnersApi(),
             beforeLoad: () async {},
             onDraw: () => draws++,
+            onViewGroup: () {},
           ),
         ),
       ),

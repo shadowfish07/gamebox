@@ -51,6 +51,7 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
   int tab = 0;
   int? filter;
   String? groupFilter;
+  final _selectedGroupKey = GlobalKey();
   bool ownedOnly = false;
   bool _leaving = false;
 
@@ -278,6 +279,9 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
                     right: GameboxTokens.spacing.compact,
                   ),
                   child: ChoiceChip(
+                    key: group != null && groupFilter == group.id
+                        ? _selectedGroupKey
+                        : null,
                     label: Text(
                       group == null
                           ? '全部分组'
@@ -365,6 +369,23 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
           controller: controller,
           api: socialApi,
           beforeLoad: collectionSync.sync,
+          onViewGroup: () {
+            Navigator.pop(context);
+            setState(() {
+              tab = 1;
+              groupFilter = cat.groupId;
+              filter = null;
+              ownedOnly = false;
+            });
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final groupContext = _selectedGroupKey.currentContext;
+              if (mounted && groupContext != null) {
+                unawaited(
+                  Scrollable.ensureVisible(groupContext, alignment: .5),
+                );
+              }
+            });
+          },
           onDraw: () {
             Navigator.pop(context);
             setState(() => tab = 0);
