@@ -54,72 +54,71 @@ class _ScratchPlayersPageState extends State<ScratchPlayersPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Padding(
-          padding: EdgeInsets.all(GameboxTokens.spacing.page),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (error.isNotEmpty)
-                Text(
-                  error,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: loading ? null : () => _load(),
-                  icon: const Icon(Icons.refresh),
-                  label: Text(error.isEmpty ? '刷新' : '重试'),
-                ),
-              ),
-            ],
+        if (error.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.all(GameboxTokens.spacing.page),
+            child: Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ),
-        ),
         if (loading) const LinearProgressIndicator(),
         Expanded(
-          child: players.isEmpty
-              ? Center(
-                  child: Text(
-                    loading
-                        ? '正在读取收藏'
-                        : error.isNotEmpty
-                        ? '收藏暂时不可用'
-                        : '暂无玩家',
-                  ),
-                )
-              : ListView.builder(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: GameboxTokens.spacing.page,
-                  ),
-                  itemCount: players.length + (cursor.isEmpty ? 0 : 1),
-                  itemBuilder: (context, i) {
-                    if (i == players.length) {
-                      return TextButton(
-                        onPressed: loading ? null : () => _load(more: true),
-                        child: const Text('查看更多玩家'),
-                      );
-                    }
-                    final player = players[i];
-                    return Card(
-                      child: ListTile(
-                        key: ValueKey('scratch-player-${player.userId}'),
-                        leading: const Icon(Icons.person_outline),
-                        title: Text(player.nickname),
-                        subtitle: Text(
-                          '已收集 ${player.collected}/${scratchCollectibles.length}',
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) =>
-                                ScratchPlayerCollectionPage(player: player),
+          child: RefreshIndicator(
+            onRefresh: _load,
+            child: players.isEmpty
+                ? CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Text(
+                            loading
+                                ? '正在读取收藏'
+                                : error.isNotEmpty
+                                ? '收藏暂时不可用'
+                                : '暂无玩家',
                           ),
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ],
+                  )
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: GameboxTokens.spacing.page,
+                    ),
+                    itemCount: players.length + (cursor.isEmpty ? 0 : 1),
+                    itemBuilder: (context, i) {
+                      if (i == players.length) {
+                        return TextButton(
+                          onPressed: loading ? null : () => _load(more: true),
+                          child: const Text('查看更多玩家'),
+                        );
+                      }
+                      final player = players[i];
+                      return Card(
+                        child: ListTile(
+                          key: ValueKey('scratch-player-${player.userId}'),
+                          leading: const Icon(Icons.person_outline),
+                          title: Text(player.nickname),
+                          subtitle: Text(
+                            '已收集 ${player.collected}/${scratchCollectibles.length}',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  ScratchPlayerCollectionPage(player: player),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
         ),
       ],
     );

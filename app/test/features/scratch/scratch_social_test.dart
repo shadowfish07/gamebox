@@ -20,6 +20,7 @@ class FakeSocial implements ScratchSocialApi {
   @override
   bool canSync = true;
   bool fail = false;
+  bool empty = false;
   List<int>? published;
   int calls = 0;
   Completer<void>? pending;
@@ -28,6 +29,7 @@ class FakeSocial implements ScratchSocialApi {
     calls++;
     await pending?.future;
     if (fail) throw const ApiError(code: 'network_error', message: '连接失败');
+    if (empty) return const ScratchPlayerPage([], '');
     return ScratchPlayerPage([
       ScratchPlayer(
         userId: '11111111-1111-4111-8111-111111111111',
@@ -72,7 +74,9 @@ void main() {
       expect(find.text('连接失败'), findsOneWidget);
       api.fail = false;
       api.pending = Completer<void>();
-      await tester.tap(find.text('重试'));
+      await tester.drag(find.byType(Scrollable), const Offset(0, 400));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       api.pending!.complete();
@@ -95,6 +99,52 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       collection.dispose();
+    });
+  }
+  for (final empty in [false, true]) {
+    testWidgets('pull refresh works on short and empty lists empty=$empty', (
+      tester,
+    ) async {
+      final api = FakeSocial()..empty = empty;
+      var beforeLoads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ScratchPlayersPage(
+              api: api,
+              beforeLoad: () async {
+                beforeLoads++;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('刷新'), findsNothing);
+      expect(find.byIcon(Icons.refresh), findsNothing);
+      expect(api.calls, 1);
+      api.pending = Completer<void>();
+      await tester.drag(find.byType(Scrollable), const Offset(0, 400));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(api.calls, 2);
+      expect(beforeLoads, 2);
+      expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+      await tester.drag(find.byType(Scrollable), const Offset(0, 400));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(api.calls, 2);
+      api.empty = false;
+      api.pending!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('玩家甲'), findsOneWidget);
+      api.pending = null;
+      api.fail = true;
+      await tester.drag(find.byType(Scrollable), const Offset(0, 400));
+      await tester.pumpAndSettle();
+      expect(find.text('连接失败'), findsOneWidget);
+      expect(find.text('玩家甲'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   }
   testWidgets('guest can browse but cannot publish', (tester) async {
