@@ -76,25 +76,26 @@ const (
 )
 
 type hubConnection struct {
-	hub             *Hub
-	transport       *websocket.Conn
-	ctx             context.Context
-	cancel          context.CancelFunc
-	done            chan struct{}
-	send            chan []byte
-	closeOnce       sync.Once
-	matchID         string
-	gameID          string
-	userID          string
-	id              string
-	ready           bool
-	pending         []queuedMessage
-	presence        map[string]bool
-	presenceEnabled bool
-	revision        atomic.Int64
-	outboundMu      sync.Mutex
-	pingMu          sync.Mutex
-	pings           map[string]time.Time
+	hub                  *Hub
+	transport            *websocket.Conn
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	done                 chan struct{}
+	send                 chan []byte
+	closeOnce            sync.Once
+	matchID              string
+	gameID               string
+	userID               string
+	id                   string
+	ready                bool
+	pending              []queuedMessage
+	presence             map[string]bool
+	presenceEnabled      bool
+	captureCountsEnabled bool
+	revision             atomic.Int64
+	outboundMu           sync.Mutex
+	pingMu               sync.Mutex
+	pings                map[string]time.Time
 }
 
 type connectPayload struct {
@@ -306,7 +307,8 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		done: make(chan struct{}), send: make(chan []byte, webSocketSendQueueSize),
 		matchID: credential.MatchID, gameID: credential.GameID, userID: credential.UserID, id: connectionID.String(),
 		pending: make([]queuedMessage, 0, 4), presence: make(map[string]bool),
-		presenceEnabled: supportsPlayerPresence(payload.Capabilities),
+		presenceEnabled:      supportsCapability(payload.Capabilities, protocol.CapabilityPlayerPresence),
+		captureCountsEnabled: supportsCapability(payload.Capabilities, protocol.CapabilityFlightChessCaptureCounts),
 	}
 	operationContext, cancelOperation = context.WithTimeout(context.Background(), webSocketOperationTimeout)
 	connectErr := hub.presence.Connect(operationContext, connection.matchID, connection.userID, connection.id)
@@ -628,9 +630,9 @@ func (hub *Hub) playerPresenceChanged(matchID, userID string, online bool) {
 	}
 }
 
-func supportsPlayerPresence(capabilities []string) bool {
+func supportsCapability(capabilities []string, requested string) bool {
 	for _, capability := range capabilities {
-		if capability == protocol.CapabilityPlayerPresence {
+		if capability == requested {
 			return true
 		}
 	}
@@ -729,7 +731,37 @@ func (connection *hubConnection) enqueue(data []byte) bool {
 	}
 }
 
+// compatibleSnapshot projects only the outbound wire payload. Authoritative
+// snapshots and replay retain capture counts for both modern and legacy peers.
+func (connection *hubConnection) compatibleSnapshot(data []byte) ([]byte, error) {
+	if connection.gameID != flightchess.GameID || connection.captureCountsEnabled {
+		return data, nil
+	}
+	var envelope protocol.Envelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Type != protocol.TypePlatformSnapshot {
+		return data, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return nil, err
+	}
+	delete(payload, "captureCounts")
+	var err error
+	envelope.Payload, err = json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelope)
+}
+
 func (connection *hubConnection) enqueueState(data []byte, revision int64) enqueueStateResult {
+	data, err := connection.compatibleSnapshot(data)
+	if err != nil {
+		return enqueueStateInvalid
+	}
 	connection.outboundMu.Lock()
 	defer connection.outboundMu.Unlock()
 	return connection.enqueueStateLocked(data, revision)
@@ -765,6 +797,10 @@ func (connection *hubConnection) enqueueStateLocked(data []byte, revision int64)
 }
 
 func (connection *hubConnection) enqueueInitial(connected, snapshot []byte, revision int64) bool {
+	snapshot, err := connection.compatibleSnapshot(snapshot)
+	if err != nil {
+		return false
+	}
 	connection.outboundMu.Lock()
 	defer connection.outboundMu.Unlock()
 	if revision < 0 || len(connected) == 0 || len(snapshot) == 0 || cap(connection.send)-len(connection.send) < 2 {
@@ -778,6 +814,10 @@ func (connection *hubConnection) enqueueInitial(connected, snapshot []byte, revi
 
 func (connection *hubConnection) enqueueErrorAndSnapshot(code, actionID string, snapshot Snapshot) enqueueStateResult {
 	snapshotMessage, err := snapshotEnvelope(snapshot, connection.userID)
+	if err != nil {
+		return enqueueStateInvalid
+	}
+	snapshotMessage, err = connection.compatibleSnapshot(snapshotMessage)
 	if err != nil {
 		return enqueueStateInvalid
 	}

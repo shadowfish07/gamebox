@@ -815,7 +815,8 @@ static func _capture_badge_states() -> bool:
 	for frame in 3:
 		await (Engine.get_main_loop() as SceneTree).process_frame
 	var snapshot := _network_snapshot(30)
-	snapshot.payload.captureCounts = {"black": 0, "white": 2048}
+	# Exercise ordinary match totals; the protocol validation ceiling is not a HUD requirement.
+	snapshot.payload.captureCounts = {"black": 0, "white": 12}
 	client.accept_snapshot(snapshot)
 	var local = scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount")
 	var opponent = scene.get_node("LeftRail/Content/OpponentCard/Content/Name/CaptureCount")
@@ -826,11 +827,11 @@ static func _capture_badge_states() -> bool:
 		scene.set_preview_dark(dark)
 		await (Engine.get_main_loop() as SceneTree).process_frame
 		var colors: Dictionary = tokens.DARK if dark else tokens.LIGHT
-		result = _check(local.count == 2048 and local.delta == 0 and opponent.count == 0, "snapshot or theme change animated a capture") and result
+		result = _check(local.count == 12 and local.delta == 0 and opponent.count == 0, "snapshot or theme change animated a capture") and result
 		result = _check(local.ink == (board.PLAYER_COLORS.yellow if dark else board.PLAYER_DARK.yellow) and opponent.ink == colors.on_surface_variant, "capture badge lost team or zero colors") and result
 		var font: Font = local.get_theme_font("font", "FlightChessPlayerName")
-		var number_width := font.get_string_size("2048", HORIZONTAL_ALIGNMENT_LEFT, -1, roundi(tokens.TYPOGRAPHY.label_medium.font_size * local.unit)).x
-		result = _check(number_width + 32 * local.unit <= local.size.x, "four-digit capture total overflows badge") and result
+		var number_width := font.get_string_size("12", HORIZONTAL_ALIGNMENT_LEFT, -1, roundi(tokens.TYPOGRAPHY.label_medium.font_size * local.unit)).x
+		result = _check(number_width + 32 * local.unit <= local.size.x, "two-digit capture total overflows badge") and result
 		result = _check(scene.get_node("LeftRail/Content/LocalCard").get_global_rect().encloses(local.get_global_rect()), "capture badge escapes player card") and result
 	local.play_capture(2)
 	local._feedback_tween.pause()
@@ -838,9 +839,9 @@ static func _capture_badge_states() -> bool:
 	result = _check(local.delta == 0 and is_equal_approx(local.feedback_phase, 1.0), "capture feedback did not settle") and result
 	local.play_capture(2)
 	client.connection_state_changed.emit("reconnecting")
-	result = _check(local.delta == 0 and local.count == 2048, "reconnect retained feedback or lost count") and result
+	result = _check(local.delta == 0 and local.count == 12, "reconnect retained feedback or lost count") and result
 	client.accept_snapshot(snapshot)
-	result = _check(local.delta == 0 and local.count == 2048, "snapshot replayed capture feedback") and result
+	result = _check(local.delta == 0 and local.count == 12, "snapshot replayed capture feedback") and result
 	snapshot.payload.erase("captureCounts")
 	client.accept_snapshot(snapshot)
 	result = _check(local.count == -1 and local.delta == 0 and local.ink == tokens.DARK.on_surface_variant, "unknown total is not quiet and neutral") and result

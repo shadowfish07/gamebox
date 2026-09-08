@@ -49,7 +49,7 @@ func TestFlightChessLimitBroadcastsTerminalToBothClients(t *testing.T) {
 	}
 	server := httptest.NewServer(fixture.handler)
 	defer server.Close()
-	connect := func(user sessionResponse) *websocket.Conn {
+	connect := func(user sessionResponse, countsEnabled bool) *websocket.Conn {
 		response := fixture.request(t, http.MethodPost, "/v1/matches/"+created.ID+"/launch-ticket", `{}`, user.Session.AccessToken)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("ticket: %d %s", response.Code, response.Body.String())
@@ -65,14 +65,18 @@ func TestFlightChessLimitBroadcastsTerminalToBothClients(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { connection.CloseNow() })
-		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticket.LaunchTicket)))
+		capabilities := ""
+		if countsEnabled {
+			capabilities = `,"capabilities":["flight_chess_capture_counts_v1"]`
+		}
+		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s%s}}`, quote(ticket.LaunchTicket), capabilities))
 		connected, snapshot := readWSEnvelope(t, connection), readWSEnvelope(t, connection)
-		if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 511 || !bytes.Contains(snapshot.Payload, []byte(`"captureCounts":{"black":0,"white":0}`)) {
+		if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 511 || bytes.Contains(snapshot.Payload, []byte(`"captureCounts"`)) != countsEnabled {
 			t.Fatalf("connect=(%+v,%+v)", connected, snapshot)
 		}
 		return connection
 	}
-	aliceWS, bobWS := connect(alice), connect(bob)
+	aliceWS, bobWS := connect(alice, true), connect(bob, false)
 	// Exercise the public HTTP cancellation boundary while both sockets are live.
 	req, err := http.NewRequest(http.MethodDelete, server.URL+"/v1/matches/"+created.ID, nil)
 	if err != nil {
@@ -112,7 +116,7 @@ func TestFlightChessLimitBroadcastsTerminalToBothClients(t *testing.T) {
 		var state struct {
 			Status string `json:"status"`
 		}
-		if snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 512 || json.Unmarshal(snapshot.Payload, &state) != nil || state.Status != matches.StatusAbandoned {
+		if snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 512 || json.Unmarshal(snapshot.Payload, &state) != nil || state.Status != matches.StatusAbandoned || bytes.Contains(snapshot.Payload, []byte(`"captureCounts"`)) != (connection == aliceWS) {
 			t.Fatalf("terminal snapshot=%+v", snapshot)
 		}
 	}
