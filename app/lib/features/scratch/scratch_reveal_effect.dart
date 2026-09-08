@@ -73,28 +73,65 @@ class _ScratchRevealEffectState extends State<ScratchRevealEffect>
       builder: (context, child) {
         final playing = _animation.isAnimating && widget.revealed;
         final t = _animation.value;
-        final pulse = math.sin(math.pi * (t / .38).clamp(0.0, 1.0));
-        return Transform.scale(
-          scale: playing ? 1 - (.025 + widget.rarity * .008) * pulse : 1,
-          child: Stack(
-            fit: StackFit.passthrough,
-            children: [
-              child!,
-              if (playing)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      key: const Key('scratch-reveal-burst'),
-                      painter: _RevealPainter(t, widget.rarity),
-                    ),
+        return Stack(
+          fit: StackFit.passthrough,
+          clipBehavior: Clip.none,
+          children: [
+            if (playing)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _CardHaloPainter(t, widget.rarity),
                   ),
                 ),
-            ],
-          ),
+              ),
+            child!,
+            if (playing)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    key: const Key('scratch-reveal-burst'),
+                    painter: _RevealPainter(t, widget.rarity),
+                  ),
+                ),
+              ),
+          ],
         );
       },
     ),
   );
+}
+
+// The opaque production card covers the inner half of this soft outline.
+// No scrim or rectangular light panel is painted behind the play area.
+class _CardHaloPainter extends CustomPainter {
+  _CardHaloPainter(this.t, this.rarity);
+  final double t;
+  final int rarity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fade = math.sin(math.pi * t);
+    if (fade <= 0) return;
+    final frame = RRect.fromRectAndRadius(
+      (Offset.zero & size).inflate(1 + rarity.toDouble()),
+      Radius.circular(GameboxTokens.shape.card + rarity),
+    );
+    canvas.drawRRect(
+      frame,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2 + rarity * 2.0
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3 + rarity * 3.0)
+        ..color = ScratchArt.rarityColors[rarity].withValues(
+          alpha: fade * [.12, .24, .32, .42][rarity],
+        ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CardHaloPainter oldDelegate) =>
+      t != oldDelegate.t || rarity != oldDelegate.rarity;
 }
 
 class _RevealPainter extends CustomPainter {
@@ -106,133 +143,110 @@ class _RevealPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (t <= 0 || t >= 1) return;
     final color = ScratchArt.rarityColors[rarity];
-    final light = Color.lerp(color, ScratchArt.paper, .8)!;
-    final center = size.center(Offset.zero);
-    final radius = size.shortestSide * .5;
-    final fade = math.sin(math.pi * t).clamp(0.0, 1.0);
+    final light = Color.lerp(color, ScratchArt.paper, .4)!;
+    final fade = math.sin(math.pi * t);
     final bounds = Offset.zero & size;
-    canvas.save();
-    canvas.clipRRect(
-      RRect.fromRectAndRadius(
-        bounds,
-        Radius.circular(GameboxTokens.shape.input),
-      ),
+    final frame = RRect.fromRectAndRadius(
+      bounds.deflate(1),
+      Radius.circular(GameboxTokens.shape.card),
     );
 
-    // Leave the face clear: the soft glow lives at the portrait's perimeter.
+    // Sweep only the card's rim. The portrait, title and collection feedback
+    // stay untouched, including while the card is still turning toward us.
+    final rim = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRRect(frame)
+      ..addRRect(frame.deflate(GameboxTokens.spacing.base));
+    canvas.save();
+    canvas.clipPath(rim);
+    canvas.drawRRect(
+      frame,
+      Paint()..color = light.withValues(alpha: fade * .1),
+    );
+    final sweep = Curves.easeInOutCubic.transform(t);
+    final x = size.width * (-.4 + sweep * 1.8);
+    final band = Rect.fromLTWH(
+      x - size.width * .15,
+      0,
+      size.width * .3,
+      size.height,
+    );
     canvas.drawRect(
       bounds,
       Paint()
-        ..shader = RadialGradient(
+        ..shader = LinearGradient(
           colors: [
-            color.withValues(alpha: 0),
-            color.withValues(alpha: 0),
-            color.withValues(alpha: fade * (.22 + rarity * .09)),
+            light.withValues(alpha: 0),
+            light.withValues(alpha: .6 * fade),
+            light.withValues(alpha: 0),
           ],
-          stops: const [0, .55, 1],
-        ).createShader(bounds),
+        ).createShader(band),
     );
+    canvas.restore();
 
-    if (rarity >= 2) {
-      final rings = rarity == 3 ? 3 : 1;
-      for (var i = 0; i < rings; i++) {
-        final phase = ((t - i * .1) / .65).clamp(0.0, 1.0);
-        if (phase <= 0 || phase >= 1) continue;
-        canvas.drawCircle(
-          center,
-          radius * (.5 + phase * .85),
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = (1 - phase) * (rarity == 3 ? 4 : 2)
-            ..color = light.withValues(alpha: (1 - phase) * .8),
-        );
-      }
-    }
-
-    if (rarity == 3) {
-      // A rotating crown of rays, with a transparent center for the artwork.
-      for (var i = 0; i < 16; i++) {
-        final angle = i * math.pi / 8 + t * .3;
-        final start =
-            center + Offset(math.cos(angle), math.sin(angle)) * radius * .68;
-        final end =
-            center + Offset(math.cos(angle), math.sin(angle)) * radius * 1.4;
-        canvas.drawLine(
-          start,
-          end,
-          Paint()
-            ..strokeWidth = i.isEven ? 5 : 2
-            ..shader = LinearGradient(
-              colors: [
-                color.withValues(alpha: 0),
-                light.withValues(alpha: fade * .5),
-              ],
-            ).createShader(Rect.fromPoints(start, end).inflate(1)),
-        );
-      }
-    }
-
-    // Common gets a single gentle sheen; higher tiers add outward starbursts.
-    if (rarity > 0) {
-      final count = [0, 10, 22, 38][rarity];
-      for (var i = 0; i < count; i++) {
-        final delay = (i % 5) * .035;
-        final phase = ((t - delay) / (1 - delay)).clamp(0.0, 1.0);
-        if (phase <= 0 || phase >= 1) continue;
-        final angle = i * 2.39996;
-        final travel = Curves.easeOutCubic.transform(phase);
-        final distance = radius * (.48 + travel * (.45 + (i % 3) * .12));
-        final position =
-            center +
-            Offset(math.cos(angle), math.sin(angle)) * distance +
-            Offset(0, phase * phase * radius * .12);
-        final opacity = math.sin(math.pi * phase);
-        final starSize = (2.5 + (i % 4) * 1.4) * opacity;
-        canvas.save();
-        canvas.translate(position.dx, position.dy);
-        canvas.rotate(angle + phase * .7);
-        final path = Path();
-        for (var point = 0; point < 8; point++) {
-          final a = point * math.pi / 4;
-          final r = point.isEven ? starSize : starSize * .25;
-          if (point == 0) {
-            path.moveTo(math.cos(a) * r, math.sin(a) * r);
-          } else {
-            path.lineTo(math.cos(a) * r, math.sin(a) * r);
-          }
-        }
-        canvas.drawPath(
-          path..close(),
-          Paint()
-            ..color = (i.isEven ? light : color).withValues(alpha: opacity),
-        );
-        canvas.restore();
-      }
-    }
-
-    final sweep = (t / .65).clamp(0.0, 1.0);
-    if (sweep > 0 && sweep < 1) {
-      canvas.save();
-      canvas.translate(size.width * (-.5 + sweep * 2), 0);
-      canvas.skew(-.25, 0);
-      final band = Rect.fromLTWH(
-        -size.width * .16,
-        0,
-        size.width * .32,
-        size.height,
+    const anchors = [
+      Offset(-.018, .16),
+      Offset(1.02, .28),
+      Offset(.82, -.015),
+      Offset(-.025, .68),
+      Offset(1.024, .82),
+      Offset(.22, 1.01),
+      Offset(.12, -.01),
+      Offset(1.01, .53),
+      Offset(-.02, .4),
+      Offset(.73, 1.015),
+    ];
+    final count = [0, 3, 6, 10][rarity];
+    // The empty center is a geometric guarantee, not an opacity illusion.
+    canvas.save();
+    canvas.clipPath(
+      Path()
+        ..fillType = PathFillType.evenOdd
+        ..addRect(bounds.inflate(24))
+        ..addRRect(frame.deflate(1)),
+    );
+    for (var i = 0; i < count; i++) {
+      final delay = (i % 3) * .07;
+      final phase = ((t - delay) / (1 - delay)).clamp(0.0, 1.0);
+      final opacity = math.sin(math.pi * phase);
+      if (opacity <= 0) continue;
+      final anchor = anchors[i];
+      final position = Offset(
+        anchor.dx * size.width + (anchor.dx - .5).sign * phase * 4,
+        anchor.dy * size.height - phase * 5,
       );
-      canvas.drawRect(
-        band,
-        Paint()
-          ..shader = LinearGradient(
-            colors: [
-              light.withValues(alpha: 0),
-              light.withValues(alpha: .12 + rarity * .055),
-              light.withValues(alpha: 0),
-            ],
-          ).createShader(band),
+      final radius = (3.0 + i % 3) * opacity;
+      final star = Path()
+        ..moveTo(position.dx, position.dy - radius)
+        ..quadraticBezierTo(
+          position.dx + radius * .12,
+          position.dy - radius * .12,
+          position.dx + radius * .7,
+          position.dy,
+        )
+        ..quadraticBezierTo(
+          position.dx + radius * .12,
+          position.dy + radius * .12,
+          position.dx,
+          position.dy + radius,
+        )
+        ..quadraticBezierTo(
+          position.dx - radius * .12,
+          position.dy + radius * .12,
+          position.dx - radius * .7,
+          position.dy,
+        )
+        ..quadraticBezierTo(
+          position.dx - radius * .12,
+          position.dy - radius * .12,
+          position.dx,
+          position.dy - radius,
+        )
+        ..close();
+      canvas.drawPath(
+        star,
+        Paint()..color = color.withValues(alpha: opacity * .9),
       );
-      canvas.restore();
     }
     canvas.restore();
   }

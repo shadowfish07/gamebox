@@ -169,23 +169,6 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                   clipBehavior: Clip.none,
                   fit: StackFit.expand,
                   children: [
-                    if (revealing &&
-                        flow.current?.winning == true &&
-                        flow.current?.card.rarity == 3)
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0, end: 1),
-                        duration: cardRevealDuration(3),
-                        builder: (_, t, _) => DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(
-                              GameboxTokens.shape.floating,
-                            ),
-                            color: scheme.scrim.withValues(
-                              alpha: math.sin(t * math.pi) * .22,
-                            ),
-                          ),
-                        ),
-                      ),
                     Center(
                       child: GestureDetector(
                         onTap: !enabled
@@ -490,68 +473,70 @@ class _CardDrawStageState extends State<CardDrawStage>
     if (!result.winning) return _miss(context);
     final color = ScratchArt.rarityColors[result.card.rarity];
     final text = Theme.of(context).textTheme;
-    return DecoratedBox(
-      key: const Key('draw-card-front'),
-      decoration: BoxDecoration(
-        color: ScratchArt.paper,
-        borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
-        border: Border.all(color: color, width: GameboxTokens.spacing.base),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: .24),
-            blurRadius: 22,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(GameboxTokens.spacing.compact),
-        child: Column(
-          children: [
-            DecoratedBox(
-              key: const Key('scratch-rarity-banner'),
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(GameboxTokens.shape.input),
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: GameboxTokens.spacing.compact,
-                  vertical: GameboxTokens.spacing.base,
+    return ScratchRevealEffect(
+      revealed: revealed,
+      rarity: result.card.rarity,
+      enabled: widget.playing,
+      playOnMount: widget.playing,
+      duration: cardRevealDuration(result.card.rarity) * .58,
+      child: DecoratedBox(
+        key: const Key('draw-card-front'),
+        decoration: BoxDecoration(
+          color: ScratchArt.paper,
+          borderRadius: BorderRadius.circular(GameboxTokens.shape.card),
+          border: Border.all(color: color, width: GameboxTokens.spacing.base),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: .24),
+              blurRadius: 22,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(GameboxTokens.spacing.compact),
+          child: Column(
+            children: [
+              DecoratedBox(
+                key: const Key('scratch-rarity-banner'),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(
+                    GameboxTokens.shape.input,
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      ScratchArt.rarityIcons[result.card.rarity],
-                      color: ScratchArt.onRarity,
-                      size: GameboxTokens.spacing.page,
-                    ),
-                    SizedBox(width: GameboxTokens.spacing.base),
-                    Flexible(
-                      child: Text(
-                        '${scratchRarities[result.card.rarity]}收藏',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.labelSmall?.copyWith(
-                          color: ScratchArt.onRarity,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: GameboxTokens.spacing.compact,
+                    vertical: GameboxTokens.spacing.base,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        ScratchArt.rarityIcons[result.card.rarity],
+                        color: ScratchArt.onRarity,
+                        size: GameboxTokens.spacing.page,
+                      ),
+                      SizedBox(width: GameboxTokens.spacing.base),
+                      Flexible(
+                        child: Text(
+                          '${scratchRarities[result.card.rarity]}收藏',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.labelSmall?.copyWith(
+                            color: ScratchArt.onRarity,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-            SizedBox(height: GameboxTokens.spacing.compact),
-            Expanded(
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: ScratchRevealEffect(
-                    revealed: revealed,
-                    rarity: result.card.rarity,
-                    enabled: widget.playing,
-                    playOnMount: widget.playing,
-                    duration: cardRevealDuration(result.card.rarity) * .58,
+              SizedBox(height: GameboxTokens.spacing.compact),
+              Expanded(
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 1,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(
                         GameboxTokens.shape.input,
@@ -561,48 +546,48 @@ class _CardDrawStageState extends State<CardDrawStage>
                   ),
                 ),
               ),
-            ),
-            SizedBox(height: GameboxTokens.spacing.compact),
-            Text(
-              '${result.card.job} · ${result.card.name}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: text.titleSmall?.copyWith(color: ScratchArt.ink),
-            ),
-            SizedBox(height: GameboxTokens.spacing.base),
-            SizedBox(
-              height: GameboxTokens.components.minimumTouchTarget,
-              child: result.isNew
-                  ? Row(
-                      children: [
-                        Expanded(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: Row(
-                              children: [
-                                _newLabel(context),
-                                SizedBox(width: GameboxTokens.spacing.base),
-                                Text(
-                                  '首次相遇',
-                                  style: text.labelSmall?.copyWith(
-                                    color: ScratchArt.ink,
+              SizedBox(height: GameboxTokens.spacing.compact),
+              Text(
+                '${result.card.job} · ${result.card.name}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.titleSmall?.copyWith(color: ScratchArt.ink),
+              ),
+              SizedBox(height: GameboxTokens.spacing.base),
+              SizedBox(
+                height: GameboxTokens.components.minimumTouchTarget,
+                child: result.isNew
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Row(
+                                children: [
+                                  _newLabel(context),
+                                  SizedBox(width: GameboxTokens.spacing.base),
+                                  Text(
+                                    '首次相遇',
+                                    style: text.labelSmall?.copyWith(
+                                      color: ScratchArt.ink,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        DrawStoryButton(onPressed: widget.onStory),
-                      ],
-                    )
-                  : DuplicateCollectionFeedback(
-                      count: result.count,
-                      progress: _duplicate.value,
-                      onStory: widget.onStory,
-                    ),
-            ),
-          ],
+                          DrawStoryButton(onPressed: widget.onStory),
+                        ],
+                      )
+                    : DuplicateCollectionFeedback(
+                        count: result.count,
+                        progress: _duplicate.value,
+                        onStory: widget.onStory,
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );

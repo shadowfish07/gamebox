@@ -7,6 +7,7 @@ import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/scratch/scratch_controller.dart';
 import 'package:gamebox/features/scratch/scratch_page.dart';
 import 'package:gamebox/features/scratch/card_draw_play.dart';
+import 'package:gamebox/features/scratch/scratch_reveal_effect.dart';
 
 import 'scratch_controller_test.dart' show MemoryScratchStore;
 import 'scratch_social_test.dart' show FakeSocial;
@@ -105,7 +106,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('scratch-primary')));
     await tester.pumpAndSettle();
-    expect(find.text('空白卡'), findsOneWidget);
+    expect(find.text('偶得一句'), findsOneWidget);
     expect(find.text('NEW'), findsNothing);
     expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
     expect(find.textContaining('每抽必得'), findsNothing);
@@ -163,6 +164,15 @@ void main() {
       await tester.pump();
       await tester.pump(cardRevealDuration(tier) * .45);
       expect(find.byKey(const Key('draw-card-front')), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byKey(const Key('draw-card-front')),
+          matching: find.byType(ScratchRevealEffect),
+        ),
+        findsOneWidget,
+        reason:
+            'Reveal light belongs around the whole card, not over the portrait',
+      );
       expect(find.text('抽取中'), findsOneWidget);
       expect(find.text('正在翻牌'), findsNothing);
       expect(
