@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"testing"
 
 	"me.zqydev/gamebox/server/internal/games/gameapi"
@@ -84,6 +85,8 @@ func TestMoveResolvesColorJumpShortcutStackAndCapture(t *testing.T) {
 	state.Pieces[Black][1] = Piece{Zone: ZoneMain, Index: 35}
 	state.Pieces[White][0] = Piece{Zone: ZoneMain, Index: 3}
 	state.Pieces[White][1] = Piece{Zone: ZoneMain, Index: 3}
+	state.CaptureCounts[Black] = 8
+	state.CaptureCounts[White] = 3
 	snapshot := encodeStateForTest(t, 7, state)
 
 	event, next, err := rules.Apply(snapshot, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":1}`)})
@@ -98,6 +101,9 @@ func TestMoveResolvesColorJumpShortcutStackAndCapture(t *testing.T) {
 		t.Fatalf("unexpected move payload: %#v", payload)
 	}
 	state = decodeStateForTest(t, next)
+	if state.CaptureCounts[Black] != 10 || state.CaptureCounts[White] != 3 {
+		t.Fatalf("capture totals: %#v", state.CaptureCounts)
+	}
 	if state.Pieces[Black][1] != payload.To || state.Pieces[White][0].Zone != ZoneHangar || state.Pieces[White][1].Zone != ZoneHangar || state.NextColor != White {
 		t.Fatalf("unexpected resolved state: %#v", state)
 	}
@@ -258,6 +264,156 @@ func TestRebuildAcceptsHistoricalOvershootExclusionAndNewBounce(t *testing.T) {
 	}
 	if rebuilt, err := rules.Rebuild(append(events, roll, move)); err != nil || !bytes.Equal(rebuilt.State, moved.State) {
 		t.Fatalf("new bounce could not be replayed: %v", err)
+	}
+}
+
+func TestCapturesEveryLandingWithoutCapturingPassedCells(t *testing.T) {
+	for _, color := range []string{Black, White} {
+		for _, tc := range []struct {
+			name           string
+			from, roll, to int
+			effect         string
+			enemies        []int
+			captured       []int
+		}{
+			{"jump", 1, 1, 6, EffectJump, []int{2, 6, 2, 4}, []int{0, 1, 2}},
+			{"shortcut", 16, 2, 30, EffectShortcut, []int{18, 30, 17, 24}, []int{0, 1}},
+			{"jump_shortcut", 10, 4, 30, EffectJumpShortcut, []int{30, 14, 18, 12}, []int{0, 1, 2}},
+		} {
+			t.Run(color+"/"+tc.name, func(t *testing.T) {
+				state := initialState()
+				state.BlackUserID, state.WhiteUserID = stringPointer(blackID), stringPointer(whiteID)
+				state.NextColor, state.Phase, state.Dice = color, PhaseAwaitingMove, tc.roll
+				state.Pieces[color][0] = Piece{ZoneMain, indexForProgress(color, tc.from)}
+				for index, progress := range tc.enemies {
+					state.Pieces[opposite(color)][index] = Piece{ZoneMain, indexForProgress(color, progress)}
+				}
+				actor := blackID
+				if color == White {
+					actor = whiteID
+				}
+				event, next, err := NewRules().Apply(encodeStateForTest(t, 10, state), actor, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":0}`)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload acceptedMovePayload
+				if err := json.Unmarshal(event.Payload, &payload); err != nil {
+					t.Fatal(err)
+				}
+				want, _ := json.Marshal(tc.captured)
+				got, _ := json.Marshal(payload.CapturedPieceIndices)
+				if !bytes.Equal(got, want) || payload.Effect != tc.effect || payload.To != (Piece{ZoneMain, indexForProgress(color, tc.to)}) {
+					t.Fatalf("move = %+v, want captures %s", payload, want)
+				}
+				after := decodeStateForTest(t, next)
+				for index, before := range state.Pieces[opposite(color)] {
+					captured := false
+					for _, slot := range tc.captured {
+						captured = captured || index == slot
+					}
+					expected := before
+					if captured {
+						expected = Piece{ZoneHangar, index}
+					}
+					if after.Pieces[opposite(color)][index] != expected {
+						t.Fatalf("piece %d: %+v", index, after)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRebuildPreservesHistoricalAndCorrectedLandingCaptures(t *testing.T) {
+	rules := NewRules()
+	random := rand.New(rand.NewSource(41))
+	var snapshot gameapi.Snapshot
+	var events []gameapi.Event
+	for step := 0; step < 2000; step++ {
+		state, _, err := stateFromSnapshot(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Status == StatusFinished {
+			snapshot = gameapi.Snapshot{}
+			events = nil
+			continue
+		}
+		actor := blackID
+		if state.NextColor == White {
+			actor = whiteID
+		}
+		roll, rolled, err := rules.applyRollValue(snapshot, actor, random.Intn(6)+1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, roll)
+		snapshot = rolled
+		state = decodeStateForTest(t, rolled)
+		if state.Phase != PhaseAwaitingMove {
+			continue
+		}
+		movable := movablePieces(state.NextColor, state.Pieces[state.NextColor], state.Dice)
+		payload, _ := json.Marshal(requestedMovePayload{PieceIndex: movable[random.Intn(len(movable))]})
+		action := gameapi.Action{Type: MoveRequested, Payload: payload}
+		current, next, err := rules.Apply(rolled, actor, action)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy, oldNext, err := rules.applyMove(rolled, actor, action, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(current.Payload, legacy.Payload) {
+			for _, variant := range []struct {
+				event    gameapi.Event
+				snapshot gameapi.Snapshot
+			}{{current, next}, {legacy, oldNext}} {
+				rebuilt, err := rules.Rebuild(append(append([]gameapi.Event{}, events...), variant.event))
+				if err != nil || !bytes.Equal(rebuilt.State, variant.snapshot.State) {
+					t.Fatalf("capture replay: %v", err)
+				}
+				expected := map[string]int{Black: 0, White: 0}
+				for _, event := range append(append([]gameapi.Event{}, events...), variant.event) {
+					if event.Type == MoveAccepted {
+						var move acceptedMovePayload
+						if err := json.Unmarshal(event.Payload, &move); err != nil {
+							t.Fatal(err)
+						}
+						expected[move.Color] += len(move.CapturedPieceIndices)
+					}
+				}
+				counts := decodeStateForTest(t, rebuilt).CaptureCounts
+				if counts[Black] != expected[Black] || counts[White] != expected[White] {
+					t.Fatalf("replayed capture totals: got %v want %v", counts, expected)
+				}
+			}
+			return
+		}
+		events = append(events, current)
+		snapshot = next
+	}
+	t.Fatal("fixture never reached an intermediate landing capture")
+}
+
+func TestCaptureCountSnapshotValidation(t *testing.T) {
+	snapshot := encodeStateForTest(t, 0, initialState())
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(snapshot.State, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "captureCounts")
+	snapshot.State, _ = json.Marshal(fields)
+	legacy, err := decodeSnapshot(snapshot)
+	if err != nil || legacy.CaptureCounts[Black] != 0 {
+		t.Fatalf("legacy snapshot: %v", err)
+	}
+	for _, invalid := range []string{`null`, `{}`, `{"black":0}`, `{"black":null,"white":0}`, `{"black":0,"black":1,"white":0}`, `{"black":-1,"white":0}`, `{"black":1.5,"white":0}`, `{"black":0,"white":0,"red":0}`} {
+		fields["captureCounts"] = json.RawMessage(invalid)
+		snapshot.State, _ = json.Marshal(fields)
+		if _, err := decodeSnapshot(snapshot); !errors.Is(err, gameapi.ErrInvalidSnapshot) {
+			t.Fatalf("accepted counts %s: %v", invalid, err)
+		}
 	}
 }
 

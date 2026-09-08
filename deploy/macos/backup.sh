@@ -22,8 +22,11 @@ trap '/bin/rm -f "${temporary_path}"' EXIT
 
 # Match the server's persistent-WAL policy: closing an administrative
 # connection must never unlink sidecars still held by the running server.
-wal_mode="$("${sqlite_bin}" -bail "${database_path}" \
-  '.filectrl persist_wal 1' ".backup '${temporary_path}'")"
+# Pass the directory through argv/cd; the dot command sees only mktemp's
+# generated basename, so quotes and backslashes in directory names stay literal.
+readonly absolute_database_path="${database_path:A}"
+wal_mode="$(cd "${temporary_path:h}" && "${sqlite_bin}" -bail "${absolute_database_path}" \
+  '.filectrl persist_wal 1' ".backup '${temporary_path:t}'")"
 if [[ "${wal_mode}" != "1" ]]; then
   print -u2 -- "Gamebox backup could not enable persistent WAL"
   exit 1

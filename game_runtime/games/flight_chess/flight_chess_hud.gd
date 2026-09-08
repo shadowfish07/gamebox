@@ -3,6 +3,7 @@ extends RefCounted
 const Tokens = preload("res://design_system/generated/gamebox_tokens.gd")
 const Board = preload("res://games/flight_chess/flight_chess_board.gd")
 const Stats = preload("res://games/flight_chess/flight_chess_stats.gd")
+const CaptureBadge = preload("res://games/flight_chess/flight_chess_capture_badge.gd")
 
 static func setup(scene: Control) -> void:
 	var left := scene.get_node("LeftRail/Content")
@@ -20,6 +21,14 @@ static func setup(scene: Control) -> void:
 		var stats := Stats.new()
 		stats.name = "Stats"
 		content.add_child(stats)
+		var dot := Panel.new()
+		dot.name = "PresenceDot"
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		content.get_node("Name").add_child(dot)
+		var capture := CaptureBadge.new()
+		capture.name = "CaptureCount"
+		capture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		content.get_node("Name").add_child(capture)
 		var badge := Label.new()
 		badge.name = "TurnBadge"
 		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -37,6 +46,7 @@ static func setup(scene: Control) -> void:
 	versus.name = "Versus"
 	versus.text = "VS"
 	versus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	versus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	left.add_child(versus)
 	var right := scene.get_node("RightRail/Content")
 	for node_name in ["DiceLabel", "SyncLabel"]:
@@ -104,27 +114,47 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		button.add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 		button.add_theme_stylebox_override("normal",box(colors.surface_container_high,colors.outline_variant,8*unit,unit))
 		button.add_theme_color_override("font_color",colors.error if i == 2 else colors.on_surface)
-	var card_height := 120.0
-	for pair in [["OpponentCard", 56], ["LocalCard",56+card_height+24]]:
+	var card_height := 128.0
+	var card_gap := 32.0
+	for pair in [["OpponentCard", 56], ["LocalCard",56+card_height+card_gap]]:
 		var card := left.get_node(pair[0])
 		place(card, Rect2(Vector2(0,pair[1]) * unit, Vector2(lw,card_height) * unit))
 		var content := card.get_node("Content")
-		content.add_theme_constant_override("separation", roundi(4 * unit))
+		content.add_theme_constant_override("separation", roundi(6 * unit))
 		content.alignment = BoxContainer.ALIGNMENT_BEGIN
+		content.get_node("Role").custom_minimum_size.y = 24 * unit
+		content.get_node("Role").vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		content.get_node("Role").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 		content.get_node("Name").add_theme_font_override("font",scene.theme.default_font)
 		content.get_node("Name").add_theme_color_override("font_color",colors.on_surface_variant)
 		content.get_node("Name").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_small.font_size*unit))
+		var capture := content.get_node("Name/CaptureCount")
+		capture.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
+		capture.offset_left = -64 * unit
+		capture.offset_right = 0
+		capture.offset_top = -9 * unit
+		capture.offset_bottom = 9 * unit
+		capture.unit = unit
+		capture.queue_redraw()
+		var name_style := StyleBoxEmpty.new()
+		name_style.content_margin_left = 14 * unit
+		content.get_node("Name").add_theme_stylebox_override("normal", name_style)
+		var dot: Panel = content.get_node("Name/PresenceDot")
+		dot.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
+		dot.offset_left = 0
+		dot.offset_right = 7 * unit
+		dot.offset_top = -3.5 * unit
+		dot.offset_bottom = 3.5 * unit
 		content.get_node("Meta").hide()
-		content.get_node("Stats").custom_minimum_size = Vector2(132,40) * unit
+		content.get_node("Stats").custom_minimum_size = Vector2(132,48) * unit
 		card.get_node("BadgeOverlay/TurnBadge").mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.get_node("BadgeOverlay/TurnBadge").set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-		card.get_node("BadgeOverlay/TurnBadge").offset_left = -36 * unit
-		card.get_node("BadgeOverlay/TurnBadge").offset_right = -8 * unit
-		card.get_node("BadgeOverlay/TurnBadge").offset_top = -8*unit
-		card.get_node("BadgeOverlay/TurnBadge").offset_bottom = 14*unit
+		card.get_node("BadgeOverlay/TurnBadge").offset_left = -44 * unit
+		card.get_node("BadgeOverlay/TurnBadge").offset_right = 0
+		card.get_node("BadgeOverlay/TurnBadge").offset_top = 0
+		card.get_node("BadgeOverlay/TurnBadge").offset_bottom = 24*unit
 		card.get_node("BadgeOverlay/TurnBadge").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_small.font_size*unit))
-	place(left.get_node("Versus"), Rect2(Vector2(0,56+card_height)*unit,Vector2(lw,24)*unit))
+	place(left.get_node("Versus"), Rect2(Vector2(0,56+card_height)*unit,Vector2(lw,card_gap)*unit))
 	left.get_node("Versus").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 	for pair in [["StatusLabel",Rect2(12,12,76,26)], ["SyncLabel",Rect2(rw-60,12,48,26)], ["TurnLabel",Rect2(12,46,rw-24,30)], ["HintLabel",Rect2(12,74,rw-24,30)], ["RuleLabel",Rect2(12,108,rw-24,28)], ["DiceCard",Rect2(12,height-150,80,80)], ["DiceLabel",Rect2(100,height-136,rw-112,52)], ["RollButton",Rect2(12,height-60,rw-24,48)], ["CancelSelection",Rect2(12,height-60,rw-24,48)]]:
 		place(right.get_node(pair[0]),Rect2(pair[1].position*unit,pair[1].size*unit))
@@ -184,7 +214,7 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		dialog_content.get_node("Actions/"+name).add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.body_small.font_size*unit))
 
 
-static func present_card(scene: Control, node_name: String, color: String, active: bool, presence: String, pieces: Array) -> void:
+static func present_card(scene: Control, node_name: String, color: String, active: bool, presence: String, pieces: Array, capture_count: int = 0) -> void:
 	var card := scene.get_node("LeftRail/Content/" + node_name)
 	var colors: Dictionary = Tokens.DARK if scene._preview_dark == true else Tokens.LIGHT
 	var unit: float = scene._hud_unit
@@ -193,16 +223,19 @@ static func present_card(scene: Control, node_name: String, color: String, activ
 	var stripe := card.get_node("BadgeOverlay/Stripe")
 	stripe.hide()
 	place(stripe,Rect2(Vector2(-9,-8)*unit,Vector2(3,card.size.y/unit-32)*unit))
-	style.content_margin_left = 14*unit
-	style.content_margin_right = 8*unit
-	style.content_margin_top = 20*unit
-	style.content_margin_bottom = 16*unit
+	style.content_margin_left = 16*unit
+	style.content_margin_right = 16*unit
+	style.content_margin_top = 12*unit
+	style.content_margin_bottom = 12*unit
 	card.add_theme_stylebox_override("panel",style)
-	card.get_node("Content/Name").text = "● " + presence
+	card.get_node("Content/Name").text = presence
+	var presence_color: Color = colors.primary if presence == "在线" else colors.tertiary if presence in ["连接中", "重连中"] else colors.outline
+	card.get_node("Content/Name/PresenceDot").add_theme_stylebox_override("panel", box(presence_color, presence_color, 4 * unit, 0))
 	var stats := card.get_node("Content/Stats")
 	stats.arrival_color = Board.PLAYER_COLORS[color] if scene._preview_dark == true else Board.PLAYER_DARK[color]
 	stats.empty_color = colors.outline_variant
 	stats.present(pieces)
+	card.get_node("Content/Name/CaptureCount").present(capture_count, color, scene._preview_dark == true)
 	card.get_node("BadgeOverlay/TurnBadge").text = "当前" if active else "等待"
 	card.get_node("BadgeOverlay/TurnBadge").add_theme_stylebox_override("normal",box(Board.PLAYER_COLORS[color] if active else colors.surface_container_high,colors.surface_container_low,12*unit,0))
 	card.get_node("BadgeOverlay/TurnBadge").add_theme_color_override("font_color",Board.BOARD_INK if active else colors.on_surface_variant)

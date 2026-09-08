@@ -42,6 +42,7 @@ const (
 	TypeRpsResignRequested             = "rps.resign.requested"
 	TypeRpsResigned                    = "rps.resigned"
 	CapabilityPlayerPresence           = "player_presence_v1"
+	CapabilityFlightChessCaptureCounts = "flight_chess_capture_counts_v1"
 )
 
 var knownTypes = map[string]struct{}{
@@ -132,8 +133,15 @@ func validateClientMessage(envelope Envelope) error {
 		}
 		if raw, ok := fields["capabilities"]; ok {
 			var capabilities []string
-			if json.Unmarshal(raw, &capabilities) != nil || len(capabilities) != 1 || capabilities[0] != CapabilityPlayerPresence {
+			if json.Unmarshal(raw, &capabilities) != nil || len(capabilities) < 1 || len(capabilities) > 2 {
 				return protocolFailure(codeInvalidEnvelope)
+			}
+			seen := make(map[string]bool, len(capabilities))
+			for _, capability := range capabilities {
+				if seen[capability] || (capability != CapabilityPlayerPresence && capability != CapabilityFlightChessCaptureCounts) {
+					return protocolFailure(codeInvalidEnvelope)
+				}
+				seen[capability] = true
 			}
 		}
 		return nil

@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
     try:
-        entries = json.loads(SOURCE.read_text())['entries']
+        entries = json.loads(SOURCE.read_text(encoding='utf-8'))['entries']
         texts = [entry['text'] for entry in entries]
         keys = [re.sub(r'[^\u4e00-\u9fff]', '', text) for text in texts]
         if len(texts) != 2000 or len(set(keys)) != 2000:
@@ -34,10 +34,10 @@ def main():
         content += ''.join("  '" + text.replace('\n', r'\n') + "',\n" for text in texts)
         content += '];\n'
         if args.check:
-            if TARGET.read_text() != content:
+            if TARGET.read_text(encoding='utf-8') != content:
                 raise ValueError('generated Dart catalog differs; regenerate it')
         else:
-            TARGET.write_text(content)
+            TARGET.write_text(content, encoding='utf-8')
         if args.verbose:
             print(f'Source: {SOURCE}\nOutput: {TARGET}\nUTF-8 bytes: {len(content.encode())}')
         print('PASS poem library (2000 distinct couplets)')

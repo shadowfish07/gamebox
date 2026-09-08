@@ -52,6 +52,19 @@ movement `effect`, and `capturedPieceIndices`. The client applies only accepted
 events in contiguous revision order; a gap requests a fresh authoritative
 snapshot.
 
+Flight Chess snapshots include `captureCounts: {"black": N, "white": N}`: each
+non-negative integer counts opposing planes returned to the hangar by that color
+throughout the match. Capturing a stack counts every plane; later recaptures count
+again. Event replay rebuilds the totals, and snapshots restore them on re-entry.
+The client increments only after a validated move, ignoring duplicate revisions.
+New clients also accept older snapshots without this field: revision zero starts
+at zero; otherwise the HUD shows an unknown total until a counted snapshot arrives.
+Connections advertise `flight_chess_capture_counts_v1` to receive the count field.
+The server omits it for legacy connections on initial, requested, recovery, and
+peer catch-up snapshots. Deploy the capability-aware server before the new client;
+older servers only accept the previously defined presence capability. No
+accepted-event payload or stored-event migration is needed.
+
 Flight Chess cancellation is allowed only before the first accepted roll or move.
 A match has a 512-event storage budget. At revision 511, a valid roll or move
 that would leave the game active instead commits `platform.match.abandoned`

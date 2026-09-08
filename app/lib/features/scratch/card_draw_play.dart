@@ -192,7 +192,8 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                             collecting: flow.phase == CardDrawPhase.collecting,
                             waiting: busy,
                             onRevealed: flow.finishReveal,
-                            onStory: flow.current?.winning == true
+                            onStory:
+                                flow.canDraw && flow.current?.winning == true
                                 ? () => widget.onDetail(flow.current!.card)
                                 : null,
                           ),

@@ -105,11 +105,14 @@ final class HttpScratchSocialApi implements ScratchSocialApi {
 
   @override
   Future<void> sync(List<int> counts) async {
-    await client.postJson(
+    final response = await client.postJson(
       '/v1/scratch/collections/me',
       {'counts': counts},
       accessToken: () => session?.accessToken,
       onUnauthorized: session?.refresh,
     );
+    if (response['published'] != true) {
+      throw const ApiError(code: 'invalid_response', message: '收藏同步未完成，请重试');
+    }
   }
 }

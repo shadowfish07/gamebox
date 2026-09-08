@@ -2,6 +2,7 @@ class_name FlightChessBoard
 extends Control
 
 signal piece_pressed(color: String, index: int)
+signal capture_landed(color: String, count: int)
 
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
@@ -62,10 +63,10 @@ const BASE_ROUTE_CELL_POLYGONS := [
 ]
 
 const HOME_STRETCHES := {
-	"yellow": [Vector2(114, 300), Vector2(146, 300), Vector2(178, 300), Vector2(210, 300), Vector2(242, 300), Vector2(270, 300)],
-	"green": [Vector2(300, 114), Vector2(300, 146), Vector2(300, 178), Vector2(300, 210), Vector2(300, 242), Vector2(300, 270)],
-	"red": [Vector2(486, 300), Vector2(454, 300), Vector2(422, 300), Vector2(390, 300), Vector2(358, 300), Vector2(330, 300)],
-	"blue": [Vector2(300, 486), Vector2(300, 454), Vector2(300, 422), Vector2(300, 390), Vector2(300, 358), Vector2(300, 330)],
+	"yellow": [Vector2(114, 300), Vector2(146, 300), Vector2(178, 300), Vector2(210, 300), Vector2(242, 300)],
+	"green": [Vector2(300, 114), Vector2(300, 146), Vector2(300, 178), Vector2(300, 210), Vector2(300, 242)],
+	"red": [Vector2(486, 300), Vector2(454, 300), Vector2(422, 300), Vector2(390, 300), Vector2(358, 300)],
+	"blue": [Vector2(300, 486), Vector2(300, 454), Vector2(300, 422), Vector2(300, 390), Vector2(300, 358)],
 }
 
 const HANGAR_RECTS := {
@@ -90,10 +91,10 @@ const LAUNCH_POINTS := {
 }
 
 const FINISH_POINTS := {
-	"yellow": Vector2(288, 300),
-	"green": Vector2(300, 288),
-	"red": Vector2(312, 300),
-	"blue": Vector2(300, 312),
+	"yellow": Vector2(272, 300),
+	"green": Vector2(300, 272),
+	"red": Vector2(328, 300),
+	"blue": Vector2(300, 328),
 }
 
 const PATH_STARTS := {"yellow": 0, "green": 13, "red": 26, "blue": 39}
@@ -105,10 +106,10 @@ const SHORTCUTS := {
 	"blue": Vector2i(4, 16),
 }
 const SHORTCUT_LINES := {
-	"yellow": [Vector2(418, 236), Vector2(418, 364)],
-	"green": [Vector2(364, 418), Vector2(236, 418)],
-	"red": [Vector2(182, 364), Vector2(182, 236)],
-	"blue": [Vector2(236, 182), Vector2(364, 182)],
+	"yellow": [Vector2(422, 236), Vector2(422, 364)],
+	"green": [Vector2(364, 422), Vector2(236, 422)],
+	"red": [Vector2(178, 364), Vector2(178, 236)],
+	"blue": [Vector2(236, 178), Vector2(364, 178)],
 }
 
 var selected_piece_index: int:
@@ -430,13 +431,12 @@ func _draw_finish_center() -> void:
 	for color in PLAYER_ORDER:
 		var turns: int = PLAYER_ORDER.find(color)
 		var points := PackedVector2Array()
-		for source in [Vector2(300,300),Vector2(279,279),Vector2(279,321)]:
+		for source in [Vector2(300,300),Vector2(258,258),Vector2(258,342)]:
 			var point: Vector2 = source
 			for _turn in turns:
 				point = Vector2(600-point.y,point.x)
 			points.append(_logical_to_pixel(point))
 		draw_colored_polygon(points,PLAYER_COLORS[color])
-	_draw_board_text(Vector2(300,355), "顺时针 · 精确归家", 10, Color(BOARD_INK,GameboxTokens.GAME["pending_overlay_alpha"]))
 
 
 func _draw_launch_pad(color: String) -> void:
@@ -564,7 +564,7 @@ static func _valid_piece(piece: Variant) -> bool:
 		"hangar": return index >= 0 and index < 4
 		"launch", "finished": return index == 0
 		"main": return index >= 0 and index < 52
-		"home": return index >= 0 and index < 6
+		"home": return index >= 0 and index < HOME_STRETCHES["yellow"].size()
 	return false
 
 
@@ -647,30 +647,43 @@ func _draw_route_preview() -> void:
 		draw_arc(_logical_to_pixel(point),24*_scale(),0,TAU,40,PLAYER_DARK.get(_selectable_color,BOARD_INK),3*_scale(),true)
 
 
-func animate_move(color: String, index: int, segments: Array, captured: Array, finished: bool) -> Tween:
+func animate_move(color: String, index: int, segments: Array, captured: Array, finished: bool, origins: Dictionary = {}) -> Tween:
 	cancel_home_bounce()
 	_route_preview.clear()
 	_bounce = {"color":color,"index":index,"point":segments[0].from,"scale":1.0}
 	var enemy := "yellow" if color == "red" else "red"
 	var target: Vector2 = segments[-1].to
 	for captured_index in captured:
-		_captured_flights.append({"color":enemy,"index":captured_index,"point":target})
+		var origin: Vector2 = _logical_piece_center(enemy, origins[captured_index]) if origins.has(captured_index) else target
+		_captured_flights.append({"color":enemy,"index":captured_index,"point":origin,"origin":origin,"hit":false})
 	_bounce_tween = create_tween()
 	for segment in segments:
 		_bounce_tween.tween_method(func(t: float) -> void:
 			_bounce.point = segment.from.lerp(segment.to,t)+Vector2(0,-sin(t*PI)*segment.lift)
 			queue_redraw()
 		,0.0,1.0,segment.duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_bounce_tween.tween_method(func(t: float) -> void:
-		_impact = {"point":target,"color":color,"phase":t}
-		queue_redraw()
-	,0.0,1.0,0.22)
-	if not captured.is_empty():
+		var landing_captures: Array = _captured_flights.filter(func(flight: Dictionary) -> bool: return not flight.hit and flight.origin.is_equal_approx(segment.to))
+		if not landing_captures.is_empty():
+			for flight in landing_captures:
+				flight.hit = true
+			_bounce_tween.tween_callback($CaptureSound.play)
+			_bounce_tween.tween_callback(func() -> void: capture_landed.emit(color, landing_captures.size()))
+			_bounce_tween.tween_method(func(t: float) -> void:
+				_impact = {"point":segment.to,"color":color,"phase":t}
+				for flight in landing_captures:
+					flight.point = flight.origin.lerp(HANGAR_SLOTS[enemy][flight.index],t)+Vector2(0,-sin(t*PI)*40)
+				queue_redraw()
+			,0.0,1.0,0.42)
+
+	if finished:
+		_bounce_tween.tween_callback($FinishSound.play)
+
+	if captured.is_empty():
 		_bounce_tween.tween_method(func(t: float) -> void:
-			for flight in _captured_flights:
-				flight.point = target.lerp(HANGAR_SLOTS[enemy][flight.index],t)+Vector2(0,-sin(t*PI)*40)
+			_impact = {"point":target,"color":color,"phase":t}
 			queue_redraw()
-		,0.0,1.0,0.42)
+		,0.0,1.0,0.22)
+
 	if finished:
 		_bounce_tween.tween_method(func(t: float) -> void:
 			_bounce.scale = 1-t

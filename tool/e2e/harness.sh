@@ -1336,7 +1336,34 @@ presence_state_fragment() {
     "$presence"
 }
 
+flight_chess_launch_matches() {
+  local snapshot="$1" color="$2" roll="$3"
+  [[ "$roll" == 5 || "$roll" == 6 ]] || return 1
+  jq -e --arg color "$color" --arg roll "$roll" '
+    .phase == "awaiting_roll" and .dice == null
+    and .nextColor == (if $roll == "6" then $color elif $color == "black" then "white" else "black" end)
+    and ([.pieces[$color][] | select(.zone == "launch")] | length == 1)
+    and ([.pieces[$color][] | select(.zone == "hangar")] | length == 3)
+  ' <<<"$snapshot" >/dev/null
+}
+
 self_test() {
+  local launch_fixture launch_color launch_roll next_color
+  for launch_color in black white; do
+    for launch_roll in 5 6; do
+      next_color="$launch_color"
+      if [[ "$launch_roll" == 5 ]]; then
+        if [[ "$launch_color" == black ]]; then next_color=white; else next_color=black; fi
+      fi
+      launch_fixture="$(jq -nc --arg color "$launch_color" --arg next "$next_color"         '{phase:"awaiting_roll",dice:null,nextColor:$next,pieces:{($color):[{zone:"launch"},{zone:"hangar"},{zone:"hangar"},{zone:"hangar"}]}}')"
+      flight_chess_launch_matches "$launch_fixture" "$launch_color" "$launch_roll"         || { printf 'Flight Chess launch fixture rejected roll %s for %s\n' "$launch_roll" "$launch_color" >&2; return 1; }
+      if flight_chess_launch_matches "$launch_fixture" "$launch_color" "$((11-launch_roll))"         || flight_chess_launch_matches "$launch_fixture" "$launch_color" 4; then
+        printf 'Flight Chess launch fixture accepted invalid turn or die\n' >&2
+        return 1
+      fi
+    done
+  done
+
   select_managed_slot 0
   [[ "$MANAGED_AVD_A:$MANAGED_PORT_A,$MANAGED_AVD_B:$MANAGED_PORT_B" == "Gamebox_A0_API_36:5560,Gamebox_B0_API_36:5562" ]] \
     || { printf 'managed slot 0 mapping fixture failed\n' >&2; return 1; }
@@ -3424,7 +3451,7 @@ done
 
 flight_color="$(jq -er '.nextColor' <<<"$flight_snapshot")"
 flight_die="$(jq -er '.dice' <<<"$flight_snapshot")"
-[[ "$flight_die" == 6 ]] || fail "Flight Chess hangar launch was unlocked by a non-six roll"
+[[ "$flight_die" == 5 || "$flight_die" == 6 ]] || fail "Flight Chess hangar launch was unlocked by a roll other than five or six"
 if [[ "$flight_color" == black ]]; then
 	flight_serial="$FLIGHT_BLACK_SERIAL"
 else
@@ -3451,14 +3478,10 @@ resume_e2e_server || fail "could not resume the server after the Flight Chess mo
 flight_revision=$((flight_revision + 1))
 flight_snapshot="$(wait_for_flight_chess_match "$FLIGHT_MATCH_ID" "$flight_revision" active)" \
 	|| fail "Flight Chess launch move did not commit"
-if ! jq -e --arg color "$flight_color" '
-	.phase == "awaiting_roll" and .dice == null and .nextColor == $color
-	and ([.pieces[$color][] | select(.zone == "launch")] | length == 1)
-	and ([.pieces[$color][] | select(.zone == "hangar")] | length == 3)
-' <<<"$flight_snapshot" >/dev/null; then
+if ! flight_chess_launch_matches "$flight_snapshot" "$flight_color" "$flight_die"; then
 	flight_launch_diagnostic="$(jq -c --arg color "$flight_color" \
 		'{phase,dice,nextColor,zones:[.pieces[$color][] | .zone]}' <<<"$flight_snapshot" 2>/dev/null || printf unavailable)"
-	fail "Flight Chess accepted launch or six extra turn was wrong: $flight_launch_diagnostic"
+	fail "Flight Chess accepted launch or next turn was wrong: $flight_launch_diagnostic"
 fi
 for serial in "$SERIAL_A" "$SERIAL_B"; do
 	wait_for_log_marker "$serial" "$GAMEBOX_STATE_MARKER match=$FLIGHT_MATCH_ID revision=$flight_revision status=active connection=connected" \
@@ -3519,7 +3542,7 @@ gamebox_e2e_record_scenario_result flight-chess-network "$(jq -n \
 		match:{id:$matchId,revision:$revision,status:"finished",result:"resignation",slotsReleased:true},
 		assertions:[
 			"flight-chess-server-dice","flight-chess-pending-before-authority",
-			"flight-chess-authoritative-launch","flight-chess-six-extra-turn",
+			"flight-chess-authoritative-launch","flight-chess-launch-turn",
 			"flight-chess-force-stop-resume","flight-chess-back-non-destructive",
 			"flight-chess-authoritative-resignation"
 		]

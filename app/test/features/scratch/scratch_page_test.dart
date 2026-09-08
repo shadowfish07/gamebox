@@ -27,6 +27,45 @@ Future<void> waitForDrawReady(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('story stays locked through reveal and success transition', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 891);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = ScratchController(store: MemoryScratchStore(), random: () => 0);
+    await c.load();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: ScratchPage(controller: c, socialApi: FakeSocial()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scratch-primary')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      tester.widget<CardDrawStage>(find.byType(CardDrawStage)).onStory,
+      isNull,
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      tester.widget<CardDrawStage>(find.byType(CardDrawStage)).onStory,
+      isNull,
+    );
+    await waitForDrawReady(tester);
+    expect(
+      tester.widget<CardDrawStage>(find.byType(CardDrawStage)).onStory,
+      isNotNull,
+    );
+    await tester.tap(find.byKey(const Key('draw-view-story')));
+    await tester.pumpAndSettle();
+    expect(find.text(c.cat.story), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    c.dispose();
+  });
+
   testWidgets('predictive back can cancel and commit after drawing', (
     tester,
   ) async {
@@ -217,6 +256,7 @@ void main() {
         1,
       );
       expect(find.textContaining(' → '), findsNothing);
+      await waitForDrawReady(tester);
       await tester.tap(find.byKey(const Key('draw-view-story')));
       await tester.pumpAndSettle();
       expect(find.text(c.cat.story), findsOneWidget);

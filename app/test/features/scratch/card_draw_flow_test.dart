@@ -8,6 +8,30 @@ import 'package:gamebox/features/scratch/scratch_controller.dart';
 import 'scratch_controller_test.dart' show MemoryScratchStore;
 
 void main() {
+  testWidgets('restored receipt stays out of current session history', (
+    tester,
+  ) async {
+    final c = ScratchController(store: MemoryScratchStore(), random: () => 0);
+    await c.load();
+    await c.draw();
+    final restoredSerial = c.serial;
+    final f = CardDrawFlow(c);
+    f.primary();
+    await tester.pump(GameboxTokens.motion.standard);
+    await tester.pump();
+    expect(f.recent, isEmpty);
+    expect(f.current!.serial, restoredSerial + 1);
+    f.finishReveal();
+    await tester.pump(CardDrawFlow.celebrationDuration);
+    await tester.pump(GameboxTokens.motion.standard);
+    f.primary();
+    await tester.pump(GameboxTokens.motion.standard);
+    await tester.pump();
+    expect(f.recent.single.serial, restoredSerial + 1);
+    f.dispose();
+    c.dispose();
+  });
+
   testWidgets('miss retry does not reroll and next win alone enters recent', (
     tester,
   ) async {

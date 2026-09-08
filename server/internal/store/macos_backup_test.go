@@ -21,7 +21,7 @@ func TestMacOSBackupPreservesLiveWAL(t *testing.T) {
 	defer db.Close()
 	insertCrossProcessUser(t, db, crossProcessOwnerID, "Owner", "owner")
 	before := existingSidecarIdentities(t, path)
-	backupDir := filepath.Join(t.TempDir(), "backups")
+	backupDir := filepath.Join(t.TempDir(), "backup's directory")
 	cmd := exec.Command("/bin/zsh", "../../../deploy/macos/backup.sh")
 	cmd.Env = append(os.Environ(), "GAMEBOX_DB_PATH="+path, "GAMEBOX_BACKUP_DIR="+backupDir)
 	if output, err := cmd.CombinedOutput(); err != nil {

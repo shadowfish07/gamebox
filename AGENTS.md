@@ -1,5 +1,27 @@
 # Project Agent Instructions
 
+## Game client technology selection
+
+- 新增棋类、牌类和回合制轻量小游戏，默认优先考虑直接使用 Flutter Widget、
+  CustomPainter 和动画系统，以复用应用 UI、主题和客户端工具链。规则复杂度本身
+  不构成引入游戏引擎的理由；权威规则、随机结果和胜负裁定继续由 Go 服务端负责。
+- 当游戏明确需要复杂实时场景、物理、粒子、镜头、关卡编辑或 3D 等能力时，优先
+  评估 Godot。结合实际表现目标和内容制作流程选型，不仅按游戏名称决定引擎。
+- 现有 Godot 游戏可以继续维护和完善，不因上述默认方向自动启动迁移或整体重写。
+  当前四款游戏中，石头剪刀布、五子棋和跳棋从零实现时更偏向 Flutter；飞行棋
+  根据动画与场景表现目标选择。已有实现与迁移成本必须纳入判断。
+- 若任务明确要求评估迁移，优先以五子棋实现一款完整 Flutter 对照版本，覆盖
+  真实联机、权威状态、动画、断线重连、后台恢复和返回大厅，并依照
+  [测试策略](docs/testing-strategy.md)及 UI 验收规则验证后，再决定是否扩大迁移。
+  本规则记录选型方向，不视为已授权实施试点或迁移。
+- 迁移范围必须包含 Godot 当前承担的对局连接、快照、操作状态和恢复行为，不能
+  只替换棋盘画面。保持服务端权威与协议契约；协议调整需按实际任务单独评估。
+- 比较方案时同时考虑 UI 一致性、开发调试、生命周期、测试构建、后续游戏类型
+  和已有资产。保留任一 Godot 游戏期间，引擎、桥接与构建链仍需维护；不能把
+  单款迁移描述为已经获得完全移除 Godot 后的维护或包体收益。
+- 流畅度、启动耗时、内存、包体和耗电结论必须区分架构预期与实测结果。量化比较
+  使用相同目标设备、可比构建配置和等价游戏状态，不凭框架名称断言性能优劣。
+
 ## UI change acceptance
 
 - Any change that affects the user-facing UI is not complete until the implementing agent has run the updated interface in the relevant target runtime, captured the affected states, and inspected the screenshots for UX problems.

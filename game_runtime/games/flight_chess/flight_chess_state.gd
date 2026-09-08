@@ -16,7 +16,7 @@ const ZONE_HOME := "home"
 const ZONE_FINISHED := "finished"
 const PIECE_COUNT := 4
 const MAIN_CELL_COUNT := 52
-const HOME_CELL_COUNT := 6
+const HOME_CELL_COUNT := 5
 const START_INDICES := {BLACK: 26, WHITE: 0}
 
 var revision: int:
@@ -52,6 +52,12 @@ var result: Variant:
 var pending_action: Dictionary:
 	get: return _pending_action.duplicate(true)
 	set(_value): pass
+
+var capture_counts: Dictionary:
+	get: return _capture_counts.duplicate()
+	set(_value): pass
+
+var _capture_counts := {BLACK: -1, WHITE: -1}
 
 var _match_id := ""
 var _revision := -1
@@ -162,6 +168,7 @@ func apply_snapshot(envelope: Dictionary) -> Dictionary:
 	_next_color = payload["nextColor"]
 	_dice = payload["dice"]
 	_pieces = payload["pieces"].duplicate(true)
+	_capture_counts = payload.get("captureCounts", {BLACK: 0, WHITE: 0} if revision == 0 else {BLACK: -1, WHITE: -1}).duplicate()
 	_winner_user_id = payload["winnerUserId"]
 	_result = payload["result"]
 	_pending_action.clear()
@@ -287,13 +294,15 @@ func _apply_move(envelope: Dictionary) -> Dictionary:
 	var expected_captured: Array = []
 	if resolution["to"]["zone"] == ZONE_MAIN:
 		for opponent_index in PIECE_COUNT:
-			if next_pieces[opponent][opponent_index] == resolution["to"]:
+			if next_pieces[opponent][opponent_index] in _capture_cells(resolution):
 				next_pieces[opponent][opponent_index] = {"zone": ZONE_HANGAR, "index": opponent_index}
 				expected_captured.append(opponent_index)
 	if payload["capturedPieceIndices"] != expected_captured:
 		return _failure("invalid_event")
 	var roll := dice
 	_pieces = next_pieces
+	if _capture_counts[color] >= 0:
+		_capture_counts[color] += expected_captured.size()
 	_dice = 0
 	_phase = PHASE_AWAITING_ROLL
 	if _all_finished(next_pieces[color]):
@@ -358,10 +367,16 @@ func _validate_snapshot(envelope: Dictionary) -> Dictionary:
 		or not _valid_bound(envelope, "platform.snapshot"):
 		return _failure("invalid_snapshot")
 	var payload: Variant = envelope["payload"]
-	if not payload is Dictionary or not _exact_keys(payload, [
-		"blackUserId", "dice", "nextColor", "phase", "pieces", "result", "status", \
-		"whiteUserId", "winnerUserId",
-	]) or not _canonical_uuid(payload.get("blackUserId")) or not _canonical_uuid(payload.get("whiteUserId")) \
+	var required_keys := ["blackUserId", "dice", "nextColor", "phase", "pieces", "result", "status", "whiteUserId", "winnerUserId"]
+	if payload is Dictionary and payload.has("captureCounts"):
+		required_keys.append("captureCounts")
+		var counts: Variant = payload["captureCounts"]
+		if not counts is Dictionary or not _exact_keys(counts, [BLACK, WHITE]):
+			return _failure("invalid_snapshot")
+		for color in [BLACK, WHITE]:
+			if typeof(counts[color]) != TYPE_INT or counts[color] < 0 or counts[color] > 2048:
+				return _failure("invalid_snapshot")
+	if not payload is Dictionary or not _exact_keys(payload, required_keys) or not _canonical_uuid(payload.get("blackUserId")) or not _canonical_uuid(payload.get("whiteUserId")) \
 		or payload["blackUserId"] == payload["whiteUserId"] \
 		or payload.get("nextColor") not in [BLACK, WHITE] \
 		or payload.get("phase") not in [PHASE_AWAITING_ROLL, PHASE_AWAITING_MOVE] \
@@ -434,7 +449,7 @@ static func _resolve_move(color: String, piece: Dictionary, roll: int) -> Dictio
 		return {"ok": false}
 	match piece["zone"]:
 		ZONE_HANGAR:
-			if roll != 6:
+			if roll != 5 and roll != 6:
 				return {"ok": false}
 			return {"ok": true, "to": {"zone": ZONE_LAUNCH, "index": 0}, "effect": "none"}
 		ZONE_LAUNCH:
@@ -579,3 +594,15 @@ static func _exact_keys(value: Dictionary, expected: Array) -> bool:
 
 static func _failure(code: String) -> Dictionary:
 	return {"ok": false, "code": code}
+
+
+static func _capture_cells(resolution: Dictionary) -> Array:
+	if resolution.to.zone != ZONE_MAIN:
+		return []
+	var offsets: Array = {"none": [0], "jump": [4, 0], "shortcut": [12, 0], "jump_shortcut": [16, 12, 0]}[resolution.effect]
+	var cells: Array = []
+	for offset in offsets:
+		cells.append({"zone": ZONE_MAIN, "index": posmod(int(resolution.to.index) - int(offset), MAIN_CELL_COUNT)})
+	if resolution.effect in ["shortcut", "jump_shortcut"]:
+		cells.append({"zone": ZONE_HOME, "index": 2})
+	return cells

@@ -43,7 +43,7 @@ const (
 
 	PieceCount    = 4
 	MainCellCount = 52
-	HomeCellCount = 6
+	HomeCellCount = 5
 )
 
 var (
@@ -71,15 +71,16 @@ type Piece struct {
 }
 
 type snapshotState struct {
-	Status       string             `json:"status"`
-	Phase        string             `json:"phase"`
-	BlackUserID  *string            `json:"blackUserId"`
-	WhiteUserID  *string            `json:"whiteUserId"`
-	NextColor    string             `json:"nextColor"`
-	Dice         int                `json:"dice"`
-	Pieces       map[string][]Piece `json:"pieces"`
-	WinnerUserID *string            `json:"winnerUserId"`
-	Result       *string            `json:"result"`
+	CaptureCounts map[string]int     `json:"captureCounts"`
+	Status        string             `json:"status"`
+	Phase         string             `json:"phase"`
+	BlackUserID   *string            `json:"blackUserId"`
+	WhiteUserID   *string            `json:"whiteUserId"`
+	NextColor     string             `json:"nextColor"`
+	Dice          int                `json:"dice"`
+	Pieces        map[string][]Piece `json:"pieces"`
+	WinnerUserID  *string            `json:"winnerUserId"`
+	Result        *string            `json:"result"`
 }
 
 type requestedMovePayload struct {
@@ -132,9 +133,14 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 			}
 			produced, next, err = rules.applyRollValue(snapshot, persisted.ActorID, accepted.Value)
 			if err == nil && !bytes.Equal(produced.Payload, persisted.Payload) {
-				// Historical rolls excluded overshoots. Replay their original turn
-				// transition without changing the rule for newly requested rolls.
-				produced, next, err = rules.applyRollValueWithBounce(snapshot, persisted.ActorID, accepted.Value, false)
+				// Historical rolls excluded overshoots or five-point launches.
+				// Replay their original turn transition without changing new rolls.
+				for _, options := range [][2]bool{{true, false}, {false, true}, {false, false}} {
+					produced, next, err = rules.applyRollValueWithOptions(snapshot, persisted.ActorID, accepted.Value, options[0], options[1])
+					if err == nil && bytes.Equal(produced.Payload, persisted.Payload) {
+						break
+					}
+				}
 			}
 		case MoveAccepted:
 			accepted, decodeErr := decodeAcceptedMove(persisted.Payload)
@@ -145,7 +151,17 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 			if marshalErr != nil {
 				return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
 			}
-			produced, next, err = rules.Apply(snapshot, persisted.ActorID, gameapi.Action{Type: MoveRequested, Payload: payload})
+			action := gameapi.Action{Type: MoveRequested, Payload: payload}
+			produced, next, err = rules.Apply(snapshot, persisted.ActorID, action)
+			if err == nil && !bytes.Equal(produced.Payload, persisted.Payload) {
+				// Replay both older landing-only and final-destination-only captures.
+				for _, captureLandings := range []bool{true, false} {
+					produced, next, err = rules.applyMove(snapshot, persisted.ActorID, action, captureLandings)
+					if err == nil && bytes.Equal(produced.Payload, persisted.Payload) {
+						break
+					}
+				}
+			}
 		default:
 			return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
 		}
@@ -172,6 +188,14 @@ func (rules *Rules) ApplyRandom(snapshot gameapi.Snapshot, actorID string, actio
 }
 
 func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action gameapi.Action) (gameapi.Event, gameapi.Snapshot, error) {
+	return rules.applyMoveWithCrossing(snapshot, actorID, action, true, true)
+}
+
+func (rules *Rules) applyMove(snapshot gameapi.Snapshot, actorID string, action gameapi.Action, captureLandings bool) (gameapi.Event, gameapi.Snapshot, error) {
+	return rules.applyMoveWithCrossing(snapshot, actorID, action, captureLandings, false)
+}
+
+func (rules *Rules) applyMoveWithCrossing(snapshot gameapi.Snapshot, actorID string, action gameapi.Action, captureLandings, captureCrossing bool) (gameapi.Event, gameapi.Snapshot, error) {
 	if action.Type != MoveRequested || !validActorID(actorID) {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
 	}
@@ -200,7 +224,19 @@ func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action game
 	color := state.NextColor
 	roll := state.Dice
 	state.Pieces[color][pieceIndex] = resolution.to
-	captured := captureAt(&state, color, resolution.to)
+	var destinations []Piece
+	if resolution.to.Zone == ZoneMain {
+		destinations = []Piece{resolution.to}
+	}
+	if captureLandings {
+		destinations = landingCells(resolution)
+	}
+	if captureCrossing && (resolution.effect == EffectShortcut || resolution.effect == EffectJumpShortcut) {
+		// The third home cell is crossed by the opposite colour's shortcut.
+		destinations = append(destinations, Piece{Zone: ZoneHome, Index: 2})
+	}
+	captured := captureAt(&state, color, destinations)
+	state.CaptureCounts[color] += len(captured)
 	state.Dice = 0
 	state.Phase = PhaseAwaitingRoll
 	if allFinished(state.Pieces[color]) {
@@ -229,10 +265,10 @@ func (rules *Rules) Apply(snapshot gameapi.Snapshot, actorID string, action game
 }
 
 func (rules *Rules) applyRollValue(snapshot gameapi.Snapshot, actorID string, value int) (gameapi.Event, gameapi.Snapshot, error) {
-	return rules.applyRollValueWithBounce(snapshot, actorID, value, true)
+	return rules.applyRollValueWithOptions(snapshot, actorID, value, true, true)
 }
 
-func (rules *Rules) applyRollValueWithBounce(snapshot gameapi.Snapshot, actorID string, value int, allowBounce bool) (gameapi.Event, gameapi.Snapshot, error) {
+func (rules *Rules) applyRollValueWithOptions(snapshot gameapi.Snapshot, actorID string, value int, allowBounce, allowFiveLaunch bool) (gameapi.Event, gameapi.Snapshot, error) {
 	if value < 1 || value > 6 || !validActorID(actorID) {
 		return gameapi.Event{}, gameapi.Snapshot{}, gameapi.ErrInvalidAction
 	}
@@ -248,11 +284,12 @@ func (rules *Rules) applyRollValueWithBounce(snapshot gameapi.Snapshot, actorID 
 	}
 	color := state.NextColor
 	movable := movablePieces(color, state.Pieces[color], value)
-	if !allowBounce {
+	if !allowBounce || !allowFiveLaunch {
 		legacyMovable := make([]int, 0, len(movable))
 		for _, index := range movable {
 			piece := state.Pieces[color][index]
-			if piece.Zone != ZoneHome || piece.Index+value <= HomeCellCount {
+			if (allowBounce || piece.Zone != ZoneHome || piece.Index+value <= HomeCellCount) &&
+				(allowFiveLaunch || value != 5 || piece.Zone != ZoneHangar) {
 				legacyMovable = append(legacyMovable, index)
 			}
 		}
@@ -300,7 +337,7 @@ func initialState() snapshotState {
 	}
 	return snapshotState{
 		Status: StatusActive, Phase: PhaseAwaitingRoll, NextColor: Black,
-		Pieces: pieces,
+		Pieces: pieces, CaptureCounts: map[string]int{Black: 0, White: 0},
 	}
 }
 
@@ -310,7 +347,7 @@ func resolveMove(color string, piece Piece, roll int) (moveResolution, bool) {
 	}
 	switch piece.Zone {
 	case ZoneHangar:
-		if roll != 6 {
+		if roll != 5 && roll != 6 {
 			return moveResolution{}, false
 		}
 		return moveResolution{to: Piece{Zone: ZoneLaunch, Index: 0}, effect: EffectNone}, true
@@ -383,16 +420,37 @@ func movablePieces(color string, pieces []Piece, roll int) []int {
 	return result
 }
 
-func captureAt(state *snapshotState, color string, destination Piece) []int {
-	if destination.Zone != ZoneMain {
-		return []int{}
+// landingCells excludes cells merely passed over by the die move or shortcut.
+func landingCells(resolution moveResolution) []Piece {
+	if resolution.to.Zone != ZoneMain {
+		return nil
 	}
+	offsets := []int{0}
+	switch resolution.effect {
+	case EffectJump:
+		offsets = []int{4, 0}
+	case EffectShortcut:
+		offsets = []int{12, 0}
+	case EffectJumpShortcut:
+		offsets = []int{16, 12, 0}
+	}
+	cells := make([]Piece, 0, len(offsets))
+	for _, offset := range offsets {
+		cells = append(cells, Piece{Zone: ZoneMain, Index: (resolution.to.Index - offset + MainCellCount) % MainCellCount})
+	}
+	return cells
+}
+
+func captureAt(state *snapshotState, color string, destinations []Piece) []int {
 	opponent := opposite(color)
 	captured := make([]int, 0, PieceCount)
 	for index, piece := range state.Pieces[opponent] {
-		if piece == destination {
-			state.Pieces[opponent][index] = Piece{Zone: ZoneHangar, Index: index}
-			captured = append(captured, index)
+		for _, destination := range destinations {
+			if (piece.Zone == ZoneMain || piece.Zone == ZoneHome) && piece == destination {
+				state.Pieces[opponent][index] = Piece{Zone: ZoneHangar, Index: index}
+				captured = append(captured, index)
+				break
+			}
 		}
 	}
 	return captured
@@ -543,20 +601,45 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 	}
 	allowed := map[string]struct{}{
 		"status": {}, "phase": {}, "blackUserId": {}, "whiteUserId": {}, "nextColor": {}, "dice": {},
-		"pieces": {}, "winnerUserId": {}, "result": {},
+		"pieces": {}, "winnerUserId": {}, "result": {}, "captureCounts": {},
 	}
 	fields, err := strictObject(snapshot.State, allowed)
-	if err != nil || len(fields) != len(allowed) {
+	if err != nil || (len(fields) != len(allowed) && (len(fields) != len(allowed)-1 || fields["captureCounts"] != nil)) {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
 	var state snapshotState
-	if json.Unmarshal(snapshot.State, &state) != nil || !validState(state) {
+	if json.Unmarshal(snapshot.State, &state) != nil {
+		return snapshotState{}, gameapi.ErrInvalidSnapshot
+	}
+	if fields["captureCounts"] == nil {
+		state.CaptureCounts = map[string]int{Black: 0, White: 0}
+	} else {
+		counts, err := strictObject(fields["captureCounts"], map[string]struct{}{Black: {}, White: {}})
+		if err != nil || len(counts) != 2 {
+			return snapshotState{}, gameapi.ErrInvalidSnapshot
+		}
+		for _, raw := range counts {
+			var count *int
+			if json.Unmarshal(raw, &count) != nil || count == nil {
+				return snapshotState{}, gameapi.ErrInvalidSnapshot
+			}
+		}
+	}
+	if !validState(state) {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
 	return state, nil
 }
 
 func validState(state snapshotState) bool {
+	if len(state.CaptureCounts) != 2 {
+		return false
+	}
+	for _, color := range []string{Black, White} {
+		if count, ok := state.CaptureCounts[color]; !ok || count < 0 || count > 2048 {
+			return false
+		}
+	}
 	if state.NextColor != Black && state.NextColor != White || !validOptionalActor(state.BlackUserID) || !validOptionalActor(state.WhiteUserID) ||
 		state.BlackUserID != nil && state.WhiteUserID != nil && *state.BlackUserID == *state.WhiteUserID ||
 		len(state.Pieces) != 2 {

@@ -78,7 +78,7 @@ static func _move_event(state: Variant, match_id: String) -> Dictionary:
 	var opponent := WHITE if color == BLACK else BLACK
 	if resolution["to"]["zone"] == "main":
 		for opponent_index in 4:
-			if pieces[opponent][opponent_index] == resolution["to"]:
+			if pieces[opponent][opponent_index] in FlightChessState._capture_cells(resolution):
 				captured.append(opponent_index)
 	return {
 		"protocolVersion": 1,
@@ -104,7 +104,7 @@ static func _choose_roll(state: Variant, color: String) -> int:
 	# Six is now always legal in home; choose an exact finish instead of bouncing forever.
 	for piece in state.pieces[color]:
 		if piece["zone"] == "home":
-			return 6 - int(piece["index"])
+			return FlightChessState.HOME_CELL_COUNT - int(piece["index"])
 	for value in [6, 5, 4, 3, 2, 1]:
 		for piece_index in _movable_indices(state, color, value):
 			var resolution: Dictionary = FlightChessState._resolve_move(

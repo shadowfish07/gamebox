@@ -25,6 +25,7 @@ final class CardDrawFlow extends ChangeNotifier {
   final recent = <CardDrawResult>[];
   CardDrawPhase phase = CardDrawPhase.idle;
   bool _disposed = false, _foreground = true;
+  bool _currentDrawnInSession = false;
   Timer? _timer;
   bool get canDraw =>
       !_disposed &&
@@ -70,6 +71,7 @@ final class CardDrawFlow extends ChangeNotifier {
   void _present(CardDrawResult receipt) {
     _pending = null;
     current = receipt;
+    _currentDrawnInSession = true;
     phase = _foreground ? CardDrawPhase.revealing : CardDrawPhase.settled;
     _changed();
   }
@@ -81,6 +83,7 @@ final class CardDrawFlow extends ChangeNotifier {
       _present(receipt);
     } else {
       current = collection.lastResult;
+      _currentDrawnInSession = false;
       phase = CardDrawPhase.idle;
       _changed();
     }
@@ -114,7 +117,8 @@ final class CardDrawFlow extends ChangeNotifier {
     _timer = Timer(GameboxTokens.motion.standard, () {
       if (_disposed || !_foreground) return;
       if (current case final receipt?) {
-        if (receipt.winning &&
+        if (_currentDrawnInSession &&
+            receipt.winning &&
             (recent.isEmpty || recent.first.serial != receipt.serial)) {
           recent.insert(0, receipt);
           if (recent.length > 6) recent.removeLast();

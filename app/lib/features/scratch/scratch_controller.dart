@@ -137,7 +137,7 @@ final class ScratchController extends ChangeNotifier {
         (savedCounts.length != scratchLegacyCatalogSize &&
             savedCounts.length != scratchCollectibles.length) ||
         savedFirst.length != savedCounts.length ||
-        savedCounts.any((v) => v < 0) ||
+        savedCounts.any((v) => v < 0 || v > 1000000000) ||
         catIndex < 0 ||
         catIndex >= savedCounts.length ||
         savedFavorites.length > 6 ||
@@ -152,9 +152,11 @@ final class ScratchController extends ChangeNotifier {
       throw const FormatException('Invalid collection');
     }
     for (var i = 0; i < savedCounts.length; i++) {
-      if (savedCounts[i] > 0 &&
-          (savedFirst[i] == null ||
-              DateTime.tryParse(savedFirst[i]!) == null)) {
+      if ((savedCounts[i] == 0 && savedFirst[i] != null) ||
+          (savedCounts[i] > 0 &&
+              (savedFirst[i] == null ||
+                  savedFirst[i]!.length < 10 ||
+                  DateTime.tryParse(savedFirst[i]!) == null))) {
         throw const FormatException('Invalid collection date');
       }
     }

@@ -7,6 +7,7 @@ const FlightChessBoard = preload("res://games/flight_chess/flight_chess_board.gd
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess reaches the center in six steps from its finish entry", "run": _finishes_in_six_steps},
 		{"name":"flight chess presentation paths end at the authoritative destination", "run":_motion_destinations},
 		{"name": "flight chess board exposes the classic 52-space topology", "run": _exposes_classic_topology},
 		{"name": "flight chess board keeps its four route quadrants rotationally symmetric", "run": _keeps_route_quadrants_symmetric},
@@ -43,7 +44,7 @@ static func _exposes_classic_topology() -> bool:
 			"yellow": Vector2i(17, 29), "green": Vector2i(30, 42),
 			"red": Vector2i(43, 3), "blue": Vector2i(4, 16),
 		}, "shortcut graph drifted") \
-		and _check((topology["home_stretches"] as Dictionary).values().all(func(points: Array) -> bool: return points.size() == 6), "a home stretch is not six spaces")
+		and _check((topology["home_stretches"] as Dictionary).values().all(func(points: Array) -> bool: return points.size() == 5), "a home stretch must have five spaces before the sixth-step finish")
 
 
 static func _separates_home_lanes_from_route() -> bool:
@@ -232,7 +233,7 @@ static func _check(condition: bool, message: String) -> bool:
 static func _motion_destinations() -> bool:
 	var board := FlightChessBoard.new()
 	for color in ["red","yellow"]:
-		for progress in range(-1,57):
+		for progress in range(-1,56):
 			var piece: Dictionary
 			if progress == -1:
 				piece = {"zone":"hangar","index":0}
@@ -255,4 +256,16 @@ static func _motion_destinations() -> bool:
 						board.free()
 						return false
 	board.free()
+	return true
+
+
+static func _finishes_in_six_steps() -> bool:
+	for color in ["red", "yellow"]:
+		var entry := {"zone": "main", "index": FlightChessBoard.FINISH_ENTRIES[color]}
+		var resolved := State._resolve_move("black" if color == "red" else "white", entry, 6)
+		if not _check(resolved.get("ok", false) and resolved.to == {"zone": "finished", "index": 0}, "six steps from finish entry must finish"):
+			return false
+		var segments := Motion.segments(color, 0, entry, 6, resolved.effect)
+		if not _check(segments.size() == 6 and segments[-1].to == FlightChessBoard.FINISH_POINTS[color], "sixth animation step must reach the center"):
+			return false
 	return true

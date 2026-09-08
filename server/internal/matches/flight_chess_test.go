@@ -63,7 +63,7 @@ func TestFlightChessAuthoritativeRollMoveRetrySnapshotAndResign(t *testing.T) {
 	}
 
 	wire, err := snapshotEnvelope(current, initiatorID)
-	if err != nil || !bytes.Contains(wire, []byte(`"blackUserId":"`+initiatorID+`"`)) || !bytes.Contains(wire, []byte(`"pieces"`)) {
+	if err != nil || !bytes.Contains(wire, []byte(`"blackUserId":"`+initiatorID+`"`)) || !bytes.Contains(wire, []byte(`"pieces"`)) || !bytes.Contains(wire, []byte(`"captureCounts":{"black":0,"white":0}`)) {
 		t.Fatalf("snapshot wire=(%s,%v)", wire, err)
 	}
 
@@ -282,6 +282,80 @@ func TestFlightChessInvalidMoveErrorsKeepDomainRecovery(t *testing.T) {
 	assertRejected(5005, 3, flightchess.MoveRequested, `{"pieceIndex":1}`, flightchess.ErrInvalidMove)
 }
 
+func TestFlightChessSnapshotCapabilityAcrossOutboundPaths(t *testing.T) {
+	fixture := newFixture(t)
+	service := fixture.service(t, bytes.NewReader([]byte{0}))
+	created, err := service.Create(context.Background(), flightchess.GameID, initiatorID, opponentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.Snapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(snapshot.Game.State, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["captureCounts"] = json.RawMessage(`{"black":12,"white":7}`)
+	snapshot.Game.State, err = json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := snapshotEnvelopesByUser(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		for _, path := range []string{"initial", "resnapshot", "stale-recovery"} {
+			t.Run(fmt.Sprintf("%s/counts=%t", path, enabled), func(t *testing.T) {
+				connection := &hubConnection{
+					gameID: flightchess.GameID, matchID: created.ID, userID: initiatorID,
+					captureCountsEnabled: enabled, send: make(chan []byte, 4),
+				}
+				switch path {
+				case "initial":
+					if !connection.enqueueInitial([]byte(`{}`), messages[initiatorID], 0) {
+						t.Fatal("initial enqueue failed")
+					}
+					<-connection.send
+				case "resnapshot":
+					if connection.enqueueState(messages[initiatorID], 0) != enqueueStateQueued {
+						t.Fatal("resnapshot enqueue failed")
+					}
+				case "stale-recovery":
+					if connection.enqueueErrorAndSnapshot("stale_revision", actionID(9994), snapshot) != enqueueStateQueued {
+						t.Fatal("stale recovery enqueue failed")
+					}
+					<-connection.send
+				}
+				var envelope protocol.Envelope
+				if err := json.Unmarshal(<-connection.send, &envelope); err != nil {
+					t.Fatal(err)
+				}
+				var payload map[string]json.RawMessage
+				if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+					t.Fatal(err)
+				}
+				_, hasCounts := payload["captureCounts"]
+				expectedFields := 9
+				if enabled {
+					expectedFields++
+				}
+				if hasCounts != enabled || len(payload) != expectedFields {
+					t.Fatalf("unexpected snapshot fields: %s", envelope.Payload)
+				}
+				if enabled && string(payload["captureCounts"]) != `{"black":12,"white":7}` {
+					t.Fatalf("counts changed: %s", payload["captureCounts"])
+				}
+			})
+		}
+	}
+	if !bytes.Contains(messages[initiatorID], []byte(`"captureCounts"`)) || !bytes.Contains(snapshot.Game.State, []byte(`"captureCounts"`)) {
+		t.Fatal("legacy projection mutated shared or authoritative snapshot")
+	}
+}
+
 func TestFlightChessAbandonsLegacyRollWithoutRewritingHistory(t *testing.T) {
 	fixture := newFixture(t)
 	service := fixture.service(t, bytes.NewReader([]byte{0, 5}))
@@ -295,7 +369,7 @@ func TestFlightChessAbandonsLegacyRollWithoutRewritingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := string(event.Payload[:len(event.Payload)-1]) + `,"penalizedPieceIndices":[]}`
-	if _, err := fixture.db.Exec(`UPDATE match_events SET payload_json=? WHERE match_id=? AND revision=1`, legacy, created.ID); err != nil {
+	if _, err := fixture.db.ExecContext(ctx, `UPDATE match_events SET payload_json=? WHERE match_id=? AND revision=1`, legacy, created.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.SetPlayerOffline(ctx, created.ID, initiatorID); err != nil {
@@ -311,7 +385,7 @@ func TestFlightChessAbandonsLegacyRollWithoutRewritingHistory(t *testing.T) {
 		t.Fatalf("snapshot=(%v,%v)", snapshot, err)
 	}
 	var retained string
-	if err := fixture.db.QueryRow(`SELECT payload_json FROM match_events WHERE match_id=? AND revision=1`, created.ID).Scan(&retained); err != nil || retained != legacy {
+	if err := fixture.db.QueryRowContext(ctx, `SELECT payload_json FROM match_events WHERE match_id=? AND revision=1`, created.ID).Scan(&retained); err != nil || retained != legacy {
 		t.Fatalf("history changed: %v", err)
 	}
 }

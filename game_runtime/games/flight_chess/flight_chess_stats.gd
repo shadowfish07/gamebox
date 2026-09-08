@@ -15,7 +15,7 @@ func present(pieces: Array) -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	var unit := size.y / 40.0
+	var unit := size.y / 48.0
 	var ink := get_theme_color("font_color", "Label")
 	var font := get_theme_default_font()
 	var font_size := maxi(1,roundi(Tokens.TYPOGRAPHY.label_small.font_size * unit))
@@ -23,7 +23,7 @@ func _draw() -> void:
 	draw_string(font,Vector2(0,11)*unit,"全部抵达" if counts[2] == 4 else "已抵达",HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,ink)
 	draw_string(font,Vector2(size.x-font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size).x,11*unit),value,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,ink)
 	for i in 4:
-		var origin := Vector2(i * (size.x-24*unit)/3.0,16*unit)
+		var origin := Vector2(i * (size.x-24*unit)/3.0,24*unit)
 		var polygon := PackedVector2Array()
 		for point in PLANE:
 			polygon.append(origin + point * unit)

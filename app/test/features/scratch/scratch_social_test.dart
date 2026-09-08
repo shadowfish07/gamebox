@@ -50,6 +50,36 @@ class FakeSocial implements ScratchSocialApi {
 }
 
 void main() {
+  for (final acknowledgment in [
+    <String, Object?>{},
+    {'published': false},
+    {'published': 'true'},
+    {'published': true},
+  ]) {
+    test('sync validates acknowledgment $acknowledgment', () async {
+      final client = ApiClient(
+        baseUri: Uri.parse('https://example.test'),
+        httpClient: MockClient(
+          (request) async => http.Response(
+            jsonEncode(acknowledgment),
+            200,
+            headers: {'content-type': 'application/json'},
+          ),
+        ),
+      );
+      final api = HttpScratchSocialApi(client);
+      if (acknowledgment['published'] == true) {
+        await api.sync(List.filled(48, 0));
+      } else {
+        await expectLater(
+          api.sync(List.filled(48, 0)),
+          throwsA(isA<ApiError>()),
+        );
+      }
+      client.close();
+    });
+  }
+
   for (final dark in [false, true]) {
     testWidgets('players loading error retry inspect dark=$dark', (
       tester,

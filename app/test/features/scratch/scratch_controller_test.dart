@@ -47,6 +47,43 @@ Map<String, Object?> legacyScratchSave({
 };
 
 void main() {
+  for (final version in [1, 3]) {
+    for (final invalid in [
+      'short',
+      'compact',
+      'unowned-date',
+      'unowned-valid-date',
+      'over-limit',
+    ]) {
+      test('invalid $invalid v$version preserves raw save', () async {
+        final data = legacyScratchSave()..['version'] = version;
+        final dates = data['firstFound'] as List;
+        final counts = data['counts'] as List;
+        switch (invalid) {
+          case 'short':
+            dates[0] = '2026-09';
+          case 'compact':
+            dates[0] = '20260908';
+          case 'unowned-date':
+            dates[1] = 'bad';
+          case 'unowned-valid-date':
+            dates[1] = '2026-09-08';
+          case 'over-limit':
+            counts[0] = 1000000001;
+        }
+        final raw = jsonEncode(data);
+        final store = MemoryScratchStore()..value = raw;
+        final c = ScratchController(store: store, random: () => 0);
+        await c.load();
+        expect(c.error, isNotNull);
+        expect(c.interactive, isFalse);
+        expect(c.total, 0);
+        expect(store.value, raw);
+        c.dispose();
+      });
+    }
+  }
+
   for (final (roll, wins) in [
     (0.0, true),
     (.199999, true),
