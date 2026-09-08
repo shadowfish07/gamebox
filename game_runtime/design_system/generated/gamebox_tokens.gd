@@ -4,7 +4,7 @@
 class_name GameboxTokens
 extends RefCounted
 
-const VERSION := "2.4.0"
+const VERSION := "2.5.0"
 const BRAND_SEED := "#006B60"
 
 const LIGHT := {
@@ -134,6 +134,22 @@ const GAME := {
     "result_loss_container_light": Color("#F6E49C"),
     "result_loss_dark": Color("#E4CA72"),
     "result_loss_light": Color("#745B00"),
+    "scratch_clue_paper": Color("#EEE4D2"),
+    "scratch_common": Color("#89775A"),
+    "scratch_enamel_light": Color("#FFEDB4"),
+    "scratch_enamel_shade": Color("#F4E1BC"),
+    "scratch_epic": Color("#8560AA"),
+    "scratch_foil": Color("#CED5CA"),
+    "scratch_foil_glint": Color("#E2E5DA"),
+    "scratch_foil_ink": Color("#51654F"),
+    "scratch_foil_light": Color("#DCE0D7"),
+    "scratch_foil_shade": Color("#BDC7BD"),
+    "scratch_ink": Color("#493F32"),
+    "scratch_legendary": Color("#B48A35"),
+    "scratch_locked_ink": Color("#657866"),
+    "scratch_paper": Color("#FFF5E3"),
+    "scratch_paw": Color("#849584"),
+    "scratch_rare": Color("#487463"),
     "white_piece": Color("#F8FAFC"),
     "white_piece_outline": Color("#667085"),
     "winning_line": Color("#F4C542"),

@@ -38,6 +38,27 @@
 - Fixed test, smoke, and E2E scripts do not capture screenshots for UI acceptance. Screenshot capture and inspection belong to the implementing agent's UI development workflow.
 - Gamebox-specific commands, device leases, markers, state matrices, and protocol invariants remain in this repository rather than shared rules.
 
+## 图片生成
+
+- 本仓库生图优先使用 Poe 的 GPT Image 2，前提是 Poe 有可用额度且模型可用。
+- 生图前先检查可用额度；额度不足或服务不可用时，再考虑其他生图方式。
+- 此偏好仅适用于本仓库，不作为全局或其他仓库的默认规则。
+- 使用 Codex 内置生图时，在提示词中优先要求生成 512 × 512 原稿；输出后检查实际尺寸，
+  若未按要求返回，等比例缩小为 512 × 512，不将提示词要求当作工具尺寸保证。
+- Poe Key 仅通过本地、已被 Git 忽略的 `.env` 中的 `POE_API_KEY` 读取，不写入源码、提示词或日志。
+- 生成或替换收藏原画前，读取项目 Skill [gamebox-collection-content](.agents/skills/gamebox-collection-content/SKILL.md)，
+  按内容标准的“四档原画要求”规划构图、故事细节、道具与光影，并逐张及整批验收。
+- 收藏卡原画逐张生成，Poe 默认使用 1024 × 1024 正方形原稿，主体四周保留安全边距；
+  程序使用的资源默认等比例缩小为 512 × 512 WebP，原稿另行保留。
+- 显示时保持原始宽高比，禁止非等比拉伸；需要图集时由程序将等尺寸图片拼接，
+  不让生图模型一次绘制多张卡片的网格。
+
+## 收藏卡片内容
+
+新增收藏系列、生成卡片或改写故事前，读取并遵守
+项目 Skill [gamebox-collection-content](.agents/skills/gamebox-collection-content/SKILL.md)。按稀有度增加具体经历、
+人物动机和故事完整度，并核对原画、跨卡关系与稳定编号；不要只靠加长文案体现稀有度。
+
 <!-- ai-rules:routing:start -->
 ## Shared rule routing
 

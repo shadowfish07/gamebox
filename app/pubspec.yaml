@@ -42,6 +42,7 @@ dependencies:
   # 11.0.0 requires Android compileSdk 37, beyond Flutter 3.47.1's
   # currently validated AGP 9.1 / compileSdk 36 toolchain.
   flutter_secure_storage: ^10.3.1
+  audioplayers: ^6.8.1
 
 dev_dependencies:
   flutter_test:
@@ -66,6 +67,22 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  fonts:
+    - family: LXGWWenKai
+      fonts:
+        - asset: assets/fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf
+  assets:
+    - assets/audio/kenney-casino/card-place-3.ogg
+    - assets/audio/kenney-casino/LICENSE.txt
+    - assets/audio/card-draw/rare.wav
+    - assets/audio/card-draw/epic.wav
+    - assets/audio/card-draw/legendary.wav
+    - assets/audio/kenney-jingles/LICENSE.txt
+    - assets/scratch/cat-atlas-v2.webp
+    - assets/scratch/dog-atlas-v2.webp
+    - assets/scratch/dog-epic-atlas.webp
+    - assets/fonts/lxgw-wenkai/OFL.txt
+    - assets/poetry/LICENSE.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:

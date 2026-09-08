@@ -833,6 +833,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 		"refresh_tokens",
 		"resume_tokens",
 		"schema_migrations",
+		"scratch_collections",
 		"users",
 	}
 	gotTables := objectNames(t, db, "table")

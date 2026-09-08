@@ -25,6 +25,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/httpapi"
 	"me.zqydev/gamebox/server/internal/matches"
+	"me.zqydev/gamebox/server/internal/scratch"
 	"me.zqydev/gamebox/server/internal/store"
 )
 
@@ -232,7 +233,8 @@ func buildRuntime(database *sql.DB, processConfig config.Config, serviceClock cl
 		return runtimeComponents{}, "hub", err
 	}
 	handler, err := httpapi.NewRouter(httpapi.RouterConfig{
-		Auth: authService, Matches: matchService, Games: registry, Publisher: hub, Hub: hub,
+		Scratch: scratch.New(database, serviceClock),
+		Auth:    authService, Matches: matchService, Games: registry, Publisher: hub, Hub: hub,
 		Logger: componentLogger, RequestIDs: httpapi.NewProductionRequestID,
 	})
 	if err != nil {

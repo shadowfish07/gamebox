@@ -17,7 +17,7 @@ void main() {
 
   test('accepts the canonical version and seed', () {
     final tokens = DesignTokenDocument.fromJson(canonicalFixture);
-    expectEqual(tokens.version, '2.4.0');
+    expectEqual(tokens.version, '2.5.0');
     expectEqual(tokens.brandSeed, '#006B60');
     expectEqual(tokens.components['dialogScrimOpacity'], 0.32);
   });
@@ -274,11 +274,13 @@ void main() {
     expectEqual(gdscriptA, renderGdscript(tokens));
     expectTrue(dartA.endsWith('\n') && !dartA.endsWith('\n\n'));
     expectTrue(gdscriptA.endsWith('\n') && !gdscriptA.endsWith('\n\n'));
-    expectContains(dartA, "static const version = '2.4.0';");
-    expectContains(gdscriptA, 'const VERSION := "2.4.0"');
+    expectContains(dartA, "static const version = '2.5.0';");
+    expectContains(gdscriptA, 'const VERSION := "2.5.0"');
     expectContains(dartA, '0xFF006B60');
     expectContains(gdscriptA, '"#006B60"');
     expectContains(dartA, 'flightBoardPaper: Color(0xFFFFF9E9)');
+    expectContains(dartA, 'scratchPaper: Color(0xFFFFF5E3)');
+    expectContains(gdscriptA, '"scratch_paper": Color("#FFF5E3")');
     expectContains(gdscriptA, '"flight_board_paper": Color("#FFF9E9")');
   });
 
@@ -883,9 +885,8 @@ var coordinate := Vector2(60, 360)
     try {
       const value = 4;
       const unit = 'dp';
-      File(
-        '${sandboxRoot.path}/outside.md',
-      ).writeAsStringSync('a $value$unit base grid\n');
+      File('${sandboxRoot.path}/outside.md')
+          .writeAsStringSync('a $value$unit base grid\n');
       final standard = File(
         '${fixtureRoot.path}/.agents/skills/gamebox-material-3-ux/references/ux-standard.md',
       );

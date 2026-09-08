@@ -123,6 +123,10 @@ func (rules *Rules) Rebuild(events []gameapi.Event) (gameapi.Snapshot, error) {
 		var next gameapi.Snapshot
 		switch persisted.Type {
 		case RollAccepted:
+			persisted.Payload, err = NormalizeLegacyRollPayload(persisted.Payload)
+			if err != nil {
+				return gameapi.Snapshot{}, err
+			}
 			accepted, decodeErr := decodeAcceptedRoll(persisted.Payload)
 			if decodeErr != nil || accepted.UserID != persisted.ActorID {
 				return gameapi.Snapshot{}, gameapi.ErrInvalidEvent
@@ -528,6 +532,36 @@ func decodeRequestedMove(payload json.RawMessage) (int, error) {
 		return 0, gameapi.ErrInvalidAction
 	}
 	return index, nil
+}
+
+// NormalizeLegacyRollPayload accepts the removed, empty penalty list from old
+// persisted rolls. Nonempty penalties require historical rule replay and must
+// never be silently discarded. The caller's persisted bytes remain unchanged.
+func NormalizeLegacyRollPayload(payload json.RawMessage) (json.RawMessage, error) {
+	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}, "penalizedPieceIndices": {}}
+	fields, err := strictObject(payload, allowed)
+	if err != nil {
+		return nil, gameapi.ErrInvalidEvent
+	}
+	penalty, legacy := fields["penalizedPieceIndices"]
+	if !legacy {
+		return payload, nil
+	}
+	if len(fields) != len(allowed) || !bytes.Equal(bytes.TrimSpace(penalty), []byte("[]")) {
+		return nil, gameapi.ErrInvalidEvent
+	}
+	var roll acceptedRollPayload
+	if json.Unmarshal(payload, &roll) != nil {
+		return nil, gameapi.ErrInvalidEvent
+	}
+	normalized, err := json.Marshal(roll)
+	if err != nil {
+		return nil, gameapi.ErrInvalidEvent
+	}
+	if _, err := decodeAcceptedRoll(normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
 }
 
 func decodeAcceptedRoll(payload json.RawMessage) (acceptedRollPayload, error) {

@@ -228,7 +228,7 @@ explicitly:
 
 ## Releases
 
-Stable Android releases are built from semantic-version tags by [the release workflow](.github/workflows/release.yml). The workflow verifies source, builds signed APK and AAB artifacts, checks the APK signature, performs Android host smoke testing, generates checksums, and publishes the artifacts.
+Stable Android releases are built from semantic-version tags by [the release workflow](.github/workflows/release.yml). The workflow runs source and Android unit tests, builds a signed ARM64 APK, checks the APK signature and packaged architectures, generates checksums, and publishes the artifacts. It does not run device runtime smoke or two-device E2E. Device acceptance can be run separately using the repository smoke and E2E tools.
 
 ```bash
 # Validate the next version without modifying Git state
@@ -245,7 +245,7 @@ Release builds require these GitHub Actions secrets:
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-The [debug workflow](.github/workflows/debug.yml) saves builds as short-lived workflow artifacts with read-only repository permissions. PR builds run on opening or reopening a matching PR and do not publish a release. They use stable signing secrets only when both the PR author and triggering actor are `shadowfish07` and the branch belongs to this repository; other PR builds use an ephemeral Android debug key. Pushes to `main` and manual dispatches from any selected branch also publish a stable-signed package to the rolling `debug-latest` prerelease. This channel can therefore contain an unmerged branch build: the download command below selects the newest APK asset, not necessarily a build from `main`. Check the release notes and asset identity for the source ref, commit SHA, build time and run before installing. Stable and debug packages have different application IDs, so both can be installed on one device.
+The [debug workflow](.github/workflows/debug.yml) saves builds as short-lived workflow artifacts with read-only repository permissions. PR builds run on opening or reopening a matching PR and do not publish a release. They use stable signing secrets only when both the PR author and triggering actor are `shadowfish07` and the branch belongs to this repository; other PR builds use an ephemeral Android debug key. Pushes to `main` and manual dispatches from any selected branch also publish a stable-signed package to the rolling `debug-latest` prerelease. This channel can therefore contain an unmerged branch build: the download command below selects the newest APK asset, not necessarily a build from `main`. Check the release notes and asset identity for the source ref, commit SHA, build time and run before installing. Stable and debug packages have different application IDs, so both can be installed on one device. Published APKs target ARM64 (`arm64-v8a`) only; 32-bit-only devices and x86 devices cannot install them. AAB artifacts are not built or published.
 
 Because release assets keep immutable provenance names, resolve the newest APK from release metadata instead of guessing a filename:
 

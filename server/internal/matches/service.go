@@ -2727,6 +2727,11 @@ type acceptedFlightChessMove struct {
 }
 
 func decodeAcceptedFlightChessRoll(payload json.RawMessage) (acceptedFlightChessRoll, error) {
+	normalized, normalizeErr := flightchess.NormalizeLegacyRollPayload(payload)
+	if normalizeErr != nil {
+		return acceptedFlightChessRoll{}, ErrInternal
+	}
+	payload = normalized
 	allowed := map[string]struct{}{"color": {}, "userId": {}, "value": {}, "movablePieceIndices": {}}
 	fields, err := strictJSONObject(payload, allowed)
 	if err != nil || len(fields) != len(allowed) {

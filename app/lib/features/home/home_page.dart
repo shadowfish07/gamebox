@@ -15,6 +15,8 @@ import '../rps/rps_controller.dart';
 import '../rps/rps_models.dart';
 import '../rps/rps_opponent_page.dart';
 import '../update/update_action.dart';
+import '../scratch/scratch_page.dart';
+import '../scratch/scratch_social_api.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
 import 'opponent_page.dart';
@@ -30,8 +32,10 @@ final class HomePage extends StatefulWidget {
     this.chineseCheckersController,
     this.flightChessController,
     this.updateController,
+    this.scratchApi,
   });
 
+  final ScratchSocialApi? scratchApi;
   final HomeController controller;
   final String currentUserId;
   final String nickname;
@@ -322,6 +326,7 @@ final class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          ScratchEntry(socialApi: widget.scratchApi),
           _buildGomoku(controller),
           if (widget.chineseCheckersController
               case final HomeController chineseCheckersController)
