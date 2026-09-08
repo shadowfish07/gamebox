@@ -5,9 +5,9 @@ import 'package:flutter/foundation.dart';
 class CardDrawSound {
   CardDrawSound({int rarity = 0})
     : _asset = switch (rarity) {
-        1 => 'audio/kenney-jingles/jingles_STEEL16.ogg',
-        2 => 'audio/kenney-jingles/jingles_STEEL12.ogg',
-        3 => 'audio/kenney-jingles/jingles_STEEL02.ogg',
+        1 => 'audio/card-draw/rare.wav',
+        2 => 'audio/card-draw/epic.wav',
+        3 => 'audio/card-draw/legendary.wav',
         _ => 'audio/kenney-casino/card-place-3.ogg',
       };
 

@@ -17,9 +17,9 @@ void main() {
     failSource = false;
     for (final path in [
       'audio/kenney-casino/card-place-3.ogg',
-      'audio/kenney-jingles/jingles_STEEL16.ogg',
-      'audio/kenney-jingles/jingles_STEEL12.ogg',
-      'audio/kenney-jingles/jingles_STEEL02.ogg',
+      'audio/card-draw/rare.wav',
+      'audio/card-draw/epic.wav',
+      'audio/card-draw/legendary.wav',
     ]) {
       AudioCache.instance.loadedFiles[path] = File('assets/$path').absolute.uri;
     }
@@ -66,9 +66,9 @@ void main() {
 
   for (final (rarity, file) in [
     (0, 'kenney-casino/card-place-3.ogg'),
-    (1, 'kenney-jingles/jingles_STEEL16.ogg'),
-    (2, 'kenney-jingles/jingles_STEEL12.ogg'),
-    (3, 'kenney-jingles/jingles_STEEL02.ogg'),
+    (1, 'card-draw/rare.wav'),
+    (2, 'card-draw/epic.wav'),
+    (3, 'card-draw/legendary.wav'),
   ]) {
     test(
       'tier $rarity preloads its selected file and releases its player',
