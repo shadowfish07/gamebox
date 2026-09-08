@@ -12,3 +12,4 @@ packages/*/pubspec.lock
 game_runtime/.godot/
 server/data/
 artifacts/
+/.env
