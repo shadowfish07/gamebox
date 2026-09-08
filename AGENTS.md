@@ -16,6 +16,12 @@
 - Fixed test, smoke, and E2E scripts do not capture screenshots for UI acceptance. Screenshot capture and inspection belong to the implementing agent's UI development workflow.
 - Gamebox-specific commands, device leases, markers, state matrices, and protocol invariants remain in this repository rather than shared rules.
 
+## 图片生成
+
+- 本仓库生图优先使用 Poe 的 GPT Image 2，前提是 Poe 有可用额度且模型可用。
+- 生图前先检查可用额度；额度不足或服务不可用时，再考虑其他生图方式。
+- 此偏好仅适用于本仓库，不作为全局或其他仓库的默认规则。
+
 ## 收藏卡片内容
 
 新增收藏系列、生成卡片或改写故事前，读取并遵守
