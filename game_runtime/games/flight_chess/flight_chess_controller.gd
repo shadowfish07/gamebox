@@ -77,6 +77,7 @@ var _event_visuals := {}
 var _moving_visuals := {}
 var _moving_card_pieces := {}
 var _capture_origins := {}
+var _presented_capture_counts := {}
 var _moving_color := ""
 var _menu_open := false
 var _bounce_roll := 0
@@ -140,6 +141,7 @@ func _ready() -> void:
 	$LeftRail/Content/ResignButton.pressed.connect(_on_resign_pressed)
 	$RightRail/Content/RollButton.pressed.connect(_on_roll_pressed)
 	$Board.piece_pressed.connect(_on_board_piece_pressed)
+	$Board.capture_landed.connect(_on_capture_landed)
 	$ConnectionLabel.return_requested.connect(_on_back_pressed)
 	$ResignDialog.confirmed.connect(_on_resign_confirmed)
 	$ResultPanel.return_requested.connect(_on_back_pressed)
@@ -594,6 +596,7 @@ func _on_snapshot_received(envelope: Dictionary) -> void:
 		_force_return = true
 	else:
 		_last_presented_event_revision = _state.revision
+		_presented_capture_counts = _state.capture_counts
 		_awaiting_snapshot = false
 		_resign_submitted = false
 		_selected_index = -1
@@ -691,6 +694,11 @@ func _cancel_home_bounce(clear_queue: bool = true) -> void:
 		_event_queue.clear()
 		_event_visuals.clear()
 		_capture_origins.clear()
+		if _state != null:
+			_presented_capture_counts = _state.capture_counts
+		for card in ["LocalCard", "OpponentCard"]:
+			if has_node("LeftRail/Content/" + card + "/Content/Name/CaptureCount"):
+				get_node("LeftRail/Content/" + card + "/Content/Name/CaptureCount").cancel_feedback()
 	_bounce_playing = false
 	$Board.cancel_home_bounce()
 
@@ -1096,7 +1104,18 @@ static func _empty_visual_pieces() -> Dictionary:
 func _capture_count(board_color: String) -> int:
 	if not _started:
 		return 0
-	return -1 if _state == null else int(_state.capture_counts.get("black" if board_color == "red" else "white", -1))
+	return int(_presented_capture_counts.get("black" if board_color == "red" else "white", -1))
+
+
+func _on_capture_landed(board_color: String, amount: int) -> void:
+	if not _started or not _bounce_playing:
+		return
+	var color := "black" if board_color == "red" else "white"
+	if int(_presented_capture_counts.get(color, -1)) >= 0:
+		_presented_capture_counts[color] += amount
+	_refresh_hud()
+	var card := "LocalCard" if board_color == _local_board_color() else "OpponentCard"
+	get_node("LeftRail/Content/" + card + "/Content/Name/CaptureCount").play_capture(amount)
 
 
 func _refresh_hud() -> void:
