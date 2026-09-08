@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../design_system/generated/gamebox_tokens.g.dart';
@@ -63,25 +65,35 @@ class CollectibleArtwork extends StatelessWidget {
       aspectRatio: 1,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final width = constraints.maxWidth;
+          final width = math.max(constraints.maxWidth, constraints.maxHeight);
           return ClipRect(
-            child: Stack(
-              children: [
-                Positioned(
-                  left: -(cat.artIndex % 4) * width,
-                  top: -rows[row] / height * width,
-                  width: width * 4,
-                  height: rows.last / height * width,
-                  child: Image.asset(
-                    cat.imageAsset,
-                    fit: BoxFit.fill,
-                    errorBuilder: (_, error, stack) => ColoredBox(
-                      color: ScratchArt.paper,
-                      child: Center(child: Icon(Icons.image_outlined)),
+            // Tight portrait/landscape parents can override AspectRatio.
+            // Crop one square atlas cell before covering the viewport.
+            child: OverflowBox(
+              minWidth: width,
+              maxWidth: width,
+              minHeight: width,
+              maxHeight: width,
+              child: ClipRect(
+                child: Stack(
+                  children: [
+                    Positioned(
+                      left: -(cat.artIndex % 4) * width,
+                      top: -rows[row] / height * width,
+                      width: width * 4,
+                      height: rows.last / height * width,
+                      child: Image.asset(
+                        cat.imageAsset,
+                        fit: BoxFit.fill,
+                        errorBuilder: (_, error, stack) => ColoredBox(
+                          color: ScratchArt.paper,
+                          child: Center(child: Icon(Icons.image_outlined)),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
           );
         },
