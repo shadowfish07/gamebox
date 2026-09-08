@@ -42,6 +42,7 @@ dependencies:
   # 11.0.0 requires Android compileSdk 37, beyond Flutter 3.47.1's
   # currently validated AGP 9.1 / compileSdk 36 toolchain.
   flutter_secure_storage: ^10.3.1
+  audioplayers: ^6.8.1
 
 dev_dependencies:
   flutter_test:
@@ -71,6 +72,8 @@ flutter:
       fonts:
         - asset: assets/fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf
   assets:
+    - assets/audio/kenney-casino/card-place-3.ogg
+    - assets/audio/kenney-casino/LICENSE.txt
     - assets/scratch/cat-atlas-v2.webp
     - assets/scratch/dog-atlas-v2.webp
     - assets/scratch/dog-epic-atlas.webp

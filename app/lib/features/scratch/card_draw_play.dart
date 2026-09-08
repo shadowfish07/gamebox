@@ -10,6 +10,7 @@ import 'duplicate_collection_feedback.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
 import 'scratch_reveal_effect.dart';
+import 'card_draw_sound.dart';
 
 Duration cardRevealDuration(int rarity) => [
   GameboxTokens.motion.pageEnter,
@@ -344,9 +345,11 @@ class _CardDrawStageState extends State<CardDrawStage>
   );
   bool _duplicateStarted = false;
   bool _sounded = false;
+  final _sound = CardDrawSound();
   @override
   void initState() {
     super.initState();
+    if (widget.playing && widget.result?.winning == true) _sound.prepare();
     _reveal.addListener(() {
       if (!_duplicateStarted &&
           widget.playing &&
@@ -361,7 +364,7 @@ class _CardDrawStageState extends State<CardDrawStage>
           widget.result?.winning == true &&
           _reveal.value >= .5) {
         _sounded = true;
-        SystemSound.play(SystemSoundType.click);
+        _sound.play();
         switch ((widget.result?.winning == true
             ? widget.result!.card.rarity
             : 0)) {
@@ -391,7 +394,10 @@ class _CardDrawStageState extends State<CardDrawStage>
     if (!widget.playing && oldWidget.playing) {
       // A skipped reveal settles immediately; a natural reveal lets the small
       // card finish landing without delaying the next draw.
-      if (!_reveal.isCompleted) _duplicate.value = 1;
+      if (!_reveal.isCompleted) {
+        _duplicate.value = 1;
+        _sound.dispose();
+      }
       _reveal.stop();
     }
     if (widget.collecting) _duplicate.value = 1;
@@ -401,6 +407,7 @@ class _CardDrawStageState extends State<CardDrawStage>
 
   @override
   void dispose() {
+    _sound.dispose();
     _reveal.dispose();
     _collect.dispose();
     _duplicate.dispose();
