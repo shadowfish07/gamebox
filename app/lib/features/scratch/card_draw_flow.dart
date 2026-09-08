@@ -5,40 +5,39 @@ import 'package:flutter/foundation.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'scratch_controller.dart';
 
-enum CardDrawPhase { idle, saving, revealing, settled, collecting, failed }
+enum CardDrawPhase {
+  idle,
+  saving,
+  revealing,
+  celebrating,
+  returning,
+  settled,
+  collecting,
+  failed,
+}
 
-/// Storage owns awards; animation completion owns pacing. A second tap queues
-/// at most one card. Navigation/backgrounding cancels it, never a saved award.
+/// Storage owns awards; reveal and result feedback completion own pacing.
+/// Repeated input is ignored until the entire presentation has finished.
 final class CardDrawFlow extends ChangeNotifier {
   CardDrawFlow(this.collection) : current = collection.lastResult;
   final ScratchController collection;
   CardDrawResult? current, _pending;
   final recent = <CardDrawResult>[];
   CardDrawPhase phase = CardDrawPhase.idle;
-  bool _queued = false, _disposed = false, _foreground = true;
+  bool _disposed = false, _foreground = true;
   Timer? _timer;
-  bool get queued => _queued;
+  bool get canDraw =>
+      !_disposed &&
+      _foreground &&
+      collection.interactive &&
+      (phase == CardDrawPhase.idle || phase == CardDrawPhase.settled);
+  static final celebrationDuration = GameboxTokens.motion.slow * 3;
   void _changed() {
     if (!_disposed) notifyListeners();
   }
 
   void primary() {
-    if (!_foreground ||
-        _disposed ||
-        phase == CardDrawPhase.failed ||
-        collection.error != null)
-      return;
-    if (phase == CardDrawPhase.saving || phase == CardDrawPhase.collecting) {
-      _queued = true;
-      _changed();
-      return;
-    }
-    if (phase == CardDrawPhase.revealing) {
-      _queued = true;
-      finishReveal();
-      return;
-    }
-    if (!collection.interactive) return;
+    if (!canDraw) return;
     if (current == null) {
       unawaited(_draw());
     } else {
@@ -53,7 +52,6 @@ final class CardDrawFlow extends ChangeNotifier {
     final receipt = await collection.draw();
     if (_disposed) return;
     if (receipt == null) {
-      _queued = false;
       phase = collection.error == null
           ? CardDrawPhase.idle
           : CardDrawPhase.failed;
@@ -63,7 +61,6 @@ final class CardDrawFlow extends ChangeNotifier {
     _pending = receipt;
     if (collection.unsaved || collection.error != null) {
       phase = CardDrawPhase.failed;
-      _queued = false;
       _changed();
       return;
     }
@@ -75,16 +72,6 @@ final class CardDrawFlow extends ChangeNotifier {
     current = receipt;
     phase = _foreground ? CardDrawPhase.revealing : CardDrawPhase.settled;
     _changed();
-    if (_foreground && _queued) {
-      // Give a committed card a readable reveal before consuming the one tap
-      // queued during saving. There is no unattended or batch draw mode.
-      _timer = Timer(
-        receipt.winning && receipt.card.rarity >= 2
-            ? GameboxTokens.motion.pageEnter * 5
-            : GameboxTokens.motion.pageEnter,
-        finishReveal,
-      );
-    }
   }
 
   Future<void> retry() async {
@@ -102,18 +89,26 @@ final class CardDrawFlow extends ChangeNotifier {
   void finishReveal() {
     if (_disposed || phase != CardDrawPhase.revealing) return;
     _timer?.cancel();
-    phase = CardDrawPhase.settled;
-    if (_queued) {
-      _advance();
+    if (current?.winning == true && _foreground) {
+      phase = CardDrawPhase.celebrating;
+      _timer = Timer(celebrationDuration, () {
+        phase = CardDrawPhase.returning;
+        _changed();
+        // Keep input locked while the success label leaves the button.
+        _timer = Timer(GameboxTokens.motion.standard, () {
+          phase = CardDrawPhase.settled;
+          _changed();
+        });
+      });
     } else {
-      _changed();
+      phase = CardDrawPhase.settled;
     }
+    _changed();
   }
 
   void _advance() {
     if (_disposed || !_foreground || !collection.interactive) return;
     _timer?.cancel();
-    _queued = false;
     phase = CardDrawPhase.collecting;
     _changed();
     _timer = Timer(GameboxTokens.motion.standard, () {
@@ -132,7 +127,6 @@ final class CardDrawFlow extends ChangeNotifier {
   void suspend() {
     _foreground = false;
     _timer?.cancel();
-    _queued = false;
     if (phase != CardDrawPhase.saving && phase != CardDrawPhase.failed)
       phase = CardDrawPhase.settled;
     _changed();

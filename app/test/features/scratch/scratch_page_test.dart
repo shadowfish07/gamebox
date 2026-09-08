@@ -10,6 +10,20 @@ import 'package:gamebox/features/scratch/card_draw_play.dart';
 import 'scratch_controller_test.dart' show MemoryScratchStore;
 import 'scratch_social_test.dart' show FakeSocial;
 
+Future<void> waitForDrawReady(WidgetTester tester) async {
+  for (var i = 0; i < 60; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    final button = tester.widget<FilledButton>(
+      find.byKey(const Key('scratch-primary')),
+    );
+    if (button.onPressed != null) {
+      await tester.pumpAndSettle();
+      return;
+    }
+  }
+  fail('Draw button did not unlock after presentation');
+}
+
 void main() {
   testWidgets('miss shows no reward, continues and keeps album unchanged', (
     tester,
@@ -76,14 +90,37 @@ void main() {
       }
       expect(find.byKey(const Key('scratch-rarity-banner')), findsNothing);
       expect(find.text('全部刮开'), findsNothing);
+      await waitForDrawReady(tester);
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pump();
       await tester.pump(cardRevealDuration(tier) * .45);
       expect(find.byKey(const Key('draw-card-front')), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('scratch-primary')))
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(const Key('scratch-primary')));
+      await tester.tap(find.byType(CardDrawStage));
+      expect(c.serial, 1);
+      await tester.pump(cardRevealDuration(tier));
       await tester.pumpAndSettle();
+      expect(find.text('恭喜抽中'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('scratch-primary')))
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(const Key('scratch-primary')));
+      expect(c.serial, 1);
+      await waitForDrawReady(tester);
+      expect(find.text('恭喜抽中'), findsNothing);
       expect(c.total, 1);
       expect(find.text('${scratchRarities[tier]}收藏'), findsOneWidget);
       expect(find.text('NEW'), findsOneWidget);
+      await waitForDrawReady(tester);
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pumpAndSettle();
       expect(c.total, 2);
@@ -109,6 +146,7 @@ void main() {
       expect(c.total, 2);
       expect(tester.takeException(), isNull);
       store.fail = true;
+      await waitForDrawReady(tester);
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pumpAndSettle();
       expect(c.error, isNotNull);
@@ -147,6 +185,7 @@ void main() {
         expect(find.text('连抽 10 张'), findsNothing);
         expect(find.byKey(const Key('draw-summary')), findsNothing);
         for (var i = 0; i < 3; i++) {
+          await waitForDrawReady(tester);
           await tester.tap(find.byKey(const Key('scratch-primary')));
           await tester.pumpAndSettle();
         }
@@ -163,7 +202,7 @@ void main() {
     }
   }
   testWidgets(
-    'leaving during a pending draw cancels queued tap; retry never duplicates',
+    'leaving during a pending draw ignores repeated taps; retry never duplicates',
     (tester) async {
       final store = MemoryScratchStore();
       final c = ScratchController(store: store, random: () => 0);
@@ -177,6 +216,7 @@ void main() {
         ),
       );
       store.pending = Completer<void>();
+      await waitForDrawReady(tester);
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pump();
       await tester.tap(find.byKey(const Key('scratch-primary')));
@@ -191,6 +231,7 @@ void main() {
       expect(find.byKey(const Key('draw-card-front')), findsOneWidget);
       store.pending = null;
       store.fail = true;
+      await waitForDrawReady(tester);
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pumpAndSettle();
       expect(c.total, 2);

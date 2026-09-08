@@ -51,6 +51,20 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
     final scheme = Theme.of(context).colorScheme;
     final busy = flow.phase == CardDrawPhase.saving;
     final revealing = flow.phase == CardDrawPhase.revealing;
+    final celebrating = flow.phase == CardDrawPhase.celebrating;
+    final returning = flow.phase == CardDrawPhase.returning;
+    final enabled = flow.canDraw;
+    final label = busy
+        ? '正在保存'
+        : revealing
+        ? '正在翻牌'
+        : celebrating
+        ? '恭喜抽中'
+        : flow.phase == CardDrawPhase.collecting
+        ? '正在收卡'
+        : flow.current == null
+        ? '抽一张'
+        : '再抽一张';
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: GameboxTokens.spacing.page),
       child: Column(
@@ -171,8 +185,8 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                       ),
                     Center(
                       child: GestureDetector(
-                        onTap: revealing
-                            ? flow.finishReveal
+                        onTap: !enabled
+                            ? null
                             : flow.current == null
                             ? flow.primary
                             : flow.current!.winning
@@ -208,7 +222,7 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
             height: GameboxTokens.spacing.section,
             child: Center(
               child: Text(
-                flow.queued ? '已接上下一张' : '免费抽卡',
+                '免费抽卡',
                 style: text.labelMedium?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
@@ -218,27 +232,62 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
           SizedBox(
             width: double.infinity,
             child: Listener(
-              onPointerDown: (_) => setState(() => pressed = true),
+              onPointerDown: (_) {
+                if (widget.flow.canDraw) setState(() => pressed = true);
+              },
               onPointerUp: (_) => setState(() => pressed = false),
               onPointerCancel: (_) => setState(() => pressed = false),
               child: AnimatedScale(
-                scale: pressed ? .97 : 1,
+                scale: pressed && enabled ? .97 : 1,
                 duration: GameboxTokens.motion.fast,
-                child: FilledButton.icon(
+                child: FilledButton(
                   key: const Key('scratch-primary'),
-                  onPressed: collection.loading || collection.error != null
+                  onPressed: !enabled
                       ? null
                       : () {
                           HapticFeedback.selectionClick();
                           flow.primary();
                         },
-                  icon: const Icon(Icons.style_outlined),
-                  label: Text(
-                    busy
-                        ? '正在保存'
-                        : flow.current == null
-                        ? '抽一张'
-                        : '再抽一张',
+                  style: FilledButton.styleFrom(
+                    animationDuration: GameboxTokens.motion.standard,
+                    disabledBackgroundColor: celebrating
+                        ? scheme.primaryContainer
+                        : returning
+                        ? scheme.primary
+                        : null,
+                    disabledForegroundColor: celebrating
+                        ? scheme.onPrimaryContainer
+                        : returning
+                        ? scheme.onPrimary
+                        : null,
+                  ),
+                  child: AnimatedSwitcher(
+                    duration: GameboxTokens.motion.standard,
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, .25),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
+                    ),
+                    child: Row(
+                      key: ValueKey(label),
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          celebrating
+                              ? Icons.auto_awesome
+                              : Icons.style_outlined,
+                        ),
+                        SizedBox(width: GameboxTokens.spacing.compact),
+                        Text(label),
+                      ],
+                    ),
                   ),
                 ),
               ),

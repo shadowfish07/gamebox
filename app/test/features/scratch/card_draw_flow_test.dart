@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/features/scratch/card_draw_flow.dart';
+import 'package:gamebox/design_system/generated/gamebox_tokens.g.dart';
 import 'package:gamebox/features/scratch/scratch_controller.dart';
 
 import 'scratch_controller_test.dart' show MemoryScratchStore;
@@ -25,6 +26,8 @@ void main() {
     await f.retry();
     expect(f.current!.winning, isFalse);
     f.finishReveal();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(GameboxTokens.motion.standard);
     f.primary();
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
@@ -32,6 +35,8 @@ void main() {
     expect(f.recent, isEmpty);
     expect(c.total, 1);
     f.finishReveal();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(GameboxTokens.motion.standard);
     f.primary();
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
@@ -41,7 +46,7 @@ void main() {
     c.dispose();
   });
   testWidgets(
-    'rapid taps queue at most one and never duplicate a pending write',
+    'rapid taps are ignored throughout saving, reveal, celebration and return',
     (tester) async {
       final store = MemoryScratchStore();
       final c = ScratchController(store: store, random: () => 0);
@@ -53,14 +58,30 @@ void main() {
         f.primary();
       }
       expect(c.total, 1);
-      expect(f.queued, isTrue);
+      expect(f.phase, CardDrawPhase.saving);
       store.pending!.complete();
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
-      expect(c.total, 2);
+      expect(c.total, 1);
+      for (var i = 0; i < 30; i++) {
+        f.primary();
+      }
+      expect(f.phase, CardDrawPhase.revealing);
       f.finishReveal();
-      await tester.pump(const Duration(seconds: 3));
+      expect(f.phase, CardDrawPhase.celebrating);
+      f.primary();
+      await tester.pump(CardDrawFlow.celebrationDuration);
+      expect(f.phase, CardDrawPhase.returning);
+      f.primary();
+      expect(c.total, 1);
+      await tester.pump(GameboxTokens.motion.standard);
+      expect(f.canDraw, isTrue);
+      await tester.pump(const Duration(seconds: 10));
+      expect(c.total, 1);
+      f.primary();
+      f.primary();
+      await tester.pump(const Duration(seconds: 1));
       expect(c.total, 2);
       f.dispose();
       c.dispose();
@@ -78,6 +99,7 @@ void main() {
         await tester.pump();
         f.finishReveal();
         await tester.pump(const Duration(seconds: 10));
+        await tester.pump(GameboxTokens.motion.standard);
         expect(c.total, i + 1);
       }
       expect(f.recent.length, 6);
@@ -87,52 +109,52 @@ void main() {
       c.dispose();
     },
   );
-  testWidgets(
-    'background cancels queued continuation but preserves current award',
-    (tester) async {
-      final store = MemoryScratchStore();
-      final c = ScratchController(store: store, random: () => 0);
-      await c.load();
-      final f = CardDrawFlow(c);
-      store.pending = Completer<void>();
-      f.primary();
-      f.primary();
-      f.suspend();
-      store.pending!.complete();
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 10));
-      expect(c.total, 1);
-      expect(f.queued, isFalse);
-      f.resume();
-      await tester.pump(const Duration(seconds: 10));
-      expect(c.total, 1);
-      f.dispose();
-      c.dispose();
-    },
-  );
-  testWidgets('save failure cancels queued tap; retry reveals the same award', (
+  testWidgets('background prevents continuation but preserves current award', (
     tester,
   ) async {
     final store = MemoryScratchStore();
     final c = ScratchController(store: store, random: () => 0);
     await c.load();
     final f = CardDrawFlow(c);
-    store.fail = true;
+    store.pending = Completer<void>();
     f.primary();
     f.primary();
+    f.suspend();
+    store.pending!.complete();
     await tester.pump();
-    expect(f.phase, CardDrawPhase.failed);
+    await tester.pump(const Duration(seconds: 10));
     expect(c.total, 1);
-    f.primary();
-    await tester.pump(const Duration(seconds: 5));
-    expect(c.total, 1);
-    store.fail = false;
-    await f.retry();
-    expect(f.phase, CardDrawPhase.revealing);
-    f.finishReveal();
-    await tester.pump(const Duration(seconds: 5));
+    expect(f.canDraw, isFalse);
+    f.resume();
+    await tester.pump(const Duration(seconds: 10));
     expect(c.total, 1);
     f.dispose();
     c.dispose();
   });
+  testWidgets(
+    'save failure ignores repeated taps; retry reveals the same award',
+    (tester) async {
+      final store = MemoryScratchStore();
+      final c = ScratchController(store: store, random: () => 0);
+      await c.load();
+      final f = CardDrawFlow(c);
+      store.fail = true;
+      f.primary();
+      f.primary();
+      await tester.pump();
+      expect(f.phase, CardDrawPhase.failed);
+      expect(c.total, 1);
+      f.primary();
+      await tester.pump(const Duration(seconds: 5));
+      expect(c.total, 1);
+      store.fail = false;
+      await f.retry();
+      expect(f.phase, CardDrawPhase.revealing);
+      f.finishReveal();
+      await tester.pump(const Duration(seconds: 5));
+      expect(c.total, 1);
+      f.dispose();
+      c.dispose();
+    },
+  );
 }
