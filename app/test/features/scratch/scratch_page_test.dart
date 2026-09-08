@@ -87,7 +87,20 @@ void main() {
       await tester.tap(find.byKey(const Key('scratch-primary')));
       await tester.pumpAndSettle();
       expect(c.total, 2);
-      expect(find.text('已拥有 ×1 → ×2'), findsOneWidget);
+      expect(find.text('共 2 张'), findsOneWidget);
+      expect(
+        find.text('已收藏').evaluate().length +
+            find.text('已收进收藏').evaluate().length,
+        1,
+      );
+      expect(find.textContaining(' → '), findsNothing);
+      await tester.tap(find.byKey(const Key('draw-view-story')));
+      await tester.pumpAndSettle();
+      expect(find.text(c.cat.story), findsOneWidget);
+      await tester.tap(find.byTooltip('关闭详情'));
+      await tester.pumpAndSettle();
+      expect(find.text('共 2 张'), findsOneWidget);
+      expect(c.total, 2);
       expect(find.byKey(const Key('draw-recent')), findsOneWidget);
       await tester.tap(find.byKey(const Key('scratch-tab-album')));
       await tester.pumpAndSettle();

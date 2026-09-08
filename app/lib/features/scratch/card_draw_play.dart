@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'card_draw_flow.dart';
 import 'blank_draw_card.dart';
+import 'duplicate_collection_feedback.dart';
 import 'scratch_controller.dart';
 import 'scratch_surface.dart';
 import 'scratch_reveal_effect.dart';
@@ -190,6 +191,9 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
                             collecting: flow.phase == CardDrawPhase.collecting,
                             waiting: busy,
                             onRevealed: flow.finishReveal,
+                            onStory: flow.current?.winning == true
+                                ? () => widget.onDetail(flow.current!.card)
+                                : null,
                           ),
                         ),
                       ),
@@ -274,10 +278,12 @@ class CardDrawStage extends StatefulWidget {
     required this.waiting,
     required this.onRevealed,
     this.flightTarget,
+    this.onStory,
   });
   final CardDrawResult? result;
   final bool playing, collecting, waiting;
   final VoidCallback onRevealed;
+  final VoidCallback? onStory;
   final Offset? flightTarget;
   @override
   State<CardDrawStage> createState() => _CardDrawStageState();
@@ -295,11 +301,25 @@ class _CardDrawStageState extends State<CardDrawStage>
     vsync: this,
     duration: GameboxTokens.motion.standard,
   );
+  late final AnimationController _duplicate = AnimationController(
+    vsync: this,
+    duration: GameboxTokens.motion.slow * 2,
+    value: widget.playing ? 0 : 1,
+  );
+  bool _duplicateStarted = false;
   bool _sounded = false;
   @override
   void initState() {
     super.initState();
     _reveal.addListener(() {
+      if (!_duplicateStarted &&
+          widget.playing &&
+          widget.result?.winning == true &&
+          !widget.result!.isNew &&
+          _reveal.value >= .64) {
+        _duplicateStarted = true;
+        _duplicate.forward();
+      }
       if (!_sounded &&
           widget.playing &&
           widget.result?.winning == true &&
@@ -332,7 +352,13 @@ class _CardDrawStageState extends State<CardDrawStage>
   @override
   void didUpdateWidget(CardDrawStage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.playing && oldWidget.playing) _reveal.stop();
+    if (!widget.playing && oldWidget.playing) {
+      // A skipped reveal settles immediately; a natural reveal lets the small
+      // card finish landing without delaying the next draw.
+      if (!_reveal.isCompleted) _duplicate.value = 1;
+      _reveal.stop();
+    }
+    if (widget.collecting) _duplicate.value = 1;
     if (widget.collecting && !oldWidget.collecting) _collect.forward(from: 0);
     if (!widget.collecting) _collect.value = 0;
   }
@@ -341,12 +367,13 @@ class _CardDrawStageState extends State<CardDrawStage>
   void dispose() {
     _reveal.dispose();
     _collect.dispose();
+    _duplicate.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: Listenable.merge([_reveal, _collect]),
+    animation: Listenable.merge([_reveal, _collect, _duplicate]),
     builder: (context, _) {
       final t = widget.playing ? _reveal.value : 1.0;
       final flip = ((t - .14) / .5).clamp(0.0, 1.0);
@@ -491,38 +518,35 @@ class _CardDrawStageState extends State<CardDrawStage>
             ),
             SizedBox(height: GameboxTokens.spacing.base),
             SizedBox(
-              height: GameboxTokens.spacing.section,
+              height: GameboxTokens.components.minimumTouchTarget,
               child: result.isNew
                   ? Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _newLabel(context),
-                        SizedBox(width: GameboxTokens.spacing.base),
-                        Flexible(
-                          child: Text(
-                            '首次相遇',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: text.labelSmall?.copyWith(
-                              color: ScratchArt.ink,
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              children: [
+                                _newLabel(context),
+                                SizedBox(width: GameboxTokens.spacing.base),
+                                Text(
+                                  '首次相遇',
+                                  style: text.labelSmall?.copyWith(
+                                    color: ScratchArt.ink,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
+                        DrawStoryButton(onPressed: widget.onStory),
                       ],
                     )
-                  : TweenAnimationBuilder<double>(
-                      key: ValueKey(result.serial),
-                      tween: Tween(begin: 0, end: 1),
-                      duration: GameboxTokens.motion.slow,
-                      builder: (_, t, _) => Transform.scale(
-                        scale: 1 + math.sin(t * math.pi) * .14,
-                        child: Text(
-                          '已拥有 ×${result.count - 1} → ×${result.count}',
-                          style: text.labelSmall?.copyWith(
-                            color: ScratchArt.ink,
-                          ),
-                        ),
-                      ),
+                  : DuplicateCollectionFeedback(
+                      count: result.count,
+                      progress: _duplicate.value,
+                      onStory: widget.onStory,
                     ),
             ),
           ],
