@@ -1,4 +1,4 @@
 interface:
-  display_name: "Gamebox 收藏卡片故事"
-  short_description: "按稀有度创作和扩写收藏卡片故事，核对原画、角色设定及整批叙事差异"
-  default_prompt: "使用 $gamebox-collection-content 按稀有度丰富指定收藏系列的故事，并在授权范围内应用和验证。"
+  display_name: "Gamebox 收藏卡片内容"
+  short_description: "按稀有度创作收藏故事与原画，核对画面层次、角色设定及整批差异"
+  default_prompt: "使用 $gamebox-collection-content 按稀有度要求处理指定收藏系列的故事或原画，并在授权范围内应用和验证。"
