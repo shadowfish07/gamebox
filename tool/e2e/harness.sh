@@ -3542,7 +3542,7 @@ gamebox_e2e_record_scenario_result flight-chess-network "$(jq -n \
 		match:{id:$matchId,revision:$revision,status:"finished",result:"resignation",slotsReleased:true},
 		assertions:[
 			"flight-chess-server-dice","flight-chess-pending-before-authority",
-			"flight-chess-authoritative-launch","flight-chess-six-extra-turn",
+			"flight-chess-authoritative-launch","flight-chess-launch-turn",
 			"flight-chess-force-stop-resume","flight-chess-back-non-destructive",
 			"flight-chess-authoritative-resignation"
 		]
