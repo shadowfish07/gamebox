@@ -222,17 +222,6 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
           ),
           SizedBox(height: GameboxTokens.spacing.compact),
           SizedBox(
-            height: GameboxTokens.spacing.section,
-            child: Center(
-              child: Text(
-                '免费抽卡',
-                style: text.labelMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(
             width: double.infinity,
             height: GameboxTokens.components.minimumTouchTarget,
             child: AnimatedSwitcher(
