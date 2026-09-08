@@ -50,6 +50,7 @@ void main() {
           expect(tapped, isTrue);
           expect(tester.takeException(), isNull);
         }
+        var lockedTapped = false;
         await tester.pumpWidget(
           MaterialApp(
             home: Center(
@@ -59,6 +60,7 @@ void main() {
                 child: ScratchCollectibleCard(
                   item: scratchCollectibles.last,
                   count: 0,
+                  onTap: () => lockedTapped = true,
                 ),
               ),
             ),
@@ -67,6 +69,9 @@ void main() {
         expect(find.byType(CollectibleArtwork), findsNothing);
         expect(find.text('传说'), findsNothing);
         expect(find.text('未获得'), findsOneWidget);
+        await tester.tap(find.byType(ScratchCollectibleCard));
+        await tester.pumpAndSettle();
+        expect(lockedTapped, isFalse);
       },
     );
   }

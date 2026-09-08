@@ -33,7 +33,7 @@ class ScratchCollectibleCard extends StatelessWidget {
         side: BorderSide(color: owned ? color : scheme.outlineVariant),
       ),
       child: InkWell(
-        onTap: onTap,
+        onTap: owned ? onTap : null,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
