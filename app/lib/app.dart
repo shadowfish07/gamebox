@@ -397,10 +397,6 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       ),
       SessionStatus.unauthenticated ||
       SessionStatus.submitting => RegistrationPage(
-        scratchApi: HttpScratchSocialApi(
-          _ownedApiClient ??= ApiClient(),
-          controller,
-        ),
         controller: controller,
         updateController: widget.updateController,
       ),

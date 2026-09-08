@@ -53,6 +53,7 @@ void main() {
       );
 
       expect(find.text('加入 Gamebox'), findsOneWidget);
+      expect(find.byKey(const Key('open-cat-scratch')), findsNothing);
       expect(find.text('输入邀请码，和朋友开始一局游戏'), findsOneWidget);
       expect(find.byIcon(Icons.sports_esports_outlined), findsOneWidget);
       expect(find.byType(GameboxPendingButton), findsOneWidget);

@@ -7,8 +7,6 @@ import '../../design_system/components/gamebox_page_body.dart';
 import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../update/update_action.dart';
-import '../scratch/scratch_page.dart';
-import '../scratch/scratch_social_api.dart';
 import 'session_controller.dart';
 
 final class RegistrationPage extends StatefulWidget {
@@ -16,10 +14,8 @@ final class RegistrationPage extends StatefulWidget {
     super.key,
     required this.controller,
     this.updateController,
-    this.scratchApi,
   });
 
-  final ScratchSocialApi? scratchApi;
   final SessionController controller;
   final UpdateController? updateController;
 
@@ -139,7 +135,6 @@ final class _RegistrationPageState extends State<RegistrationPage> {
           ),
         ),
         children: [
-          ScratchEntry(socialApi: widget.scratchApi),
           Column(
             children: [
               Icon(
