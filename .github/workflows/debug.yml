@@ -111,16 +111,19 @@ jobs:
         run: |
           pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)"
           short_sha="${GITHUB_SHA::7}"
-          flutter build apk --debug \
+          ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
+          flutter build apk --debug --target-platform=android-arm64 \
             --build-name="${pubspec_version}-dev.${short_sha}" \
             --build-number="${GITHUB_RUN_NUMBER}" \
             --dart-define="GAMEBOX_API_BASE_URL=${API_BASE_URL}"
 
-      - name: Verify debug package name is independent
+      - name: Verify ARM64 debug package and independent name
         run: |
           build_tools_dir="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
           aapt="${build_tools_dir}/aapt"
           package_line="$("${aapt}" dump badging app/build/app/outputs/flutter-apk/app-debug.apk | grep '^package:')"
+          abis="$(unzip -Z1 app/build/app/outputs/flutter-apk/app-debug.apk | awk -F/ '/^lib\// {print $2}' | sort -u)"
+          [[ "$abis" == "arm64-v8a" ]] || { echo "Unexpected APK ABIs: $abis" >&2; exit 1; }
           printf '%s\n' "${package_line}"
           if ! grep -q "name='me.zqydev.gamebox.debug'" <<<"${package_line}"; then
             printf 'Debug APK package name is not me.zqydev.gamebox.debug\n' >&2
@@ -219,16 +222,19 @@ jobs:
         run: |
           pubspec_version="$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)"
           short_sha="${GITHUB_SHA::7}"
-          flutter build apk --debug \
+          ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
+          flutter build apk --debug --target-platform=android-arm64 \
             --build-name="${pubspec_version}-dev.${short_sha}" \
             --build-number="${GITHUB_RUN_NUMBER}" \
             --dart-define="GAMEBOX_API_BASE_URL=${API_BASE_URL}"
 
-      - name: Verify debug package name is independent
+      - name: Verify ARM64 debug package and independent name
         run: |
           build_tools_dir="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
           aapt="${build_tools_dir}/aapt"
           package_line="$("${aapt}" dump badging app/build/app/outputs/flutter-apk/app-debug.apk | grep '^package:')"
+          abis="$(unzip -Z1 app/build/app/outputs/flutter-apk/app-debug.apk | awk -F/ '/^lib\// {print $2}' | sort -u)"
+          [[ "$abis" == "arm64-v8a" ]] || { echo "Unexpected APK ABIs: $abis" >&2; exit 1; }
           printf '%s\n' "${package_line}"
           if ! grep -q "name='me.zqydev.gamebox.debug'" <<<"${package_line}"; then
             printf 'Debug APK package name is not me.zqydev.gamebox.debug\n' >&2
@@ -265,6 +271,7 @@ jobs:
           - built: \`${GAMEBOX_DEBUG_BUILD_TIME} UTC\`
           - run: \`${GITHUB_RUN_ID}\` (attempt \`${GITHUB_RUN_ATTEMPT}\`)
           - package: \`me.zqydev.gamebox.debug\`
+          - architecture: ARM64 (arm64-v8a)
           - api: \`${API_BASE_URL}\`
           - apk: \`${asset_name}\`
           - checksums: \`${checksum_name}\`"

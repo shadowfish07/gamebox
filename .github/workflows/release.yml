@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       publish:
-        description: Upload the tested assets to the existing version tag
+        description: Upload the verified build assets to the existing version tag
         required: true
         default: false
         type: boolean
@@ -53,9 +53,11 @@ jobs:
             echo "Invalid release tag: ${tag}" >&2
             exit 1
           fi
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          echo "source_ref=${source_ref}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=${tag}"
+            echo "version=${tag#v}"
+            echo "source_ref=${source_ref}"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
         with:
@@ -132,17 +134,14 @@ jobs:
             echo "keyPassword=${KEY_PASSWORD}"
           } > app/android/key.properties
 
-      - name: Build signed APK and app bundle
+      - name: Build signed ARM64 APK
         working-directory: app
         env:
           GAMEBOX_REQUIRE_RELEASE_SIGNING: "true"
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          flutter build apk --release \
-            --build-name="${RELEASE_VERSION}" \
-            --build-number="${GITHUB_RUN_NUMBER}" \
-            --dart-define="GAMEBOX_API_BASE_URL=${GAMEBOX_API_BASE_URL}"
-          flutter build appbundle --release \
+          ORG_GRADLE_PROJECT_gameboxAndroidAbi=arm64-v8a \
+          flutter build apk --release --target-platform=android-arm64 \
             --build-name="${RELEASE_VERSION}" \
             --build-number="${GITHUB_RUN_NUMBER}" \
             --dart-define="GAMEBOX_API_BASE_URL=${GAMEBOX_API_BASE_URL}"
@@ -155,35 +154,24 @@ jobs:
         run: |
           mkdir -p release-assets
           apk="release-assets/gamebox-v${RELEASE_VERSION}-android.apk"
-          bundle="release-assets/gamebox-v${RELEASE_VERSION}-android.aab"
           cp app/build/app/outputs/flutter-apk/app-release.apk "${apk}"
-          cp app/build/app/outputs/bundle/release/app-release.aab "${bundle}"
-          "${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -1)/apksigner" \
-            verify --verbose --print-certs "${apk}"
-          (cd release-assets && sha256sum "$(basename "${apk}")" "$(basename "${bundle}")" > checksums.txt)
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Smoke-test exact signed release APK
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_7_pro
-          avd-name: Gamebox_Release_CI_API_35
-          disk-size: 6000M
-          disable-animations: true
-          script: >-
-            GAMEBOX_ANDROID_SERIAL=emulator-5554
-            GAMEBOX_ALLOW_RENDERER_LIMITED_SMOKE=true
-            bash tool/smoke_android_release_apk.sh
-            "release-assets/gamebox-v${{ steps.release.outputs.version }}-android.apk"
+          abis="$(unzip -Z1 "$apk" | awk -F/ '/^lib\// {print $2}' | sort -u)"
+          [[ "$abis" == "arm64-v8a" ]] || { echo "Unexpected APK ABIs: $abis" >&2; exit 1; }
+          apk_entries="$(unzip -Z1 "$apk")"
+          for library in libgodot_android.so libflutter.so libapp.so libc++_shared.so; do
+            grep -Fxq "lib/arm64-v8a/$library" <<<"$apk_entries" || { echo "Missing APK library: $library" >&2; exit 1; }
+          done
+          for asset in project.godot main.gd main.tscn core/launch_config.gd \
+            games/chinese_checkers/chinese_checkers_board.gd \
+            games/chinese_checkers/chinese_checkers_controller.gd \
+            games/chinese_checkers/chinese_checkers_scene.tscn \
+            games/chinese_checkers/chinese_checkers_state.gd \
+            games/gomoku/gomoku_scene.tscn; do
+            grep -Fxq "assets/$asset" <<<"$apk_entries" || { echo "Missing APK asset: $asset" >&2; exit 1; }
+          done
+          build_tools_dir="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
+          "${build_tools_dir}/apksigner" verify --verbose --print-certs "${apk}"
+          (cd release-assets && sha256sum "$(basename "${apk}")" > checksums.txt)
 
       - name: Publish GitHub Release
         if: github.event_name == 'push' || inputs.publish
@@ -201,6 +189,7 @@ jobs:
             gh release create "${RELEASE_TAG}" \
               --verify-tag \
               --generate-notes \
+              --notes "Android APK: ARM64 (arm64-v8a)." \
               --title "Gamebox ${RELEASE_TAG}" \
               "${prerelease[@]}"
           fi

@@ -62,7 +62,7 @@ jobs:
           commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA}"
           size_mib="$(( (size_bytes + 1048575) / 1048576 ))"
           short_sha="${HEAD_SHA:0:7}"
-          printf -v body "%s\n\n### Debug APK\n\n- [Download \`%s\`](%s)\n- PR head: [\`%s\`](%s)\n- Build: [Debug APK run \`%s\`](%s)\n- Size: \`%s MiB\`\n- Expires: \`%s\`\n\n> GitHub sign-in is required. The APK and its checksum are downloaded together as a ZIP archive.\n" \
+          printf -v body "%s\n\n### Debug APK\n\n- [Download \`%s\`](%s)\n- PR head: [\`%s\`](%s)\n- Build: [Debug APK run \`%s\`](%s)\n- Architecture: ARM64 (arm64-v8a)\n- Size: \`%s MiB\`\n- Expires: \`%s\`\n\n> GitHub sign-in is required. The APK and its checksum are downloaded together as a ZIP archive.\n" \
             "${marker}" \
             "${artifact_name}" \
             "${artifact_url}" \
