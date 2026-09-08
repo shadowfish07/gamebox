@@ -32,15 +32,23 @@ class _CardDrawPlayState extends State<CardDrawPlay> {
   final _stageAnchor = GlobalKey();
 
   Offset? _flightTarget() {
+    final play = context.findRenderObject();
     final recent = _recentAnchor.currentContext?.findRenderObject();
     final stage = _stageAnchor.currentContext?.findRenderObject();
-    if (recent is! RenderBox ||
+    if (play is! RenderBox ||
+        recent is! RenderBox ||
         stage is! RenderBox ||
         !recent.hasSize ||
         !stage.hasSize)
       return null;
-    return recent.localToGlobal(Offset(22, recent.size.height / 2)) -
-        stage.localToGlobal(stage.size.center(Offset.zero));
+    // Keep flight geometry inside the play area. Predictive Back can insert
+    // unlaid-out route transforms above it, and their scale must not affect
+    // the local distance that the card travels.
+    return recent.localToGlobal(
+          Offset(22, recent.size.height / 2),
+          ancestor: play,
+        ) -
+        stage.localToGlobal(stage.size.center(Offset.zero), ancestor: play);
   }
 
   @override

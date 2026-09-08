@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/scratch/scratch_controller.dart';
@@ -25,6 +26,70 @@ Future<void> waitForDrawReady(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('predictive back can cancel and commit after drawing', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 891);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = ScratchController(store: MemoryScratchStore(), random: () => 0);
+    await c.load();
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        theme: GameboxTheme.light().copyWith(platform: TargetPlatform.android),
+        home: const Scaffold(body: Text('Lobby')),
+      ),
+    );
+    navigator.currentState!.push<void>(
+      MaterialPageRoute(
+        builder: (_) => ScratchPage(
+          controller: c,
+          socialApi: FakeSocial()..canSync = false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scratch-primary')));
+    await waitForDrawReady(tester);
+    final total = c.total;
+    Future<void> backEvent(String method, [double? progress]) async {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        SystemChannels.backGesture.name,
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall(
+            method,
+            progress == null
+                ? null
+                : <String, Object>{
+                    'touchOffset': <double>[10 + progress * 200, 400],
+                    'progress': progress,
+                    'swipeEdge': 0,
+                  },
+          ),
+        ),
+        (_) {},
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    }
+
+    await backEvent('startBackGesture', 0);
+    await backEvent('updateBackGestureProgress', .4);
+    await backEvent('cancelBackGesture');
+    await tester.pumpAndSettle();
+    expect(find.byType(ScratchPage), findsOneWidget);
+    expect(c.total, total);
+    await backEvent('startBackGesture', 0);
+    await backEvent('updateBackGestureProgress', .7);
+    await backEvent('commitBackGesture');
+    await tester.pumpAndSettle();
+    expect(find.text('Lobby'), findsOneWidget);
+    expect(find.byType(ScratchPage), findsNothing);
+    expect(c.total, total);
+    c.dispose();
+  });
   testWidgets('miss shows no reward, continues and keeps album unchanged', (
     tester,
   ) async {
