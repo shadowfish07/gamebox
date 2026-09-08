@@ -172,7 +172,7 @@ void main() {
               .byType(CollectibleArtwork)
               .evaluate()
               .map((e) => (e.widget as CollectibleArtwork).cat.imageAsset),
-          everyElement('assets/scratch/dog-atlas.webp'),
+          everyElement('assets/scratch/dog-atlas-v2.webp'),
         );
         await tester.tap(find.byTooltip('关闭详情'));
         await tester.pumpAndSettle();

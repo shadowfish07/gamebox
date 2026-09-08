@@ -1,9 +1,51 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/features/scratch/scratch_catalog.dart';
 import 'package:gamebox/features/scratch/scratch_surface.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('published artwork cells match square source pixels', () async {
+    final dimensions = <String, Size>{};
+    final usedCells = <(String, int)>{};
+    for (final card in scratchCollectibles) {
+      final size = dimensions[card.imageAsset] ??= await () async {
+        final data = await rootBundle.load(card.imageAsset);
+        final codec = await ui.instantiateImageCodec(
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        );
+        try {
+          final frame = await codec.getNextFrame();
+          final size = Size(
+            frame.image.width.toDouble(),
+            frame.image.height.toDouble(),
+          );
+          frame.image.dispose();
+          return size;
+        } finally {
+          codec.dispose();
+        }
+      }();
+      final row = card.artIndex ~/ 4;
+      expect(card.artRows.first, 0);
+      expect(card.artRows.last, size.height);
+      expect(
+        card.artRows[row + 1] - card.artRows[row],
+        size.width / 4,
+        reason: '${card.groupId}/${card.index} must not stretch',
+      );
+      expect(
+        usedCells.add((card.imageAsset, card.artIndex)),
+        isTrue,
+        reason: 'Every collectible needs its own artwork cell',
+      );
+    }
+  });
+
   for (final size in [
     const Size(36, 48),
     const Size(48, 36),

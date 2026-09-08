@@ -71,8 +71,8 @@ flutter:
       fonts:
         - asset: assets/fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf
   assets:
-    - assets/scratch/cat-atlas.webp
-    - assets/scratch/dog-atlas.webp
+    - assets/scratch/cat-atlas-v2.webp
+    - assets/scratch/dog-atlas-v2.webp
     - assets/scratch/dog-epic-atlas.webp
     - assets/fonts/lxgw-wenkai/OFL.txt
     - assets/poetry/LICENSE.txt

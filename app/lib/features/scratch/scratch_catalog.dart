@@ -10,7 +10,7 @@ const scratchGroups = [
 
 // Published catalog sizes; entries are append-only to preserve saved indices.
 const scratchLegacyCatalogSize = 24;
-const scratchDogArtRows = [0, 304, 586, 862, 1132, 1354, 1536];
+const scratchDogArtRows = [0, 512, 1024, 1536, 2048, 2560];
 
 final class ScratchCollectible {
   const ScratchCollectible(
@@ -22,8 +22,8 @@ final class ScratchCollectible {
     this.rarity, {
     required this.groupId,
     required this.artIndex,
-    this.imageAsset = 'assets/scratch/cat-atlas.webp',
-    this.artRows = const [0, 304, 576, 838, 1096, 1319, 1536],
+    this.imageAsset = 'assets/scratch/cat-atlas-v2.webp',
+    this.artRows = const [0, 512, 1024, 1536, 2048, 2560, 3072],
   });
   final int index;
   final List<int> artRows;
@@ -301,7 +301,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 0,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -313,7 +313,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 1,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -325,7 +325,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 2,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -337,7 +337,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 3,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -349,7 +349,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 4,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -361,7 +361,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 5,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -373,7 +373,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 6,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -385,7 +385,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 7,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -397,7 +397,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 8,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -409,7 +409,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 9,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -421,7 +421,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 10,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -433,7 +433,7 @@ const scratchCollectibles = <ScratchCollectible>[
     0,
     groupId: 'dogs',
     artIndex: 11,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -446,7 +446,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 12,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -459,7 +459,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 13,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -472,7 +472,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 14,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -485,7 +485,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 15,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -498,7 +498,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 16,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -511,7 +511,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 17,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -524,7 +524,7 @@ const scratchCollectibles = <ScratchCollectible>[
     1,
     groupId: 'dogs',
     artIndex: 18,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
   ScratchCollectible(
@@ -594,8 +594,8 @@ const scratchCollectibles = <ScratchCollectible>[
     '王冠上的星星，会回应你的心愿。',
     3,
     groupId: 'dogs',
-    artIndex: 23,
-    imageAsset: 'assets/scratch/dog-atlas.webp',
+    artIndex: 19,
+    imageAsset: 'assets/scratch/dog-atlas-v2.webp',
     artRows: scratchDogArtRows,
   ),
 ];
