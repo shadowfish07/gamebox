@@ -258,12 +258,7 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                scratchGroups
-                    .firstWhere((group) => group.id == widget.cat.groupId)
-                    .title,
-                style: text.labelLarge,
-              ),
+              _SeriesTitle(groupId: widget.cat.groupId),
               SizedBox(height: GameboxTokens.spacing.layout),
               Center(
                 child: ConstrainedBox(
@@ -315,4 +310,108 @@ class _ScratchCardDetailState extends State<ScratchCardDetail> {
       ),
     );
   }
+}
+
+class _SeriesTitle extends StatelessWidget {
+  const _SeriesTitle({required this.groupId});
+
+  final String groupId;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final group = scratchGroups.firstWhere((group) => group.id == groupId);
+    Widget rule() => SizedBox(
+      width: GameboxTokens.spacing.section,
+      child: Divider(color: theme.colorScheme.outlineVariant),
+    );
+    return Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          rule(),
+          SizedBox(width: GameboxTokens.spacing.compact),
+          CustomPaint(
+            size: Size.square(GameboxTokens.spacing.section),
+            painter: _SeriesEmblem(
+              groupId: groupId,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          SizedBox(width: GameboxTokens.spacing.layout),
+          Flexible(
+            child: Text(
+              group.title,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          SizedBox(width: GameboxTokens.spacing.compact),
+          rule(),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeriesEmblem extends CustomPainter {
+  const _SeriesEmblem({required this.groupId, required this.color});
+
+  final String groupId;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 24, size.height / 24);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final path = Path();
+    if (groupId == 'cats') {
+      path
+        ..moveTo(4, 11)
+        ..lineTo(4, 3)
+        ..quadraticBezierTo(7, 3, 9, 7)
+        ..quadraticBezierTo(12, 6, 15, 7)
+        ..quadraticBezierTo(17, 3, 20, 3)
+        ..lineTo(20, 11)
+        ..cubicTo(24, 23, 0, 23, 4, 11)
+        ..close();
+    } else if (groupId == 'dogs') {
+      path
+        ..moveTo(7, 6)
+        ..quadraticBezierTo(12, 3, 17, 6)
+        ..lineTo(21, 8)
+        ..quadraticBezierTo(24, 17, 19, 15)
+        ..lineTo(17, 9)
+        ..moveTo(7, 6)
+        ..lineTo(3, 8)
+        ..quadraticBezierTo(0, 17, 5, 15)
+        ..lineTo(7, 9)
+        ..moveTo(6, 13)
+        ..lineTo(6, 16)
+        ..cubicTo(6, 23, 18, 23, 18, 16)
+        ..lineTo(18, 13);
+    } else {
+      path.addRRect(
+        RRect.fromRectAndRadius(
+          const Rect.fromLTWH(4, 3, 16, 18),
+          const Radius.circular(3),
+        ),
+      );
+    }
+    canvas.drawPath(path, paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_SeriesEmblem oldDelegate) =>
+      oldDelegate.groupId != groupId || oldDelegate.color != color;
 }
