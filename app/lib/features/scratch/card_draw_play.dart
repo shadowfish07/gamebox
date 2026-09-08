@@ -662,7 +662,7 @@ class _CardDrawStageState extends State<CardDrawStage>
               ),
               SizedBox(height: GameboxTokens.spacing.layout),
               Text(
-                '百 业 收 藏',
+                '珍 藏 时 光',
                 style: text.titleMedium?.copyWith(
                   color: scheme.onPrimaryContainer,
                 ),
