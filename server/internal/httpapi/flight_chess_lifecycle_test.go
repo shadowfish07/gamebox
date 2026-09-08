@@ -67,7 +67,7 @@ func TestFlightChessLimitBroadcastsTerminalToBothClients(t *testing.T) {
 		t.Cleanup(func() { connection.CloseNow() })
 		writeWS(t, connection, fmt.Sprintf(`{"protocolVersion":1,"type":"platform.connect","payload":{"launchTicket":%s}}`, quote(ticket.LaunchTicket)))
 		connected, snapshot := readWSEnvelope(t, connection), readWSEnvelope(t, connection)
-		if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 511 {
+		if connected.Type != protocol.TypePlatformConnected || snapshot.Type != protocol.TypePlatformSnapshot || snapshot.Revision == nil || *snapshot.Revision != 511 || !bytes.Contains(snapshot.Payload, []byte(`"captureCounts":{"black":0,"white":0}`)) {
 			t.Fatalf("connect=(%+v,%+v)", connected, snapshot)
 		}
 		return connection

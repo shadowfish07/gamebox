@@ -62,7 +62,7 @@ func TestFlightChessAuthoritativeRollMoveRetrySnapshotAndResign(t *testing.T) {
 	}
 
 	wire, err := snapshotEnvelope(current, initiatorID)
-	if err != nil || !bytes.Contains(wire, []byte(`"blackUserId":"`+initiatorID+`"`)) || !bytes.Contains(wire, []byte(`"pieces"`)) {
+	if err != nil || !bytes.Contains(wire, []byte(`"blackUserId":"`+initiatorID+`"`)) || !bytes.Contains(wire, []byte(`"pieces"`)) || !bytes.Contains(wire, []byte(`"captureCounts":{"black":0,"white":0}`)) {
 		t.Fatalf("snapshot wire=(%s,%v)", wire, err)
 	}
 

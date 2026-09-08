@@ -303,6 +303,7 @@ static func _plays_natural_match_to_goal() -> bool:
 	var move_count := 0
 	var move_counts := {"black": 0, "white": 0}
 	var effect_counts := {"jump": 0, "shortcut": 0, "jump_shortcut": 0}
+	var capture_counts := {"black": 0, "white": 0}
 	while client.state.status == "active" and client.state.revision < 512:
 		var previous_revision: int = client.state.revision
 		var event: Dictionary = FlightChessFullGameDriver.next_event(client.state, MATCH_ID)
@@ -313,6 +314,7 @@ static func _plays_natural_match_to_goal() -> bool:
 		else:
 			move_count += 1
 			move_counts[event["payload"]["color"]] += 1
+			capture_counts[event.payload.color] += event.payload.capturedPieceIndices.size()
 			var effect: String = event["payload"]["effect"]
 			if effect_counts.has(effect):
 				effect_counts[effect] += 1
@@ -337,6 +339,8 @@ static func _plays_natural_match_to_goal() -> bool:
 			and _check(move_counts["black"] > 0 and move_counts["white"] > 0, "natural match did not exercise both players") \
 			and _check(effect_counts["jump"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised a same-color jump") \
 			and _check(effect_counts["shortcut"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised the long shortcut") \
+			and _check(client.state.capture_counts == capture_counts, "natural match capture totals diverged") \
+			and _check(scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount").text == "撞回 %d 架" % capture_counts.black, "final capture total missing from card") \
 			and _check(local_summary.counts == [0,0,4], "natural winner summary still described finished planes as in transit") \
 			and _check(result_panel.visible and result_panel.get_node("Content/Result").text == "全员抵达", "goal victory did not render the natural result panel"),
 	)
@@ -346,7 +350,9 @@ static func _maps_player_cards_to_board_colors() -> bool:
 	var harness: Dictionary = await _network_scene_harness(WHITE_ID)
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
-	client.accept_snapshot(_network_snapshot(0))
+	var snapshot := _network_snapshot(30)
+	snapshot.payload.captureCounts = {"black": 12, "white": 27}
+	client.accept_snapshot(snapshot)
 	return _network_cleanup(
 		scene,
 		_check(
@@ -355,6 +361,10 @@ static func _maps_player_cards_to_board_colors() -> bool:
 		) and _check(
 			scene.get_node("LeftRail/Content/OpponentCard").theme_type_variation == &"FlightChessRedCard",
 			"red opponent card retained the yellow card style",
+		) and _check(
+			scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount").text == "撞回 27 架"
+			and scene.get_node("LeftRail/Content/OpponentCard/Content/Name/CaptureCount").text == "撞回 12 架",
+			"re-entry capture totals did not follow local player color",
 		),
 	)
 
@@ -382,7 +392,7 @@ static func _network_snapshot(revision: int) -> Dictionary:
 		"payload": {
 			"status": "active", "phase": "awaiting_roll",
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
-			"dice": 0,
+			"dice": 0, "captureCounts": {"black": 0, "white": 0},
 			"pieces": _network_pieces(), "winnerUserId": null, "result": null,
 		},
 	}
@@ -712,6 +722,8 @@ static func _captures_at_landings() -> bool:
 	sound.stop()
 	client.accept_event(event)
 	result = _check(not sound.playing, "duplicate capture replayed sound") and result
+	result = _check(scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount").text == "撞回 3 架", "capture count was lost or duplicated") and result
+	result = _check(scene.get_node("LeftRail/Content/OpponentCard/Content/Name/CaptureCount").text == "撞回 0 架", "capture credited the victim") and result
 	result = _check(scene.piece_state("yellow", 0).zone == "hangar" and not scene._bounce_playing, "capture did not finish") and result
 	_network_cleanup(scene)
 	return result

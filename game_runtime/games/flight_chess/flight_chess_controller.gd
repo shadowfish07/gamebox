@@ -1093,6 +1093,12 @@ static func _empty_visual_pieces() -> Dictionary:
 	return {"red": [], "yellow": []}
 
 
+func _capture_count(board_color: String) -> int:
+	if not _started:
+		return 0
+	return -1 if _state == null else int(_state.capture_counts.get("black" if board_color == "red" else "white", -1))
+
+
 func _refresh_hud() -> void:
 	if not has_node("BoardStatus"):
 		return
@@ -1105,8 +1111,8 @@ func _refresh_hud() -> void:
 		local_turn = _moving_color == local_color
 	var card_pieces: Dictionary = _moving_card_pieces if _bounce_playing and not _moving_card_pieces.is_empty() else _pieces
 	var paused: bool = _started and (_state == null or _state.revision < 0 or (_state.status != "active" and not _bounce_playing) or _awaiting_snapshot or _connection_state != "connected" or _resign_submitted)
-	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, _local_presence_text(), card_pieces.get(local_color, []))
-	HUD.present_card(self, "OpponentCard", opponent_color, not local_turn and not paused, _opponent_presence_text() if _started and _state != null else "在线", card_pieces.get(opponent_color, []))
+	HUD.present_card(self, "LocalCard", local_color, local_turn and not paused, _local_presence_text(), card_pieces.get(local_color, []), _capture_count(local_color))
+	HUD.present_card(self, "OpponentCard", opponent_color, not local_turn and not paused, _opponent_presence_text() if _started and _state != null else "在线", card_pieces.get(opponent_color, []), _capture_count(opponent_color))
 	if paused:
 		$LeftRail/Content/LocalCard/BadgeOverlay/TurnBadge.text = "暂停"
 		$LeftRail/Content/OpponentCard/BadgeOverlay/TurnBadge.text = "暂停"

@@ -162,15 +162,16 @@ type chineseCheckersSnapshotPayload struct {
 }
 
 type flightChessSnapshotPayload struct {
-	Status       string                         `json:"status"`
-	Phase        string                         `json:"phase"`
-	BlackUserID  *string                        `json:"blackUserId"`
-	WhiteUserID  *string                        `json:"whiteUserId"`
-	NextColor    string                         `json:"nextColor"`
-	Dice         int                            `json:"dice"`
-	Pieces       map[string][]flightchess.Piece `json:"pieces"`
-	WinnerUserID *string                        `json:"winnerUserId"`
-	Result       *string                        `json:"result"`
+	CaptureCounts map[string]int                 `json:"captureCounts"`
+	Status        string                         `json:"status"`
+	Phase         string                         `json:"phase"`
+	BlackUserID   *string                        `json:"blackUserId"`
+	WhiteUserID   *string                        `json:"whiteUserId"`
+	NextColor     string                         `json:"nextColor"`
+	Dice          int                            `json:"dice"`
+	Pieces        map[string][]flightchess.Piece `json:"pieces"`
+	WinnerUserID  *string                        `json:"winnerUserId"`
+	Result        *string                        `json:"result"`
 }
 
 type rpsPlayerSnapshot struct {

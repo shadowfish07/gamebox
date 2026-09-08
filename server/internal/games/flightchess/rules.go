@@ -71,15 +71,16 @@ type Piece struct {
 }
 
 type snapshotState struct {
-	Status       string             `json:"status"`
-	Phase        string             `json:"phase"`
-	BlackUserID  *string            `json:"blackUserId"`
-	WhiteUserID  *string            `json:"whiteUserId"`
-	NextColor    string             `json:"nextColor"`
-	Dice         int                `json:"dice"`
-	Pieces       map[string][]Piece `json:"pieces"`
-	WinnerUserID *string            `json:"winnerUserId"`
-	Result       *string            `json:"result"`
+	CaptureCounts map[string]int     `json:"captureCounts"`
+	Status        string             `json:"status"`
+	Phase         string             `json:"phase"`
+	BlackUserID   *string            `json:"blackUserId"`
+	WhiteUserID   *string            `json:"whiteUserId"`
+	NextColor     string             `json:"nextColor"`
+	Dice          int                `json:"dice"`
+	Pieces        map[string][]Piece `json:"pieces"`
+	WinnerUserID  *string            `json:"winnerUserId"`
+	Result        *string            `json:"result"`
 }
 
 type requestedMovePayload struct {
@@ -231,6 +232,7 @@ func (rules *Rules) applyMoveWithCrossing(snapshot gameapi.Snapshot, actorID str
 		destinations = append(destinations, Piece{Zone: ZoneHome, Index: 2})
 	}
 	captured := captureAt(&state, color, destinations)
+	state.CaptureCounts[color] += len(captured)
 	state.Dice = 0
 	state.Phase = PhaseAwaitingRoll
 	if allFinished(state.Pieces[color]) {
@@ -331,7 +333,7 @@ func initialState() snapshotState {
 	}
 	return snapshotState{
 		Status: StatusActive, Phase: PhaseAwaitingRoll, NextColor: Black,
-		Pieces: pieces,
+		Pieces: pieces, CaptureCounts: map[string]int{Black: 0, White: 0},
 	}
 }
 
@@ -565,20 +567,45 @@ func decodeSnapshot(snapshot gameapi.Snapshot) (snapshotState, error) {
 	}
 	allowed := map[string]struct{}{
 		"status": {}, "phase": {}, "blackUserId": {}, "whiteUserId": {}, "nextColor": {}, "dice": {},
-		"pieces": {}, "winnerUserId": {}, "result": {},
+		"pieces": {}, "winnerUserId": {}, "result": {}, "captureCounts": {},
 	}
 	fields, err := strictObject(snapshot.State, allowed)
-	if err != nil || len(fields) != len(allowed) {
+	if err != nil || (len(fields) != len(allowed) && (len(fields) != len(allowed)-1 || fields["captureCounts"] != nil)) {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
 	var state snapshotState
-	if json.Unmarshal(snapshot.State, &state) != nil || !validState(state) {
+	if json.Unmarshal(snapshot.State, &state) != nil {
+		return snapshotState{}, gameapi.ErrInvalidSnapshot
+	}
+	if fields["captureCounts"] == nil {
+		state.CaptureCounts = map[string]int{Black: 0, White: 0}
+	} else {
+		counts, err := strictObject(fields["captureCounts"], map[string]struct{}{Black: {}, White: {}})
+		if err != nil || len(counts) != 2 {
+			return snapshotState{}, gameapi.ErrInvalidSnapshot
+		}
+		for _, raw := range counts {
+			var count *int
+			if json.Unmarshal(raw, &count) != nil || count == nil {
+				return snapshotState{}, gameapi.ErrInvalidSnapshot
+			}
+		}
+	}
+	if !validState(state) {
 		return snapshotState{}, gameapi.ErrInvalidSnapshot
 	}
 	return state, nil
 }
 
 func validState(state snapshotState) bool {
+	if len(state.CaptureCounts) != 2 {
+		return false
+	}
+	for _, color := range []string{Black, White} {
+		if count, ok := state.CaptureCounts[color]; !ok || count < 0 || count > 2048 {
+			return false
+		}
+	}
 	if state.NextColor != Black && state.NextColor != White || !validOptionalActor(state.BlackUserID) || !validOptionalActor(state.WhiteUserID) ||
 		state.BlackUserID != nil && state.WhiteUserID != nil && *state.BlackUserID == *state.WhiteUserID ||
 		len(state.Pieces) != 2 {
