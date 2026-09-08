@@ -74,6 +74,10 @@ flutter:
   assets:
     - assets/audio/kenney-casino/card-place-3.ogg
     - assets/audio/kenney-casino/LICENSE.txt
+    - assets/audio/kenney-jingles/jingles_STEEL16.ogg
+    - assets/audio/kenney-jingles/jingles_STEEL12.ogg
+    - assets/audio/kenney-jingles/jingles_STEEL02.ogg
+    - assets/audio/kenney-jingles/LICENSE.txt
     - assets/scratch/cat-atlas-v2.webp
     - assets/scratch/dog-atlas-v2.webp
     - assets/scratch/dog-epic-atlas.webp

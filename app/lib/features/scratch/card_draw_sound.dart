@@ -3,6 +3,15 @@ import 'package:flutter/foundation.dart';
 
 /// A preloaded, single-use reveal cue owned by one card animation.
 class CardDrawSound {
+  CardDrawSound({int rarity = 0})
+    : _asset = switch (rarity) {
+        1 => 'audio/kenney-jingles/jingles_STEEL16.ogg',
+        2 => 'audio/kenney-jingles/jingles_STEEL12.ogg',
+        3 => 'audio/kenney-jingles/jingles_STEEL02.ogg',
+        _ => 'audio/kenney-casino/card-place-3.ogg',
+      };
+
+  final String _asset;
   AudioPlayer? _player;
   Future<void>? _ready;
   bool _disposed = false;
@@ -25,9 +34,7 @@ class CardDrawSound {
         ),
       );
       await player.setReleaseMode(ReleaseMode.stop);
-      await player.setSource(
-        AssetSource('audio/kenney-casino/card-place-3.ogg'),
-      );
+      await player.setSource(AssetSource(_asset));
       _available = true;
     } on Exception catch (error) {
       // Optional feedback must never interrupt collection or saving.

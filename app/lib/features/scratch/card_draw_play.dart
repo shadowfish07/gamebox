@@ -345,7 +345,7 @@ class _CardDrawStageState extends State<CardDrawStage>
   );
   bool _duplicateStarted = false;
   bool _sounded = false;
-  final _sound = CardDrawSound();
+  late final _sound = CardDrawSound(rarity: widget.result?.card.rarity ?? 0);
   @override
   void initState() {
     super.initState();

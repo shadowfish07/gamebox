@@ -15,8 +15,14 @@ void main() {
     calls.clear();
     preparing = null;
     failSource = false;
-    AudioCache.instance.loadedFiles['audio/kenney-casino/card-place-3.ogg'] =
-        File('assets/audio/kenney-casino/card-place-3.ogg').absolute.uri;
+    for (final path in [
+      'audio/kenney-casino/card-place-3.ogg',
+      'audio/kenney-jingles/jingles_STEEL16.ogg',
+      'audio/kenney-jingles/jingles_STEEL12.ogg',
+      'audio/kenney-jingles/jingles_STEEL02.ogg',
+    ]) {
+      AudioCache.instance.loadedFiles[path] = File('assets/$path').absolute.uri;
+    }
     final messenger = binding.defaultBinaryMessenger;
     for (final name in [
       'xyz.luan/audioplayers.global',
@@ -58,21 +64,28 @@ void main() {
     );
   });
 
-  test('preloads the requested file and releases its player', () async {
-    final sound = CardDrawSound();
-    sound.prepare();
-    await sound.play();
-    expect(
-      calls.where((c) => c.method == 'setSourceUrl').single.arguments,
-      containsPair(
-        'url',
-        endsWith('/assets/audio/kenney-casino/card-place-3.ogg'),
-      ),
+  for (final (rarity, file) in [
+    (0, 'kenney-casino/card-place-3.ogg'),
+    (1, 'kenney-jingles/jingles_STEEL16.ogg'),
+    (2, 'kenney-jingles/jingles_STEEL12.ogg'),
+    (3, 'kenney-jingles/jingles_STEEL02.ogg'),
+  ]) {
+    test(
+      'tier $rarity preloads its selected file and releases its player',
+      () async {
+        final sound = CardDrawSound(rarity: rarity);
+        sound.prepare();
+        await sound.play();
+        expect(
+          calls.where((c) => c.method == 'setSourceUrl').single.arguments,
+          containsPair('url', endsWith('/assets/audio/$file')),
+        );
+        expect(calls.where((c) => c.method == 'resume'), hasLength(1));
+        await sound.dispose();
+        expect(calls.where((c) => c.method == 'dispose'), hasLength(1));
+      },
     );
-    expect(calls.where((c) => c.method == 'resume'), hasLength(1));
-    await sound.dispose();
-    expect(calls.where((c) => c.method == 'dispose'), hasLength(1));
-  });
+  }
 
   test('leaving during preparation suppresses delayed playback', () async {
     preparing = Completer<void>();
