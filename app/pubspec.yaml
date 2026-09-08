@@ -74,6 +74,7 @@ flutter:
     - assets/scratch/cat-atlas.webp
     - assets/scratch/dog-atlas.webp
     - assets/fonts/lxgw-wenkai/OFL.txt
+    - assets/poetry/LICENSE.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'scratch_surface.dart';
+import 'blank_card_poems.dart';
+export 'blank_card_poems.dart';
 
 /// Cosmetic weights only; never consumes the collectible prize random source.
 int blankCardStyleForRoll(double roll) => roll < .30
@@ -19,18 +21,6 @@ int blankCardStyleForRoll(double roll) => roll < .30
 /// Stable across rebuilds and restored receipts, without storing a collection.
 int blankCardStyle(int serial) =>
     blankCardStyleForRoll(math.Random(serial).nextDouble());
-
-// Public-domain verse excerpts. Attribution stays in source, not on the card.
-const blankCardPoems = [
-  '行到水穷处，\n坐看云起时。', // 王维《终南别业》
-  '明月松间照，\n清泉石上流。', // 王维《山居秋暝》
-  '采菊东篱下，\n悠然见南山。', // 陶渊明《饮酒·其五》
-  '山气日夕佳，\n飞鸟相与还。', // 陶渊明《饮酒·其五》
-  '野旷天低树，\n江清月近人。', // 孟浩然《宿建德江》
-  '海上生明月，\n天涯共此时。', // 张九龄《望月怀远》
-  '晚来天欲雪，\n能饮一杯无。', // 白居易《问刘十九》
-  '掬水月在手，\n弄花香满衣。', // 于良史《春山夜月》
-];
 
 String blankCardPoem(int serial) =>
     blankCardPoems[math.Random(serial ^ 0x706f656d)

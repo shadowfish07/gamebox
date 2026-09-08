@@ -30,3 +30,14 @@ Verdict: complete。其他页面/交互改动不属于本任务，不提交。
 ## 诗句字体与字号
 
 改用本地 LXGW WenKai Regular（固定上游提交，未修改原字体，随包附 OFL.txt），仅应用于诗句和「偶得一句」。诗句由 titleLarge 改为 bodyLarge，行高 2.3、字距 1；底部由 labelLarge 改为 labelSmall。保持无作者/篇名、五种纹样和概率规则。字体样式和紧凑卡面测试覆盖。首次测试错误地从未解析的 ThemeData 取字号，改用实际 widget 上下文后完整 verify 通过 7 项检查（17 条既有提示）。Android API 36 实际页面检查多组诗句、浅色 360×640 和深色 412×891：文楷正确加载，小字号与两行文字可读，无作者/篇名、溢出或遮挡。五款实际抽取 total/recent 均为零。两张同诗句的明暗截图按用户要求分享；恢复原包/尺寸/密度并释放租约。字体调整 Verdict: complete。
+
+
+## 内置 2000 组诗句
+
+范围与 Profile：Core Contract，离线内容扩充。MUST：精确 2000 组不重复两行五言/七言、仅正文展示、沿用文楷、概率不变。SHOULD：可追溯与可维护；采用固定版本选集与源清单，生成脚本只依赖 Python 标准库。MAY：保留原八组，不新增收藏。
+
+需求追踪复核：blank_card_poems.dart 包含 840 组五言和 1160 组七言；blankCardPoem 的独立种子及 BlankDrawCard 原有字体/缩放逻辑保持。源清单、常量一致性和 2000 条可达性由组件测试覆盖，材质比例测试保留；所有字形通过当前字体 cmap 检查。当前 diff 未修改 controller、flow、中奖门槛或库存语义，无阻塞发现。原作者/篇名留在 docs，运行时只有正文。
+
+生成器 --check/--verbose 和无效数据诊断退出码检查通过。完整 bash tool/verify.sh 通过 7 项检查（17 条既有提示）。正文 UTF-8 87920 字节，生成 Dart 文件 102172 字节；同一 debug 构建前后压缩 kernel_blob 增加 123019 字节，许可及资产索引增加 666 字节，约 121 KiB；APK 总长度受 ZIP 对齐填充影响，本次只增加 93 字节，不能用作 release 包增量预测。
+
+Android API 36 实际生产 ScratchPage/Controller/Flow，使用隔离存储与可控结果输入，检查深色 412×891、浅色 360×640 的五种材质及明确的五言/七言样本。截图逐一检查：文楷正常、两行可读、无作者/篇名、无溢出或按钮遮挡；所有空白结果 total/recent 均为零。截图只用于本地视觉检查。验收后恢复原 APK、显示尺寸和密度并释放租约。Verdict: complete。

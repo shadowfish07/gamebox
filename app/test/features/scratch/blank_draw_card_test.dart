@@ -1,8 +1,34 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/features/scratch/blank_draw_card.dart';
 
 void main() {
+  test('offline catalog contains exactly 2000 sourced unique couplets', () {
+    final catalog = jsonDecode(
+      File('../docs/design/cat-scratch/poetry-library.json').readAsStringSync(),
+    ) as Map;
+    final entries = (catalog['entries'] as List).cast<Map>();
+    expect(blankCardPoems, entries.map((e) => e['text']).toList());
+    expect(blankCardPoems.length, 2000);
+    final keys = blankCardPoems
+        .map((p) => p.replaceAll(RegExp(r'[^\u4e00-\u9fff]'), ''))
+        .toSet();
+    expect(keys.length, 2000);
+    for (final poem in blankCardPoems) {
+      final lines = poem.split('\n');
+      expect(lines.length, 2);
+      expect([6, 8], contains(lines.first.length));
+      expect(lines.last.length, lines.first.length);
+      expect(entries[blankCardPoems.indexOf(poem)]['source'], isNotEmpty);
+    }
+    final reachable = {
+      for (var serial = 1; serial <= 50000; serial++) blankCardPoem(serial),
+    };
+    expect(reachable.length, 2000);
+  });
   testWidgets('poem fits compact card without attribution and remains stable', (
     tester,
   ) async {
