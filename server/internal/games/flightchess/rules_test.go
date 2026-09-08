@@ -85,6 +85,8 @@ func TestMoveResolvesColorJumpShortcutStackAndCapture(t *testing.T) {
 	state.Pieces[Black][1] = Piece{Zone: ZoneMain, Index: 35}
 	state.Pieces[White][0] = Piece{Zone: ZoneMain, Index: 3}
 	state.Pieces[White][1] = Piece{Zone: ZoneMain, Index: 3}
+	state.CaptureCounts[Black] = 8
+	state.CaptureCounts[White] = 3
 	snapshot := encodeStateForTest(t, 7, state)
 
 	event, next, err := rules.Apply(snapshot, blackID, gameapi.Action{Type: MoveRequested, Payload: json.RawMessage(`{"pieceIndex":1}`)})
@@ -99,6 +101,9 @@ func TestMoveResolvesColorJumpShortcutStackAndCapture(t *testing.T) {
 		t.Fatalf("unexpected move payload: %#v", payload)
 	}
 	state = decodeStateForTest(t, next)
+	if state.CaptureCounts[Black] != 10 || state.CaptureCounts[White] != 3 {
+		t.Fatalf("capture totals: %#v", state.CaptureCounts)
+	}
 	if state.Pieces[Black][1] != payload.To || state.Pieces[White][0].Zone != ZoneHangar || state.Pieces[White][1].Zone != ZoneHangar || state.NextColor != White {
 		t.Fatalf("unexpected resolved state: %#v", state)
 	}
@@ -368,6 +373,20 @@ func TestRebuildPreservesHistoricalAndCorrectedLandingCaptures(t *testing.T) {
 				if err != nil || !bytes.Equal(rebuilt.State, variant.snapshot.State) {
 					t.Fatalf("capture replay: %v", err)
 				}
+				expected := map[string]int{Black: 0, White: 0}
+				for _, event := range append(append([]gameapi.Event{}, events...), variant.event) {
+					if event.Type == MoveAccepted {
+						var move acceptedMovePayload
+						if err := json.Unmarshal(event.Payload, &move); err != nil {
+							t.Fatal(err)
+						}
+						expected[move.Color] += len(move.CapturedPieceIndices)
+					}
+				}
+				counts := decodeStateForTest(t, rebuilt).CaptureCounts
+				if counts[Black] != expected[Black] || counts[White] != expected[White] {
+					t.Fatalf("replayed capture totals: got %v want %v", counts, expected)
+				}
 			}
 			return
 		}
@@ -375,4 +394,25 @@ func TestRebuildPreservesHistoricalAndCorrectedLandingCaptures(t *testing.T) {
 		snapshot = next
 	}
 	t.Fatal("fixture never reached an intermediate landing capture")
+}
+
+func TestCaptureCountSnapshotValidation(t *testing.T) {
+	snapshot := encodeStateForTest(t, 0, initialState())
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(snapshot.State, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "captureCounts")
+	snapshot.State, _ = json.Marshal(fields)
+	legacy, err := decodeSnapshot(snapshot)
+	if err != nil || legacy.CaptureCounts[Black] != 0 {
+		t.Fatalf("legacy snapshot: %v", err)
+	}
+	for _, invalid := range []string{`null`, `{}`, `{"black":0}`, `{"black":null,"white":0}`, `{"black":0,"black":1,"white":0}`, `{"black":-1,"white":0}`, `{"black":1.5,"white":0}`, `{"black":0,"white":0,"red":0}`} {
+		fields["captureCounts"] = json.RawMessage(invalid)
+		snapshot.State, _ = json.Marshal(fields)
+		if _, err := decodeSnapshot(snapshot); !errors.Is(err, gameapi.ErrInvalidSnapshot) {
+			t.Fatalf("accepted counts %s: %v", invalid, err)
+		}
+	}
 }

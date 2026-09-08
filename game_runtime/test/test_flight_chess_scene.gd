@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess capture badge stays compact and restores quietly", "run": _capture_badge_states},
 		{"name": "flight chess captures home stacks at the shortcut crossing before continuing", "run": _captures_home_crossing},
 		{"name":"flight chess player cards share presence text and state colors", "run":_player_presence_status},
 		{"name":"flight chess captures at each landing before continuing", "run":_captures_at_landings},
@@ -303,6 +304,7 @@ static func _plays_natural_match_to_goal() -> bool:
 	var move_count := 0
 	var move_counts := {"black": 0, "white": 0}
 	var effect_counts := {"jump": 0, "shortcut": 0, "jump_shortcut": 0}
+	var capture_counts := {"black": 0, "white": 0}
 	while client.state.status == "active" and client.state.revision < 512:
 		var previous_revision: int = client.state.revision
 		var event: Dictionary = FlightChessFullGameDriver.next_event(client.state, MATCH_ID)
@@ -313,6 +315,7 @@ static func _plays_natural_match_to_goal() -> bool:
 		else:
 			move_count += 1
 			move_counts[event["payload"]["color"]] += 1
+			capture_counts[event.payload.color] += event.payload.capturedPieceIndices.size()
 			var effect: String = event["payload"]["effect"]
 			if effect_counts.has(effect):
 				effect_counts[effect] += 1
@@ -337,6 +340,8 @@ static func _plays_natural_match_to_goal() -> bool:
 			and _check(move_counts["black"] > 0 and move_counts["white"] > 0, "natural match did not exercise both players") \
 			and _check(effect_counts["jump"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised a same-color jump") \
 			and _check(effect_counts["shortcut"] + effect_counts["jump_shortcut"] > 0, "natural match never exercised the long shortcut") \
+			and _check(client.state.capture_counts == capture_counts, "natural match capture totals diverged") \
+			and _check(scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount").text == "撞回 %d 架" % capture_counts.black, "final capture total missing from card") \
 			and _check(local_summary.counts == [0,0,4], "natural winner summary still described finished planes as in transit") \
 			and _check(result_panel.visible and result_panel.get_node("Content/Result").text == "全员抵达", "goal victory did not render the natural result panel"),
 	)
@@ -346,7 +351,9 @@ static func _maps_player_cards_to_board_colors() -> bool:
 	var harness: Dictionary = await _network_scene_harness(WHITE_ID)
 	var scene: Control = harness["scene"]
 	var client: FakeMatchClient = harness["client"]
-	client.accept_snapshot(_network_snapshot(0))
+	var snapshot := _network_snapshot(30)
+	snapshot.payload.captureCounts = {"black": 12, "white": 27}
+	client.accept_snapshot(snapshot)
 	return _network_cleanup(
 		scene,
 		_check(
@@ -355,6 +362,10 @@ static func _maps_player_cards_to_board_colors() -> bool:
 		) and _check(
 			scene.get_node("LeftRail/Content/OpponentCard").theme_type_variation == &"FlightChessRedCard",
 			"red opponent card retained the yellow card style",
+		) and _check(
+			scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount").text == "撞回 27 架"
+			and scene.get_node("LeftRail/Content/OpponentCard/Content/Name/CaptureCount").text == "撞回 12 架",
+			"re-entry capture totals did not follow local player color",
 		),
 	)
 
@@ -382,7 +393,7 @@ static func _network_snapshot(revision: int) -> Dictionary:
 		"payload": {
 			"status": "active", "phase": "awaiting_roll",
 			"blackUserId": BLACK_ID, "whiteUserId": WHITE_ID, "nextColor": "black",
-			"dice": 0,
+			"dice": 0, "captureCounts": {"black": 0, "white": 0},
 			"pieces": _network_pieces(), "winnerUserId": null, "result": null,
 		},
 	}
@@ -694,7 +705,9 @@ static func _captures_at_landings() -> bool:
 	client.accept_event(event)
 	var board = scene.get_node("Board")
 	var sound := board.get_node("CaptureSound") as AudioStreamPlayer
-	var result := _check(not sound.playing, "capture sound played before impact")
+	var badge = scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount")
+	var result := _check(badge.text == "撞回 0 架", "capture count advanced before impact")
+	result = _check(not sound.playing, "capture sound played before impact") and result
 	result = _check(scene._bounce_playing and board._captured_flights.size() == 3, "capture animation missing") and result
 	for index in 3:
 		result = _check(board._captured_flights[index].origin == board.MAIN_PATH[[39,43,3][index]], "capture origin teleported") and result
@@ -703,6 +716,7 @@ static func _captures_at_landings() -> bool:
 	result = _check(not sound.playing, "capture sound played during approach") and result
 	board._bounce_tween.custom_step(0.01 + 0.42)
 	result = _check(sound.playing, "landing capture was silent") and result
+	result = _check(badge.text == "撞回 1 架" and badge.get("delta") == 1, "first landing did not animate its own capture count") and result
 	result = _check(not scene.get_node("LaunchSound").playing, "ordinary move played launch sound") and result
 	sound.stop()
 	result = _check(board._captured_flights[0].point.is_equal_approx(board.HANGAR_SLOTS.yellow[0]), "initial landing capture did not finish before jump") and result
@@ -710,8 +724,13 @@ static func _captures_at_landings() -> bool:
 	board._bounce_tween.custom_step(10.0)
 	result = _check(sound.playing, "later landing captures were silent") and result
 	sound.stop()
+	if badge.has_method("cancel_feedback"):
+		badge.cancel_feedback()
 	client.accept_event(event)
+	result = _check(badge.get("delta") == 0, "duplicate capture replayed HUD feedback") and result
 	result = _check(not sound.playing, "duplicate capture replayed sound") and result
+	result = _check(scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount").text == "撞回 3 架", "capture count was lost or duplicated") and result
+	result = _check(scene.get_node("LeftRail/Content/OpponentCard/Content/Name/CaptureCount").text == "撞回 0 架", "capture credited the victim") and result
 	result = _check(scene.piece_state("yellow", 0).zone == "hangar" and not scene._bounce_playing, "capture did not finish") and result
 	_network_cleanup(scene)
 	return result
@@ -778,8 +797,52 @@ static func _captures_home_crossing() -> bool:
 	for flight in board._captured_flights:
 		result = _check(flight.point.is_equal_approx(crossing), "victim returned before crossing") and result
 	board._bounce_tween.custom_step(0.42)
+	var capture_badge = scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount")
+	result = _check(capture_badge.count == 2 and capture_badge.delta == 2, "home stack did not show one +2 feedback") and result
 	for flight in board._captured_flights:
 		result = _check(flight.point.is_equal_approx(board.HANGAR_SLOTS.red[flight.index]), "home stack did not return before flight continued") and result
 	board._bounce_tween.custom_step(10.0)
 	result = _check(not scene._bounce_playing and scene.piece_state("yellow", 0) == {"zone": "main", "index": 29} and scene.piece_state("red", 2) == {"zone": "home", "index": 1}, "shortcut destination or adjacent home plane incorrect") and result
+	return _network_cleanup(scene, result)
+
+
+static func _capture_badge_states() -> bool:
+	var harness: Dictionary = await _network_scene_harness(WHITE_ID)
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	scene.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	scene.size = Vector2(1920, 1080)
+	for frame in 3:
+		await (Engine.get_main_loop() as SceneTree).process_frame
+	var snapshot := _network_snapshot(30)
+	# Exercise ordinary match totals; the protocol validation ceiling is not a HUD requirement.
+	snapshot.payload.captureCounts = {"black": 0, "white": 12}
+	client.accept_snapshot(snapshot)
+	var local = scene.get_node("LeftRail/Content/LocalCard/Content/Name/CaptureCount")
+	var opponent = scene.get_node("LeftRail/Content/OpponentCard/Content/Name/CaptureCount")
+	var tokens = preload("res://design_system/generated/gamebox_tokens.gd")
+	var board = scene.get_node("Board")
+	var result := true
+	for dark in [false, true]:
+		scene.set_preview_dark(dark)
+		await (Engine.get_main_loop() as SceneTree).process_frame
+		var colors: Dictionary = tokens.DARK if dark else tokens.LIGHT
+		result = _check(local.count == 12 and local.delta == 0 and opponent.count == 0, "snapshot or theme change animated a capture") and result
+		result = _check(local.ink == (board.PLAYER_COLORS.yellow if dark else board.PLAYER_DARK.yellow) and opponent.ink == colors.on_surface_variant, "capture badge lost team or zero colors") and result
+		var font: Font = local.get_theme_font("font", "FlightChessPlayerName")
+		var number_width := font.get_string_size("12", HORIZONTAL_ALIGNMENT_LEFT, -1, roundi(tokens.TYPOGRAPHY.label_medium.font_size * local.unit)).x
+		result = _check(number_width + 32 * local.unit <= local.size.x, "two-digit capture total overflows badge") and result
+		result = _check(scene.get_node("LeftRail/Content/LocalCard").get_global_rect().encloses(local.get_global_rect()), "capture badge escapes player card") and result
+	local.play_capture(2)
+	local._feedback_tween.pause()
+	local._feedback_tween.custom_step(1.0)
+	result = _check(local.delta == 0 and is_equal_approx(local.feedback_phase, 1.0), "capture feedback did not settle") and result
+	local.play_capture(2)
+	client.connection_state_changed.emit("reconnecting")
+	result = _check(local.delta == 0 and local.count == 12, "reconnect retained feedback or lost count") and result
+	client.accept_snapshot(snapshot)
+	result = _check(local.delta == 0 and local.count == 12, "snapshot replayed capture feedback") and result
+	snapshot.payload.erase("captureCounts")
+	client.accept_snapshot(snapshot)
+	result = _check(local.count == -1 and local.delta == 0 and local.ink == tokens.DARK.on_surface_variant, "unknown total is not quiet and neutral") and result
 	return _network_cleanup(scene, result)

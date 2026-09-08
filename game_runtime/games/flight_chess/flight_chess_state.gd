@@ -53,6 +53,12 @@ var pending_action: Dictionary:
 	get: return _pending_action.duplicate(true)
 	set(_value): pass
 
+var capture_counts: Dictionary:
+	get: return _capture_counts.duplicate()
+	set(_value): pass
+
+var _capture_counts := {BLACK: -1, WHITE: -1}
+
 var _match_id := ""
 var _revision := -1
 var _status := ""
@@ -162,6 +168,7 @@ func apply_snapshot(envelope: Dictionary) -> Dictionary:
 	_next_color = payload["nextColor"]
 	_dice = payload["dice"]
 	_pieces = payload["pieces"].duplicate(true)
+	_capture_counts = payload.get("captureCounts", {BLACK: 0, WHITE: 0} if revision == 0 else {BLACK: -1, WHITE: -1}).duplicate()
 	_winner_user_id = payload["winnerUserId"]
 	_result = payload["result"]
 	_pending_action.clear()
@@ -294,6 +301,8 @@ func _apply_move(envelope: Dictionary) -> Dictionary:
 		return _failure("invalid_event")
 	var roll := dice
 	_pieces = next_pieces
+	if _capture_counts[color] >= 0:
+		_capture_counts[color] += expected_captured.size()
 	_dice = 0
 	_phase = PHASE_AWAITING_ROLL
 	if _all_finished(next_pieces[color]):
@@ -358,10 +367,16 @@ func _validate_snapshot(envelope: Dictionary) -> Dictionary:
 		or not _valid_bound(envelope, "platform.snapshot"):
 		return _failure("invalid_snapshot")
 	var payload: Variant = envelope["payload"]
-	if not payload is Dictionary or not _exact_keys(payload, [
-		"blackUserId", "dice", "nextColor", "phase", "pieces", "result", "status", \
-		"whiteUserId", "winnerUserId",
-	]) or not _canonical_uuid(payload.get("blackUserId")) or not _canonical_uuid(payload.get("whiteUserId")) \
+	var required_keys := ["blackUserId", "dice", "nextColor", "phase", "pieces", "result", "status", "whiteUserId", "winnerUserId"]
+	if payload is Dictionary and payload.has("captureCounts"):
+		required_keys.append("captureCounts")
+		var counts: Variant = payload["captureCounts"]
+		if not counts is Dictionary or not _exact_keys(counts, [BLACK, WHITE]):
+			return _failure("invalid_snapshot")
+		for color in [BLACK, WHITE]:
+			if typeof(counts[color]) != TYPE_INT or counts[color] < 0 or counts[color] > 2048:
+				return _failure("invalid_snapshot")
+	if not payload is Dictionary or not _exact_keys(payload, required_keys) or not _canonical_uuid(payload.get("blackUserId")) or not _canonical_uuid(payload.get("whiteUserId")) \
 		or payload["blackUserId"] == payload["whiteUserId"] \
 		or payload.get("nextColor") not in [BLACK, WHITE] \
 		or payload.get("phase") not in [PHASE_AWAITING_ROLL, PHASE_AWAITING_MOVE] \

@@ -2,6 +2,7 @@ class_name FlightChessBoard
 extends Control
 
 signal piece_pressed(color: String, index: int)
+signal capture_landed(color: String, count: int)
 
 const GameboxTokens = preload("res://design_system/generated/gamebox_tokens.gd")
 
@@ -666,6 +667,7 @@ func animate_move(color: String, index: int, segments: Array, captured: Array, f
 			for flight in landing_captures:
 				flight.hit = true
 			_bounce_tween.tween_callback($CaptureSound.play)
+			_bounce_tween.tween_callback(func() -> void: capture_landed.emit(color, landing_captures.size()))
 			_bounce_tween.tween_method(func(t: float) -> void:
 				_impact = {"point":segment.to,"color":color,"phase":t}
 				for flight in landing_captures:

@@ -3,6 +3,7 @@ extends RefCounted
 const Tokens = preload("res://design_system/generated/gamebox_tokens.gd")
 const Board = preload("res://games/flight_chess/flight_chess_board.gd")
 const Stats = preload("res://games/flight_chess/flight_chess_stats.gd")
+const CaptureBadge = preload("res://games/flight_chess/flight_chess_capture_badge.gd")
 
 static func setup(scene: Control) -> void:
 	var left := scene.get_node("LeftRail/Content")
@@ -24,6 +25,10 @@ static func setup(scene: Control) -> void:
 		dot.name = "PresenceDot"
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		content.get_node("Name").add_child(dot)
+		var capture := CaptureBadge.new()
+		capture.name = "CaptureCount"
+		capture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		content.get_node("Name").add_child(capture)
 		var badge := Label.new()
 		badge.name = "TurnBadge"
 		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -123,6 +128,14 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		content.get_node("Name").add_theme_font_override("font",scene.theme.default_font)
 		content.get_node("Name").add_theme_color_override("font_color",colors.on_surface_variant)
 		content.get_node("Name").add_theme_font_size_override("font_size", roundi(Tokens.TYPOGRAPHY.label_small.font_size*unit))
+		var capture := content.get_node("Name/CaptureCount")
+		capture.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
+		capture.offset_left = -64 * unit
+		capture.offset_right = 0
+		capture.offset_top = -9 * unit
+		capture.offset_bottom = 9 * unit
+		capture.unit = unit
+		capture.queue_redraw()
 		var name_style := StyleBoxEmpty.new()
 		name_style.content_margin_left = 14 * unit
 		content.get_node("Name").add_theme_stylebox_override("normal", name_style)
@@ -201,7 +214,7 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 		dialog_content.get_node("Actions/"+name).add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.body_small.font_size*unit))
 
 
-static func present_card(scene: Control, node_name: String, color: String, active: bool, presence: String, pieces: Array) -> void:
+static func present_card(scene: Control, node_name: String, color: String, active: bool, presence: String, pieces: Array, capture_count: int = 0) -> void:
 	var card := scene.get_node("LeftRail/Content/" + node_name)
 	var colors: Dictionary = Tokens.DARK if scene._preview_dark == true else Tokens.LIGHT
 	var unit: float = scene._hud_unit
@@ -222,6 +235,7 @@ static func present_card(scene: Control, node_name: String, color: String, activ
 	stats.arrival_color = Board.PLAYER_COLORS[color] if scene._preview_dark == true else Board.PLAYER_DARK[color]
 	stats.empty_color = colors.outline_variant
 	stats.present(pieces)
+	card.get_node("Content/Name/CaptureCount").present(capture_count, color, scene._preview_dark == true)
 	card.get_node("BadgeOverlay/TurnBadge").text = "当前" if active else "等待"
 	card.get_node("BadgeOverlay/TurnBadge").add_theme_stylebox_override("normal",box(Board.PLAYER_COLORS[color] if active else colors.surface_container_high,colors.surface_container_low,12*unit,0))
 	card.get_node("BadgeOverlay/TurnBadge").add_theme_color_override("font_color",Board.BOARD_INK if active else colors.on_surface_variant)

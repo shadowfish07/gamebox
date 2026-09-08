@@ -37,6 +37,7 @@ const TYPE_RPS_ROUND_REVEALED := "rps.round.revealed"
 const TYPE_RPS_RESIGN_REQUESTED := "rps.resign.requested"
 const TYPE_RPS_RESIGNED := "rps.resigned"
 const CAPABILITY_PLAYER_PRESENCE := "player_presence_v1"
+const CAPABILITY_FLIGHT_CHESS_CAPTURE_COUNTS := "flight_chess_capture_counts_v1"
 
 const _ALLOWED_FIELDS := {
 	"protocolVersion": true,
@@ -202,7 +203,7 @@ static func encode_connect(credential_name: String, credential: String) -> Dicti
 		"type": TYPE_PLATFORM_CONNECT,
 		"payload": {
 			credential_name: credential,
-			"capabilities": [CAPABILITY_PLAYER_PRESENCE],
+			"capabilities": [CAPABILITY_PLAYER_PRESENCE, CAPABILITY_FLIGHT_CHESS_CAPTURE_COUNTS],
 		},
 	})
 

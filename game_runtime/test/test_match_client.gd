@@ -278,7 +278,7 @@ static func _connects_and_resumes() -> bool:
 	if not _check(connect.get("type") == "platform.connect", "missing platform.connect") \
 		or not _check(connect.get("payload") == {
 			"launchTicket": "launch-secret",
-			"capabilities": [Protocol.CAPABILITY_PLAYER_PRESENCE],
+			"capabilities": [Protocol.CAPABILITY_PLAYER_PRESENCE, Protocol.CAPABILITY_FLIGHT_CHESS_CAPTURE_COUNTS],
 		}, "initial connect did not advertise player presence"):
 		return false
 	transport.queue(_connected(0, "resume-secret"))
@@ -295,8 +295,8 @@ static func _connects_and_resumes() -> bool:
 	var resumed := _last_sent(transport)
 	return _check(resumed.get("payload") == {
 		"resumeToken": "resume-secret",
-		"capabilities": [Protocol.CAPABILITY_PLAYER_PRESENCE],
-	}, "reconnect did not preserve player presence capability") \
+		"capabilities": [Protocol.CAPABILITY_PLAYER_PRESENCE, Protocol.CAPABILITY_FLIGHT_CHESS_CAPTURE_COUNTS],
+	}, "reconnect did not preserve negotiated capabilities") \
 		and _check(not JSON.stringify(resumed).contains("launch-secret"), "launch ticket leaked into resume handshake")
 
 

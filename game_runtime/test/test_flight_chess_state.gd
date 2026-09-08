@@ -10,6 +10,7 @@ const ACTION_ID := "44444444-4444-4444-8444-444444444444"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess restores and validates cumulative capture counts", "run": _capture_count_snapshots},
 		{"name": "flight chess validates shortcut home crossing captures", "run": _crossing_captures},
 		{"name": "flight chess bounces all home rolls and validates authority", "run": _bounces_home_rolls},
 		{"name": "flight chess restores an authoritative roll snapshot", "run": _restores_snapshot},
@@ -260,3 +261,26 @@ static func _crossing_captures() -> bool:
 				if not _check(state.pieces[opponent][i] == expected, "crossing or adjacent home piece incorrect"):
 					return false
 	return true
+
+
+static func _capture_count_snapshots() -> bool:
+	var state = FlightChessState.new(MATCH_ID)
+	var snapshot := _snapshot(10, "awaiting_roll", "black", 0, _initial_pieces())
+	if not state.apply_snapshot(snapshot).get("ok", false) or state.capture_counts.black != -1:
+		return _check(false, "legacy snapshot fabricated a known total")
+	snapshot.payload["captureCounts"] = {"black": 12, "white": 7}
+	var decoded := Protocol.decode(JSON.stringify(snapshot))
+	if not decoded.get("ok", false) or not state.apply_snapshot(decoded.envelope).get("ok", false) or state.capture_counts != snapshot.payload.captureCounts:
+		return _check(false, "snapshot did not restore totals")
+	var stale := snapshot.duplicate(true)
+	stale.revision = 9
+	stale.payload.captureCounts.black = 0
+	state.apply_snapshot(stale)
+	if state.capture_counts.black != 12:
+		return _check(false, "stale snapshot reset capture count")
+	for invalid in [null, {}, {"black": 1}, {"black": -1, "white": 0}, {"black": 1.5, "white": 0}, {"black": 1, "white": 0, "red": 0}]:
+		snapshot.payload["captureCounts"] = invalid
+		if state.apply_snapshot(snapshot).get("ok", true) or state.capture_counts.black != 12:
+			return _check(false, "malformed count accepted or mutated state")
+	var fresh = FlightChessState.new(MATCH_ID)
+	return _check(fresh.apply_snapshot(_snapshot(0, "awaiting_roll", "black", 0, _initial_pieces())).get("ok", false) and fresh.capture_counts.black == 0, "new game did not start at zero")
