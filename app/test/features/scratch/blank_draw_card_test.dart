@@ -23,7 +23,17 @@ void main() {
       expect(find.text('空白卡'), findsNothing);
       expect(find.textContaining('王维'), findsNothing);
       expect(tester.takeException(), isNull);
-      expect(blankCardPoem(serial), blankCardPoem(serial));
+      final poem = tester.widget<Text>(
+        find.byKey(const Key('blank-card-poem')),
+      );
+      expect(poem.style!.fontFamily, 'LXGWWenKai');
+      expect(
+        poem.style!.fontSize,
+        Theme.of(tester.element(find.byKey(const Key('blank-card-poem'))))
+            .textTheme
+            .bodyLarge!
+            .fontSize,
+      );
     }
   });
   test('blank style weights are 30/30/20/15/5, independent of prizes', () {

@@ -68,10 +68,11 @@ class BlankDrawCard extends StatelessWidget {
                         blankCardPoem(serial),
                         key: const Key('blank-card-poem'),
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: ScratchArt.ink,
-                          height: 2.1,
-                          letterSpacing: 2,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: ScratchArt.ink.withValues(alpha: .9),
+                          fontFamily: 'LXGWWenKai',
+                          height: 2.3,
+                          letterSpacing: 1,
                         ),
                       ),
                     ),
@@ -81,9 +82,10 @@ class BlankDrawCard extends StatelessWidget {
             ),
             Text(
               '偶得一句',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 color: ScratchArt.ink.withValues(alpha: .65),
-                letterSpacing: 3,
+                fontFamily: 'LXGWWenKai',
+                letterSpacing: 2,
               ),
             ),
             SizedBox(height: GameboxTokens.spacing.section),

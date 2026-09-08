@@ -66,9 +66,14 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  fonts:
+    - family: LXGWWenKai
+      fonts:
+        - asset: assets/fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf
   assets:
     - assets/scratch/cat-atlas.webp
     - assets/scratch/dog-atlas.webp
+    - assets/fonts/lxgw-wenkai/OFL.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:
