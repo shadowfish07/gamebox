@@ -7,6 +7,8 @@ import '../../core/api/api_client.dart';
 import 'scratch_social_api.dart';
 import 'scratch_collection_sync.dart';
 import 'scratch_players_page.dart';
+import 'scratch_compare_page.dart';
+import 'scratch_compare_player_picker.dart';
 import 'scratch_controller.dart';
 import 'scratch_collectible_card.dart';
 import 'scratch_card_detail.dart';
@@ -54,6 +56,7 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
   final _selectedGroupKey = GlobalKey();
   bool ownedOnly = false;
   bool _leaving = false;
+  bool _openingCompare = false;
 
   @override
   void initState() {
@@ -99,6 +102,44 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
     controller.removeListener(_changed);
     if (widget.controller == null) controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _compare() async {
+    if (_openingCompare) return;
+    _openingCompare = true;
+    try {
+      final api = socialApi;
+      final selfId = api is HttpScratchSocialApi
+          ? api.session?.session?.user.id
+          : null;
+      final player = await Navigator.push<ScratchPlayer>(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              ScratchComparePlayerPicker(api: api, excludeUserId: selfId),
+        ),
+      );
+      if (!mounted || player == null) return;
+      final mine = List<int>.unmodifiable(controller.counts);
+      final group =
+          groupFilter ??
+          await showScratchCompareGroups(context, mine: mine, player: player);
+      if (!mounted || group == null) return;
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ScratchComparePage(
+            api: api,
+            player: player,
+            mine: mine,
+            groupId: group,
+            excludeUserId: selfId,
+          ),
+        ),
+      );
+    } finally {
+      _openingCompare = false;
+    }
   }
 
   Future<void> _back() async {
@@ -170,6 +211,19 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
             icon: const Icon(Icons.arrow_back),
           ),
           title: Text(['抽卡收藏', '收藏图鉴', '玩家收藏'][tab]),
+          actions: [
+            if (tab == 1)
+              TextButton(
+                key: const Key('scratch-compare'),
+                onPressed:
+                    controller.loading ||
+                        controller.saving ||
+                        controller.unsaved
+                    ? null
+                    : _compare,
+                child: const Text('对比'),
+              ),
+          ],
         ),
         body: SafeArea(
           bottom: false,
