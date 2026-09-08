@@ -118,12 +118,14 @@ class ScratchComparePage extends StatefulWidget {
     required this.player,
     required this.mine,
     required this.groupId,
+    required this.onDetail,
     this.excludeUserId,
   });
   final ScratchSocialApi api;
   final ScratchPlayer player;
   final List<int> mine;
   final String groupId;
+  final Future<void> Function(ScratchCollectible card) onDetail;
   final String? excludeUserId;
 
   @override
@@ -186,34 +188,14 @@ class _ScratchComparePageState extends State<ScratchComparePage> {
     }
   }
 
-  void _detail(ScratchCollectible card) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('${card.job} · ${card.name}'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              AspectRatio(aspectRatio: 1, child: CollectibleArtwork(cat: card)),
-              SizedBox(height: GameboxTokens.spacing.layout),
-              Text('我 ${_count(widget.mine, card.index)} 张'),
-              Text(
-                '${_player.nickname} ${_count(_player.counts, card.index)} 张',
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            key: const Key('compare-detail-close'),
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _detail(ScratchCollectible card) async {
+    if (_opening) return;
+    _opening = true;
+    try {
+      await widget.onDetail(card);
+    } finally {
+      _opening = false;
+    }
   }
 
   @override

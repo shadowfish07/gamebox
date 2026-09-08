@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/scratch/scratch_compare_page.dart';
+import 'package:gamebox/features/scratch/scratch_card_detail.dart';
 import 'package:gamebox/features/scratch/scratch_compare_player_picker.dart';
 import 'package:gamebox/features/scratch/scratch_controller.dart';
 import 'package:gamebox/features/scratch/scratch_page.dart';
@@ -105,6 +106,7 @@ void main() {
           player: player('空收藏', {}),
           mine: counts({}),
           groupId: 'cats',
+          onDetail: (_) async {},
         ),
       ),
     );
@@ -131,6 +133,7 @@ void main() {
             player: api.first,
             mine: counts({0: 1, 2: 2, 25: 1}),
             groupId: 'cats',
+            onDetail: (_) async {},
           ),
         ),
       );
@@ -141,7 +144,7 @@ void main() {
       await tap(t, 'compare-card-0');
       expect(find.text('我 1 张'), findsWidgets);
       expect(find.text('小满 3 张'), findsWidgets);
-      await tap(t, 'compare-detail-close');
+      expect(find.byType(AlertDialog), findsNothing);
       await tap(t, 'compare-filter-only');
       await tap(t, 'compare-group');
       await tap(t, 'compare-group-dogs');
@@ -155,6 +158,84 @@ void main() {
       await tap(t, 'compare-filter-both');
       expect(find.byKey(const Key('compare-card-25')), findsOneWidget);
       expect(t.takeException(), isNull);
+    });
+  }
+  for (final action in ['close', 'back', 'owners', 'series', 'draw']) {
+    testWidgets('comparison reuses album detail and handles $action', (
+      t,
+    ) async {
+      t.view.physicalSize = const Size(360, 800);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      final c = ScratchController(store: MemoryScratchStore());
+      await c.load();
+      await t.pumpWidget(
+        MaterialApp(
+          theme: GameboxTheme.light(),
+          home: ScratchPage(controller: c, socialApi: CompareApi()),
+        ),
+      );
+      await t.pumpAndSettle();
+      await tap(t, 'scratch-tab-album');
+      await t.tap(find.text('猫猫百业 0/24'));
+      await t.pumpAndSettle();
+      await tap(t, 'scratch-compare');
+      await tap(t, 'compare-player-小满');
+      await tap(t, 'compare-card-1');
+      expect(find.byType(ScratchCardDetail), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text(scratchCollectibles[1].story), findsOneWidget);
+      expect(find.text('尚未收藏'), findsOneWidget);
+      final detail = t.widget<ScratchCardDetail>(
+        find.byType(ScratchCardDetail),
+      );
+      expect(detail.controller, same(c));
+      if (action == 'owners') {
+        await t.ensureVisible(find.byKey(const Key('scratch-view-owners')));
+        await tap(t, 'scratch-view-owners');
+        expect(find.text('持有玩家'), findsOneWidget);
+        await t.binding.handlePopRoute();
+        await t.pumpAndSettle();
+        expect(find.text('卡片详情'), findsOneWidget);
+        expect(find.byType(ScratchCardDetail), findsOneWidget);
+      }
+      if (action == 'series') {
+        await tap(t, 'scratch-view-series');
+      } else if (action == 'draw') {
+        await t.ensureVisible(find.text('去抽一张'));
+        await t.tap(find.text('去抽一张'));
+        await t.pumpAndSettle();
+      } else if (action == 'back') {
+        await t.binding.handlePopRoute();
+        await t.pumpAndSettle();
+      } else {
+        await t.tap(find.byTooltip('关闭详情'));
+        await t.pumpAndSettle();
+      }
+      expect(find.byType(ScratchCardDetail), findsNothing);
+      if (action == 'series' || action == 'draw') {
+        expect(find.byType(ScratchComparePage), findsNothing);
+        expect(find.text(action == 'draw' ? '抽卡收藏' : '收藏图鉴'), findsOneWidget);
+        if (action == 'series') {
+          expect(
+            t
+                .widget<ChoiceChip>(
+                  find.ancestor(
+                    of: find.text('猫猫百业 0/24'),
+                    matching: find.byType(ChoiceChip),
+                  ),
+                )
+                .selected,
+            isTrue,
+          );
+        }
+      } else {
+        expect(find.text('收藏对比'), findsOneWidget);
+        expect(find.byKey(const Key('compare-card-1')), findsOneWidget);
+      }
+      expect(t.takeException(), isNull);
+      await t.pumpWidget(const SizedBox());
+      c.dispose();
     });
   }
   for (final selectedGroup in [false, true]) {

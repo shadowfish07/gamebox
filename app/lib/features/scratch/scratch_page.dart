@@ -125,18 +125,21 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
           groupFilter ??
           await showScratchCompareGroups(context, mine: mine, player: player);
       if (!mounted || group == null) return;
-      await Navigator.push<void>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ScratchComparePage(
-            api: api,
-            player: player,
-            mine: mine,
-            groupId: group,
-            excludeUserId: selfId,
+      late final MaterialPageRoute<void> compareRoute;
+      compareRoute = MaterialPageRoute(
+        builder: (_) => ScratchComparePage(
+          api: api,
+          player: player,
+          mine: mine,
+          groupId: group,
+          excludeUserId: selfId,
+          onDetail: (card) => _detail(
+            card,
+            onNavigate: () => Navigator.of(context).removeRoute(compareRoute),
           ),
         ),
       );
+      await Navigator.push<void>(context, compareRoute);
     } finally {
       _openingCompare = false;
     }
@@ -415,7 +418,10 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _detail(ScratchCollectible cat) async {
+  Future<void> _detail(
+    ScratchCollectible cat, {
+    VoidCallback? onNavigate,
+  }) async {
     drawFlow.suspend();
     await showModalBottomSheet<void>(
       context: context,
@@ -431,6 +437,7 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
           beforeLoad: collectionSync.sync,
           onViewGroup: () {
             Navigator.pop(context);
+            onNavigate?.call();
             setState(() {
               tab = 1;
               groupFilter = cat.groupId;
@@ -448,6 +455,7 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
           },
           onDraw: () {
             Navigator.pop(context);
+            onNavigate?.call();
             setState(() => tab = 0);
           },
         ),
