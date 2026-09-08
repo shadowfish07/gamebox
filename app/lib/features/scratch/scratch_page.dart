@@ -102,6 +102,11 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
   }
 
   Future<void> _back() async {
+    if (tab != 0) {
+      setState(() => tab = 0);
+      drawFlow.resume();
+      return;
+    }
     drawFlow.suspend();
     if (controller.saving) {
       _message('正在保存收藏，请稍候');
@@ -150,7 +155,8 @@ class _ScratchPageState extends State<ScratchPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PopScope(
-      canPop: _leaving || (!controller.saving && !controller.unsaved),
+      canPop:
+          _leaving || (tab == 0 && !controller.saving && !controller.unsaved),
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) unawaited(_back());
       },
