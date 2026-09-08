@@ -409,6 +409,7 @@ func _on_roll_pressed() -> void:
 			_error_text = ""
 			_last_action = "roll"
 			_turn_feedback = ""
+			$DiceSound.play()
 		else:
 			_error_text = "暂时无法掷骰子，请重试"
 		_sync_ui()
@@ -417,6 +418,7 @@ func _on_roll_pressed() -> void:
 		return
 	_dice_value = DICE_SEQUENCE[_roll_cursor % DICE_SEQUENCE.size()]
 	_roll_cursor += 1
+	$DiceSound.play()
 	_selected_index = -1
 	if _dice_value == 6:
 		_selectable_indices = [0, 1, 2, 3]
@@ -653,6 +655,8 @@ func _on_event_received(envelope: Dictionary) -> void:
 		_feedback_dice = int(payload.get("value",0))
 	elif envelope.get("type") == "flight_chess.move.accepted" and payload.get("roll") == 6:
 		_turn_feedback = "再掷一次"
+	if envelope.get("type") == "flight_chess.roll.accepted" and payload.get("userId") != _client.local_user_id:
+		$DiceSound.play()
 	var moving: bool = envelope.get("type") == "flight_chess.move.accepted" and applied.get("ok", false)
 	_moving_visuals = _event_visuals.get(envelope.revision,_state.visual_pieces())
 	_event_visuals.erase(envelope.revision)

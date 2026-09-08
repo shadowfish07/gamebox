@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_controller.gd" id="1_controller"]
 [ext_resource type="Script" path="res://games/flight_chess/flight_chess_board.gd" id="2_board"]
@@ -9,10 +9,11 @@
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_confirmation_dialog.tscn" id="8_confirmation"]
 [ext_resource type="PackedScene" path="res://design_system/components/gamebox_result_panel.tscn" id="9_result"]
 
-[ext_resource type="AudioStream" path="res://games/flight_chess/assets/explosionCrunch_001.ogg" id="10_capture_sound"]
-[ext_resource type="AudioStream" path="res://games/flight_chess/assets/jingles_PIZZI02.ogg" id="11_launch_sound"]
+[ext_resource type="AudioStream" path="res://games/flight_chess/assets/capture.ogg" id="10_capture_sound"]
+[ext_resource type="AudioStream" path="res://games/flight_chess/assets/takeoff.ogg" id="11_launch_sound"]
 
-[ext_resource type="AudioStream" path="res://games/flight_chess/assets/jingles_STEEL15.ogg" id="12_finish_sound"]
+[ext_resource type="AudioStream" path="res://games/flight_chess/assets/finish.ogg" id="12_finish_sound"]
+[ext_resource type="AudioStream" path="res://games/flight_chess/assets/dice_roll.ogg" id="13_dice_sound"]
 
 [node name="FlightChess" type="Control"]
 layout_mode = 3
@@ -25,6 +26,9 @@ script = ExtResource("1_controller")
 
 [node name="LaunchSound" type="AudioStreamPlayer" parent="."]
 stream = ExtResource("11_launch_sound")
+
+[node name="DiceSound" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("13_dice_sound")
 
 [node name="Background" type="PanelContainer" parent="."]
 layout_mode = 1

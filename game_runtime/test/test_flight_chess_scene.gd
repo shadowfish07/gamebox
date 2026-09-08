@@ -29,6 +29,7 @@ static func cases() -> Array:
 		{"name": "flight chess scene stays inside landscape phone safe areas", "run": _respects_phone_safe_areas},
 		{"name": "flight chess scene rolls before enabling manual plane selection", "run": _rolls_before_selection},
 		{"name": "flight chess scene waits for authoritative roll and move events", "run": _waits_for_authoritative_actions},
+		{"name": "flight chess scene plays the dice sound for opponent rolls", "run": _plays_opponent_roll_sound},
 		{"name": "flight chess scene plays a natural match through goal victory", "run": _plays_natural_match_to_goal},
 		{"name": "flight chess scene maps player cards to board colors", "run": _maps_player_cards_to_board_colors},
 		{"name": "flight chess Back returns without resigning", "run": _back_is_non_destructive},
@@ -211,6 +212,7 @@ static func _rolls_before_selection() -> bool:
 	result = result \
 		and _check(scene.dice_value == 6, "deterministic first roll is not six") \
 		and _check(board.selectable_piece_indices == [0, 1, 2, 3], "six did not enable manual plane selection") \
+		and _check((scene.get_node("DiceSound") as AudioStreamPlayer).playing, "preview roll was silent") \
 		and _check((scene.get_node("RightRail/Content/HintLabel") as Label).text.contains("选择"), "rolled state does not prompt plane selection")
 	scene._on_piece_pressed("red", 0)
 	result = result and _check(scene.piece_state("red",0).zone == "hangar", "selection moved a plane before confirmation")
@@ -233,6 +235,24 @@ static func _waits_for_authoritative_actions() -> bool:
 	return await _checks_launch_turn(5) and await _checks_launch_turn(6)
 
 
+static func _plays_opponent_roll_sound() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness["scene"]
+	var client: FakeMatchClient = harness["client"]
+	var snapshot := _network_snapshot(0)
+	snapshot.payload.nextColor = "white"
+	client.accept_snapshot(snapshot)
+	var roll := _network_roll(1)
+	roll.payload.color = "white"
+	roll.payload.userId = WHITE_ID
+	client.accept_event(roll)
+	return _network_cleanup(
+		scene,
+		_check(scene.dice_value == 6, "opponent roll did not update the shared die") \
+			and _check((scene.get_node("DiceSound") as AudioStreamPlayer).playing, "opponent roll was silent"),
+	)
+
+
 static func _checks_launch_turn(value: int) -> bool:
 	var harness: Dictionary = await _network_scene_harness()
 	var scene: Control = harness["scene"]
@@ -243,13 +263,17 @@ static func _checks_launch_turn(value: int) -> bool:
 	if not _check(not roll_button.disabled, "authoritative roll phase did not enable the roll action"):
 		return _network_cleanup(scene)
 	scene._on_roll_pressed()
+	var dice_sound := scene.get_node("DiceSound") as AudioStreamPlayer
 	if not _check(client.roll_requests == 1, "roll action was not submitted") \
+		or not _check(dice_sound.playing, "authoritative roll press was silent") \
 		or not _check(scene.dice_value == 0 and board.selectable_piece_indices.is_empty(), "roll changed the board optimistically"):
 		return _network_cleanup(scene)
+	dice_sound.stop()
 	var roll := _network_roll(1)
 	roll.payload.value = value
 	client.accept_event(roll)
-	if not _check(scene.dice_value == value and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes"):
+	if not _check(scene.dice_value == value and board.selectable_piece_indices == [0, 1, 2, 3], "accepted roll did not unlock the planes") \
+		or not _check(not dice_sound.playing, "own roll event replayed the dice sound"):
 		return _network_cleanup(scene)
 	scene._on_piece_pressed("red", 1)
 	if not _check(client.move_requests.is_empty() and not board._route_preview.is_empty(), "selection submitted instead of previewing"):
