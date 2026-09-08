@@ -20,6 +20,22 @@ int blankCardStyleForRoll(double roll) => roll < .30
 int blankCardStyle(int serial) =>
     blankCardStyleForRoll(math.Random(serial).nextDouble());
 
+// Public-domain verse excerpts. Attribution stays in source, not on the card.
+const blankCardPoems = [
+  '行到水穷处，\n坐看云起时。', // 王维《终南别业》
+  '明月松间照，\n清泉石上流。', // 王维《山居秋暝》
+  '采菊东篱下，\n悠然见南山。', // 陶渊明《饮酒·其五》
+  '山气日夕佳，\n飞鸟相与还。', // 陶渊明《饮酒·其五》
+  '野旷天低树，\n江清月近人。', // 孟浩然《宿建德江》
+  '海上生明月，\n天涯共此时。', // 张九龄《望月怀远》
+  '晚来天欲雪，\n能饮一杯无。', // 白居易《问刘十九》
+  '掬水月在手，\n弄花香满衣。', // 于良史《春山夜月》
+];
+
+String blankCardPoem(int serial) =>
+    blankCardPoems[math.Random(serial ^ 0x706f656d)
+        .nextInt(blankCardPoems.length)];
+
 class BlankDrawCard extends StatelessWidget {
   const BlankDrawCard({super.key, required this.serial, this.reveal = 1});
   final int serial;
@@ -38,9 +54,33 @@ class BlankDrawCard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            const Spacer(),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: GameboxTokens.spacing.layout,
+                ),
+                child: Center(
+                  child: Opacity(
+                    opacity: ((reveal - .45) / .45).clamp(0.0, 1.0),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        blankCardPoem(serial),
+                        key: const Key('blank-card-poem'),
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: ScratchArt.ink,
+                          height: 2.1,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
             Text(
-              '空白卡',
+              '偶得一句',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
                 color: ScratchArt.ink.withValues(alpha: .65),
                 letterSpacing: 3,
@@ -276,6 +316,20 @@ class _TransparentArt extends CustomPainter {
       );
     }
     canvas.restore();
+    canvas.drawRect(
+      bounds,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(0, -.1),
+          radius: .65,
+          colors: [
+            ScratchArt.paper.withValues(alpha: .94),
+            ScratchArt.paper.withValues(alpha: .6),
+            ScratchArt.paper.withValues(alpha: 0),
+          ],
+          stops: const [0, .5, 1],
+        ).createShader(bounds),
+    );
   }
 
   @override
