@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/material.dart';
+import 'package:gamebox/features/scratch/card_draw_play.dart';
+import 'package:gamebox/features/scratch/scratch_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/features/scratch/card_draw_sound.dart';
 
@@ -85,6 +88,71 @@ void main() {
         expect(calls.where((c) => c.method == 'dispose'), hasLength(1));
       },
     );
+  }
+
+  for (var rarity = 0; rarity < 4; rarity++) {
+    testWidgets('tier $rarity sound and haptic start with reveal effect once', (
+      tester,
+    ) async {
+      final haptics = <MethodCall>[];
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'HapticFeedback.vibrate') haptics.add(call);
+          return null;
+        },
+      );
+      addTearDown(
+        () => binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 220,
+                child: CardDrawStage(
+                  result: CardDrawResult(
+                    card: scratchCollectibles.firstWhere(
+                      (card) => card.rarity == rarity,
+                    ),
+                    serial: 1,
+                    isNew: true,
+                    count: 1,
+                  ),
+                  playing: true,
+                  collecting: false,
+                  waiting: false,
+                  onRevealed: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(Duration.zero);
+      });
+      final cueTime = cardRevealDuration(rarity) * .4;
+      await tester.pump(cueTime - const Duration(milliseconds: 1));
+      expect(calls.where((c) => c.method == 'resume'), isEmpty);
+      expect(haptics, isEmpty);
+      expect(find.byKey(const Key('scratch-reveal-burst')), findsNothing);
+      await tester.pump(const Duration(milliseconds: 2));
+      await tester.pump();
+      expect(find.byKey(const Key('scratch-reveal-burst')), findsOneWidget);
+      expect(calls.where((c) => c.method == 'resume'), hasLength(1));
+      expect(haptics, hasLength(1));
+      await tester.pump(cardRevealDuration(rarity));
+      expect(calls.where((c) => c.method == 'resume'), hasLength(1));
+      expect(haptics, hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
   }
 
   test('leaving during preparation suppresses delayed playback', () async {
