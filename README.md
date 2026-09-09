@@ -240,9 +240,23 @@ Stable Android releases are built from semantic-version tags by [the release wor
 # Validate the next version without modifying Git state
 bash tool/release.sh patch --dry-run
 
-# Increment, commit, push, and trigger a release
+# Increment, commit, push, wait for publication, and update production on this Mac
 bash tool/release.sh patch  # or minor / major
+
+# Resume an existing release after interruption or deployment failure
+bash tool/release.sh --resume v1.2.3
 ```
+
+Run the release command on the production Mac as the service user, with authenticated
+`gh`, Python 3, Go, and zsh available. It polls only the tag's matching release workflow
+and commit, with backoff up to 60 seconds and a two-hour deadline (override with
+`GAMEBOX_RELEASE_TIMEOUT_SECONDS`). A failed, cancelled, timed-out, or incomplete
+release stops before deployment. After success it runs `deploy/macos/install.sh`
+from a temporary snapshot of the released commit, including the installer's health
+and backup checks. Checkout changes during the wait are excluded. `--resume` uses
+the existing remote tag and does not bump the version; rerun a failed GitHub workflow
+before resuming. An interrupted deployment may already have changed production;
+resume reruns the installer. `--dry-run` never waits or deploys.
 
 Release builds require these GitHub Actions secrets:
 

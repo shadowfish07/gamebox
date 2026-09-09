@@ -8,9 +8,13 @@ readonly PUBSPEC_FILE="${ROOT_DIR}/app/pubspec.yaml"
 usage() {
   cat <<'EOF'
 Usage: bash tool/release.sh major|minor|patch [--dry-run]
+       bash tool/release.sh --resume vX.Y.Z
 
 Updates app/pubspec.yaml, commits the release, pushes the current branch, and
 pushes the matching version tag to trigger the GitHub release workflow.
+Waits for publication, then updates production on this Mac from that commit.
+Use --resume to wait/deploy an existing tag without incrementing the version.
+GAMEBOX_RELEASE_TIMEOUT_SECONDS sets the wait deadline (default: 7200).
 Use --dry-run to calculate and validate the release without changing Git state.
 EOF
 }
@@ -20,8 +24,26 @@ die() {
   exit 1
 }
 
+preflight() {
+  [[ "$(uname -s)" == Darwin ]] || die "production deployment requires macOS"
+  for dependency in gh python3 zsh go; do
+    command -v "$dependency" >/dev/null || die "$dependency is required"
+  done
+  [[ "${GAMEBOX_RELEASE_TIMEOUT_SECONDS:-7200}" =~ ^[1-9][0-9]*$ ]] \
+    || die "GAMEBOX_RELEASE_TIMEOUT_SECONDS must be a positive integer"
+  gh auth status >/dev/null 2>&1 || die "gh authentication is required"
+}
+
 [[ $# -ge 1 && $# -le 2 ]] || { usage >&2; exit 2; }
 bump_type="$1"
+if [[ "$bump_type" == "--resume" ]]; then
+  [[ $# -eq 2 && "$2" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { usage >&2; exit 2; }
+  preflight
+  cd "$ROOT_DIR"
+  git fetch origin "refs/tags/$2"
+  sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
+  exec python3 "$ROOT_DIR/tool/lib/release_finish.py" "$2" "$sha"
+fi
 dry_run=false
 if [[ $# -eq 2 ]]; then
   [[ "$2" == "--dry-run" ]] || { usage >&2; exit 2; }
@@ -31,6 +53,10 @@ case "$bump_type" in
   major|minor|patch) ;;
   *) die "bump must be major, minor, or patch" ;;
 esac
+
+if [[ "$dry_run" == false ]]; then
+  preflight
+fi
 
 [[ -f "$PUBSPEC_FILE" ]] || die "missing ${PUBSPEC_FILE}"
 version_line="$(awk '/^version:[[:space:]]/ { print; exit }' "$PUBSPEC_FILE")"
@@ -53,6 +79,7 @@ new_version_line="version: ${version}+${build}"
 
 cd "$ROOT_DIR"
 git diff --quiet || die "working tree has tracked changes"
+git diff --cached --quiet || die "index has staged changes"
 [[ -z "$(git ls-files --others --exclude-standard)" ]] || die "working tree has untracked files"
 branch="$(git branch --show-current)"
 [[ -n "$branch" ]] || die "HEAD is detached"
@@ -79,6 +106,8 @@ GAMEBOX_RELEASE_VERSION_LINE="$new_version_line" perl -0pi \
 git add -- app/pubspec.yaml
 git commit -m "chore: release ${tag}"
 git tag -a "$tag" -m "Release ${tag}"
+release_sha="$(git rev-parse "${tag}^{commit}")"
 git push origin "$branch"
 git push origin "$tag"
 printf 'Release triggered: https://github.com/shadowfish07/gamebox/actions\n'
+exec python3 "$ROOT_DIR/tool/lib/release_finish.py" "$tag" "$release_sha"
