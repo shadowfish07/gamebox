@@ -127,13 +127,15 @@ validate_apk_native_runtime() {
   local listing_text="$1"
   local source_name="$2"
   local packaged_abis expected_abis abi target
-  expected_abis='arm64-v8a armeabi-v7a x86_64'
+  expected_abis="${3:-arm64-v8a armeabi-v7a x86_64}"
+  local -a expected_abi_list
+  read -r -a expected_abi_list <<<"$expected_abis"
   packaged_abis="$(awk '$NF ~ /^lib\/[^\/]+\// { split($NF, parts, "/"); print parts[2] }' <<<"$listing_text" | LC_ALL=C sort -u | paste -sd ' ' -)"
   if [[ "$packaged_abis" != "$expected_abis" ]]; then
     printf '%s packages native ABIs [%s], expected exactly [%s].\n' "$source_name" "$packaged_abis" "$expected_abis" >&2
     return 1
   fi
-  for abi in arm64-v8a armeabi-v7a x86_64; do
+  for abi in "${expected_abi_list[@]}"; do
     target="lib/$abi/libgodot_android.so"
     if ! awk -v target="$target" '
       $NF == target {
@@ -263,6 +265,18 @@ verify_native_runtime_fixtures() {
     printf 'Native runtime fixture accepted an empty Godot library.\n' >&2
     return 1
   fi
+  local arm64_listing
+  arm64_listing=$'71148032  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so'
+  validate_apk_native_runtime "$arm64_listing" 'ARM64 release fixture' arm64-v8a || return $?
+  for bad_listing in "$good_listing" \
+    '0  01-01-1980 00:00 lib/arm64-v8a/libgodot_android.so' \
+    '1  01-01-1980 00:00 lib/arm64-v8a/libflutter.so'; do
+    if validate_apk_native_runtime "$bad_listing" 'invalid ARM64 fixture' arm64-v8a >/dev/null 2>&1; then
+      printf 'ARM64 runtime fixture accepted extra ABIs or missing/empty Godot library.\n' >&2
+      return 1
+    fi
+  done
+
   bad_listing="$good_listing"$'\n1  01-01-1980 00:00 lib/riscv64/libfixture.so'
   if validate_apk_native_runtime "$bad_listing" 'extra ABI fixture' >/dev/null 2>&1; then
     printf 'Native runtime fixture accepted an unexpected ABI.\n' >&2
@@ -352,7 +366,9 @@ verify_apk_packaging() (
 
   apk_entries="$(unzip -Z1 "$apk")" || exit $?
   apk_listing="$(unzip -l "$apk")" || exit $?
-  validate_apk_native_runtime "$apk_listing" "$apk" || exit $?
+  # Universal builds are the default; ARM64 release CI supplies its exact ABI set.
+  validate_apk_native_runtime "$apk_listing" "$apk" \
+    "${GAMEBOX_EXPECTED_APK_ABIS:-arm64-v8a armeabi-v7a x86_64}" || exit $?
   local required_asset
   for required_asset in "${GAMEBOX_REQUIRED_APK_ASSETS[@]}"; do
     grep -Fx "$required_asset" <<<"$apk_entries" >/dev/null || {

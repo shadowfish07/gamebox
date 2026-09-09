@@ -175,9 +175,15 @@ Use the lowest layer that proves the changed boundary. The standard repository g
 # Go, Flutter, and Godot tests; Flutter analysis; smoke parser fixtures
 bash tool/verify_fast.sh
 
-# CI-equivalent gate, including Kotlin tests and debug APK assertions
+# CI gate: APK packaging-gate fixtures, toolchain bootstrap, and the fast gate
 bash tool/verify.sh
 ```
+
+Android unit tests, APK builds, and APK packaging assertions are not part of
+the pull-request gate. The tag-triggered release workflow runs them via
+`tool/verify_android_apk.sh`, which verifies a built APK's updater
+permissions, packaged ABIs, required Godot assets, and excluded/secret-named
+assets.
 
 Successful output is compact. To stream passing subprocess output while debugging:
 
@@ -228,7 +234,7 @@ explicitly:
 
 ## Releases
 
-Stable Android releases are built from semantic-version tags by [the release workflow](.github/workflows/release.yml). The workflow runs source and Android unit tests, builds a signed ARM64 APK, checks the APK signature and packaged architectures, generates checksums, and publishes the artifacts. It does not run device runtime smoke or two-device E2E. Device acceptance can be run separately using the repository smoke and E2E tools.
+Stable Android releases are built from semantic-version tags by [the release workflow](.github/workflows/release.yml). The workflow runs source and Android unit tests, builds a signed ARM64 APK, verifies release APK packaging with `tool/verify_android_apk.sh`, checks the APK signature and packaged architectures, generates checksums, and publishes the artifacts. It does not run device runtime smoke or two-device E2E. Device acceptance can be run separately using the repository smoke and E2E tools.
 
 ```bash
 # Validate the next version without modifying Git state

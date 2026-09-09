@@ -109,8 +109,8 @@ jobs:
           trap gamebox_test_output_cleanup EXIT
           gamebox_run_step "fast verification" \
             env GAMEBOX_TEST_NESTED=1 bash tool/verify_fast.sh
-          gamebox_run_step "Android app unit tests" \
-            bash -c 'cd app/android && ./gradlew :app:testDebugUnitTest'
+          gamebox_run_step "Android unit tests" \
+            bash -c 'cd app/android && ./gradlew :app:testDebugUnitTest :flutter_release_updater:testDebugUnitTest'
           gamebox_test_output_finish release-source-tests
 
       - name: Configure release signing
@@ -147,6 +147,11 @@ jobs:
             --dart-define="GAMEBOX_API_BASE_URL=${GAMEBOX_API_BASE_URL}"
           bash ../tool/verify_release_godot_bridge.sh \
             build/app/outputs/mapping/release/mapping.txt
+
+      - name: Verify release APK packaging
+        env:
+          GAMEBOX_EXPECTED_APK_ABIS: arm64-v8a
+        run: bash tool/verify_android_apk.sh app/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Verify and prepare release assets
         env:

@@ -175,9 +175,13 @@ bash tool/worktree.sh e2e      # 获取 Android 共享租约并运行双设备 g
 # Go、Flutter 和 Godot 测试；Flutter 分析；smoke parser fixture
 bash tool/verify_fast.sh
 
-# CI 等价 gate，包含 Kotlin 测试和 debug APK 断言
+# CI gate：APK 打包 fixture、工具链引导和快速 gate
 bash tool/verify.sh
 ```
+
+Android 单元测试、APK 构建和 APK 打包断言不属于 PR gate。tag 触发的发布工作流会通过
+`tool/verify_android_apk.sh` 执行它们，校验已构建 APK 的 updater 权限、打包 ABI、必备
+Godot 资产以及禁入/密钥命名资产。
 
 成功输出默认保持简洁。调试时如需流式输出已通过的子进程日志：
 
@@ -198,7 +202,7 @@ bash tool/worktree.sh e2e               # 发布级全量场景
 
 ## 发布
 
-稳定版 Android 应用由 [发布工作流](.github/workflows/release.yml) 根据语义化版本 tag 构建。工作流会验证源码，生成已签名的 APK 和 AAB，检查 APK 签名，执行 Android 宿主 smoke，生成校验和并发布产物。
+稳定版 Android 应用由 [发布工作流](.github/workflows/release.yml) 根据语义化版本 tag 构建。工作流会验证源码（包括 Android 单元测试），生成已签名的 ARM64 APK，用 `tool/verify_android_apk.sh` 校验 release APK 打包，检查 APK 签名和架构，生成校验和并发布产物。发布流程不运行设备 smoke 或双设备 E2E；设备验收可使用仓库的 smoke 和 E2E 工具单独执行。
 
 ```bash
 # 不修改 Git 状态，校验下一版本
