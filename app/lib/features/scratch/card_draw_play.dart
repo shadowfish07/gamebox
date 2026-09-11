@@ -346,6 +346,9 @@ class _CardDrawStageState extends State<CardDrawStage>
     duration: GameboxTokens.motion.slow * 2,
     value: widget.playing ? 0 : 1,
   );
+  // Keep the reveal effect, sound and haptic on the same animation beat.
+  static const _revealCueProgress = .4;
+
   bool _duplicateStarted = false;
   bool _sounded = false;
   late final _sound = CardDrawSound(rarity: widget.result?.card.rarity ?? 0);
@@ -365,7 +368,7 @@ class _CardDrawStageState extends State<CardDrawStage>
       if (!_sounded &&
           widget.playing &&
           widget.result?.winning == true &&
-          _reveal.value >= .5) {
+          _reveal.value >= _revealCueProgress) {
         _sounded = true;
         _sound.play();
         switch ((widget.result?.winning == true
@@ -465,7 +468,7 @@ class _CardDrawStageState extends State<CardDrawStage>
                     child: AspectRatio(
                       aspectRatio: .73,
                       child: front
-                          ? _front(context, flip == 1 || t > .4)
+                          ? _front(context, t >= _revealCueProgress)
                           : _back(context),
                     ),
                   ),

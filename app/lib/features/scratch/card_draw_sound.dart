@@ -17,9 +17,7 @@ class CardDrawSound {
   bool _disposed = false;
   bool _available = false;
 
-  void prepare() {
-    _ready ??= _prepare();
-  }
+  Future<void> prepare() => _ready ??= _prepare();
 
   Future<void> _prepare() async {
     try {
@@ -44,7 +42,8 @@ class CardDrawSound {
 
   Future<void> play() async {
     prepare();
-    await _ready;
+    // The visual cue cannot wait for cold asset loading. Skip a missed beat
+    // instead of playing it after the reveal effect and haptic have started.
     if (_disposed || !_available) return;
     try {
       await _player?.resume();
