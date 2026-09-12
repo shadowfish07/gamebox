@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess stacked tap randomly selects a movable plane without a picker", "run": _selects_stacked_plane},
 		{"name": "flight chess capture badge stays compact and restores quietly", "run": _capture_badge_states},
 		{"name": "flight chess captures home stacks at the shortcut crossing before continuing", "run": _captures_home_crossing},
 		{"name":"flight chess player cards share presence text and state colors", "run":_player_presence_status},
@@ -570,6 +571,36 @@ class FakeMatchClient:
 			push_error("fake Flight Chess event invalid")
 			return
 		event_received.emit(envelope)
+
+
+static func _selects_stacked_plane() -> bool:
+	var harness: Dictionary = await _network_scene_harness()
+	var scene: Control = harness.scene
+	var client: FakeMatchClient = harness.client
+	var snapshot := _network_snapshot(0)
+	for index in [1, 3]:
+		snapshot.payload.pieces.black[index] = {"zone": "main", "index": 30}
+	client.accept_snapshot(snapshot)
+	client.accept_event(_network_roll(1))
+	var seen := {}
+	seed(12345)
+	for attempt in 32:
+		scene.get_node("Board").piece_pressed.emit("red", 1)
+		if not _check(scene._selected_index in [1, 3] and not scene.has_node("StackPicker"), "stack tap did not directly select a member"):
+			return _network_cleanup(scene)
+		seen[scene._selected_index] = true
+	if not _check(seen.size() == 2, "stack selection always chose the same plane") \
+		or not _check(client.move_requests.is_empty() and scene.piece_state("red", 1).index == 30, "stack tap submitted or moved before confirmation"):
+		return _network_cleanup(scene)
+	scene._selectable_indices = [3]
+	scene.get_node("Board").piece_pressed.emit("red", 1)
+	if not _check(scene._selected_index == 3, "stack selection chose an immovable member"):
+		return _network_cleanup(scene)
+	scene._on_roll_pressed()
+	if not _check(client.move_requests == [3] and scene.get_node("Board")._pending_index == 3, "confirmation did not submit the selected stack member"):
+		return _network_cleanup(scene)
+	scene.get_node("Board").piece_pressed.emit("red", 1)
+	return _network_cleanup(scene, _check(client.move_requests == [3] and not scene.has_node("StackPicker"), "pending stack tap reopened selection or submitted twice"))
 
 
 static func _selection_recovery() -> bool:

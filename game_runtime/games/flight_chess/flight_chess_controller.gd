@@ -519,9 +519,6 @@ func _on_back_pressed() -> void:
 	if has_node("RulesOverlay"):
 		_close_rules()
 		return
-	if has_node("StackPicker"):
-		_close_stack_picker()
-		return
 	if _menu_open:
 		_toggle_menu()
 		return
@@ -753,7 +750,6 @@ func _on_resign_confirmed() -> void:
 
 
 func _sync_network_ui() -> void:
-	_close_stack_picker()
 	var has_state: bool = _state != null and _state.revision >= 0
 	if has_state:
 		_pieces = _state.visual_pieces()
@@ -1268,40 +1264,12 @@ func _submit_selected_move() -> void:
 
 
 func _on_board_piece_pressed(color: String, index: int) -> void:
-	var members: Array = $Board._stack_members(color,_pieces[color][index])
-	if members.size() <= 1:
-		_on_piece_pressed(color,index)
+	if not _pieces.has(color) or index < 0 or index >= _pieces[color].size():
 		return
-	_close_stack_picker()
-	var panel := PanelContainer.new()
-	panel.name = "StackPicker"
-	panel.z_index = 35
-	var row := HBoxContainer.new()
-	panel.add_child(row)
-	var unit: float = _hud_unit
-	for member in members:
-		var button := Button.new()
-		button.text = "%d 号" % (member+1)
-		button.custom_minimum_size = Vector2(48,48)*unit
-		button.add_theme_font_size_override("font_size",roundi(12*unit))
-		button.disabled = not _selectable_indices.has(member)
-		button.pressed.connect(func() -> void: _close_stack_picker(); _on_piece_pressed(color,member))
-		row.add_child(button)
-	var cancel := Button.new()
-	cancel.text = "取消"
-	cancel.custom_minimum_size = Vector2(48,48)*unit
-	cancel.add_theme_font_size_override("font_size",roundi(12*unit))
-	cancel.pressed.connect(_close_stack_picker)
-	row.add_child(cancel)
-	add_child(panel)
-	panel.position = $Board.position+Vector2(($Board.size.x-panel.get_combined_minimum_size().x)/2,$Board.size.y*0.68)
-
-
-func _close_stack_picker() -> void:
-	if has_node("StackPicker"):
-		var picker := get_node("StackPicker")
-		remove_child(picker)
-		picker.queue_free()
+	var members: Array = $Board._stack_members(color, _pieces[color][index])
+	var movable_members := members.filter(func(member: int) -> bool: return _selectable_indices.has(member))
+	if not movable_members.is_empty():
+		_on_piece_pressed(color, movable_members.pick_random())
 
 
 func _primary_action_text(has_state: bool) -> String:
