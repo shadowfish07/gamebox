@@ -60,6 +60,8 @@ static func setup(scene: Control) -> void:
 	right.add_child(cancel)
 	var board_status := Label.new()
 	board_status.name = "BoardStatus"
+	# Retain the node contract, but never show transient copy below the board.
+	board_status.hide()
 	board_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	scene.add_child(board_status)
 	# Godot Control hit order follows the tree, independently of z_index.

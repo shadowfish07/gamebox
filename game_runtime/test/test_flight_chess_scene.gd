@@ -12,6 +12,7 @@ const MOVE_ACTION_ID := "55555555-5555-4555-8555-555555555555"
 
 static func cases() -> Array:
 	return [
+		{"name": "flight chess keeps board footer hints hidden across HUD updates", "run": _hides_board_footer},
 		{"name": "flight chess stacked tap randomly selects a movable plane without a picker", "run": _selects_stacked_plane},
 		{"name": "flight chess capture badge stays compact and restores quietly", "run": _capture_badge_states},
 		{"name": "flight chess captures home stacks at the shortcut crossing before continuing", "run": _captures_home_crossing},
@@ -35,6 +36,26 @@ static func cases() -> Array:
 		{"name": "flight chess scene maps player cards to board colors", "run": _maps_player_cards_to_board_colors},
 		{"name": "flight chess Back returns without resigning", "run": _back_is_non_destructive},
 	]
+
+
+static func _hides_board_footer() -> bool:
+	var scene = FlightChessScene.instantiate()
+	(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	var result := true
+	for state in ["ready", "rolled", "selected", "stacked"]:
+		scene.set_preview_state(state)
+		result = _check(not scene.get_node("BoardStatus").is_visible_in_tree(), "board footer appeared in %s" % state) and result
+	scene._bounce_playing = true
+	scene._animation_copy = "移动中"
+	scene._refresh_hud()
+	result = _check(not scene.get_node("BoardStatus").is_visible_in_tree(), "animation exposed board footer") and result
+	scene._bounce_playing = false
+	scene._started = true
+	scene._refresh_hud()
+	result = _check(not scene.get_node("BoardStatus").is_visible_in_tree(), "sync exposed board footer") and result
+	scene.free()
+	return result
 
 
 static func _declares_mobile_landscape() -> bool:
