@@ -58,12 +58,6 @@ static func setup(scene: Control) -> void:
 	cancel.text = "取消选择"
 	cancel.visible = false
 	right.add_child(cancel)
-	var board_status := Label.new()
-	board_status.name = "BoardStatus"
-	# Retain the node contract, but never show transient copy below the board.
-	board_status.hide()
-	board_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	scene.add_child(board_status)
 	# Godot Control hit order follows the tree, independently of z_index.
 	for name in ["RulesButton", "ThemeButton", "ResignButton", "MenuButton"]:
 		left.move_child(left.get_node(name), -1)
@@ -181,10 +175,6 @@ static func layout(scene: Control, regions: Dictionary, dark: bool) -> void:
 	var rule_style := box(colors.surface_container_high,colors.surface_container_low,12*unit,0)
 	rule_style.content_margin_left = 8*unit
 	right.get_node("RuleLabel").add_theme_stylebox_override("normal",rule_style)
-	var status := scene.get_node("BoardStatus")
-	place(status,Rect2(regions.board.position+Vector2(0,regions.board.size.y-22*unit),Vector2(regions.board.size.x,20*unit)))
-	status.add_theme_font_size_override("font_size",roundi(9*unit))
-	status.add_theme_color_override("font_color",Board.BOARD_INK)
 	place(scene.get_node("ConnectionLabel"),Rect2(regions.board.position+Vector2(8,8)*unit,Vector2(regions.board.size.x-16*unit,48*unit)))
 	scene.get_node("ConnectionLabel/Content/Message").add_theme_font_size_override("font_size",roundi(Tokens.TYPOGRAPHY.label_medium.font_size*unit))
 	scene.get_node("ConnectionLabel/Content/ReturnButton").custom_minimum_size = Vector2(96,48)*unit
