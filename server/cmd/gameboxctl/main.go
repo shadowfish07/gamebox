@@ -19,6 +19,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/store"
@@ -365,6 +366,16 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			flightchess.Black: append([]flightchess.Piece(nil), state.Pieces[flightchess.Black]...),
 			flightchess.White: append([]flightchess.Piece(nil), state.Pieces[flightchess.White]...),
 		}
+	case reversi.GameID:
+		var state reversi.State
+		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != reversi.BoardSize {
+			writeLine(stderr, matchFailed)
+			return exitFailure
+		}
+		for _, cell := range state.Board {
+			board = append(board, int(cell))
+		}
+		boardSize, nextColor = state.BoardSize, state.NextColor
 	case gomoku.GameID:
 		var state gomokuStateView
 		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != gomoku.BoardSize {

@@ -188,6 +188,32 @@ void main() {
     flightChess.dispose();
   });
 
+  testWidgets('Reversi card exposes lobby history and launch actions', (
+    tester,
+  ) async {
+    final gomoku = _Fixture(now)..api.status = const GomokuIdleStatus();
+    final reversi = _Fixture(now)..api.status = _active(revision: 0);
+    await tester.pumpWidget(
+      _app(gomoku.controller, aliceId, reversiController: reversi.controller),
+    );
+    await _flushWidget(tester);
+
+    expect(find.byKey(const Key('game-reversi')), findsOneWidget);
+    expect(find.text('黑白棋'), findsOneWidget);
+    expect(find.text('2 人 · 翻转争夺'), findsOneWidget);
+    expect(find.text('你的阵营：黑方 · 先手'), findsOneWidget);
+    expect(find.textContaining('当前步数'), findsNothing);
+    expect(
+      find.bySemanticsIdentifier('reversi-continue-match'),
+      findsOneWidget,
+    );
+    expect(find.bySemanticsIdentifier('reversi-cancel-match'), findsOneWidget);
+    expect(find.bySemanticsIdentifier('open-reversi-history'), findsOneWidget);
+
+    gomoku.dispose();
+    reversi.dispose();
+  });
+
   testWidgets('Flight Chess active card does not count rolls as moves', (
     tester,
   ) async {
@@ -942,6 +968,7 @@ Widget _app(
   RpsController? rpsController,
   HomeController? chineseCheckersController,
   HomeController? flightChessController,
+  HomeController? reversiController,
 }) => MaterialApp(
   theme: GameboxTheme.light(),
   darkTheme: GameboxTheme.dark(),
@@ -954,6 +981,7 @@ Widget _app(
     rpsController: rpsController,
     chineseCheckersController: chineseCheckersController,
     flightChessController: flightChessController,
+    reversiController: reversiController,
   ),
 );
 

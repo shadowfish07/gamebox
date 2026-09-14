@@ -12,6 +12,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 )
 
@@ -148,6 +149,8 @@ func matchHistoryGameSpec(gameID string) (historyGameSpec, bool) {
 			decisiveResult:   ResultGoal,
 			countedEventType: flightchess.MoveAccepted,
 		}, true
+	case reversi.GameID:
+		return historyGameSpec{decisiveResult: ResultMajority, countedEventType: reversi.MoveAccepted, allowsDraw: true}, true
 	case gomoku.GameID:
 		return historyGameSpec{
 			decisiveResult:   ResultFive,

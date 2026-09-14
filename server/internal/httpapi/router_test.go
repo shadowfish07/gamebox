@@ -298,7 +298,7 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 
 	gamesResponse := fixture.request(t, http.MethodGet, "/v1/games", "", alice.Session.AccessToken)
-	if gamesResponse.Code != http.StatusOK || gamesResponse.Body.String() != "{\"games\":[{\"id\":\"chinese_checkers\",\"title\":\"跳棋\",\"playerCount\":2},{\"id\":\"flight_chess\",\"title\":\"飞行棋\",\"playerCount\":2},{\"id\":\"gomoku\",\"title\":\"五子棋\",\"playerCount\":2},{\"id\":\"rps\",\"title\":\"石头剪刀布\",\"playerCount\":2}]}\n" {
+	if gamesResponse.Code != http.StatusOK || gamesResponse.Body.String() != "{\"games\":[{\"id\":\"chinese_checkers\",\"title\":\"跳棋\",\"playerCount\":2},{\"id\":\"flight_chess\",\"title\":\"飞行棋\",\"playerCount\":2},{\"id\":\"gomoku\",\"title\":\"五子棋\",\"playerCount\":2},{\"id\":\"reversi\",\"title\":\"黑白棋\",\"playerCount\":2},{\"id\":\"rps\",\"title\":\"石头剪刀布\",\"playerCount\":2}]}\n" {
 		t.Fatalf("games=(%d,%q)", gamesResponse.Code, gamesResponse.Body.String())
 	}
 
