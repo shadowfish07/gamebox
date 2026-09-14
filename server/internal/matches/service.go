@@ -1040,6 +1040,10 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 	if loadErr != nil {
 		return Event{}, Snapshot{}, loadErr
 	}
+	// Direct service callers must respect the same game binding as WebSocket clients.
+	if !strings.HasPrefix(request.Type, match.GameID+".") {
+		return Event{}, Snapshot{}, ErrInvalidRequest
+	}
 	template, ok := service.games.Lookup(match.GameID)
 	if !ok || template.PlayerLimit() != 2 {
 		return Event{}, Snapshot{}, ErrInternal

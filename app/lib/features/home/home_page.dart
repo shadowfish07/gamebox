@@ -91,9 +91,7 @@ final class _HomePageState extends State<HomePage> {
     if (oldWidget.flightChessController != widget.flightChessController) {
       oldWidget.flightChessController?.removeListener(_changed);
       widget.flightChessController?.addListener(_changed);
-      widget.reversiController?.addListener(_changed);
       widget.flightChessController?.start();
-      widget.reversiController?.start();
     }
     if (oldWidget.reversiController != widget.reversiController) {
       oldWidget.reversiController?.removeListener(_changed);

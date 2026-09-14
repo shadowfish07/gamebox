@@ -27,6 +27,49 @@ void main() {
   const carolId = '44444444-4444-4444-8444-444444444444';
   final now = DateTime.utc(2026, 8, 20, 12);
 
+  for (final replaceReversi in [false, true]) {
+    testWidgets(
+      'controller replacement releases Reversi listeners ($replaceReversi)',
+      (tester) async {
+        final home = _Fixture(now);
+        final oldFlight = _Fixture(now);
+        final newFlight = _Fixture(now);
+        final oldReversi = _Fixture(now);
+        final newReversi = replaceReversi ? _Fixture(now) : oldReversi;
+        final fixtures = {home, oldFlight, newFlight, oldReversi, newReversi};
+        addTearDown(() {
+          for (final fixture in fixtures) {
+            fixture.dispose();
+          }
+        });
+        await tester.pumpWidget(
+          _app(
+            home.controller,
+            aliceId,
+            flightChessController: oldFlight.controller,
+            reversiController: oldReversi.controller,
+          ),
+        );
+        await _flushWidget(tester);
+        await tester.pumpWidget(
+          _app(
+            home.controller,
+            aliceId,
+            flightChessController: newFlight.controller,
+            reversiController: newReversi.controller,
+          ),
+        );
+        await _flushWidget(tester);
+        await tester.pumpWidget(const SizedBox.shrink());
+        // Inspect notifier ownership without exposing a production test hook.
+        // ignore: invalid_use_of_protected_member
+        expect(oldReversi.controller.hasListeners, isFalse);
+        // ignore: invalid_use_of_protected_member
+        expect(newReversi.controller.hasListeners, isFalse);
+      },
+    );
+  }
+
   testWidgets(
     'idle catalog preserves stable game and opponent automation ids',
     (tester) async {

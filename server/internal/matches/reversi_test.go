@@ -112,3 +112,49 @@ func TestReversiCancelResignAndTurn(t *testing.T) {
 		t.Fatal("resign replay", err)
 	}
 }
+
+func TestBoardResignationRejectsCrossGameRequests(t *testing.T) {
+	for _, gameID := range []string{"gomoku", reversi.GameID} {
+		t.Run(gameID, func(t *testing.T) {
+			f := newFixture(t)
+			svc := f.service(t, bytes.NewReader([]byte{0}))
+			ctx := context.Background()
+			m, err := svc.Create(ctx, gameID, initiatorID, opponentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			move := reversiRequest(m.ID, initiatorID, 0, reversi.Point{X: 3, Y: 2})
+			move.Type = gameID + ".move.requested"
+			if _, _, err = svc.ApplyAction(ctx, move); err != nil {
+				t.Fatal(err)
+			}
+			other := "gomoku"
+			if gameID == "gomoku" {
+				other = reversi.GameID
+			}
+			request := ActionRequest{MatchID: m.ID, ActorUserID: opponentID, ActionID: "bbbbbbbb-1111-4111-8111-111111111111", ExpectedRevision: 1, Type: other + ".resign.requested", Payload: []byte(`{}`)}
+			for range 2 {
+				if _, _, err = svc.ApplyAction(ctx, request); !errors.Is(err, ErrInvalidRequest) {
+					t.Fatalf("cross-game resignation: %v", err)
+				}
+			}
+			snapshot, err := svc.Snapshot(ctx, m.ID)
+			if err != nil || snapshot.Match.Status != StatusActive || snapshot.Match.Revision != 1 {
+				t.Fatalf("invalid request changed match: %+v, %v", snapshot.Match, err)
+			}
+			request.Type = gameID + ".resign.requested"
+			event, terminal, err := svc.ApplyAction(ctx, request)
+			if err != nil || event.Type != gameID+".resigned" || terminal.Match.Status != StatusFinished {
+				t.Fatalf("valid resignation: %+v, %v", event, err)
+			}
+			duplicate, _, err := svc.ApplyAction(ctx, request)
+			if err != nil || duplicate.Revision != event.Revision {
+				t.Fatalf("valid retry: %+v, %v", duplicate, err)
+			}
+			request.Type = other + ".resign.requested"
+			if _, _, err = svc.ApplyAction(ctx, request); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("cross-game retry: %v", err)
+			}
+		})
+	}
+}
