@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"me.zqydev/gamebox/server/internal/auth"
+	"me.zqydev/gamebox/server/internal/battleship"
 	"me.zqydev/gamebox/server/internal/diagnostics"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/matches"
@@ -39,6 +40,7 @@ type requestIDGenerator func() (string, error)
 // must return a fresh opaque identifier and must not derive it from request
 // credentials or bodies.
 type RouterConfig struct {
+	Battleship *battleship.Service
 	Scratch    *scratch.Service
 	Auth       *auth.Service
 	Matches    *matches.Service
@@ -50,13 +52,14 @@ type RouterConfig struct {
 }
 
 type router struct {
-	scratch   *scratch.Service
-	auth      *auth.Service
-	matches   *matches.Service
-	games     *games.Registry
-	publisher MatchEventPublisher
-	hub       *matches.Hub
-	logger    *log.Logger
+	battleship *battleship.Service
+	scratch    *scratch.Service
+	auth       *auth.Service
+	matches    *matches.Service
+	games      *games.Registry
+	publisher  MatchEventPublisher
+	hub        *matches.Hub
+	logger     *log.Logger
 }
 
 func NewRouter(config RouterConfig) (http.Handler, error) {
@@ -64,10 +67,11 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 		return nil, ErrInvalidConfiguration
 	}
 	router := &router{
-		scratch: config.Scratch, auth: config.Auth, matches: config.Matches, games: config.Games,
+		battleship: config.Battleship, scratch: config.Scratch, auth: config.Auth, matches: config.Matches, games: config.Games,
 		publisher: config.Publisher, hub: config.Hub, logger: config.Logger,
 	}
 	mux := http.NewServeMux()
+	router.registerBattleship(mux)
 	if router.scratch != nil {
 		mux.HandleFunc("GET /v1/scratch/collections", router.listScratchCollections)
 		mux.Handle("POST /v1/scratch/collections/me", router.authenticated(http.HandlerFunc(router.publishScratchCollection)))
@@ -324,8 +328,12 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
+	case "/v1/battleship/matches", "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
+	}
+	if strings.HasPrefix(request.URL.Path, "/v1/battleship/matches/") && strings.HasSuffix(request.URL.Path, "/actions") {
+		id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/v1/battleship/matches/"), "/actions")
+		return canonicalRequestID(id)
 	}
 	const launchPrefix = "/v1/matches/"
 	const launchSuffix = "/launch-ticket"

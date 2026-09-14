@@ -25,4 +25,5 @@ const List<GameDescriptor> gameCatalog = <GameDescriptor>[
   GameDescriptor(id: 'chinese_checkers', title: '跳棋', playerCount: 2),
   GameDescriptor(id: 'flight_chess', title: '飞行棋', playerCount: 2),
   GameDescriptor(id: 'rps', title: '石头剪刀布', playerCount: 2),
+  GameDescriptor(id: 'battleship', title: '海战棋', playerCount: 2),
 ];

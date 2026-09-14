@@ -29,6 +29,9 @@ type gameResponse struct {
 func (router *router) listGames(writer http.ResponseWriter, _ *http.Request) {
 	descriptors := router.games.Descriptors()
 	games := make([]gameResponse, 0, len(descriptors))
+	if router.battleship != nil {
+		games = append(games, gameResponse{ID: "battleship", Title: "海战棋", PlayerCount: 2})
+	}
 	for _, descriptor := range descriptors {
 		if descriptor.PlayerLimit != 2 {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")

@@ -17,6 +17,8 @@ import '../rps/rps_opponent_page.dart';
 import '../update/update_action.dart';
 import '../scratch/scratch_page.dart';
 import '../scratch/scratch_social_api.dart';
+import '../battleship/battleship_api.dart';
+import '../battleship/battleship_lobby.dart';
 import 'game_catalog.dart';
 import 'home_controller.dart';
 import 'opponent_page.dart';
@@ -33,9 +35,11 @@ final class HomePage extends StatefulWidget {
     this.flightChessController,
     this.updateController,
     this.scratchApi,
+    this.battleshipApi,
   });
 
   final ScratchSocialApi? scratchApi;
+  final BattleshipApi? battleshipApi;
   final HomeController controller;
   final String currentUserId;
   final String nickname;
@@ -327,6 +331,21 @@ final class _HomePageState extends State<HomePage> {
             ),
           ),
           ScratchEntry(socialApi: widget.scratchApi),
+          if (widget.battleshipApi case final api?)
+            Card(
+              child: ListTile(
+                key: const Key('open-battleship'),
+                leading: const Icon(Icons.sailing_outlined),
+                title: const Text('海战棋'),
+                subtitle: const Text('2 人 · 随时续玩'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => BattleshipLobby(api: api),
+                  ),
+                ),
+              ),
+            ),
           _buildGomoku(controller),
           if (widget.chineseCheckersController
               case final HomeController chineseCheckersController)

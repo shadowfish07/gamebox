@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"me.zqydev/gamebox/server/internal/auth"
+	"me.zqydev/gamebox/server/internal/battleship"
 	"me.zqydev/gamebox/server/internal/clock"
 	"me.zqydev/gamebox/server/internal/games"
 	"me.zqydev/gamebox/server/internal/httpapi"
@@ -156,8 +157,9 @@ func StartServer(ctx context.Context, config ServerConfig) (*Server, error) {
 	}
 	logs := &synchronizedBuffer{}
 	handler, err := httpapi.NewRouter(httpapi.RouterConfig{
-		Scratch: scratch.New(database, config.Clock),
-		Auth:    authService, Matches: matchService, Games: registry, Publisher: hub, Hub: hub,
+		Battleship: battleship.New(database, config.Clock),
+		Scratch:    scratch.New(database, config.Clock),
+		Auth:       authService, Matches: matchService, Games: registry, Publisher: hub, Hub: hub,
 		Logger: log.New(logs, "", 0), RequestIDs: httpapi.NewProductionRequestID,
 	})
 	if err != nil {
