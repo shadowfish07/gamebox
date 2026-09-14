@@ -1,3 +1,4 @@
+import '../reversi/reversi_models.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/api_error.dart';
 import '../auth/session_controller.dart';
@@ -20,7 +21,8 @@ final class HttpHomeApi implements HomeApi {
     : _gameId = gameId {
     if (gameId != gomokuGameId &&
         gameId != chineseCheckersGameId &&
-        gameId != flightChessGameId) {
+        gameId != flightChessGameId &&
+        gameId != reversiGameId) {
       throw ArgumentError.value(gameId, 'gameId', 'unsupported board game');
     }
   }

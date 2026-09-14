@@ -28,13 +28,14 @@ func (fakeRules) Apply(Snapshot, string, Action) (Event, Snapshot, error) {
 func TestDefaultRegistryContainsBuiltInGamesAndModuleMetadata(t *testing.T) {
 	registry := NewRegistry()
 	descriptors := registry.Descriptors()
-	if len(descriptors) != 4 {
-		t.Fatalf("descriptor count = %d, want 4", len(descriptors))
+	if len(descriptors) != 5 {
+		t.Fatalf("descriptor count = %d, want 5", len(descriptors))
 	}
 	want := []Descriptor{
 		{GameID: "chinese_checkers", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 		{GameID: "flight_chess", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 		{GameID: "gomoku", PlayerLimit: 2, SingleActiveMatchPerUser: true},
+		{GameID: "reversi", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 		{GameID: "rps", PlayerLimit: 2, SingleActiveMatchPerUser: true},
 	}
 	if !reflect.DeepEqual(descriptors, want) {
@@ -92,7 +93,7 @@ func TestRegistryUnknownLookupAndDescriptorDefensiveCopy(t *testing.T) {
 	first := registry.Descriptors()
 	first[0] = Descriptor{GameID: "mutated"}
 	second := registry.Descriptors()
-	if len(second) != 4 || second[0].GameID != "chinese_checkers" || second[1].GameID != "flight_chess" || second[2].GameID != "gomoku" || second[3].GameID != "rps" {
+	if len(second) != 5 || second[0].GameID != "chinese_checkers" || second[1].GameID != "flight_chess" || second[2].GameID != "gomoku" || second[3].GameID != "reversi" || second[4].GameID != "rps" {
 		t.Fatalf("registry descriptors were mutable: %#v", second)
 	}
 }
@@ -112,7 +113,7 @@ func TestRegistrySupportsConcurrentReads(t *testing.T) {
 					errorsCh <- fmt.Errorf("lookup failed")
 					return
 				}
-				if descriptors := registry.Descriptors(); len(descriptors) != 4 || descriptors[0].GameID != "chinese_checkers" || descriptors[1].GameID != "flight_chess" || descriptors[2].GameID != "gomoku" || descriptors[3].GameID != "rps" {
+				if descriptors := registry.Descriptors(); len(descriptors) != 5 || descriptors[0].GameID != "chinese_checkers" || descriptors[1].GameID != "flight_chess" || descriptors[2].GameID != "gomoku" || descriptors[3].GameID != "reversi" || descriptors[4].GameID != "rps" {
 					errorsCh <- fmt.Errorf("descriptors changed")
 					return
 				}

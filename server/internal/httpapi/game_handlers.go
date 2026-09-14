@@ -10,6 +10,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 )
@@ -34,7 +35,7 @@ func (router *router) listGames(writer http.ResponseWriter, _ *http.Request) {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		title := map[string]string{chinesecheckers.GameID: "跳棋", flightchess.GameID: "飞行棋", gomoku.GameID: "五子棋", rps.GameID: "石头剪刀布"}[descriptor.GameID]
+		title := map[string]string{chinesecheckers.GameID: "跳棋", flightchess.GameID: "飞行棋", gomoku.GameID: "五子棋", reversi.GameID: "黑白棋", rps.GameID: "石头剪刀布"}[descriptor.GameID]
 		if title == "" {
 			writeAPIError(writer, http.StatusInternalServerError, "internal_error")
 			return

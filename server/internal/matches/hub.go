@@ -18,6 +18,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 )
@@ -941,7 +942,7 @@ func (connection *hubConnection) readLoop() {
 			connection.sendLatestSnapshot()
 		case protocol.TypeChineseCheckersMoveRequested, protocol.TypeChineseCheckersResignRequested,
 			protocol.TypeFlightChessRollRequested, protocol.TypeFlightChessMoveRequested, protocol.TypeFlightChessResignRequested,
-			protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
+			protocol.TypeReversiMoveRequested, protocol.TypeReversiResignRequested, protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
 			connection.applyAction(envelope)
 		default:
 			connection.enqueueError("invalid_request", envelope.ActionID)
@@ -1144,6 +1145,26 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 		payload.Status = snapshot.Match.Status
 		payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
 		payload.Result = cloneStringPointer(snapshot.Match.Result)
+		return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+	}
+	if snapshot.Match.GameID == reversi.GameID {
+		var payload reversi.State
+		if json.Unmarshal(snapshot.Game.State, &payload) != nil {
+			return nil, ErrInternal
+		}
+		black, white, err := snapshotPlayerIDs(snapshot.Players)
+		if err != nil {
+			return nil, err
+		}
+		payload.BlackUserID, payload.WhiteUserID = &black, &white
+		payload.Status = snapshot.Match.Status
+		payload.Result = cloneStringPointer(snapshot.Match.Result)
+		payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
+		if payload.Status != StatusActive {
+			payload.LegalMoves = []reversi.Point{}
+			payload.NextColor = ""
+			payload.PassedColor = nil
+		}
 		return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
 	}
 	if snapshot.Match.GameID != gomoku.GameID {

@@ -1,3 +1,4 @@
+import '../reversi/reversi_models.dart';
 import '../../core/api/api_client.dart';
 import '../../core/platform/game_launch_request.dart';
 import '../../core/platform/game_launcher.dart';
@@ -16,7 +17,8 @@ final class GomokuRepository {
        _now = now ?? DateTime.now {
     if (gameId != gomokuGameId &&
         gameId != chineseCheckersGameId &&
-        gameId != flightChessGameId) {
+        gameId != flightChessGameId &&
+        gameId != reversiGameId) {
       throw ArgumentError.value(gameId, 'gameId', 'unsupported board game');
     }
     if (!_isHttpOrigin(_apiBaseUri)) {

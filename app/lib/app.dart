@@ -10,6 +10,8 @@ import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
 import 'design_system/generated/gamebox_tokens.g.dart';
 import 'design_system/gamebox_theme.dart';
+import 'features/reversi/reversi_models.dart';
+import 'features/reversi/reversi_launcher.dart';
 import 'features/auth/auth_api.dart';
 import 'features/scratch/scratch_social_api.dart';
 import 'features/auth/registration_page.dart';
@@ -34,6 +36,7 @@ class GameboxApp extends StatefulWidget {
     this.rpsController,
     this.chineseCheckersController,
     this.flightChessController,
+    this.reversiController,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
@@ -50,6 +53,7 @@ class GameboxApp extends StatefulWidget {
   final RpsController? rpsController;
   final HomeController? chineseCheckersController;
   final HomeController? flightChessController;
+  final HomeController? reversiController;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -59,6 +63,8 @@ class GameboxApp extends StatefulWidget {
 }
 
 class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
+  var _navigatorKey = GlobalKey<NavigatorState>();
+  String? _navigatorBoundary;
   var _isLaunchingHostSmoke = false;
   var _hostSmokeError = false;
   SessionController? _sessionController;
@@ -66,11 +72,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   HomeController? _homeController;
   HomeController? _chineseCheckersController;
   HomeController? _flightChessController;
+  HomeController? _reversiController;
   RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
   var _ownsChineseCheckersController = false;
   var _ownsFlightChessController = false;
+  var _ownsReversiController = false;
   var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
 
@@ -110,6 +118,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   }
 
   void _syncHomeController() {
+    // Authentication boundaries must create a new navigator; reusing a global
+    // key would reparent protected routes into the next session.
+    final boundary = _navigationBoundary;
+    if (_navigatorBoundary != boundary) {
+      _navigatorBoundary = boundary;
+      _navigatorKey = GlobalKey<NavigatorState>();
+    }
     final sessionController = _sessionController;
     if (sessionController == null ||
         sessionController.status != SessionStatus.authenticated ||
@@ -141,6 +156,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsFlightChessController = false;
       } else if (_homeControllerAuthenticated) {
         _flightChessController?.pauseForeground();
+      }
+      if (_ownsReversiController) {
+        _reversiController?.dispose();
+        _reversiController = null;
+        _ownsReversiController = false;
+      } else if (_homeControllerAuthenticated) {
+        _reversiController?.pauseForeground();
       }
       _homeControllerAuthenticated = false;
       return;
@@ -232,12 +254,44 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsFlightChessController = true;
       }
     }
+    if (_reversiController == null &&
+        (widget.reversiController != null || widget.homeController == null)) {
+      final injected = widget.reversiController;
+      if (injected != null) {
+        _reversiController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _reversiController = HomeController(
+          repository: GomokuRepository(
+            api: HttpHomeApi(
+              apiClient,
+              sessionController,
+              gameId: reversiGameId,
+            ),
+            gameLauncher: ReversiLauncher(
+              navigatorKey: _navigatorKey,
+              api: HttpHomeApi(
+                apiClient,
+                sessionController,
+                gameId: reversiGameId,
+              ),
+            ),
+            gameId: reversiGameId,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsReversiController = true;
+      }
+    }
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
     _flightChessController?.resumeForeground();
+    _reversiController?.resumeForeground();
   }
 
   @override
@@ -249,6 +303,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _rpsController?.pauseForeground();
       _chineseCheckersController?.pauseForeground();
       _flightChessController?.pauseForeground();
+      _reversiController?.pauseForeground();
     }
   }
 
@@ -264,6 +319,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
     _flightChessController?.resumeForeground();
+    _reversiController?.resumeForeground();
   }
 
   @override
@@ -289,10 +345,14 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsFlightChessController) {
       _flightChessController?.dispose();
     }
+    if (_ownsReversiController) {
+      _reversiController?.dispose();
+    }
     _homeController = null;
     _rpsController = null;
     _chineseCheckersController = null;
     _flightChessController = null;
+    _reversiController = null;
     _homeControllerAuthenticated = false;
     _ownedApiClient?.close();
     widget.updateController?.dispose();
@@ -366,6 +426,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       key: ValueKey<String>(_navigationBoundary),
+      navigatorKey: _navigatorKey,
       title: 'Gamebox',
       theme: GameboxTheme.light(),
       darkTheme: GameboxTheme.dark(),
@@ -441,6 +502,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       rpsController: _rpsController,
       chineseCheckersController: _chineseCheckersController,
       flightChessController: _flightChessController,
+      reversiController: _reversiController,
       updateController: widget.updateController,
     );
   }

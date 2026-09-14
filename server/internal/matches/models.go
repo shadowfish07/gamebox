@@ -14,6 +14,7 @@ const (
 	StatusFinished  = "finished"
 	StatusAbandoned = "abandoned"
 
+	ResultMajority    = "majority"
 	ResultFive        = "five"
 	ResultGoal        = "goal"
 	ResultResignation = "resignation"
