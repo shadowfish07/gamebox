@@ -1,10 +1,14 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'battleship_models.dart';
 
 /// Dense playfield cells are the game-owned exception to 48dp public controls.
 /// The entire cell is hittable; firing still requires the separate confirm button.
-final class BattleshipBoard extends StatelessWidget {
+final class BattleshipBoard extends StatefulWidget {
   const BattleshipBoard({
     super.key,
     required this.ships,
@@ -21,6 +25,61 @@ final class BattleshipBoard extends StatelessWidget {
   final ValueChanged<int>? onCell;
   final bool pending;
   @override
+  State<BattleshipBoard> createState() => _BattleshipBoardState();
+}
+
+final class _BattleshipBoardState extends State<BattleshipBoard> {
+  final _images = <int, ui.Image>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShips();
+  }
+
+  Future<void> _loadShips() async {
+    for (var id = 0; id < _shipAssets.length; id++) {
+      try {
+        final data = await rootBundle.load(
+          'assets/battleship/${_shipAssets[id]}',
+        );
+        final codec = await ui.instantiateImageCodec(
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        );
+        final ui.Image image;
+        try {
+          image = (await codec.getNextFrame()).image;
+        } finally {
+          codec.dispose();
+        }
+        if (!mounted) {
+          image.dispose();
+          return;
+        }
+        setState(() => _images[id] = image);
+      } catch (error, stack) {
+        // Keep the occupied cells and all interaction usable if an asset fails.
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stack,
+            library: 'battleship ship assets',
+          ),
+        );
+      }
+      if (!mounted) return;
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final image in _images.values) {
+      image.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return AspectRatio(
@@ -35,11 +94,12 @@ final class BattleshipBoard extends StatelessWidget {
                   painter: _SeaPainter(
                     scheme,
                     Theme.of(context).textTheme.labelSmall!,
-                    ships,
-                    shots,
-                    selected,
-                    preview,
-                    pending,
+                    widget.ships,
+                    widget.shots,
+                    widget.selected,
+                    widget.preview,
+                    widget.pending,
+                    _images,
                   ),
                 ),
               ),
@@ -54,7 +114,9 @@ final class BattleshipBoard extends StatelessWidget {
                     child: GestureDetector(
                       key: ValueKey('sea-cell-$i'),
                       behavior: HitTestBehavior.opaque,
-                      onTap: onCell == null ? null : () => onCell!(i),
+                      onTap: widget.onCell == null
+                          ? null
+                          : () => widget.onCell!(i),
                     ),
                   ),
                 ),
@@ -66,6 +128,24 @@ final class BattleshipBoard extends StatelessWidget {
   }
 }
 
+const _shipAssets = [
+  'carrier.webp',
+  'battleship.webp',
+  'cruiser.webp',
+  'submarine.webp',
+  'destroyer.webp',
+];
+
+// Alpha >= 32 subject bounds from the checked 512px asset manifest.
+// Exclude transparent square padding without stretching the ship silhouette.
+const _shipSources = [
+  Rect.fromLTRB(199, 9, 318, 504),
+  Rect.fromLTRB(213, 15, 300, 497),
+  Rect.fromLTRB(209, 17, 303, 492),
+  Rect.fromLTRB(188, 11, 324, 495),
+  Rect.fromLTRB(209, 13, 303, 497),
+];
+
 final class _SeaPainter extends CustomPainter {
   _SeaPainter(
     this.colors,
@@ -75,7 +155,9 @@ final class _SeaPainter extends CustomPainter {
     this.selected,
     this.preview,
     this.pending,
+    this.images,
   );
+  final Map<int, ui.Image> images;
   final ColorScheme colors;
   final TextStyle label;
   final List<FleetShip> ships;
@@ -135,6 +217,41 @@ final class _SeaPainter extends CustomPainter {
       );
     }
     for (final ship in ships) {
+      if (images[ship.id] case final image?) {
+        final area = rect(ship.cells.first)
+            .expandToInclude(rect(ship.cells.last))
+            .deflate(c * .12);
+        final source = _shipSources[ship.id];
+        // Artwork points up. Rotate the entire local coordinate system for
+        // horizontal placement, preserving scale and the occupied-cell bounds.
+        final available = ship.vertical
+            ? area.size
+            : Size(area.height, area.width);
+        final fitted = applyBoxFit(
+          BoxFit.contain,
+          source.size,
+          available,
+        ).destination;
+        canvas.save();
+        canvas.translate(area.center.dx, area.center.dy);
+        if (!ship.vertical) canvas.rotate(math.pi / 2);
+        canvas.drawImageRect(
+          image,
+          source,
+          Rect.fromCenter(
+            center: Offset.zero,
+            width: fitted.width,
+            height: fitted.height,
+          ),
+          Paint()
+            ..filterQuality = FilterQuality.medium
+            // Image paint uses only the color alpha, preserving the asset colors.
+            ..color = colors.onSurface.withValues(alpha: pending ? .55 : 1),
+        );
+        canvas.restore();
+      }
+    }
+    for (final ship in ships) {
       final hit = ship.cells.every(
         (c) => shots.any((s) => s.cell == c && s.hit),
       );
@@ -157,6 +274,13 @@ final class _SeaPainter extends CustomPainter {
                 : colors.onSurfaceVariant
             ..strokeWidth = 2;
       if (shot.hit) {
+        // Paired semantic background keeps hits legible over detailed artwork
+        // in either theme, including ordinary hits on still-hidden enemy ships.
+        canvas.drawCircle(
+          r.center,
+          c * .29,
+          Paint()..color = colors.secondaryContainer,
+        );
         canvas.drawLine(
           r.topLeft + Offset(c * .3, c * .3),
           r.bottomRight - Offset(c * .3, c * .3),

@@ -85,11 +85,10 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     if (opened) return;
     opened = true;
     timer?.cancel();
+    final controller = BattleshipController(widget.api, match.id, widget.store);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => BattleshipPage(
-          controller: BattleshipController(widget.api, match.id, widget.store),
-        ),
+        builder: (_) => BattleshipPage(controller: controller),
       ),
     );
     opened = false;

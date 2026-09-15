@@ -333,13 +333,18 @@ final class _BattleshipPageState extends State<BattleshipPage>
       if (m.nextMatchId.isNotEmpty) {
         return FilledButton(
           key: const Key('sea-next'),
-          onPressed: () => Navigator.of(context).pushReplacement(
-            MaterialPageRoute<void>(
-              builder: (_) => BattleshipPage(
-                controller: BattleshipController(c.api, m.nextMatchId, c.store),
+          onPressed: () {
+            final controller = BattleshipController(
+              c.api,
+              m.nextMatchId,
+              c.store,
+            );
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute<void>(
+                builder: (_) => BattleshipPage(controller: controller),
               ),
-            ),
-          ),
+            );
+          },
           child: const Text('进入下一局'),
         );
       }

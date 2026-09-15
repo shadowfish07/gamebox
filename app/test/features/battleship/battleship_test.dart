@@ -8,6 +8,7 @@ import 'package:gamebox/design_system/gamebox_theme.dart';
 import 'package:gamebox/features/battleship/battleship_api.dart';
 import 'package:gamebox/features/battleship/battleship_controller.dart';
 import 'package:gamebox/features/battleship/battleship_models.dart';
+import 'package:gamebox/features/battleship/battleship_lobby.dart';
 import 'package:gamebox/features/battleship/battleship_page.dart';
 
 const user = '11111111-1111-4111-8111-111111111111';
@@ -92,6 +93,63 @@ class FakeSea implements BattleshipApi {
 }
 
 void main() {
+  for (final rematch in [false, true]) {
+    testWidgets(
+      'theme rebuild preserves routed match controller rematch=$rematch',
+      (tester) async {
+        final api = FakeSea(
+          rematch
+              ? {
+                  ...state(phase: 'finished', ready: true),
+                  'nextMatchId': matchId,
+                }
+              : state(phase: 'battle', ready: true, turn: true),
+        );
+        final store = MemoryPending();
+        final home = rematch
+            ? BattleshipPage(
+                controller: BattleshipController(api, matchId, store),
+              )
+            : BattleshipLobby(api: api, store: store);
+        late StateSetter changeTheme;
+        var dark = false;
+        await tester.pumpWidget(
+          StatefulBuilder(
+            builder: (context, setState) {
+              changeTheme = setState;
+              return MaterialApp(
+                theme: dark ? GameboxTheme.dark() : GameboxTheme.light(),
+                home: home,
+              );
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (rematch) {
+          api.json = state(phase: 'battle', ready: true, turn: true);
+          await tester.tap(find.byKey(const Key('sea-next')));
+        } else {
+          await tester.tap(find.text('舰长乙'));
+        }
+        await tester.pumpAndSettle();
+        final controller = tester
+            .widget<BattleshipPage>(find.byType(BattleshipPage))
+            .controller;
+        expect(find.text('轮到你了'), findsOneWidget);
+        changeTheme(() => dark = true);
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<BattleshipPage>(find.byType(BattleshipPage)).controller,
+          same(controller),
+        );
+        expect(find.text('轮到你了'), findsOneWidget);
+        expect(find.text('正在加载对局'), findsNothing);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
   test('random fleets always obey geometry and preserve distinct ships', () {
     for (var seed = 0; seed < 1000; seed++) {
       final ships = randomFleet(Random(seed));
