@@ -19,7 +19,7 @@
 - Flutter：断网后重建控制器沿用 receiver、恢复存档和清除迁移日志后才发布登录、本地写入失败可重试、重复提交阻止、输入错误保留。
 - `bash tool/verify.sh`：通过；追加 Go 日期兼容检查、Flutter 过期状态及重建 SessionController 的重试测试也通过。
 
-## Android 运行时
+## Android 运行时（初次验收）
 
 使用隔离 worktree 服务、测试账号、独立 `me.zqydev.gamebox.debug` 包名，遵守共享 Android exclusive lease。隐私构建掩蔽迁移码与输入内容；截图临时检查，不提交或发布。
 
@@ -36,3 +36,9 @@
 最终检查通过：最新版 APK 能将管理员恢复后的账号再次迁入另一台设备；页面返回按钮及 Android 系统返回均成功取消未用迁移码并返回大厅，截图已检查。完整 `tool/verify.sh` 最终复跑通过。
 
 验收结论：本次实现范围完成，上述自动化与 Android 运行时验收通过。
+
+## 后续调整：移除迁移截图隐私逻辑
+
+按用户要求删除迁移码的隐私条件分支和输入框的 obscureText 设置，正常显示字符；更新设计说明。范围为 Material 3 Core Contract 下的两个文本显示状态，复核 diff 未发现残留隐私路径，无新增 SHOULD 偏离或 MAY 扩展。
+
+`bash tool/verify.sh` 通过，Android debug APK 构建通过。A 模拟器因存储空间不足无法安装，改用 B 模拟器完成实际运行；检查输入普通测试字符及生成码截图，文字完整可见、无圆点或布局问题。生成码在截图前已通过服务端替换撤销，输入使用无效测试值。验收结论：complete。

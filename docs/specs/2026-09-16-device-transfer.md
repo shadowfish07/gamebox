@@ -43,6 +43,6 @@ gameboxctl recovery create --user-id UUID --db PATH --json
 | 管理员恢复复用输入框 | recovery CLI、相同兑换端点 | recovery service test | 见验收记录 |
 | 简洁导航、明暗主题、键盘、返回 | Material 3 标准组件和项目 token | 聚焦 widget test | 见验收记录 |
 
-采用 App Material 3 Core Contract。截图为临时检查输入，使用隐私构建掩蔽迁移码与输入框，不上传凭据。自动化测试与 Android UX 截图检查分别记录。
+采用 App Material 3 Core Contract。迁移码及输入内容直接显示，不提供截图隐私分支。截图为临时检查输入，仅使用无效测试输入或已撤销的测试码，不上传有效凭据。自动化测试与 Android UX 截图检查分别记录。
 
 实际证据与边界见 [验收记录](../acceptance/2026-09-16-device-transfer.md)。

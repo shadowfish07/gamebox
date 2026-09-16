@@ -90,9 +90,7 @@ class _DeviceTransferPageState extends State<DeviceTransferPage> {
                   const Center(child: CircularProgressIndicator())
                 else if (t.code != null && !expired) ...[
                   Text(
-                    const bool.fromEnvironment('GAMEBOX_SCREENSHOT_PRIVACY')
-                        ? '•••• · ••••'
-                        : '${t.code!.substring(0, 4)} · ${t.code!.substring(4)}',
+                    '${t.code!.substring(0, 4)} · ${t.code!.substring(4)}',
                     key: const Key('transfer-code'),
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineLarge,
@@ -127,9 +125,6 @@ class _DeviceTransferPageState extends State<DeviceTransferPage> {
               ] else ...[
                 TextField(
                   key: const Key('transfer-input'),
-                  obscureText: const bool.fromEnvironment(
-                    'GAMEBOX_SCREENSHOT_PRIVACY',
-                  ),
                   controller: _input,
                   enabled: !t.busy && !t.incoming,
                   autocorrect: false,
