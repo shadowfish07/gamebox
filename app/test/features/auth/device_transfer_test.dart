@@ -16,8 +16,14 @@ import 'package:gamebox/design_system/gamebox_theme.dart';
 
 class MemoryTransferStore implements TransferStore {
   final values = <String, String>{};
+  String? failingRead;
+  final reads = <String>[];
   @override
-  Future<String?> read(String key) async => values[key];
+  Future<String?> read(String key) async {
+    reads.add(key);
+    if (key == failingRead) throw StateError('storage unavailable');
+    return values[key];
+  }
   @override
   Future<void> write(String key, String value) async {
     values[key] = value;
@@ -90,6 +96,52 @@ http.Response response(Map<String, Object?> data, [int status = 200]) =>
       headers: {'content-type': 'application/json'},
     );
 void main() {
+  for (final failingKey in [DeviceTransfer.incomingKey, DeviceTransfer.outgoingKey]) {
+    test('startup retry rereads both journals after $failingKey fails', () async {
+      final journal = MemoryTransferStore()
+        ..failingRead = failingKey
+        ..values[DeviceTransfer.outgoingKey] = 'pending';
+      final token = MemoryToken()..value = 'stored-refresh';
+      var cancellationFails = true;
+      var cancellations = 0;
+      final api = ApiClient(httpClient: MockClient((request) async {
+        if (request.method == 'DELETE') {
+          cancellations++;
+          if (cancellationFails) throw http.ClientException('offline');
+          return http.Response('', 204);
+        }
+        expect(request.url.path, '/v1/auth/refresh');
+        return response({'session': payload()['session']});
+      }));
+      final session = SessionController(authApi: HttpAuthApi(api), tokenStore: token);
+      final transfer = DeviceTransfer(api: api, session: session, store: journal, scratchStore: MemoryScratch());
+      await transfer.restoreIncoming();
+      expect(transfer.incoming, isTrue);
+      expect(session.status, SessionStatus.restoring);
+      journal.failingRead = null;
+      journal.reads.clear();
+      // The production retry button supplies the (empty) input field.
+      await transfer.receive('');
+      expect(journal.reads, containsAllInOrder([DeviceTransfer.incomingKey, DeviceTransfer.outgoingKey]));
+      expect(cancellations, 1);
+      expect(transfer.incoming, isTrue, reason: 'normal app use stays blocked while cancellation fails');
+      expect(journal.values[DeviceTransfer.outgoingKey], 'pending');
+      cancellationFails = false;
+      // Successful retry must cancel the outstanding code before clearing the gate.
+      transfer.addListener(() {
+        if (!transfer.incoming) expect(journal.values, isEmpty);
+      });
+      await transfer.receive('');
+      expect(cancellations, 2);
+      expect(transfer.incoming, isFalse);
+      expect(transfer.outgoing, isFalse);
+      expect(session.status, SessionStatus.authenticated);
+      expect(journal.values, isEmpty);
+      transfer.dispose();
+      session.dispose();
+      api.close();
+    });
+  }
   test('durable receiver retries after lost response and restores before publishing session', () async {
     final journal = MemoryTransferStore();
     final scratch = MemoryScratch();

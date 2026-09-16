@@ -46,6 +46,7 @@ final class DeviceTransfer extends ChangeNotifier {
   bool incoming = false;
   bool outgoing = false;
   bool _disposed = false;
+  bool _retryJournalRestore = false;
   String? error;
   String? code;
   DateTime? expiresAt;
@@ -59,6 +60,7 @@ final class DeviceTransfer extends ChangeNotifier {
       outgoing = await store.read(outgoingKey) != null;
       if (incoming) await receive();
     } catch (_) {
+      _retryJournalRestore = true;
       incoming = true;
       error = '无法读取迁移进度，请重试';
       _changed();
@@ -119,18 +121,7 @@ final class DeviceTransfer extends ChangeNotifier {
     error = null;
     _changed();
     try {
-      if (session.accessToken != null) {
-        await api.deleteEmpty(
-          '/v1/auth/transfer',
-          accessToken: () => session.accessToken,
-          onUnauthorized: session.refresh,
-        );
-      } else if (session.canRetryRestore) {
-        throw const ApiError(code: 'network_error', message: '网络连接失败');
-      }
-      await store.delete(outgoingKey);
-      outgoing = false;
-      code = null;
+      await _cancelOutgoing();
       return true;
     } on ApiError catch (e) {
       error = transferMessage(e);
@@ -144,6 +135,21 @@ final class DeviceTransfer extends ChangeNotifier {
     }
   }
 
+  Future<void> _cancelOutgoing() async {
+    if (session.accessToken != null) {
+      await api.deleteEmpty(
+        '/v1/auth/transfer',
+        accessToken: () => session.accessToken,
+        onUnauthorized: session.refresh,
+      );
+    } else if (session.canRetryRestore) {
+      throw const ApiError(code: 'network_error', message: '网络连接失败');
+    }
+    await store.delete(outgoingKey);
+    outgoing = false;
+    code = null;
+  }
+
   Future<void> receive([String? enteredCode]) async {
     if (busy) return;
     busy = true;
@@ -151,11 +157,18 @@ final class DeviceTransfer extends ChangeNotifier {
     _changed();
     try {
       var raw = await store.read(incomingKey);
+      if (_retryJournalRestore) {
+        outgoing = await store.read(outgoingKey) != null;
+      }
       if (raw == null) {
-        if (enteredCode == null) {
+        if (enteredCode == null || _retryJournalRestore) {
+          await session.restore();
+          if (session.canRetryRestore) await session.retryRestore();
+          if (outgoing) await _cancelOutgoing();
+          // Keep the startup gate closed until both journal reads and any
+          // outgoing cancellation have succeeded, including on later retries.
+          _retryJournalRestore = false;
           incoming = false;
-          if (session.status == SessionStatus.restoring)
-            await session.restore();
           return;
         }
         if (!session.canRegister) throw StateError('session not ready');
@@ -191,6 +204,7 @@ final class DeviceTransfer extends ChangeNotifier {
         next,
         beforePublish: () async {
           await store.delete(incomingKey);
+          _retryJournalRestore = false;
           incoming = false;
         },
       );
