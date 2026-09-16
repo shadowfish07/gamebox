@@ -378,6 +378,7 @@ final class SessionController extends ChangeNotifier {
       return false;
     }
     _session = next;
+    migratedAway = false;
     _hasStoredRefreshToken = true;
     _credentialCleanupRequired = false;
     _credentialCleanupPending = false;

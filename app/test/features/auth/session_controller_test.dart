@@ -40,7 +40,7 @@ void main() {
       authApi: api,
       tokenStore: store,
       now: () => now,
-    );
+    )..migratedAway = true;
     var authenticatedAfterStorage = false;
     controller.addListener(() {
       if (controller.status == SessionStatus.authenticated) {
@@ -55,6 +55,7 @@ void main() {
     expect(store.value, 'refresh-new');
     expect(store.writes, ['refresh-new']);
     expect(authenticatedAfterStorage, isTrue);
+    expect(controller.migratedAway, isFalse);
   });
 
   test('invalid stored refresh token is deleted and fails closed', () async {

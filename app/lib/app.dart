@@ -34,6 +34,7 @@ class GameboxApp extends StatefulWidget {
     super.key,
     required this.gameLauncher,
     this.sessionController,
+    this.deviceTransfer,
     this.homeController,
     this.matchHistoryApi,
     this.rpsController,
@@ -43,7 +44,8 @@ class GameboxApp extends StatefulWidget {
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
-  }) : hostSmokeEnabled =
+  }) : assert(deviceTransfer == null || sessionController != null),
+       hostSmokeEnabled =
            hostSmokeEnabled ?? const bool.fromEnvironment('GAMEBOX_HOST_SMOKE'),
        instrumentationCanaryNonce =
            instrumentationCanaryNonce ??
@@ -51,6 +53,7 @@ class GameboxApp extends StatefulWidget {
 
   final GameLauncher gameLauncher;
   final SessionController? sessionController;
+  final DeviceTransfer? deviceTransfer;
   final HomeController? homeController;
   final MatchHistoryApi? matchHistoryApi;
   final RpsController? rpsController;
@@ -67,6 +70,7 @@ class GameboxApp extends StatefulWidget {
 
 class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   DeviceTransfer? _transfer;
+  bool _ownsTransfer = false;
   bool _preparingTransfer = false;
   bool _recoveringOutgoing = false;
   var _navigatorKey = GlobalKey<NavigatorState>();
@@ -101,6 +105,8 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     final injected = widget.sessionController;
     if (injected != null) {
       _sessionController = injected;
+      _transfer = widget.deviceTransfer;
+      assert(_transfer == null || identical(_transfer!.session, injected));
     } else {
       final apiClient = ApiClient(httpClient: http.Client());
       _ownedApiClient = apiClient;
@@ -115,9 +121,10 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         store: SecureTransferStore(),
         scratchStore: SecureScratchStore(),
       );
-      _transfer!.addListener(_transferChanged);
-      _preparingTransfer = true;
+      _ownsTransfer = true;
     }
+    _transfer?.addListener(_transferChanged);
+    _preparingTransfer = _transfer != null;
     _sessionController!.addListener(_sessionChanged);
     WidgetsBinding.instance.addObserver(this);
     _syncHomeController();
@@ -142,6 +149,10 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   }
 
   void _sessionChanged() {
+    if (_transfer?.outgoing == true &&
+        _sessionController!.status != SessionStatus.authenticated) {
+      _recoveringOutgoing = true;
+    }
     _syncHomeController();
     if (_sessionController!.status == SessionStatus.authenticated &&
         _sessionController!.migratedIn) {
@@ -397,7 +408,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _reversiController = null;
     _homeControllerAuthenticated = false;
     _transfer?.removeListener(_transferChanged);
-    _transfer?.dispose();
+    if (_ownsTransfer) _transfer?.dispose();
     _ownedApiClient?.close();
     widget.updateController?.dispose();
     super.dispose();

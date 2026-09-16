@@ -174,7 +174,7 @@ func (s *Service) RedeemTransfer(ctx context.Context, code, receiver, peer strin
 		args []any
 	}{
 		{`UPDATE users SET auth_epoch=? WHERE id=?`, []any{receiverHash, user.ID}},
-		{`UPDATE refresh_tokens SET revoked_at=?,revoked_reason='transfer' WHERE user_id=? AND revoked_at IS NULL`, []any{now, user.ID}},
+		{`UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,?),revoked_reason='transfer' WHERE user_id=?`, []any{now, user.ID}},
 		{`UPDATE resume_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, []any{now * 1000, user.ID}},
 		{`DELETE FROM launch_tickets WHERE user_id=?`, []any{user.ID}},
 		{`INSERT INTO refresh_tokens(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)`, []any{refreshHash, user.ID, session.RefreshExpiresAt.Unix(), now}},

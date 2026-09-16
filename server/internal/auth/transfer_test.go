@@ -19,6 +19,49 @@ func transferSnapshot() string {
 func receiverSecret(n byte) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat(string(n), 32)))
 }
+
+func TestTransferMarksPreviouslyRotatedTokensWithoutChangingRevocationTime(t *testing.T) {
+	f := newAuthFixture(t)
+	ctx := context.Background()
+	f.addInvite(t, "transfer-rotated")
+	old, err := f.service.RegisterAndIssue(ctx, "transfer-rotated", "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := f.service.CreateTransfer(ctx, old.AccessToken, transferSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := f.service.Refresh(ctx, old.RefreshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := HashRefreshToken(f.service.pepper, old.RefreshToken)
+	var before int64
+	if err = f.db.QueryRow(`SELECT revoked_at FROM refresh_tokens WHERE token_hash=?`, hash).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	f.service.clock.(*clock.Fake).Advance(time.Minute)
+	result, err := f.service.RedeemTransfer(ctx, code.Code, receiverSecret('a'), "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{old.RefreshToken, rotated.RefreshToken} {
+		if _, err = f.service.Refresh(ctx, token); !errors.Is(err, ErrSessionTransferred) {
+			t.Fatalf("pre-transfer token did not report transfer: %v", err)
+		}
+	}
+	var after int64
+	if err = f.db.QueryRow(`SELECT revoked_at FROM refresh_tokens WHERE token_hash=?`, hash).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("original revocation timestamp changed")
+	}
+	if _, err = f.service.Refresh(ctx, result.Session.RefreshToken); err != nil {
+		t.Fatal("receiver refresh rejected", err)
+	}
+}
 func TestTransferIdentityRevocationAndRetry(t *testing.T) {
 	f := newAuthFixture(t)
 	ctx := context.Background()
