@@ -96,6 +96,29 @@ http.Response response(Map<String, Object?> data, [int status = 200]) =>
       headers: {'content-type': 'application/json'},
     );
 void main() {
+  for (final malformed in ['{', '[]', 'null', '{"code":3,"receiver":false}', '{"code":"ABCDEFG2","receiver":"broken"}']) {
+    test('corrupt incoming journal can be replaced: $malformed', () async {
+      final journal = MemoryTransferStore()..values[DeviceTransfer.incomingKey] = malformed;
+      var requests = 0;
+      final api = ApiClient(httpClient: MockClient((_) async {
+        requests++;
+        return response(payload());
+      }));
+      final session = SessionController(authApi: HttpAuthApi(api), tokenStore: MemoryToken());
+      final transfer = DeviceTransfer(api: api, session: session, store: journal, scratchStore: MemoryScratch());
+      await transfer.restoreIncoming();
+      expect(transfer.incoming, isFalse);
+      expect(journal.values, isEmpty);
+      expect(session.canRegister, isTrue);
+      expect(requests, 0);
+      await transfer.receive('ABCDEFG2');
+      expect(session.status, SessionStatus.authenticated);
+      expect(requests, 1);
+      transfer.dispose();
+      session.dispose();
+      api.close();
+    });
+  }
   test('missing credentials cannot falsely confirm outgoing cancellation', () async {
     final journal = MemoryTransferStore()
       ..values[DeviceTransfer.outgoingKey] = 'pending';

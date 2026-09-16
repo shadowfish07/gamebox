@@ -161,6 +161,16 @@ final class DeviceTransfer extends ChangeNotifier {
     _changed();
     try {
       var raw = await store.read(incomingKey);
+      var pending = raw == null ? null : _decodeIncoming(raw);
+      if (raw != null && pending == null) {
+        // An undecodable code/receiver cannot be retried. Reset only this
+        // journal, preserving credentials, collection data and outgoing work.
+        incoming = true;
+        _retryJournalRestore = true;
+        await store.delete(incomingKey);
+        raw = null;
+        error = '迁移记录已损坏，请重新输入迁移码';
+      }
       if (_retryJournalRestore) {
         outgoing = await store.read(outgoingKey) != null;
       }
@@ -191,12 +201,13 @@ final class DeviceTransfer extends ChangeNotifier {
           ).replaceAll('=', ''),
         });
         await store.write(incomingKey, raw);
+        pending = _decodeIncoming(raw);
       }
       incoming = true;
-      final pending = jsonDecode(raw) as Map<String, dynamic>;
+      final journal = pending!;
       final response = await api.postJson(
         '/v1/auth/transfer/redeem',
-        {'code': pending['code'], 'receiver': pending['receiver']},
+        {'code': journal['code'], 'receiver': journal['receiver']},
         expectedStatuses: const {200},
       );
       final next = Session.fromEnvelope({'session': response['session']});
@@ -231,6 +242,25 @@ final class DeviceTransfer extends ChangeNotifier {
     } finally {
       busy = false;
       _changed();
+    }
+  }
+
+  Map<String, dynamic>? _decodeIncoming(String raw) {
+    try {
+      final value = jsonDecode(raw);
+      if (value is! Map<String, dynamic>) return null;
+      final code = value['code'];
+      final receiver = value['receiver'];
+      if (code is! String ||
+          !RegExp(r'^[A-Z2-7]{8}$').hasMatch(code) ||
+          receiver is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(receiver) ||
+          base64Url.decode(base64Url.normalize(receiver)).length != 32) {
+        return null;
+      }
+      return value;
+    } on FormatException {
+      return null;
     }
   }
 
