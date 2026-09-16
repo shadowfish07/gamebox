@@ -20,7 +20,7 @@ func (c *hubConnection) credentialValid() bool {
 
 // Disconnect only revoked sessions: a receiver may already have reconnected
 // when an idempotent HTTP retry finishes.
-func (h *Hub) DisconnectRevokedUser(ctx context.Context, userID string) {
+func (h *Hub) DisconnectRevokedUser(_ context.Context, userID string) {
 	h.mu.Lock()
 	var list []*hubConnection
 	for _, m := range h.matches {
@@ -32,7 +32,9 @@ func (h *Hub) DisconnectRevokedUser(ctx context.Context, userID string) {
 	}
 	h.mu.Unlock()
 	for _, c := range list {
-		if !validConnectionCredential(ctx, h.service.db, connectionCredential{c.authEpoch, c.userID}) {
+		// The redemption request may have been cancelled after commit. Each
+		// connection owns its credential check independently of that request.
+		if !c.credentialValid() {
 			c.close()
 		}
 	}

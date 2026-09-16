@@ -100,6 +100,27 @@ func TestHubRevalidatesTransferBeforeSendingInitialState(t *testing.T) {
 					t.Fatalf("current session did not receive %s: %v", want, err)
 				}
 			}
+			if !transfer {
+				hub.mu.Lock()
+				var current *hubConnection
+				for c := range hub.matches[match.ID].connections {
+					current = c
+				}
+				hub.mu.Unlock()
+				requestCtx, cancelRequest := context.WithCancel(context.Background())
+				cancelRequest()
+				hub.DisconnectRevokedUser(requestCtx, initiatorID)
+				if current.ctx.Err() != nil {
+					t.Fatal("cancelled HTTP request disconnected valid session")
+				}
+				if _, err := f.db.ExecContext(ctx, `UPDATE users SET auth_epoch='later-transfer' WHERE id=?`, initiatorID); err != nil {
+					t.Fatal(err)
+				}
+				hub.DisconnectRevokedUser(requestCtx, initiatorID)
+				if current.ctx.Err() == nil {
+					t.Fatal("cancelled HTTP request failed to disconnect revoked session")
+				}
+			}
 			ws.CloseNow()
 			select {
 			case <-done:
