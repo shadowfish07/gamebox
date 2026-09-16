@@ -513,7 +513,8 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     }
     if (_transfer case final transfer?) {
       if (transfer.incoming) return DeviceTransferPage(transfer: transfer);
-      if (_recoveringOutgoing && transfer.outgoing) {
+      if ((_recoveringOutgoing || transfer.restoringOutgoing) &&
+          transfer.outgoing) {
         return Scaffold(
           appBar: AppBar(title: const Text('恢复换机状态')),
           body: Center(
@@ -532,7 +533,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
                         },
                   child: const Text('重试'),
                 ),
-                if (controller.canRegister)
+                if (transfer.canRecoverOutgoing)
                   TextButton(
                     onPressed: transfer.busy
                         ? null

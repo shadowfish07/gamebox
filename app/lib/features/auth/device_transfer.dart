@@ -45,6 +45,9 @@ final class DeviceTransfer extends ChangeNotifier {
   bool busy = false;
   bool incoming = false;
   bool outgoing = false;
+  bool restoringOutgoing = false;
+  String? _outgoingUserId;
+  bool get canRecoverOutgoing => session.canRegister && _outgoingUserId != null;
   bool _disposed = false;
   bool _retryJournalRestore = false;
   String? error;
@@ -57,7 +60,7 @@ final class DeviceTransfer extends ChangeNotifier {
   Future<void> restoreIncoming() async {
     try {
       incoming = await store.read(incomingKey) != null;
-      outgoing = await store.read(outgoingKey) != null;
+      await _restoreOutgoing();
       if (incoming) await receive();
     } catch (_) {
       _retryJournalRestore = true;
@@ -76,7 +79,10 @@ final class DeviceTransfer extends ChangeNotifier {
     try {
       // Persist the cancellation obligation before sending any request. After
       // process death the app cancels this snapshot before allowing more draws.
-      await store.write(outgoingKey, 'pending');
+      final userId = session.session?.user.id;
+      if (userId == null) throw StateError('missing account');
+      await store.write(outgoingKey, jsonEncode({'userId': userId}));
+      _outgoingUserId = userId;
       outgoing = true;
       final controller = ScratchController(store: scratchStore);
       late String snapshot;
@@ -151,6 +157,7 @@ final class DeviceTransfer extends ChangeNotifier {
     }
     await store.delete(outgoingKey);
     outgoing = false;
+    restoringOutgoing = false;
     code = null;
   }
 
@@ -171,11 +178,14 @@ final class DeviceTransfer extends ChangeNotifier {
         raw = null;
         error = '迁移记录已损坏，请重新输入迁移码';
       }
-      if (_retryJournalRestore) {
-        outgoing = await store.read(outgoingKey) != null;
+      final retryingJournals = _retryJournalRestore;
+      if (retryingJournals) {
+        await _restoreOutgoing();
+        _retryJournalRestore = false;
+        incoming = raw != null;
       }
       if (raw == null) {
-        if (enteredCode == null || _retryJournalRestore) {
+        if (enteredCode == null || retryingJournals) {
           await session.restore();
           if (session.canRetryRestore) await session.retryRestore();
           if (outgoing) await _cancelOutgoing();
@@ -185,7 +195,9 @@ final class DeviceTransfer extends ChangeNotifier {
           incoming = false;
           return;
         }
-        if (!session.canRegister) throw StateError('session not ready');
+        if (!session.canRegister || (outgoing && !canRecoverOutgoing)) {
+          throw StateError('session not ready');
+        }
         final normalized = enteredCode
             .replaceAll(RegExp(r'\s'), '')
             .toUpperCase();
@@ -196,6 +208,7 @@ final class DeviceTransfer extends ChangeNotifier {
         final random = Random.secure();
         raw = jsonEncode({
           'code': normalized,
+          if (outgoing) 'expectedUserId': _outgoingUserId,
           'receiver': base64UrlEncode(
             List.generate(32, (_) => random.nextInt(256)),
           ).replaceAll('=', ''),
@@ -205,12 +218,26 @@ final class DeviceTransfer extends ChangeNotifier {
       }
       incoming = true;
       final journal = pending!;
+      final expectedUserId = journal['expectedUserId'];
+      if (outgoing &&
+          (expectedUserId == null || expectedUserId != _outgoingUserId)) {
+        throw StateError('missing recovery account');
+      }
+      final path = Uri(
+        path: '/v1/auth/transfer/redeem',
+        queryParameters: expectedUserId == null
+            ? null
+            : {'expectedUserId': expectedUserId as String},
+      ).toString();
       final response = await api.postJson(
-        '/v1/auth/transfer/redeem',
+        path,
         {'code': journal['code'], 'receiver': journal['receiver']},
         expectedStatuses: const {200},
       );
       final next = Session.fromEnvelope({'session': response['session']});
+      if (expectedUserId != null && next.user.id != expectedUserId) {
+        throw const FormatException('recovery account mismatch');
+      }
       final snapshot = response['snapshot'];
       if (snapshot is! String) throw const FormatException('missing snapshot');
       final normalized = ScratchController.validateTransfer(snapshot);
@@ -223,6 +250,7 @@ final class DeviceTransfer extends ChangeNotifier {
           if (outgoing) {
             await store.delete(outgoingKey);
             outgoing = false;
+            restoringOutgoing = false;
             code = null;
           }
           await store.delete(incomingKey);
@@ -252,12 +280,37 @@ final class DeviceTransfer extends ChangeNotifier {
     }
   }
 
+  Future<void> _restoreOutgoing() async {
+    final raw = await store.read(outgoingKey);
+    outgoing = raw != null;
+    restoringOutgoing = outgoing;
+    _outgoingUserId = null;
+    if (raw != null) {
+      try {
+        final value = jsonDecode(raw);
+        if (value is Map && _validUserId(value['userId'])) {
+          _outgoingUserId = value['userId'] as String;
+        }
+      } on FormatException {
+        // Unreleased legacy journals have no owner; never guess an account.
+      }
+    }
+  }
+
+  bool _validUserId(dynamic value) =>
+      value is String &&
+      RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+          .hasMatch(value);
+
   Map<String, dynamic>? _decodeIncoming(String raw) {
     try {
       final value = jsonDecode(raw);
       if (value is! Map<String, dynamic>) return null;
       final code = value['code'];
       final receiver = value['receiver'];
+      if (value.containsKey('expectedUserId') &&
+          !_validUserId(value['expectedUserId']))
+        return null;
       if (code is! String ||
           !RegExp(r'^[A-Z2-7]{8}$').hasMatch(code) ||
           receiver is! String ||

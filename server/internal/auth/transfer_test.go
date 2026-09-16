@@ -342,3 +342,30 @@ func TestTransferRejectedPeerDoesNotExhaustGlobalQuota(t *testing.T) {
 		t.Fatalf("next window still limited: %v", err)
 	}
 }
+
+func TestRecoveryAccountMismatchDoesNotConsumeCode(t *testing.T) {
+	f := newAuthFixture(t)
+	ctx := context.Background()
+	f.addInvite(t, "bound-recovery")
+	session, err := f.service.RegisterAndIssue(ctx, "bound-recovery", "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := f.service.CreateRecovery(ctx, session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.RedeemTransferForUser(ctx, code.Code, receiverSecret('a'), "peer", "other-user"); !errors.Is(err, ErrTransferInvalid) {
+		t.Fatalf("wrong account accepted: %v", err)
+	}
+	if _, err = f.service.Authenticate(ctx, session.AccessToken); err != nil {
+		t.Fatalf("wrong account revoked session: %v", err)
+	}
+	result, err := f.service.RedeemTransferForUser(ctx, code.Code, receiverSecret('b'), "peer", session.User.ID)
+	if err != nil || result.Session.User.ID != session.User.ID {
+		t.Fatalf("matching recovery failed: %v", err)
+	}
+	if _, err = f.service.RedeemTransferForUser(ctx, code.Code, receiverSecret('b'), "peer", "other-user"); !errors.Is(err, ErrTransferInvalid) {
+		t.Fatalf("receipt ignored account binding: %v", err)
+	}
+}

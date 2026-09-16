@@ -96,12 +96,90 @@ http.Response response(Map<String, Object?> data, [int status = 200]) =>
       status,
       headers: {'content-type': 'application/json'},
     );
+const outgoingJournal = '{"userId":"11111111-1111-4111-8111-111111111111"}';
+
 void main() {
+  test(
+    'generation journals the originating account before creating a code',
+    () async {
+      final journal = MemoryTransferStore();
+      final api = ApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/v1/auth/refresh')
+            return response({'session': payload()['session']});
+          expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
+          return response({
+            'code': 'ABCDEFG2',
+            'expiresAt': DateTime.now()
+                .add(const Duration(minutes: 10))
+                .millisecondsSinceEpoch,
+          }, 201);
+        }),
+      );
+      final session = SessionController(
+        authApi: HttpAuthApi(api),
+        tokenStore: MemoryToken()..value = 'old',
+      );
+      await session.restore();
+      final transfer = DeviceTransfer(
+        api: api,
+        session: session,
+        store: journal,
+        scratchStore: MemoryScratch()..value = payload()['snapshot'] as String,
+      );
+      await transfer.generate();
+      expect(transfer.code, 'ABCDEFG2');
+      expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
+      transfer.dispose();
+      session.dispose();
+      api.close();
+    },
+  );
+
+  test('recovered journal reads allow bound recovery after permanent credential loss', () async {
+    final journal = MemoryTransferStore()
+      ..values[DeviceTransfer.outgoingKey] = outgoingJournal
+      ..failingRead = DeviceTransfer.incomingKey;
+    final api = ApiClient(
+      httpClient: MockClient((request) async {
+        expect(
+          request.url.queryParameters['expectedUserId'],
+          '11111111-1111-4111-8111-111111111111',
+        );
+        return response(payload());
+      }),
+    );
+    final session = SessionController(
+      authApi: HttpAuthApi(api),
+      tokenStore: MemoryToken(),
+    );
+    final transfer = DeviceTransfer(
+      api: api,
+      session: session,
+      store: journal,
+      scratchStore: MemoryScratch(),
+    );
+    await transfer.restoreIncoming();
+    expect(transfer.incoming, isTrue);
+    journal.failingRead = null;
+    await transfer.receive('');
+    expect(transfer.incoming, isFalse);
+    expect(transfer.restoringOutgoing, isTrue);
+    expect(transfer.canRecoverOutgoing, isTrue);
+    expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
+    await transfer.receive('ABCDEFG2');
+    expect(session.status, SessionStatus.authenticated);
+    expect(journal.values, isEmpty);
+    transfer.dispose();
+    session.dispose();
+    api.close();
+  });
+
   test(
     'lost outgoing credentials can recover without releasing failed imports',
     () async {
       final journal = MemoryTransferStore()
-        ..values[DeviceTransfer.outgoingKey] = 'pending';
+        ..values[DeviceTransfer.outgoingKey] = outgoingJournal;
       final scratch = MemoryScratch()..fail = true;
       final api = ApiClient(
         httpClient: MockClient((_) async => response(payload())),
@@ -122,7 +200,7 @@ void main() {
       expect(transfer.outgoing, isTrue);
       expect(transfer.incoming, isTrue);
       expect(session.status, SessionStatus.unauthenticated);
-      expect(journal.values[DeviceTransfer.outgoingKey], 'pending');
+      expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
       transfer.dispose();
       scratch.fail = false;
       final resumed = DeviceTransfer(
@@ -186,7 +264,7 @@ void main() {
     'missing credentials cannot falsely confirm outgoing cancellation',
     () async {
       final journal = MemoryTransferStore()
-        ..values[DeviceTransfer.outgoingKey] = 'pending';
+        ..values[DeviceTransfer.outgoingKey] = outgoingJournal;
       var requests = 0;
       final api = ApiClient(
         httpClient: MockClient((_) async {
@@ -208,7 +286,7 @@ void main() {
       await transfer.restoreIncoming();
       expect(await transfer.cancelOutgoing(), isFalse);
       expect(transfer.outgoing, isTrue);
-      expect(journal.values[DeviceTransfer.outgoingKey], 'pending');
+      expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
       expect(requests, 0);
       // An authoritative session_transferred response proves the code was
       // consumed and invalidated by the server, unlike simply losing a token.
@@ -230,7 +308,7 @@ void main() {
       () async {
         final journal = MemoryTransferStore()
           ..failingRead = failingKey
-          ..values[DeviceTransfer.outgoingKey] = 'pending';
+          ..values[DeviceTransfer.outgoingKey] = outgoingJournal;
         final token = MemoryToken()..value = 'stored-refresh';
         var cancellationFails = true;
         var cancellations = 0;
@@ -272,16 +350,14 @@ void main() {
         expect(cancellations, 1);
         expect(
           transfer.incoming,
-          isTrue,
-          reason: 'normal app use stays blocked while cancellation fails',
+          isFalse,
+          reason: 'journal reads recovered; outgoing gate owns cancellation',
         );
-        expect(journal.values[DeviceTransfer.outgoingKey], 'pending');
+        expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
         cancellationFails = false;
         // Successful retry must cancel the outstanding code before clearing the gate.
-        transfer.addListener(() {
-          if (!transfer.incoming) expect(journal.values, isEmpty);
-        });
-        await transfer.receive('');
+        expect(transfer.restoringOutgoing, isTrue);
+        await transfer.cancelOutgoing();
         expect(cancellations, 2);
         expect(transfer.incoming, isFalse);
         expect(transfer.outgoing, isFalse);

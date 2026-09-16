@@ -105,6 +105,11 @@ func (s *Service) createTransfer(ctx context.Context, userID, epoch, snapshot st
 // RedeemTransfer is single-use across devices and retryable by the same durable
 // receiver secret for 24 hours. Receipts are encrypted, never plaintext tokens.
 func (s *Service) RedeemTransfer(ctx context.Context, code, receiver, peer string) (TransferResult, error) {
+	return s.RedeemTransferForUser(ctx, code, receiver, peer, "")
+}
+
+// RedeemTransferForUser checks recovery account identity before consuming a code.
+func (s *Service) RedeemTransferForUser(ctx context.Context, code, receiver, peer, expectedUserID string) (TransferResult, error) {
 	if err := s.transferAttempt(ctx, peer); err != nil {
 		return TransferResult{}, err
 	}
@@ -133,6 +138,9 @@ func (s *Service) RedeemTransfer(ctx context.Context, code, receiver, peer strin
 	}
 	if err != nil {
 		return TransferResult{}, databaseError(ctx, err)
+	}
+	if expectedUserID != "" && user.ID != expectedUserID {
+		return TransferResult{}, ErrTransferInvalid
 	}
 	now := s.clock.Now().UTC().Unix()
 	if redeemed.Valid {

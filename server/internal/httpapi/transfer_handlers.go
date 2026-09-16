@@ -44,7 +44,7 @@ func (r *router) redeemTransfer(w http.ResponseWriter, q *http.Request) {
 	if err != nil {
 		peer = q.RemoteAddr
 	}
-	result, err := r.auth.RedeemTransfer(q.Context(), body.Code, body.Receiver, peer)
+	result, err := r.auth.RedeemTransferForUser(q.Context(), body.Code, body.Receiver, peer, q.URL.Query().Get("expectedUserId"))
 	if err != nil {
 		writeServiceError(w, err)
 		return

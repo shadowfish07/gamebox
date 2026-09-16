@@ -53,7 +53,11 @@ func TestDeviceTransferHTTPRevokesLiveConnectionAndPreservesMatch(t *testing.T) 
 	}
 	secret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))
 	body, _ := json.Marshal(map[string]string{"code": code.Code, "receiver": secret})
-	result := f.request(t, "POST", "/v1/auth/transfer/redeem", string(body), "")
+	wrong := f.request(t, "POST", "/v1/auth/transfer/redeem?expectedUserId="+other.Session.User.ID, string(body), "")
+	if wrong.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("cross-account recovery status: %d", wrong.Code)
+	}
+	result := f.request(t, "POST", "/v1/auth/transfer/redeem?expectedUserId="+old.Session.User.ID, string(body), "")
 	if result.Code != 200 {
 		t.Fatal("redeem status", result.Code)
 	}
