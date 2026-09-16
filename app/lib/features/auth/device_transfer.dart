@@ -144,6 +144,10 @@ final class DeviceTransfer extends ChangeNotifier {
       );
     } else if (session.canRetryRestore) {
       throw const ApiError(code: 'network_error', message: '网络连接失败');
+    } else if (!session.migratedAway) {
+      // Missing credentials do not prove that an outstanding bearer code was
+      // revoked. Only a confirmed transfer makes cancellation unnecessary.
+      throw const ApiError(code: 'unauthorized', message: '无法确认迁移已取消');
     }
     await store.delete(outgoingKey);
     outgoing = false;

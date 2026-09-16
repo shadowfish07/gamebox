@@ -96,6 +96,32 @@ http.Response response(Map<String, Object?> data, [int status = 200]) =>
       headers: {'content-type': 'application/json'},
     );
 void main() {
+  test('missing credentials cannot falsely confirm outgoing cancellation', () async {
+    final journal = MemoryTransferStore()
+      ..values[DeviceTransfer.outgoingKey] = 'pending';
+    var requests = 0;
+    final api = ApiClient(httpClient: MockClient((_) async {
+      requests++;
+      throw StateError('unauthenticated cancellation must not be sent');
+    }));
+    final session = SessionController(authApi: HttpAuthApi(api), tokenStore: MemoryToken());
+    await session.restore();
+    final transfer = DeviceTransfer(api: api, session: session, store: journal, scratchStore: MemoryScratch());
+    await transfer.restoreIncoming();
+    expect(await transfer.cancelOutgoing(), isFalse);
+    expect(transfer.outgoing, isTrue);
+    expect(journal.values[DeviceTransfer.outgoingKey], 'pending');
+    expect(requests, 0);
+    // An authoritative session_transferred response proves the code was
+    // consumed and invalidated by the server, unlike simply losing a token.
+    session.migratedAway = true;
+    expect(await transfer.cancelOutgoing(), isTrue);
+    expect(journal.values, isEmpty);
+    expect(transfer.outgoing, isFalse);
+    transfer.dispose();
+    session.dispose();
+    api.close();
+  });
   for (final failingKey in [DeviceTransfer.incomingKey, DeviceTransfer.outgoingKey]) {
     test('startup retry rereads both journals after $failingKey fails', () async {
       final journal = MemoryTransferStore()
