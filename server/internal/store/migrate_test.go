@@ -824,6 +824,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 
 	wantTables := []string{
 		"active_game_slots",
+		"device_transfers",
 		"flight_chess_limit_actions",
 		"invite_codes",
 		"launch_tickets",
@@ -834,6 +835,7 @@ func assertSchema(t *testing.T, db *sql.DB) {
 		"resume_tokens",
 		"schema_migrations",
 		"scratch_collections",
+		"transfer_attempts",
 		"users",
 	}
 	gotTables := objectNames(t, db, "table")

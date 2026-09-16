@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"me.zqydev/gamebox/server/internal/auth"
 	"reflect"
 	"slices"
 	"sort"
@@ -132,6 +133,7 @@ func (request CredentialRequest) GoString() string { return request.String() }
 // ConnectionCredential is returned only after ticket consumption/token
 // issuance or resume sliding-expiry has committed.
 type ConnectionCredential struct {
+	AuthEpoch       string
 	UserID          string
 	MatchID         string
 	GameID          string
@@ -701,11 +703,16 @@ WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?`, nowMillis, expiresM
 			return ConnectionCredential{}, ErrResumeExpired
 		}
 	}
+	var authEpoch string
+	if err := transaction.QueryRowContext(ctx, `SELECT auth_epoch FROM users WHERE id=?`, userID).Scan(&authEpoch); err != nil {
+		return ConnectionCredential{}, ErrInternal
+	}
+
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return ConnectionCredential{}, matchDatabaseError(ctx, commitErr)
 	}
 	return ConnectionCredential{
-		UserID: userID, MatchID: matchID, GameID: match.GameID,
+		AuthEpoch: authEpoch, UserID: userID, MatchID: matchID, GameID: match.GameID,
 		ResumeToken: resumePlaintext, ResumeExpiresAt: time.UnixMilli(expiresMillis).UTC(),
 	}, nil
 }
@@ -1035,6 +1042,10 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		}
 		_ = transaction.release()
 	}()
+
+	if credential, ok := ctx.Value(connectionCredentialKey{}).(connectionCredential); ok && !validConnectionCredential(ctx, transaction.Tx, credential) {
+		return Event{}, Snapshot{}, ErrResumeExpired
+	}
 
 	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, request.MatchID)
 	if loadErr != nil {
@@ -3296,6 +3307,13 @@ func (service *Service) beginWriteTransaction(ctx context.Context) (*writeTransa
 		}
 		transaction, err := connection.BeginTx(operationContext, nil)
 		if err == nil {
+			if guardErr := auth.GuardTransaction(ctx, transaction); guardErr != nil {
+				_ = transaction.Rollback()
+				failed := &writeTransaction{connection: connection, originalBusyTimeout: originalBusyTimeout}
+				_ = failed.release()
+				cancel()
+				return nil, guardErr
+			}
 			return &writeTransaction{
 				Tx:                  transaction,
 				connection:          connection,

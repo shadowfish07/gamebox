@@ -77,6 +77,11 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("POST /v1/auth/register", router.register)
+	mux.Handle("POST /v1/auth/transfer", router.authenticated(http.HandlerFunc(router.createTransfer)))
+	mux.Handle("DELETE /v1/auth/transfer", router.authenticated(http.HandlerFunc(router.cancelTransfer)))
+	mux.HandleFunc("POST /v1/auth/transfer/redeem", router.redeemTransfer)
+	registerMethodFallback(mux, "/v1/auth/transfer", "POST, DELETE")
+	registerMethodFallback(mux, "/v1/auth/transfer/redeem", http.MethodPost)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refresh)
 	mux.Handle("GET /v1/me", router.authenticated(http.HandlerFunc(router.me)))
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
@@ -332,7 +337,7 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/games/reversi/matches", "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
+	case "/v1/auth/transfer", "/v1/auth/transfer/redeem", "/v1/games/reversi/matches", "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
 	}
 	const launchPrefix = "/v1/matches/"
@@ -396,7 +401,8 @@ func (router *router) authenticated(next http.Handler) http.Handler {
 			writeServiceError(writer, authErr)
 			return
 		}
-		contextWithUser := context.WithValue(request.Context(), authenticatedUserContextKey{}, user)
+		identity, _ := router.auth.ParseAccess(credential)
+		contextWithUser := context.WithValue(auth.WithRequestIdentity(request.Context(), identity), authenticatedUserContextKey{}, user)
 		next.ServeHTTP(writer, request.WithContext(contextWithUser))
 	})
 }

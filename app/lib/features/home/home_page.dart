@@ -1,4 +1,6 @@
 import '../reversi/reversi_models.dart';
+import '../auth/device_transfer.dart';
+import '../auth/device_transfer_page.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_release_updater/flutter_release_updater.dart';
@@ -36,8 +38,10 @@ final class HomePage extends StatefulWidget {
     this.reversiController,
     this.updateController,
     this.scratchApi,
+    this.transfer,
   });
 
+  final DeviceTransfer? transfer;
   final ScratchSocialApi? scratchApi;
   final HomeController controller;
   final String currentUserId;
@@ -363,6 +367,20 @@ final class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Gamebox'),
         actions: [
+          if (widget.transfer case final transfer?)
+            PopupMenuButton<String>(
+              key: const Key('account-menu'),
+              tooltip: '账号',
+              onSelected: (_) => Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      DeviceTransferPage(transfer: transfer, sending: true),
+                ),
+              ),
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'transfer', child: Text('换设备')),
+              ],
+            ),
           if (widget.updateController case final controller?)
             UpdateActionButton(controller: controller),
         ],

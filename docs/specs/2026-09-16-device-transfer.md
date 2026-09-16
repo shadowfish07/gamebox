@@ -1,0 +1,48 @@
+# F3 设备迁移
+
+## 已批准的范围
+
+大厅账号菜单「换设备」自动准备本地收藏存档并生成 8 位迁移码；有效期 10 分钟，支持复制和过期后重新生成。注册页「已有账号」打开同一迁入页面，输入迁移码或管理员恢复码，迁入成功直接进入大厅。生成、输错、过期、取消都不退出旧账号；成功后所有旧会话失效。首版不做扫码、账号合并或多设备同时登录。
+
+昵称、账号 ID、战绩和服务端进行中对局保持不变。普通迁移完整携带收藏数量、发现时间、抽卡序号、待揭晓结果和领取状态。管理员恢复只能还原已发布收藏数量，无法还原未上传的抽卡进度与首次获得日期，恢复入口的帮助弹层说明这一限制。
+
+## 接口与持久化
+
+- `POST /v1/auth/transfer`：认证请求 `{snapshot: string}`；返回 `{code, expiresAt}`，时间为毫秒。存档是现有 v3 JSON 的字符串表示（恢复存档以可选 `recoveredDates: true` 标记未知首次日期，不伪造日期），最多 16 KiB。新码替换同账号未使用的旧码。
+- `DELETE /v1/auth/transfer`：取消尚未使用的迁移码，返回 204。离开旧设备页面前完成取消，取消失败保留页面并支持重试；后台切换不取消。
+- `POST /v1/auth/transfer/redeem`：公开请求 `{code, receiver}`；返回 `{session, snapshot}`。输入忽略大小写和空格。`receiver` 是新设备提前写入安全存储的 256 位随机重试秘密。
+- 兑换事务一次完成：消费迁移码、更新账号会话世代、撤销旧 refresh/resume 凭据与启动票据、签发新会话。相同 receiver 在 24 小时内可以重新获取结果；其他设备不能重复兑换。发生后续迁移或 refresh 被消费后不再回放旧结果。
+- 短码、receiver 仅存带 pepper 的域隔离摘要。可重放响应使用 AES-GCM 加密；账号世代写入 JWT 的 jti，并在认证时核验。
+- 服务端按实际连接来源和全局限制兑换频率，分别每分钟 30/300 次，不信任客户端转发地址。代理部署共享来源额度。
+- 已连接 WebSocket 在迁移后断开，动作提交在事务内核验会话世代；HTTP 写事务也重新核验，防止认证与提交之间发生迁移。
+
+新设备恢复本地存档、写入 refresh token、清除迁入日志后才发布已登录状态并启动大厅/收藏同步。网络或存储失败保留日志；重启先恢复迁移。旧设备生成前持久记录取消义务，重启先取消旧快照再允许继续使用，防止旧码携带过时抽卡进度。
+
+数据库迁移 006 为旧账号设置空世代，兼容升级前的 JWT。保留现有账号、对局和收藏记录。
+
+## 管理员恢复
+
+在目标数据库所在环境使用既有 `GAMEBOX_TOKEN_PEPPER` 和 `GAMEBOX_JWT_SECRET`：
+
+```sh
+gameboxctl recovery create --user-id UUID --db PATH --json
+```
+
+管理员先在现有沟通渠道核实账号归属。命令只签发短期码，兑换成功才退出旧设备；输出属于凭据，不进入日志、提交或截图。本次开发仅操作隔离的 worktree 数据库，不部署或改动生产数据。
+
+## 验证与需求追踪
+
+| 需求或状态 | 实现 | 自动化证据 | 运行时检查 |
+| --- | --- | --- | --- |
+| 生成不退出、过期、替换、取消 | auth/transfer.go、DeviceTransferPage | transfer_test.go | 见验收记录 |
+| 单次兑换、同接收端断网重试 | 加密 receipt、incoming journal | Go 并发测试、Flutter 重建控制器测试 | 见验收记录 |
+| 收藏先恢复、再允许同步 | DeviceTransfer.receive、SessionController.importSession | 存储失败/重试及发布顺序测试 | 见验收记录 |
+| 原身份与进行中对局保留 | 同 userId 新 session | HTTP 活跃对局迁移测试 | 见验收记录 |
+| 旧访问/刷新/恢复凭据与活动连接失效 | auth_epoch、事务 guard、Hub | auth 与真实 WebSocket HTTP 测试 | 见验收记录 |
+| 错误提示、重复提交、输入保留 | DeviceTransferPage | widget test | 见验收记录 |
+| 管理员恢复复用输入框 | recovery CLI、相同兑换端点 | recovery service test | 见验收记录 |
+| 简洁导航、明暗主题、键盘、返回 | Material 3 标准组件和项目 token | 聚焦 widget test | 见验收记录 |
+
+采用 App Material 3 Core Contract。截图为临时检查输入，使用隐私构建掩蔽迁移码与输入框，不上传凭据。自动化测试与 Android UX 截图检查分别记录。
+
+实际证据与边界见 [验收记录](../acceptance/2026-09-16-device-transfer.md)。

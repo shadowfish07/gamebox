@@ -13,6 +13,9 @@ import 'design_system/gamebox_theme.dart';
 import 'features/reversi/reversi_models.dart';
 import 'features/reversi/reversi_launcher.dart';
 import 'features/auth/auth_api.dart';
+import 'features/auth/device_transfer.dart';
+import 'features/auth/device_transfer_page.dart';
+import 'features/scratch/scratch_controller.dart';
 import 'features/scratch/scratch_social_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
@@ -63,6 +66,9 @@ class GameboxApp extends StatefulWidget {
 }
 
 class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
+  DeviceTransfer? _transfer;
+  bool _preparingTransfer = false;
+  bool _recoveringOutgoing = false;
   var _navigatorKey = GlobalKey<NavigatorState>();
   String? _navigatorBoundary;
   var _isLaunchingHostSmoke = false;
@@ -103,15 +109,51 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         tokenStore: SecureTokenStore(),
       );
       _ownsSessionController = true;
+      _transfer = DeviceTransfer(
+        api: apiClient,
+        session: _sessionController!,
+        store: SecureTransferStore(),
+        scratchStore: SecureScratchStore(),
+      );
+      _transfer!.addListener(_transferChanged);
+      _preparingTransfer = true;
     }
     _sessionController!.addListener(_sessionChanged);
     WidgetsBinding.instance.addObserver(this);
     _syncHomeController();
-    unawaited(_sessionController!.restore());
+    unawaited(_restoreWithTransfer());
+  }
+
+  void _transferChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _restoreWithTransfer() async {
+    await _transfer?.restoreIncoming();
+    if (_transfer?.incoming != true &&
+        _sessionController!.status != SessionStatus.authenticated) {
+      await _sessionController!.restore();
+    }
+    if (_transfer?.incoming != true && _transfer?.outgoing == true) {
+      await _transfer!.cancelOutgoing();
+      _recoveringOutgoing = _transfer!.outgoing;
+    }
+    if (mounted) setState(() => _preparingTransfer = false);
   }
 
   void _sessionChanged() {
     _syncHomeController();
+    if (_sessionController!.status == SessionStatus.authenticated &&
+        _sessionController!.migratedIn) {
+      _sessionController!.migratedIn = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (mounted && context != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('账号已迁入')));
+        }
+      });
+    }
     if (mounted) {
       setState(() {});
     }
@@ -354,6 +396,8 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _flightChessController = null;
     _reversiController = null;
     _homeControllerAuthenticated = false;
+    _transfer?.removeListener(_transferChanged);
+    _transfer?.dispose();
     _ownedApiClient?.close();
     widget.updateController?.dispose();
     super.dispose();
@@ -447,6 +491,36 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
 
   Widget _buildAuthFlow() {
     final controller = _sessionController!;
+    if (_preparingTransfer) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_transfer case final transfer?) {
+      if (transfer.incoming) return DeviceTransferPage(transfer: transfer);
+      if (_recoveringOutgoing && transfer.outgoing) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('恢复换机状态')),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(transfer.error ?? '正在恢复'),
+                TextButton(
+                  onPressed: transfer.busy
+                      ? null
+                      : () async {
+                          if (controller.canRetryRestore) {
+                            await controller.retryRestore();
+                          }
+                          await transfer.cancelOutgoing();
+                        },
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
     return switch (controller.status) {
       SessionStatus.restoring => Scaffold(
         body: Center(
@@ -458,6 +532,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       ),
       SessionStatus.unauthenticated ||
       SessionStatus.submitting => RegistrationPage(
+        transfer: _transfer,
         controller: controller,
         updateController: widget.updateController,
       ),
@@ -491,6 +566,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       historyApi = HttpMatchHistoryApi(apiClient, controller);
     }
     return HomePage(
+      transfer: _transfer,
       scratchApi: HttpScratchSocialApi(
         _ownedApiClient ??= ApiClient(),
         controller,
