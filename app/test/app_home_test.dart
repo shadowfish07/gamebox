@@ -10,6 +10,13 @@ import 'package:gamebox/core/platform/game_launch_request.dart';
 import 'package:gamebox/core/platform/game_launcher.dart';
 import 'package:gamebox/features/auth/auth_api.dart';
 import 'package:gamebox/features/auth/session_controller.dart';
+import 'package:gamebox/features/auth/device_transfer.dart';
+import 'package:gamebox/core/api/api_client.dart';
+import 'package:http/testing.dart';
+
+import 'features/auth/device_transfer_test.dart'
+    show MemoryTransferStore, MemoryScratch, outgoingJournal;
+
 import 'package:gamebox/features/gomoku/gomoku_models.dart';
 import 'package:gamebox/features/gomoku/gomoku_repository.dart';
 import 'package:gamebox/features/history/match_history_api.dart';
@@ -20,6 +27,114 @@ import 'package:gamebox/features/home/home_controller.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
+
+  testWidgets(
+    'journal read recovery exposes the outgoing account recovery entry',
+    (tester) async {
+      final fixture = await _Fixture.create(now);
+      fixture.authApi.rejectRefresh = true;
+      await fixture.session.refresh();
+      final journal = MemoryTransferStore()
+        ..values[DeviceTransfer.outgoingKey] = outgoingJournal
+        ..failingRead = DeviceTransfer.incomingKey;
+      final api = ApiClient(
+        httpClient: MockClient(
+          (_) async => throw StateError('no request expected'),
+        ),
+      );
+      final transfer = DeviceTransfer(
+        api: api,
+        session: fixture.session,
+        store: journal,
+        scratchStore: MemoryScratch(),
+      );
+      await tester.pumpWidget(
+        GameboxApp(
+          gameLauncher: fixture.launcher,
+          sessionController: fixture.session,
+          deviceTransfer: transfer,
+          homeController: fixture.home,
+          matchHistoryApi: fixture.historyApi,
+        ),
+      );
+      await _flush(tester);
+      expect(find.text('重试迁入'), findsOneWidget);
+      journal.failingRead = null;
+      await tester.tap(find.text('重试迁入'));
+      await _flush(tester);
+      expect(find.text('恢复换机状态'), findsOneWidget);
+      expect(find.text('恢复账号'), findsOneWidget);
+      expect(find.byKey(const Key('register')), findsNothing);
+      await tester.tap(find.text('恢复账号'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('transfer-input')))
+            .enabled,
+        isTrue,
+      );
+      expect(journal.values[DeviceTransfer.outgoingKey], outgoingJournal);
+      await tester.pumpWidget(const SizedBox.shrink());
+      transfer.dispose();
+      api.close();
+      fixture.dispose();
+    },
+  );
+
+  testWidgets('live session loss preserves the outgoing recovery gate', (
+    tester,
+  ) async {
+    final fixture = await _Fixture.create(now);
+    final journal = MemoryTransferStore();
+    final api = ApiClient(
+      httpClient: MockClient((_) async => throw StateError('no credentials')),
+    );
+    final transfer = DeviceTransfer(
+      api: api,
+      session: fixture.session,
+      store: journal,
+      scratchStore: MemoryScratch(),
+    );
+    await tester.pumpWidget(
+      GameboxApp(
+        gameLauncher: fixture.launcher,
+        sessionController: fixture.session,
+        deviceTransfer: transfer,
+        homeController: fixture.home,
+        matchHistoryApi: fixture.historyApi,
+      ),
+    );
+    await _flush(tester);
+    expect(find.byKey(const Key('home-shell')), findsOneWidget);
+    journal.values[DeviceTransfer.outgoingKey] = outgoingJournal;
+    await transfer.restoreIncoming();
+    fixture.authApi.rejectRefresh = true;
+    await fixture.session.refresh();
+    await _flush(tester);
+    expect(find.text('恢复换机状态'), findsOneWidget);
+    expect(find.byKey(const Key('register')), findsNothing);
+    await tester.tap(find.text('重试'));
+    await _flush(tester);
+    expect(find.text('恢复换机状态'), findsOneWidget);
+    expect(journal.values, isNotEmpty);
+    await tester.tap(find.text('恢复账号'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('transfer-input')), findsOneWidget);
+    expect(find.text('无法使用旧设备？'), findsOneWidget);
+    expect(journal.values, isNotEmpty);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('恢复换机状态'), findsOneWidget);
+    fixture.session.migratedAway = true;
+    await tester.tap(find.text('重试'));
+    await _flush(tester);
+    expect(find.byKey(const Key('register')), findsOneWidget);
+    expect(journal.values, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    transfer.dispose();
+    api.close();
+    fixture.dispose();
+  });
 
   testWidgets('authenticated app mounts the injected playable Home flow', (
     tester,

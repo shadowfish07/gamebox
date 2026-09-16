@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -19,6 +20,7 @@ final class SecureScratchStore implements ScratchStore {
   Future<String?> read() => _storage.read(key: _key);
   @override
   Future<void> write(String value) => _storage.write(key: _key, value: value);
+  Future<void> clear() => _storage.delete(key: _key);
 }
 
 ScratchCollectible drawScratchCollectible(double Function() random) {
@@ -59,6 +61,7 @@ final class ScratchController extends ChangeNotifier {
   final favorites = <int>[];
   ScratchCollectible cat = scratchCollectibles.first;
   bool winning = true;
+  bool recoveredDates = false;
   bool claimed = false,
       isNew = false,
       loading = true,
@@ -79,6 +82,14 @@ final class ScratchController extends ChangeNotifier {
           winning: winning,
         )
       : null;
+  static final _pendingWrites = <Future<void>>{};
+
+  static Future<void> drainPendingWrites() async {
+    while (_pendingWrites.isNotEmpty) {
+      await Future.wait(_pendingWrites.toList());
+    }
+  }
+
   Future<void> _writes = Future.value();
   int _revision = 0;
 
@@ -111,6 +122,7 @@ final class ScratchController extends ChangeNotifier {
 
   Map<String, Object?> _snapshot() => {
     'version': 3,
+    if (recoveredDates) 'recoveredDates': true,
     'winning': winning,
     'counts': counts,
     'firstFound': firstFound,
@@ -121,9 +133,27 @@ final class ScratchController extends ChangeNotifier {
     'serial': serial,
   };
 
+  String exportTransfer() {
+    if (loading || saving || unsaved || error != null) {
+      throw StateError('Collection is not saved');
+    }
+    return jsonEncode(_snapshot());
+  }
+
+  static String validateTransfer(String raw) {
+    final controller = ScratchController(store: _TransferValidationStore());
+    try {
+      controller._restore(raw);
+      return jsonEncode(controller._snapshot());
+    } finally {
+      controller.dispose();
+    }
+  }
+
   bool _restore(String raw) {
     final data = jsonDecode(raw) as Map<String, dynamic>;
     final version = data['version'];
+    final savedRecoveredDates = data['recoveredDates'] == true;
     final savedCounts = (data['counts'] as List).cast<int>();
     final savedFirst = (data['firstFound'] as List).cast<String?>();
     final savedFavorites = (data['favorites'] as List).cast<int>();
@@ -154,9 +184,10 @@ final class ScratchController extends ChangeNotifier {
     for (var i = 0; i < savedCounts.length; i++) {
       if ((savedCounts[i] == 0 && savedFirst[i] != null) ||
           (savedCounts[i] > 0 &&
-              (savedFirst[i] == null ||
-                  savedFirst[i]!.length < 10 ||
-                  DateTime.tryParse(savedFirst[i]!) == null))) {
+              (savedFirst[i] == null
+                  ? !savedRecoveredDates
+                  : savedFirst[i]!.length < 10 ||
+                        DateTime.tryParse(savedFirst[i]!) == null))) {
         throw const FormatException('Invalid collection date');
       }
     }
@@ -170,6 +201,7 @@ final class ScratchController extends ChangeNotifier {
       ..clear()
       ..addAll(savedFavorites);
     cat = scratchCollectibles[catIndex];
+    recoveredDates = savedRecoveredDates;
     winning = savedWinning;
     claimed = savedClaimed;
     isNew = claimed && winning && data['isNew'] as bool;
@@ -232,7 +264,10 @@ final class ScratchController extends ChangeNotifier {
         }
       }
     });
-    return _writes;
+    final pending = _writes;
+    _pendingWrites.add(pending);
+    unawaited(pending.whenComplete(() => _pendingWrites.remove(pending)));
+    return pending;
   }
 
   Future<void> retry() => unsaved ? persist() : load();
@@ -257,7 +292,9 @@ final class ScratchController extends ChangeNotifier {
     isNew = winning && counts[cat.index] == 0;
     if (winning) {
       counts[cat.index]++;
-      firstFound[cat.index] ??= DateTime.now().toIso8601String();
+      if (counts[cat.index] == 1) {
+        firstFound[cat.index] = DateTime.now().toIso8601String();
+      }
     }
     final receipt = lastResult!;
     await persist();
@@ -269,4 +306,11 @@ final class ScratchController extends ChangeNotifier {
     _disposed = true;
     super.dispose();
   }
+}
+
+final class _TransferValidationStore implements ScratchStore {
+  @override
+  Future<String?> read() async => null;
+  @override
+  Future<void> write(String value) async => throw StateError('validation only');
 }

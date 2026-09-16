@@ -303,7 +303,7 @@ func (service *Service) Authenticate(ctx context.Context, rawAccessToken string)
 	result, updateErr := transaction.ExecContext(ctx, `
 UPDATE users
 SET last_seen_at = ?
-WHERE id = ? AND enabled = 1`, nowMillis, identity.UserID)
+WHERE id = ? AND enabled = 1 AND auth_epoch = ?`, nowMillis, identity.UserID, identity.Epoch)
 	if updateErr != nil {
 		return users.User{}, databaseError(ctx, updateErr)
 	}

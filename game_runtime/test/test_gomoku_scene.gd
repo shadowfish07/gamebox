@@ -579,6 +579,11 @@ static func _plays_confirmed_move_sound_for_either_player() -> bool:
 			var sound := scene.get_node_or_null("MoveSound") as AudioStreamPlayer
 			if not _check(sound != null and sound.stream != null, "confirmed move sound is not configured"):
 				return _cleanup(scene)
+			# Keep the short click alive until the assertion even when the audio
+			# thread finishes a mix while the scene refreshes its UI.
+			var test_stream := sound.stream.duplicate() as AudioStreamOggVorbis
+			test_stream.loop = true
+			sound.stream = test_stream
 			var revision := 1
 			var move_user_id := BLACK_ID
 			var x := 7

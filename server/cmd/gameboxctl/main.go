@@ -34,7 +34,7 @@ const (
 	maximumInviteGenerationAttempts = maximumInviteCount * 10
 	minimumPepperBytes              = 32
 
-	rootUsage    = "usage: gameboxctl <invite create|match show> [options]"
+	rootUsage    = "usage: gameboxctl <invite create|match show|recovery create> [options]"
 	inviteUsage  = "usage: gameboxctl invite create --count N --db PATH --json"
 	matchUsage   = "usage: gameboxctl match show --id UUID --db PATH --json"
 	inviteFailed = "error: invite creation failed"
@@ -69,6 +69,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, deps comm
 		return exitUsage
 	}
 	switch {
+	case args[0] == "recovery" && args[1] == "create":
+		return runRecoveryCreate(ctx, args[2:], stdout, stderr, deps)
 	case args[0] == "invite" && args[1] == "create":
 		return runInviteCreate(ctx, args[2:], stdout, stderr, deps)
 	case args[0] == "match" && args[1] == "show":

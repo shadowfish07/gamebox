@@ -77,6 +77,7 @@ const (
 )
 
 type hubConnection struct {
+	authEpoch            string
 	hub                  *Hub
 	transport            *websocket.Conn
 	ctx                  context.Context
@@ -302,9 +303,10 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		_ = transport.Close(websocket.StatusInternalError, "internal error")
 		return
 	}
+	authEpoch := credential.AuthEpoch
 	connectionContext, cancelConnection := context.WithCancel(context.Background())
 	connection := &hubConnection{
-		hub: hub, transport: transport, ctx: connectionContext, cancel: cancelConnection,
+		authEpoch: authEpoch, hub: hub, transport: transport, ctx: connectionContext, cancel: cancelConnection,
 		done: make(chan struct{}), send: make(chan []byte, webSocketSendQueueSize),
 		matchID: credential.MatchID, gameID: credential.GameID, userID: credential.UserID, id: connectionID.String(),
 		pending: make([]queuedMessage, 0, 4), presence: make(map[string]bool),
@@ -320,6 +322,14 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if !hub.register(connection) {
+		connection.close()
+		return
+	}
+	// A transfer may commit after credential authentication but before hub
+	// registration, when its revocation sweep cannot see this transport yet.
+	// Once registered, later sweeps can close it; recheck earlier revocations
+	// before starting the writer or sending any initial state.
+	if !connection.credentialValid() {
 		connection.close()
 		return
 	}
@@ -872,6 +882,10 @@ func (connection *hubConnection) writeLoop() {
 				return
 			}
 		case <-ticker.C:
+			if !connection.credentialValid() {
+				connection.close()
+				return
+			}
 			nonce, err := uuid.NewRandom()
 			if err != nil {
 				connection.close()
@@ -910,6 +924,9 @@ func (connection *hubConnection) readLoop() {
 		if messageType != websocket.MessageText {
 			connection.enqueueError("invalid_request", "")
 			continue
+		}
+		if !connection.credentialValid() {
+			return
 		}
 		envelope, decodeErr := protocol.DecodeClient(data)
 		if decodeErr != nil || envelope.Type == protocol.TypePlatformConnect || envelope.MatchID != connection.matchID || envelope.GameID != connection.gameID {
@@ -1011,6 +1028,7 @@ func outstandingPingLimit(activityTimeout, heartbeatInterval time.Duration) int 
 
 func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
 	operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
+	operationContext = context.WithValue(operationContext, connectionCredentialKey{}, connectionCredential{connection.authEpoch, connection.userID})
 	event, _, err := connection.hub.service.ApplyAction(operationContext, ActionRequest{
 		MatchID: connection.matchID, ActorUserID: connection.userID, ActionID: envelope.ActionID,
 		ExpectedRevision: *envelope.ExpectedRevision, Type: envelope.Type, Payload: append(json.RawMessage(nil), envelope.Payload...),

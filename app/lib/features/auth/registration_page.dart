@@ -8,14 +8,18 @@ import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import '../update/update_action.dart';
 import 'session_controller.dart';
+import 'device_transfer.dart';
+import 'device_transfer_page.dart';
 
 final class RegistrationPage extends StatefulWidget {
   const RegistrationPage({
     super.key,
     required this.controller,
     this.updateController,
+    this.transfer,
   });
 
+  final DeviceTransfer? transfer;
   final SessionController controller;
   final UpdateController? updateController;
 
@@ -135,6 +139,7 @@ final class _RegistrationPageState extends State<RegistrationPage> {
           ),
         ),
         children: [
+          if (widget.controller.migratedAway) const Text('账号已迁移至其他设备'),
           Column(
             children: [
               Icon(
@@ -190,6 +195,18 @@ final class _RegistrationPageState extends State<RegistrationPage> {
               ),
             ),
           ),
+          if (widget.transfer case final transfer?)
+            TextButton(
+              key: const Key('existing-account'),
+              onPressed: canSubmit
+                  ? () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => DeviceTransferPage(transfer: transfer),
+                      ),
+                    )
+                  : null,
+              child: const Text('已有账号'),
+            ),
           SizedBox(
             height: GameboxTokens.components.minimumTouchTarget,
             child: _errorMessage == null

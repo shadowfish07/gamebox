@@ -47,6 +47,31 @@ Map<String, Object?> legacyScratchSave({
 };
 
 void main() {
+  test(
+    'account cleanup drains writes from disposed collection controllers',
+    () async {
+      final store = MemoryScratchStore();
+      final controller = ScratchController(store: store);
+      await controller.load();
+      store.pending = Completer<void>();
+      final draw = controller.draw();
+      controller.dispose();
+      var drained = false;
+      final drain = ScratchController.drainPendingWrites().then(
+        (_) => drained = true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(drained, isFalse);
+      store.pending!.complete();
+      await draw;
+      await drain;
+      expect(drained, isTrue);
+      store.value = null; // Account cleanup happens only after all old writes.
+      await Future<void>.delayed(Duration.zero);
+      expect(store.value, isNull);
+    },
+  );
+
   for (final claimed in [false, true]) {
     test(
       'count cap refuses draw without changing stored collection claimed=$claimed',
