@@ -15,6 +15,7 @@ final class SessionController extends ChangeNotifier {
     required this._authApi,
     required this._tokenStore,
     DateTime Function()? now,
+    this.onSessionTransferred,
   }) : _now = now ?? DateTime.now;
 
   // Only authoritative credential rejection clears the stored login.
@@ -27,6 +28,7 @@ final class SessionController extends ChangeNotifier {
   final AuthApi _authApi;
   final TokenStore _tokenStore;
   final DateTime Function() _now;
+  final Future<void> Function()? onSessionTransferred;
 
   SessionStatus _status = SessionStatus.restoring;
   Session? _session;
@@ -420,6 +422,9 @@ final class SessionController extends ChangeNotifier {
   Future<bool> _performCredentialCleanup(int generation) async {
     var deleted = false;
     try {
+      // Keep the rejected credential durable until account-local cleanup has
+      // succeeded, so a process restart repeats the authoritative rejection.
+      if (migratedAway) await onSessionTransferred?.call();
       await _tokenStore.deleteRefreshToken();
       deleted = true;
     } catch (_) {

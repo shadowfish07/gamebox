@@ -113,6 +113,12 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _sessionController = SessionController(
         authApi: HttpAuthApi(apiClient),
         tokenStore: SecureTokenStore(),
+        onSessionTransferred: () async {
+          // Dispose protected routes before draining their collection writes.
+          await WidgetsBinding.instance.endOfFrame;
+          await ScratchController.drainPendingWrites();
+          await SecureScratchStore().clear();
+        },
       );
       _ownsSessionController = true;
       _transfer = DeviceTransfer(
@@ -526,6 +532,18 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
                         },
                   child: const Text('重试'),
                 ),
+                if (controller.canRegister)
+                  TextButton(
+                    onPressed: transfer.busy
+                        ? null
+                        : () => _navigatorKey.currentState!.push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  DeviceTransferPage(transfer: transfer),
+                            ),
+                          ),
+                    child: const Text('恢复账号'),
+                  ),
               ],
             ),
           ),

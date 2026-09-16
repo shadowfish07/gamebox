@@ -11,6 +11,37 @@ import 'package:gamebox/features/auth/session_controller.dart';
 void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
 
+  test('transferred account cleanup blocks registration until local data is cleared', () async {
+    final api = _FakeAuthApi()
+      ..onRefresh = (_) async => throw const ApiError(
+        code: 'session_transferred',
+        message: 'transferred',
+      );
+    final store = _MemoryTokenStore(value: 'old-refresh');
+    var fail = true;
+    var cleared = false;
+    final controller = SessionController(
+      authApi: api,
+      tokenStore: store,
+      now: () => now,
+      onSessionTransferred: () async {
+        expect(store.value, 'old-refresh');
+        if (fail) throw StateError('disk');
+        cleared = true;
+      },
+    );
+    await controller.restore();
+    expect(controller.canRegister, isFalse);
+    expect(store.value, 'old-refresh');
+    expect(controller.canRetryCredentialCleanup, isTrue);
+    fail = false;
+    await controller.retryCredentialCleanup();
+    expect(cleared, isTrue);
+    expect(store.value, isNull);
+    expect(controller.canRegister, isTrue);
+    controller.dispose();
+  });
+
   test('restore without a refresh token becomes unauthenticated', () async {
     final api = _FakeAuthApi();
     final store = _MemoryTokenStore();

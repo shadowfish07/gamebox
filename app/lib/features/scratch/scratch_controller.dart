@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -19,6 +20,7 @@ final class SecureScratchStore implements ScratchStore {
   Future<String?> read() => _storage.read(key: _key);
   @override
   Future<void> write(String value) => _storage.write(key: _key, value: value);
+  Future<void> clear() => _storage.delete(key: _key);
 }
 
 ScratchCollectible drawScratchCollectible(double Function() random) {
@@ -80,6 +82,14 @@ final class ScratchController extends ChangeNotifier {
           winning: winning,
         )
       : null;
+  static final _pendingWrites = <Future<void>>{};
+
+  static Future<void> drainPendingWrites() async {
+    while (_pendingWrites.isNotEmpty) {
+      await Future.wait(_pendingWrites.toList());
+    }
+  }
+
   Future<void> _writes = Future.value();
   int _revision = 0;
 
@@ -254,7 +264,10 @@ final class ScratchController extends ChangeNotifier {
         }
       }
     });
-    return _writes;
+    final pending = _writes;
+    _pendingWrites.add(pending);
+    unawaited(pending.whenComplete(() => _pendingWrites.remove(pending)));
+    return pending;
   }
 
   Future<void> retry() => unsaved ? persist() : load();

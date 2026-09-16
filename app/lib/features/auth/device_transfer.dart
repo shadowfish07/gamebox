@@ -218,6 +218,13 @@ final class DeviceTransfer extends ChangeNotifier {
       final restored = await session.importSession(
         next,
         beforePublish: () async {
+          // The replacement snapshot and credentials are durable. No further
+          // edits can be made to the old outgoing snapshot on this device.
+          if (outgoing) {
+            await store.delete(outgoingKey);
+            outgoing = false;
+            code = null;
+          }
           await store.delete(incomingKey);
           _retryJournalRestore = false;
           incoming = false;
