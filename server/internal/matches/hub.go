@@ -325,6 +325,14 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		connection.close()
 		return
 	}
+	// A transfer may commit after credential authentication but before hub
+	// registration, when its revocation sweep cannot see this transport yet.
+	// Once registered, later sweeps can close it; recheck earlier revocations
+	// before starting the writer or sending any initial state.
+	if !connection.credentialValid() {
+		connection.close()
+		return
+	}
 	go connection.writeLoop()
 	defer func() {
 		connection.close()
