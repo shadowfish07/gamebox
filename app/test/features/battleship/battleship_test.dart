@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -150,12 +149,7 @@ void main() {
     );
   }
 
-  test('random fleets always obey geometry and preserve distinct ships', () {
-    for (var seed = 0; seed < 1000; seed++) {
-      final ships = randomFleet(Random(seed));
-      expect(validFleet(ships), isTrue);
-      expect(ships.expand((s) => s.cells).toSet().length, 17);
-    }
+  test('manual fleets reject overlap and boundary violations', () {
     expect(validFleet([const FleetShip(0, 9, false)]), isFalse);
     expect(
       validFleet([const FleetShip(0, 0, false), const FleetShip(1, 0, true)]),
@@ -279,7 +273,64 @@ void main() {
       },
     );
   }
+  for (final scenario in ['empty', 'rotate', 'overlap', 'edge']) {
+    testWidgets('rotate selected ship: $scenario', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final ships = <FleetShip>[
+        if (scenario != 'empty')
+          FleetShip(0, scenario == 'edge' ? 90 : 0, false),
+        if (scenario == 'overlap') const FleetShip(4, 10, false),
+      ];
+      final api = FakeSea({
+        ...state(),
+        'ownShips': ships.map((s) => s.toJson()).toList(),
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GameboxTheme.light(),
+          home: BattleshipPage(
+            controller: BattleshipController(api, matchId, MemoryPending()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('随机布阵'), findsNothing);
+      final rotate = find.byKey(const Key('sea-rotate'));
+      await tester.ensureVisible(rotate);
+      await tester.pumpAndSettle();
+      expect(find.text('旋转舰船'), findsOneWidget);
+      if (scenario == 'empty') {
+        expect(tester.widget<OutlinedButton>(rotate).onPressed, isNull);
+      } else {
+        await tester.tap(rotate);
+        await tester.pumpAndSettle();
+        if (scenario == 'rotate') {
+          expect(api.calls, hasLength(1));
+          expect(SeaMatch(api.json).ownShips.single.cells, [0, 10, 20, 30, 40]);
+          final cell = find.byKey(const ValueKey('sea-cell-1'));
+          await tester.ensureVisible(cell);
+          await tester.pumpAndSettle();
+          await tester.tap(cell);
+          await tester.pumpAndSettle();
+          expect(SeaMatch(api.json).ownShips.single.cells, [1, 11, 21, 31, 41]);
+        } else {
+          expect(api.calls, isEmpty);
+          expect(find.text('这里放不下这艘船'), findsOneWidget);
+          expect(SeaMatch(api.json).ownShips.first.vertical, isFalse);
+        }
+      }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    });
+  }
   testWidgets('manual placement persists; ready locks editing', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final api = FakeSea(state());
     await tester.pumpWidget(
       MaterialApp(
@@ -294,14 +345,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.calls.single['kind'], 'save');
     expect(SeaMatch(api.json).ownShips.single.cells, [0, 1, 2, 3, 4]);
-    await tester.scrollUntilVisible(find.byKey(const Key('sea-random')), 200);
-    await tester.tap(find.byKey(const Key('sea-random')));
-    await tester.pumpAndSettle();
+    for (var id = 1; id < 5; id++) {
+      final chip = find.byKey(ValueKey('sea-ship-$id'));
+      await tester.ensureVisible(chip);
+      await tester.pumpAndSettle();
+      await tester.tap(chip);
+      final cell = find.byKey(ValueKey('sea-cell-${id * 10}'));
+      await tester.ensureVisible(cell);
+      await tester.pumpAndSettle();
+      await tester.tap(cell);
+      await tester.pumpAndSettle();
+    }
     await tester.tap(find.text('准备好了'));
     await tester.pumpAndSettle();
     expect(SeaMatch(api.json).ready, isTrue);
     expect(find.text('等待对方布阵'), findsWidgets);
-    expect(find.byKey(const Key('sea-random')), findsNothing);
+    expect(find.byKey(const Key('sea-rotate')), findsNothing);
+    expect(find.text('随机布阵'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('resignation requires consequence confirmation', (tester) async {

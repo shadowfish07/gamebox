@@ -59,22 +59,6 @@ bool validFleet(List<FleetShip> ships) {
   return true;
 }
 
-List<FleetShip> randomFleet([Random? source]) {
-  final r = source ?? Random.secure();
-  final ships = <FleetShip>[];
-  for (var id = 0; id < 5; id++) {
-    final candidates = <FleetShip>[];
-    for (var cell = 0; cell < 100; cell++) {
-      for (final vertical in [false, true]) {
-        final ship = FleetShip(id, cell, vertical);
-        if (validFleet([...ships, ship])) candidates.add(ship);
-      }
-    }
-    ships.add(candidates[r.nextInt(candidates.length)]);
-  }
-  return ships;
-}
-
 final class FleetShot {
   const FleetShot(this.cell, this.hit);
   final int cell;

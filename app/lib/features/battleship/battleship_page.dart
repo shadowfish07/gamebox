@@ -19,7 +19,7 @@ final class BattleshipPage extends StatefulWidget {
 final class _BattleshipPageState extends State<BattleshipPage>
     with WidgetsBindingObserver {
   int shipId = 0;
-  bool vertical = false, ownBoard = false;
+  bool ownBoard = false;
   int? target;
   BattleshipController get c => widget.controller;
   @override
@@ -79,7 +79,17 @@ final class _BattleshipPageState extends State<BattleshipPage>
   }
 
   void _place(int cell) {
-    final ship = FleetShip(shipId, cell, vertical);
+    final selected = c.shownShips.where((s) => s.id == shipId).firstOrNull;
+    _savePlacement(FleetShip(shipId, cell, selected?.vertical ?? false));
+  }
+
+  void _rotate() {
+    final selected = c.shownShips.where((s) => s.id == shipId).firstOrNull;
+    if (selected == null) return;
+    _savePlacement(FleetShip(shipId, selected.cell, !selected.vertical));
+  }
+
+  void _savePlacement(FleetShip ship) {
     final ships = [...c.shownShips.where((s) => s.id != shipId), ship];
     if (!validFleet(ships)) {
       ScaffoldMessenger.of(context)
@@ -258,26 +268,13 @@ final class _BattleshipPageState extends State<BattleshipPage>
                       ],
                     ),
                     SizedBox(height: pad),
-                    Wrap(
-                      spacing: pad,
-                      children: [
-                        OutlinedButton.icon(
-                          key: const Key('sea-rotate'),
-                          onPressed: can
-                              ? () => setState(() => vertical = !vertical)
-                              : null,
-                          icon: const Icon(Icons.rotate_90_degrees_ccw),
-                          label: Text(vertical ? '竖向' : '横向'),
-                        ),
-                        OutlinedButton.icon(
-                          key: const Key('sea-random'),
-                          onPressed: can
-                              ? () => c.submit('save', ships: randomFleet())
-                              : null,
-                          icon: const Icon(Icons.shuffle),
-                          label: const Text('随机布阵'),
-                        ),
-                      ],
+                    OutlinedButton.icon(
+                      key: const Key('sea-rotate'),
+                      onPressed: can && c.shownShips.any((s) => s.id == shipId)
+                          ? _rotate
+                          : null,
+                      icon: const Icon(Icons.rotate_90_degrees_ccw),
+                      label: const Text('旋转舰船'),
                     ),
                   ],
                 ),
