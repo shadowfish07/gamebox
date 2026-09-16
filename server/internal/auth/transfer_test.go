@@ -20,6 +20,62 @@ func receiverSecret(n byte) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat(string(n), 32)))
 }
 
+func TestRepeatedReceiverStillRevokesEveryPreviousSession(t *testing.T) {
+	f := newAuthFixture(t)
+	ctx := context.Background()
+	f.addInvite(t, "repeat-receiver")
+	old, err := f.service.RegisterAndIssue(ctx, "repeat-receiver", "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := f.service.CreateTransfer(ctx, old.AccessToken, transferSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.service.RedeemTransfer(ctx, code.Code, receiverSecret('a'), "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIdentity, err := f.service.ParseAccess(first.Session.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextCode, err := f.service.CreateTransfer(ctx, first.Session.AccessToken, transferSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.service.RedeemTransfer(ctx, nextCode.Code, receiverSecret('a'), "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.Authenticate(ctx, first.Session.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("earlier access survives reused receiver: %v", err)
+	}
+	tx, err := f.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = GuardTransaction(WithRequestIdentity(ctx, firstIdentity), tx)
+	tx.Rollback()
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("earlier action identity survived", err)
+	}
+	if _, err = f.service.RedeemTransfer(ctx, code.Code, receiverSecret('a'), "peer"); !errors.Is(err, ErrTransferInvalid) {
+		t.Fatal("earlier receipt survived later transfer", err)
+	}
+	f.service.clock.(*clock.Fake).Advance(20 * time.Minute)
+	retry, err := f.service.RedeemTransfer(ctx, nextCode.Code, receiverSecret('a'), "peer")
+	if err != nil {
+		t.Fatal("latest receipt retry failed", err)
+	}
+	if retry.Session.RefreshToken != second.Session.RefreshToken {
+		t.Fatal("retry changed refresh token")
+	}
+	if _, err = f.service.Authenticate(ctx, retry.Session.AccessToken); err != nil {
+		t.Fatal("retry access rejected", err)
+	}
+}
+
 func TestTransferMarksPreviouslyRotatedTokensWithoutChangingRevocationTime(t *testing.T) {
 	f := newAuthFixture(t)
 	ctx := context.Background()

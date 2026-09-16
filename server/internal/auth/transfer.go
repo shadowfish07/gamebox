@@ -34,6 +34,11 @@ type TransferResult struct {
 	Snapshot string
 }
 
+type transferReceipt struct {
+	TransferResult
+	Epoch string
+}
+
 func (TransferResult) String() string     { return "TransferResult{<redacted>}" }
 func (v TransferResult) GoString() string { return v.String() }
 
@@ -134,13 +139,14 @@ func (s *Service) RedeemTransfer(ctx context.Context, code, receiver, peer strin
 		if bound.String != receiverHash || now >= redeemed.Int64+86400 {
 			return TransferResult{}, ErrTransferInvalid
 		}
-		result, err := s.openTransferReceipt(receipt, hash)
+		saved, err := s.openTransferReceipt(receipt, hash)
 		if err != nil {
 			return TransferResult{}, ErrInternal
 		}
-		if epoch != receiverHash {
+		if saved.Epoch == "" || epoch != saved.Epoch {
 			return TransferResult{}, ErrTransferInvalid
 		}
+		result := saved.TransferResult
 		// Mint a fresh access token while preserving the unconsumed refresh token.
 		var revoked sql.NullInt64
 		refreshHash, _ := HashRefreshToken(s.pepper, result.Session.RefreshToken)
@@ -159,12 +165,18 @@ func (s *Service) RedeemTransfer(ctx context.Context, code, receiver, peer strin
 	if now >= expires {
 		return TransferResult{}, ErrTransferInvalid
 	}
-	session, err := s.newSessionAt(user, now, receiverHash)
+	// The caller controls receiver, so it must never define the session epoch.
+	// Every new redemption gets independent server entropy; retries reuse it.
+	nextEpoch, err := randomToken(refreshTokenEntropyBytes, s.entropy)
+	if err != nil {
+		return TransferResult{}, ErrInternal
+	}
+	session, err := s.newSessionAt(user, now, nextEpoch)
 	if err != nil {
 		return TransferResult{}, err
 	}
 	result := TransferResult{Session: session, Snapshot: snapshot}
-	receipt, err = s.sealTransferReceipt(result, hash)
+	receipt, err = s.sealTransferReceipt(transferReceipt{TransferResult: result, Epoch: nextEpoch}, hash)
 	if err != nil {
 		return TransferResult{}, ErrInternal
 	}
@@ -173,7 +185,7 @@ func (s *Service) RedeemTransfer(ctx context.Context, code, receiver, peer strin
 		sql  string
 		args []any
 	}{
-		{`UPDATE users SET auth_epoch=? WHERE id=?`, []any{receiverHash, user.ID}},
+		{`UPDATE users SET auth_epoch=? WHERE id=?`, []any{nextEpoch, user.ID}},
 		{`UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,?),revoked_reason='transfer' WHERE user_id=?`, []any{now, user.ID}},
 		{`UPDATE resume_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, []any{now * 1000, user.ID}},
 		{`DELETE FROM launch_tickets WHERE user_id=?`, []any{user.ID}},
@@ -238,7 +250,7 @@ func (s *Service) transferCipher() (cipher.AEAD, error) {
 	}
 	return cipher.NewGCM(block)
 }
-func (s *Service) sealTransferReceipt(result TransferResult, aad string) ([]byte, error) {
+func (s *Service) sealTransferReceipt(result transferReceipt, aad string) ([]byte, error) {
 	a, err := s.transferCipher()
 	if err != nil {
 		return nil, err
@@ -253,8 +265,8 @@ func (s *Service) sealTransferReceipt(result TransferResult, aad string) ([]byte
 	}
 	return a.Seal(nonce, nonce, data, []byte(aad)), nil
 }
-func (s *Service) openTransferReceipt(data []byte, aad string) (TransferResult, error) {
-	var r TransferResult
+func (s *Service) openTransferReceipt(data []byte, aad string) (transferReceipt, error) {
+	var r transferReceipt
 	a, err := s.transferCipher()
 	if err != nil {
 		return r, err
