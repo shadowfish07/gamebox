@@ -217,7 +217,7 @@ func (s *Service) transferAttempt(ctx context.Context, peer string) error {
 		return ErrInternal
 	}
 	limited := false
-	for _, bucket := range []string{"global", hash} {
+	for _, bucket := range []string{hash, "global"} {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO transfer_attempts(bucket,window,attempts) VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1`, bucket, window); err != nil {
 			return ErrInternal
 		}
@@ -231,6 +231,7 @@ func (s *Service) transferAttempt(ctx context.Context, peer string) error {
 		}
 		if count > limit {
 			limited = true
+			break // Rejected peer traffic must not consume the global budget.
 		}
 	}
 	if err = s.commit(tx); err != nil {

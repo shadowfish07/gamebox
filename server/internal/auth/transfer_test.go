@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"me.zqydev/gamebox/server/internal/clock"
 	"strings"
 	"sync"
@@ -313,5 +314,31 @@ func TestRecoveryKeepsPublishedCountsWithoutInventingDiscoveryDates(t *testing.T
 	}
 	if saved.Counts[3] != 7 || saved.FirstFound[3] != nil || !saved.RecoveredDates {
 		t.Fatal("recovery invented dates or lost counts")
+	}
+}
+
+func TestTransferRejectedPeerDoesNotExhaustGlobalQuota(t *testing.T) {
+	f := newAuthFixture(t)
+	ctx := context.Background()
+	for i := 0; i < 350; i++ {
+		err := f.service.transferAttempt(ctx, "attack")
+		if i < 30 && err != nil {
+			t.Fatalf("allowed attempt %d: %v", i, err)
+		}
+		if i >= 30 && !errors.Is(err, ErrTransferLimited) {
+			t.Fatalf("rejected attempt %d: %v", i, err)
+		}
+	}
+	for i := 0; i < 270; i++ {
+		if err := f.service.transferAttempt(ctx, fmt.Sprintf("peer-%d", i)); err != nil {
+			t.Fatalf("peer %d blocked by rejected traffic: %v", i, err)
+		}
+	}
+	if err := f.service.transferAttempt(ctx, "over-global"); !errors.Is(err, ErrTransferLimited) {
+		t.Fatalf("global limit bypassed: %v", err)
+	}
+	f.service.clock.(*clock.Fake).Advance(time.Minute)
+	if err := f.service.transferAttempt(ctx, "attack"); err != nil {
+		t.Fatalf("next window still limited: %v", err)
 	}
 }
