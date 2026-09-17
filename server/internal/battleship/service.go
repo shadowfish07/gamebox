@@ -21,7 +21,7 @@ type Service struct {
 func New(db *sql.DB, c clock.Clock) *Service { return &Service{db, c} }
 func validID(id string) bool {
 	u, e := uuid.Parse(id)
-	return e == nil && u.String() == id && u != uuid.Nil
+	return e == nil && u.String() == id && u.Variant() == uuid.RFC4122 && u.Version() >= 1 && u.Version() <= 5
 }
 func (s *Service) Create(ctx context.Context, user, id, opponent string) (View, error) {
 	if !validID(id) || !validID(user) || !validID(opponent) || user == opponent {

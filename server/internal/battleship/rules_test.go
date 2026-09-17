@@ -1,6 +1,10 @@
 package battleship
 
-import "testing"
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+)
 
 func fleet() []Ship {
 	return []Ship{{0, 0, false}, {10, 1, false}, {20, 2, false}, {30, 3, false}, {40, 4, false}}
@@ -90,5 +94,51 @@ func TestSinkWinAndCancellation(t *testing.T) {
 	_ = s.apply(1, Action{Kind: "offer_end"})
 	if s.Phase != "cancelled" || s.Winner != "" {
 		t.Fatal(s)
+	}
+}
+
+func TestUnusedActionFieldsCannotChangeState(t *testing.T) {
+	for _, kind := range []string{"save", "ready", "fire", "cancel", "resign", "offer_end", "decline_end", "rematch"} {
+		for _, field := range []string{"ships", "cell"} {
+			if (kind == "save" || kind == "ready") && field == "ships" || kind == "fire" && field == "cell" {
+				continue
+			}
+			t.Run(kind+"/"+field, func(t *testing.T) {
+				s := newState("a", "b", 0)
+				a := Action{Kind: kind}
+				switch kind {
+				case "save", "ready":
+					a.Ships = fleet()
+				case "fire", "resign", "offer_end", "decline_end":
+					for p := 0; p < 2; p++ {
+						if err := s.apply(p, Action{Kind: "ready", Ships: fleet()}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if kind == "decline_end" {
+						s.EndOffer = "b"
+					}
+				case "rematch":
+					s.Phase = "cancelled"
+				}
+				before, _ := json.Marshal(s)
+				malformed := a
+				if field == "ships" {
+					malformed.Ships = fleet()
+				} else {
+					malformed.Cell = 99
+				}
+				if err := s.apply(0, malformed); !errors.Is(err, ErrInvalid) {
+					t.Errorf("malformed %s: %v", kind, err)
+				}
+				after, _ := json.Marshal(s)
+				if string(before) != string(after) {
+					t.Error("malformed payload changed authoritative state")
+				}
+				if err := s.apply(0, a); err != nil {
+					t.Fatalf("valid action rejected: %v", err)
+				}
+			})
+		}
 	}
 }

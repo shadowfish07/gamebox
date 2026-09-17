@@ -68,3 +68,36 @@ func TestBattleshipAuthenticatedPrivateHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestBattleshipRejectsIncompatibleMatchIDs(t *testing.T) {
+	f := newAPIFixture(t)
+	a := f.register(t, "sea-id-a", "甲舰长")
+	b := f.register(t, "sea-id-b", "乙舰长")
+	for _, id := range []string{
+		"11111111-1111-4111-0111-111111111111",
+		"11111111-1111-4111-c111-111111111111",
+		"11111111-1111-0111-8111-111111111111",
+		"11111111-1111-6111-8111-111111111111",
+		"11111111-1111-7111-8111-111111111111",
+		"11111111-1111-f111-8111-111111111111",
+	} {
+		body, _ := json.Marshal(map[string]string{"id": id, "opponentId": b.Session.User.ID})
+		if got := f.request(t, "POST", "/v1/battleship/matches", string(body), a.Session.AccessToken); got.Code != 400 {
+			t.Errorf("incompatible ID %s: status=%d, want 400", id, got.Code)
+		}
+	}
+	var list battleship.MatchPage
+	decodeResponse(t, f.request(t, "GET", "/v1/battleship/matches", "", b.Session.AccessToken), &list)
+	if len(list.Matches) != 0 {
+		t.Fatalf("invalid IDs polluted opponent list: %d matches", len(list.Matches))
+	}
+	// All UUID versions accepted by the client remain usable over HTTP.
+	for _, version := range []byte{'1', '2', '3', '4', '5'} {
+		id := []byte("11111111-1111-4111-8111-111111111111")
+		id[14] = version
+		body, _ := json.Marshal(map[string]string{"id": string(id), "opponentId": b.Session.User.ID})
+		if got := f.request(t, "POST", "/v1/battleship/matches", string(body), a.Session.AccessToken); got.Code != 200 {
+			t.Fatalf("supported version %c: %d", version, got.Code)
+		}
+	}
+}

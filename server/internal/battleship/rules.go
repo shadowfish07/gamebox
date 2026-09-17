@@ -132,6 +132,10 @@ func (s *State) apply(p int, a Action) error {
 	if p < 0 || p > 1 {
 		return ErrNotFound
 	}
+	// Reject mixed payloads before touching authority, matching the HTTP contract.
+	if a.Kind != "fire" && a.Cell != 0 || a.Kind != "save" && a.Kind != "ready" && len(a.Ships) != 0 {
+		return ErrInvalid
+	}
 	switch a.Kind {
 	case "save", "ready":
 		if s.Phase != "placement" || s.Ready[p] || !validFleet(a.Ships, a.Kind == "ready") {
