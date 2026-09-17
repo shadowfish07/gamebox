@@ -91,7 +91,83 @@ class FakeSea implements BattleshipApi {
       const SeaPage([SeaOpponent(opponent, '舰长乙')], '');
 }
 
+class PagedSea extends FakeSea {
+  PagedSea() : super(state());
+  final requests = <String>[];
+  bool failSecond = false;
+  int revision = 0;
+  Completer<void>? secondPage;
+  @override
+  Future<SeaPage<SeaMatch>> matches([String after = '']) async {
+    requests.add(after);
+    final page = after.isEmpty ? 0 : int.parse(after);
+    if (page == 1) {
+      if (secondPage != null) await secondPage!.future;
+      if (failSecond)
+        throw const ApiError(code: 'network_error', message: '失败');
+    }
+    return SeaPage([
+      for (var i = page * 2; i < page * 2 + 2; i++)
+        SeaMatch({
+          ...state(),
+          'id': '33333333-3333-4333-8333-${i.toString().padLeft(12, '0')}',
+          'opponentName': '舰长$i',
+          'revision': revision,
+        }),
+    ], page < 2 ? '${page + 1}' : '');
+  }
+}
+
 void main() {
+  testWidgets(
+    'refresh preserves loaded pages and retains them on partial failure',
+    (tester) async {
+      final api = PagedSea();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GameboxTheme.light(),
+          home: BattleshipLobby(api: api, store: MemoryPending()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('加载更多'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('舰长3'), 200);
+      final scroll = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      final offset = scroll.pixels;
+      api.secondPage = Completer<void>();
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pump();
+      expect(api.requests, ['', '1', '', '1']);
+      expect(find.text('舰长3'), findsOneWidget);
+      api.secondPage!.complete();
+      await tester.pumpAndSettle();
+      api.secondPage = null;
+      expect(find.text('舰长3'), findsOneWidget);
+      expect(scroll.pixels, offset);
+      api.failSecond = true;
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pumpAndSettle();
+      expect(find.text('舰长3'), findsOneWidget);
+      api.failSecond = false;
+      await tester.tap(find.byTooltip('刷新'));
+      await tester.pumpAndSettle();
+      expect(find.text('舰长3'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('加载更多'), 200);
+      await tester.tap(find.text('加载更多'));
+      await tester.pumpAndSettle();
+      expect(api.requests.last, '2');
+      await tester.scrollUntilVisible(find.text('舰长5'), 200);
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pumpAndSettle();
+      expect(api.requests.sublist(api.requests.length - 3), ['', '1', '2']);
+      expect(find.text('舰长5'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   for (final rematch in [false, true]) {
     testWidgets(
       'theme rebuild preserves routed match controller rematch=$rematch',

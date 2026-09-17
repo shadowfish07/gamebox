@@ -62,11 +62,22 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     setState(() => loading = true);
     timer?.cancel();
     try {
-      final page = await widget.api.matches(more ? cursor : '');
-      if (!mounted) return;
+      final retainedCount = matches.length;
+      final refreshed = <SeaMatch>[];
+      var nextCursor = more ? cursor : '';
+      do {
+        final page = await widget.api.matches(nextCursor);
+        if (!mounted) return;
+        refreshed.addAll(page.items);
+        nextCursor = page.nextCursor;
+      } while (!more &&
+          nextCursor.isNotEmpty &&
+          refreshed.length < retainedCount);
+      // Commit the full refresh together so a later-page failure retains the
+      // previous list and cursor, including the user's loaded range.
       setState(() {
-        matches = more ? [...matches, ...page.items] : page.items;
-        cursor = page.nextCursor;
+        matches = more ? [...matches, ...refreshed] : refreshed;
+        cursor = nextCursor;
         error = null;
       });
     } catch (_) {
