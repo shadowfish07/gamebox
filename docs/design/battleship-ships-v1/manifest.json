@@ -1,0 +1,142 @@
+[
+  {
+    "id": "carrier",
+    "name": "航空母舰",
+    "cells": 5,
+    "png": "carrier.png",
+    "webp": "carrier.webp",
+    "size": [
+      512,
+      512
+    ],
+    "alphaBounds": [
+      17,
+      7,
+      428,
+      506
+    ],
+    "originalSize": [
+      1247,
+      1261
+    ],
+    "bow": "up",
+    "visibleBounds": [
+      199,
+      9,
+      318,
+      504
+    ]
+  },
+  {
+    "id": "battleship",
+    "name": "战列舰",
+    "cells": 4,
+    "png": "battleship.png",
+    "webp": "battleship.webp",
+    "size": [
+      512,
+      512
+    ],
+    "alphaBounds": [
+      40,
+      12,
+      425,
+      499
+    ],
+    "originalSize": [
+      1254,
+      1254
+    ],
+    "bow": "up",
+    "visibleBounds": [
+      213,
+      15,
+      300,
+      497
+    ]
+  },
+  {
+    "id": "cruiser",
+    "name": "巡洋舰",
+    "cells": 3,
+    "png": "cruiser.png",
+    "webp": "cruiser.webp",
+    "size": [
+      512,
+      512
+    ],
+    "alphaBounds": [
+      46,
+      14,
+      402,
+      494
+    ],
+    "originalSize": [
+      1254,
+      1254
+    ],
+    "bow": "up",
+    "visibleBounds": [
+      209,
+      17,
+      303,
+      492
+    ]
+  },
+  {
+    "id": "submarine",
+    "name": "潜艇",
+    "cells": 3,
+    "png": "submarine.png",
+    "webp": "submarine.webp",
+    "size": [
+      512,
+      512
+    ],
+    "alphaBounds": [
+      42,
+      9,
+      379,
+      497
+    ],
+    "originalSize": [
+      1254,
+      1254
+    ],
+    "bow": "up",
+    "visibleBounds": [
+      188,
+      11,
+      324,
+      495
+    ]
+  },
+  {
+    "id": "destroyer",
+    "name": "驱逐舰",
+    "cells": 2,
+    "png": "destroyer.png",
+    "webp": "destroyer.webp",
+    "size": [
+      512,
+      512
+    ],
+    "alphaBounds": [
+      40,
+      11,
+      478,
+      499
+    ],
+    "originalSize": [
+      1254,
+      1254
+    ],
+    "bow": "up",
+    "visibleBounds": [
+      209,
+      13,
+      303,
+      497
+    ]
+  }
+]

@@ -25,6 +25,7 @@ import 'features/history/match_history_api.dart';
 import 'features/home/home_api.dart';
 import 'features/home/home_controller.dart';
 import 'features/home/home_page.dart';
+import 'features/battleship/battleship_api.dart';
 import 'features/rps/rps_api.dart';
 import 'features/rps/rps_controller.dart';
 import 'features/rps/rps_repository.dart';
@@ -596,6 +597,12 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       historyApi = HttpMatchHistoryApi(apiClient, controller);
     }
     return HomePage(
+      battleshipApi: HttpBattleshipApi(
+        _ownedApiClient ??= ApiClient(),
+        userId: session.user.id,
+        accessToken: () => controller.accessToken,
+        onUnauthorized: controller.refresh,
+      ),
       transfer: _transfer,
       scratchApi: HttpScratchSocialApi(
         _ownedApiClient ??= ApiClient(),
