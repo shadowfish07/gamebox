@@ -829,3 +829,24 @@ func readMutableRows(t *testing.T, path string) mutableRows {
 	}
 	return result
 }
+
+func TestMatchShowReversiBoard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reversi.sqlite")
+	seedChineseCheckersMatch(t, path)
+	db := openDatabase(t, path)
+	if _, err := db.Exec(`UPDATE matches SET game_id='reversi'; UPDATE active_game_slots SET game_id='reversi'`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"match", "show", "--id", testMatchID, "--db", path, "--json"}, &stdout, &stderr, defaultCommandDeps()); code != exitOK {
+		t.Fatal(code, stderr.String())
+	}
+	var result matchShowResponse
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.GameID != "reversi" || result.BoardSize != 8 || len(result.Board) != 64 || result.Board[27] != 2 || result.Board[28] != 1 || result.NextColor != "black" {
+		t.Fatal(result)
+	}
+}

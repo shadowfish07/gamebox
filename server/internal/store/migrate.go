@@ -33,7 +33,8 @@ var migrations = []migration{
 	{version: 3, path: "migrations/003_match_game_config.sql"},
 	{version: 4, path: "migrations/004_flight_chess_limit_actions.sql"},
 	{version: 5, path: "migrations/005_scratch_collections.sql"},
-	{version: 6, path: "migrations/006_battleship.sql"},
+	{version: 6, path: "migrations/006_device_transfer.sql"},
+	{version: 7, path: "migrations/007_battleship.sql"},
 }
 
 // ErrIncompatibleMigrationLedger tells operators that a pre-release database

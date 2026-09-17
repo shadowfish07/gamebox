@@ -19,6 +19,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/matches"
 	"me.zqydev/gamebox/server/internal/store"
@@ -33,7 +34,7 @@ const (
 	maximumInviteGenerationAttempts = maximumInviteCount * 10
 	minimumPepperBytes              = 32
 
-	rootUsage    = "usage: gameboxctl <invite create|match show> [options]"
+	rootUsage    = "usage: gameboxctl <invite create|match show|recovery create> [options]"
 	inviteUsage  = "usage: gameboxctl invite create --count N --db PATH --json"
 	matchUsage   = "usage: gameboxctl match show --id UUID --db PATH --json"
 	inviteFailed = "error: invite creation failed"
@@ -68,6 +69,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, deps comm
 		return exitUsage
 	}
 	switch {
+	case args[0] == "recovery" && args[1] == "create":
+		return runRecoveryCreate(ctx, args[2:], stdout, stderr, deps)
 	case args[0] == "invite" && args[1] == "create":
 		return runInviteCreate(ctx, args[2:], stdout, stderr, deps)
 	case args[0] == "match" && args[1] == "show":
@@ -365,6 +368,16 @@ func runMatchShow(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			flightchess.Black: append([]flightchess.Piece(nil), state.Pieces[flightchess.Black]...),
 			flightchess.White: append([]flightchess.Piece(nil), state.Pieces[flightchess.White]...),
 		}
+	case reversi.GameID:
+		var state reversi.State
+		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != reversi.BoardSize {
+			writeLine(stderr, matchFailed)
+			return exitFailure
+		}
+		for _, cell := range state.Board {
+			board = append(board, int(cell))
+		}
+		boardSize, nextColor = state.BoardSize, state.NextColor
 	case gomoku.GameID:
 		var state gomokuStateView
 		if err := json.Unmarshal(snapshot.Game.State, &state); err != nil || state.BoardSize != gomoku.BoardSize {

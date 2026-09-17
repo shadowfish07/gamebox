@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/clock"
 )
 
@@ -59,8 +60,19 @@ func (s *Service) Publish(ctx context.Context, userID string, counts []int) erro
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO scratch_collections(user_id,counts_json,updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET counts_json=`+update+`, updated_at=excluded.updated_at`, userID, string(raw), s.clock.Now().UnixMilli())
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = auth.GuardTransaction(ctx, tx); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO scratch_collections(user_id,counts_json,updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET counts_json=`+update+`, updated_at=excluded.updated_at`, userID, string(raw), s.clock.Now().UnixMilli())
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Service) List(ctx context.Context, after string, card *int) (Page, error) {
 	result := Page{Players: []Player{}}

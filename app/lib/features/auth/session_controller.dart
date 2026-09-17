@@ -15,15 +15,20 @@ final class SessionController extends ChangeNotifier {
     required this._authApi,
     required this._tokenStore,
     DateTime Function()? now,
+    this.onSessionTransferred,
   }) : _now = now ?? DateTime.now;
 
-  // The current server deliberately collapses every invalid, revoked, or
-  // expired HTTP credential into this single authoritative code.
-  static const _authoritativeInvalidCodes = {'unauthorized'};
+  // Only authoritative credential rejection clears the stored login.
+  // Migration has a distinct code so the old device can explain its sign-out.
+  static const _authoritativeInvalidCodes = {
+    'unauthorized',
+    'session_transferred',
+  };
 
   final AuthApi _authApi;
   final TokenStore _tokenStore;
   final DateTime Function() _now;
+  final Future<void> Function()? onSessionTransferred;
 
   SessionStatus _status = SessionStatus.restoring;
   Session? _session;
@@ -41,6 +46,8 @@ final class SessionController extends ChangeNotifier {
   SessionStatus get status => _status;
   Session? get session => _session;
   String? get accessToken => _session?.accessToken;
+  bool migratedAway = false;
+  bool migratedIn = false;
   ApiError? get lastError => _lastError;
   bool get credentialCleanupPending => _credentialCleanupPending;
   bool get canRegister =>
@@ -167,6 +174,7 @@ final class SessionController extends ChangeNotifier {
         return false;
       }
       if (_authoritativeInvalidCodes.contains(error.code)) {
+        migratedAway = error.code == 'session_transferred';
         await _clearStoredCredential(generation);
       } else {
         _preserveForRetry(generation, _safeFailure(error.code));
@@ -246,6 +254,23 @@ final class SessionController extends ChangeNotifier {
     }
   }
 
+  Future<bool> importSession(
+    Session next, {
+    required Future<void> Function() beforePublish,
+  }) async {
+    if (_disposed ||
+        _status == SessionStatus.authenticated ||
+        !next.refreshExpiresAt.isAfter(_now())) {
+      return false;
+    }
+    migratedIn = true;
+    return _persistAndPublish(
+      next,
+      ++_generation,
+      beforePublish: beforePublish,
+    );
+  }
+
   /// Refreshes credentials once. Concurrent callers receive this exact Future.
   Future<bool> refresh([String? failedAccessToken]) {
     final current = _session;
@@ -293,6 +318,7 @@ final class SessionController extends ChangeNotifier {
         return false;
       }
       if (_authoritativeInvalidCodes.contains(error.code)) {
+        migratedAway = error.code == 'session_transferred';
         await _clearStoredCredential(generation);
       } else {
         _preserveForRetry(generation, _safeFailure(error.code));
@@ -333,12 +359,17 @@ final class SessionController extends ChangeNotifier {
     return refresh();
   }
 
-  Future<bool> _persistAndPublish(Session next, int generation) async {
+  Future<bool> _persistAndPublish(
+    Session next,
+    int generation, {
+    Future<void> Function()? beforePublish,
+  }) async {
     if (!_isCurrent(generation)) {
       return false;
     }
     try {
       await _tokenStore.writeRefreshToken(next.refreshToken);
+      await beforePublish?.call();
     } catch (_) {
       if (_isCurrent(generation)) {
         await _clearStoredCredential(generation);
@@ -349,6 +380,7 @@ final class SessionController extends ChangeNotifier {
       return false;
     }
     _session = next;
+    migratedAway = false;
     _hasStoredRefreshToken = true;
     _credentialCleanupRequired = false;
     _credentialCleanupPending = false;
@@ -390,6 +422,9 @@ final class SessionController extends ChangeNotifier {
   Future<bool> _performCredentialCleanup(int generation) async {
     var deleted = false;
     try {
+      // Keep the rejected credential durable until account-local cleanup has
+      // succeeded, so a process restart repeats the authoritative rejection.
+      if (migratedAway) await onSessionTransferred?.call();
       await _tokenStore.deleteRefreshToken();
       deleted = true;
     } catch (_) {

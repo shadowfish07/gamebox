@@ -10,7 +10,12 @@ import 'core/platform/game_launch_request.dart';
 import 'core/platform/game_launcher.dart';
 import 'design_system/generated/gamebox_tokens.g.dart';
 import 'design_system/gamebox_theme.dart';
+import 'features/reversi/reversi_models.dart';
+import 'features/reversi/reversi_launcher.dart';
 import 'features/auth/auth_api.dart';
+import 'features/auth/device_transfer.dart';
+import 'features/auth/device_transfer_page.dart';
+import 'features/scratch/scratch_controller.dart';
 import 'features/scratch/scratch_social_api.dart';
 import 'features/auth/registration_page.dart';
 import 'features/auth/session_controller.dart';
@@ -30,15 +35,18 @@ class GameboxApp extends StatefulWidget {
     super.key,
     required this.gameLauncher,
     this.sessionController,
+    this.deviceTransfer,
     this.homeController,
     this.matchHistoryApi,
     this.rpsController,
     this.chineseCheckersController,
     this.flightChessController,
+    this.reversiController,
     this.updateController,
     bool? hostSmokeEnabled,
     String? instrumentationCanaryNonce,
-  }) : hostSmokeEnabled =
+  }) : assert(deviceTransfer == null || sessionController != null),
+       hostSmokeEnabled =
            hostSmokeEnabled ?? const bool.fromEnvironment('GAMEBOX_HOST_SMOKE'),
        instrumentationCanaryNonce =
            instrumentationCanaryNonce ??
@@ -46,11 +54,13 @@ class GameboxApp extends StatefulWidget {
 
   final GameLauncher gameLauncher;
   final SessionController? sessionController;
+  final DeviceTransfer? deviceTransfer;
   final HomeController? homeController;
   final MatchHistoryApi? matchHistoryApi;
   final RpsController? rpsController;
   final HomeController? chineseCheckersController;
   final HomeController? flightChessController;
+  final HomeController? reversiController;
   final UpdateController? updateController;
   final bool hostSmokeEnabled;
   final String instrumentationCanaryNonce;
@@ -60,6 +70,12 @@ class GameboxApp extends StatefulWidget {
 }
 
 class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
+  DeviceTransfer? _transfer;
+  bool _ownsTransfer = false;
+  bool _preparingTransfer = false;
+  bool _recoveringOutgoing = false;
+  var _navigatorKey = GlobalKey<NavigatorState>();
+  String? _navigatorBoundary;
   var _isLaunchingHostSmoke = false;
   var _hostSmokeError = false;
   SessionController? _sessionController;
@@ -67,11 +83,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   HomeController? _homeController;
   HomeController? _chineseCheckersController;
   HomeController? _flightChessController;
+  HomeController? _reversiController;
   RpsController? _rpsController;
   var _ownsSessionController = false;
   var _ownsHomeController = false;
   var _ownsChineseCheckersController = false;
   var _ownsFlightChessController = false;
+  var _ownsReversiController = false;
   var _ownsRpsController = false;
   var _homeControllerAuthenticated = false;
 
@@ -88,29 +106,85 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     final injected = widget.sessionController;
     if (injected != null) {
       _sessionController = injected;
+      _transfer = widget.deviceTransfer;
+      assert(_transfer == null || identical(_transfer!.session, injected));
     } else {
       final apiClient = ApiClient(httpClient: http.Client());
       _ownedApiClient = apiClient;
       _sessionController = SessionController(
         authApi: HttpAuthApi(apiClient),
         tokenStore: SecureTokenStore(),
+        onSessionTransferred: () async {
+          // Dispose protected routes before draining their collection writes.
+          await WidgetsBinding.instance.endOfFrame;
+          await ScratchController.drainPendingWrites();
+          await SecureScratchStore().clear();
+        },
       );
       _ownsSessionController = true;
+      _transfer = DeviceTransfer(
+        api: apiClient,
+        session: _sessionController!,
+        store: SecureTransferStore(),
+        scratchStore: SecureScratchStore(),
+      );
+      _ownsTransfer = true;
     }
+    _transfer?.addListener(_transferChanged);
+    _preparingTransfer = _transfer != null;
     _sessionController!.addListener(_sessionChanged);
     WidgetsBinding.instance.addObserver(this);
     _syncHomeController();
-    unawaited(_sessionController!.restore());
+    unawaited(_restoreWithTransfer());
+  }
+
+  void _transferChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _restoreWithTransfer() async {
+    await _transfer?.restoreIncoming();
+    if (_transfer?.incoming != true &&
+        _sessionController!.status != SessionStatus.authenticated) {
+      await _sessionController!.restore();
+    }
+    if (_transfer?.incoming != true && _transfer?.outgoing == true) {
+      await _transfer!.cancelOutgoing();
+      _recoveringOutgoing = _transfer!.outgoing;
+    }
+    if (mounted) setState(() => _preparingTransfer = false);
   }
 
   void _sessionChanged() {
+    if (_transfer?.outgoing == true &&
+        _sessionController!.status != SessionStatus.authenticated) {
+      _recoveringOutgoing = true;
+    }
     _syncHomeController();
+    if (_sessionController!.status == SessionStatus.authenticated &&
+        _sessionController!.migratedIn) {
+      _sessionController!.migratedIn = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (mounted && context != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('账号已迁入')));
+        }
+      });
+    }
     if (mounted) {
       setState(() {});
     }
   }
 
   void _syncHomeController() {
+    // Authentication boundaries must create a new navigator; reusing a global
+    // key would reparent protected routes into the next session.
+    final boundary = _navigationBoundary;
+    if (_navigatorBoundary != boundary) {
+      _navigatorBoundary = boundary;
+      _navigatorKey = GlobalKey<NavigatorState>();
+    }
     final sessionController = _sessionController;
     if (sessionController == null ||
         sessionController.status != SessionStatus.authenticated ||
@@ -142,6 +216,13 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsFlightChessController = false;
       } else if (_homeControllerAuthenticated) {
         _flightChessController?.pauseForeground();
+      }
+      if (_ownsReversiController) {
+        _reversiController?.dispose();
+        _reversiController = null;
+        _ownsReversiController = false;
+      } else if (_homeControllerAuthenticated) {
+        _reversiController?.pauseForeground();
       }
       _homeControllerAuthenticated = false;
       return;
@@ -233,12 +314,44 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         _ownsFlightChessController = true;
       }
     }
+    if (_reversiController == null &&
+        (widget.reversiController != null || widget.homeController == null)) {
+      final injected = widget.reversiController;
+      if (injected != null) {
+        _reversiController = injected;
+      } else {
+        final apiClient = _ownedApiClient ??= ApiClient(
+          httpClient: http.Client(),
+        );
+        _reversiController = HomeController(
+          repository: GomokuRepository(
+            api: HttpHomeApi(
+              apiClient,
+              sessionController,
+              gameId: reversiGameId,
+            ),
+            gameLauncher: ReversiLauncher(
+              navigatorKey: _navigatorKey,
+              api: HttpHomeApi(
+                apiClient,
+                sessionController,
+                gameId: reversiGameId,
+              ),
+            ),
+            gameId: reversiGameId,
+            apiBaseUri: Uri.parse(apiBaseUrl),
+          ),
+        );
+        _ownsReversiController = true;
+      }
+    }
     if (_homeControllerAuthenticated) return;
     _homeControllerAuthenticated = true;
     _homeController?.resumeForeground();
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
     _flightChessController?.resumeForeground();
+    _reversiController?.resumeForeground();
   }
 
   @override
@@ -250,6 +363,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       _rpsController?.pauseForeground();
       _chineseCheckersController?.pauseForeground();
       _flightChessController?.pauseForeground();
+      _reversiController?.pauseForeground();
     }
   }
 
@@ -265,6 +379,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     _rpsController?.resumeForeground();
     _chineseCheckersController?.resumeForeground();
     _flightChessController?.resumeForeground();
+    _reversiController?.resumeForeground();
   }
 
   @override
@@ -290,11 +405,17 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
     if (_ownsFlightChessController) {
       _flightChessController?.dispose();
     }
+    if (_ownsReversiController) {
+      _reversiController?.dispose();
+    }
     _homeController = null;
     _rpsController = null;
     _chineseCheckersController = null;
     _flightChessController = null;
+    _reversiController = null;
     _homeControllerAuthenticated = false;
+    _transfer?.removeListener(_transferChanged);
+    if (_ownsTransfer) _transfer?.dispose();
     _ownedApiClient?.close();
     widget.updateController?.dispose();
     super.dispose();
@@ -367,6 +488,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       key: ValueKey<String>(_navigationBoundary),
+      navigatorKey: _navigatorKey,
       title: 'Gamebox',
       theme: GameboxTheme.light(),
       darkTheme: GameboxTheme.dark(),
@@ -387,6 +509,49 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
 
   Widget _buildAuthFlow() {
     final controller = _sessionController!;
+    if (_preparingTransfer) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_transfer case final transfer?) {
+      if (transfer.incoming) return DeviceTransferPage(transfer: transfer);
+      if ((_recoveringOutgoing || transfer.restoringOutgoing) &&
+          transfer.outgoing) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('恢复换机状态')),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(transfer.error ?? '正在恢复'),
+                TextButton(
+                  onPressed: transfer.busy
+                      ? null
+                      : () async {
+                          if (controller.canRetryRestore) {
+                            await controller.retryRestore();
+                          }
+                          await transfer.cancelOutgoing();
+                        },
+                  child: const Text('重试'),
+                ),
+                if (transfer.canRecoverOutgoing)
+                  TextButton(
+                    onPressed: transfer.busy
+                        ? null
+                        : () => _navigatorKey.currentState!.push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  DeviceTransferPage(transfer: transfer),
+                            ),
+                          ),
+                    child: const Text('恢复账号'),
+                  ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
     return switch (controller.status) {
       SessionStatus.restoring => Scaffold(
         body: Center(
@@ -398,6 +563,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       ),
       SessionStatus.unauthenticated ||
       SessionStatus.submitting => RegistrationPage(
+        transfer: _transfer,
         controller: controller,
         updateController: widget.updateController,
       ),
@@ -437,6 +603,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
         accessToken: () => controller.accessToken,
         onUnauthorized: controller.refresh,
       ),
+      transfer: _transfer,
       scratchApi: HttpScratchSocialApi(
         _ownedApiClient ??= ApiClient(),
         controller,
@@ -448,6 +615,7 @@ class _GameboxAppState extends State<GameboxApp> with WidgetsBindingObserver {
       rpsController: _rpsController,
       chineseCheckersController: _chineseCheckersController,
       flightChessController: _flightChessController,
+      reversiController: _reversiController,
       updateController: widget.updateController,
     );
   }

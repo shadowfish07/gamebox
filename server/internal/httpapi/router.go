@@ -81,6 +81,11 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("POST /v1/auth/register", router.register)
+	mux.Handle("POST /v1/auth/transfer", router.authenticated(http.HandlerFunc(router.createTransfer)))
+	mux.Handle("DELETE /v1/auth/transfer", router.authenticated(http.HandlerFunc(router.cancelTransfer)))
+	mux.HandleFunc("POST /v1/auth/transfer/redeem", router.redeemTransfer)
+	registerMethodFallback(mux, "/v1/auth/transfer", "POST, DELETE")
+	registerMethodFallback(mux, "/v1/auth/transfer/redeem", http.MethodPost)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refresh)
 	mux.Handle("GET /v1/me", router.authenticated(http.HandlerFunc(router.me)))
 	mux.Handle("GET /v1/games", router.authenticated(http.HandlerFunc(router.listGames)))
@@ -93,9 +98,13 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	mux.Handle("GET /v1/games/flight_chess/history", router.authenticated(http.HandlerFunc(router.flightChessHistory)))
 	mux.Handle("POST /v1/games/flight_chess/matches", router.authenticated(http.HandlerFunc(router.createFlightChessMatch)))
 	mux.Handle("GET /v1/games/gomoku/status", router.authenticated(http.HandlerFunc(router.gomokuStatus)))
+	mux.Handle("GET /v1/games/reversi/status", router.authenticated(http.HandlerFunc(router.reversiStatus)))
 	mux.Handle("GET /v1/games/gomoku/opponents", router.authenticated(http.HandlerFunc(router.gomokuOpponents)))
+	mux.Handle("GET /v1/games/reversi/opponents", router.authenticated(http.HandlerFunc(router.reversiOpponents)))
 	mux.Handle("GET /v1/games/gomoku/history", router.authenticated(http.HandlerFunc(router.gomokuHistory)))
+	mux.Handle("GET /v1/games/reversi/history", router.authenticated(http.HandlerFunc(router.reversiHistory)))
 	mux.Handle("POST /v1/games/gomoku/matches", router.authenticated(http.HandlerFunc(router.createGomokuMatch)))
+	mux.Handle("POST /v1/games/reversi/matches", router.authenticated(http.HandlerFunc(router.createReversiMatch)))
 	mux.Handle("GET /v1/games/rps/status", router.authenticated(http.HandlerFunc(router.rpsStatus)))
 	mux.Handle("GET /v1/games/rps/opponents", router.authenticated(http.HandlerFunc(router.rpsOpponents)))
 	mux.Handle("GET /v1/games/rps/history", router.authenticated(http.HandlerFunc(router.rpsHistory)))
@@ -118,9 +127,13 @@ func NewRouter(config RouterConfig) (http.Handler, error) {
 	registerMethodFallback(mux, "/v1/games/flight_chess/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/flight_chess/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/games/gomoku/status", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/reversi/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/opponents", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/reversi/opponents", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/history", http.MethodGet)
+	registerMethodFallback(mux, "/v1/games/reversi/history", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/gomoku/matches", http.MethodPost)
+	registerMethodFallback(mux, "/v1/games/reversi/matches", http.MethodPost)
 	registerMethodFallback(mux, "/v1/games/rps/status", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/rps/opponents", http.MethodGet)
 	registerMethodFallback(mux, "/v1/games/rps/history", http.MethodGet)
@@ -328,7 +341,7 @@ func requestAcceptsJSONBody(request *http.Request) bool {
 		return false
 	}
 	switch request.URL.Path {
-	case "/v1/battleship/matches", "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
+	case "/v1/battleship/matches", "/v1/auth/transfer", "/v1/auth/transfer/redeem", "/v1/games/reversi/matches", "/v1/scratch/collections/me", "/v1/auth/register", "/v1/auth/refresh", "/v1/games/chinese_checkers/matches", "/v1/games/flight_chess/matches", "/v1/games/gomoku/matches", "/v1/games/rps/matches":
 		return true
 	}
 	if strings.HasPrefix(request.URL.Path, "/v1/battleship/matches/") && strings.HasSuffix(request.URL.Path, "/actions") {
@@ -396,7 +409,8 @@ func (router *router) authenticated(next http.Handler) http.Handler {
 			writeServiceError(writer, authErr)
 			return
 		}
-		contextWithUser := context.WithValue(request.Context(), authenticatedUserContextKey{}, user)
+		identity, _ := router.auth.ParseAccess(credential)
+		contextWithUser := context.WithValue(auth.WithRequestIdentity(request.Context(), identity), authenticatedUserContextKey{}, user)
 		next.ServeHTTP(writer, request.WithContext(contextWithUser))
 	})
 }

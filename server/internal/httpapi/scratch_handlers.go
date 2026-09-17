@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"github.com/google/uuid"
+	"me.zqydev/gamebox/server/internal/auth"
 	"me.zqydev/gamebox/server/internal/scratch"
 	"net/http"
 	"net/url"
@@ -72,6 +73,10 @@ func (router *router) publishScratchCollection(w http.ResponseWriter, r *http.Re
 		return
 	}
 	err := router.scratch.Publish(r.Context(), user.ID, body.Counts)
+	if errors.Is(err, auth.ErrUnauthorized) {
+		writeServiceError(w, err)
+		return
+	}
 	if errors.Is(err, scratch.ErrInvalid) {
 		writeAPIError(w, 400, "invalid_request")
 		return

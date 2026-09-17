@@ -53,6 +53,7 @@ func (session Session) GoString() string {
 // AccessIdentity is the authenticated identity carried by a valid access JWT.
 type AccessIdentity struct {
 	UserID string
+	Epoch  string
 }
 
 // Issue creates a new access/refresh pair for an enabled user.
@@ -72,10 +73,11 @@ func (service *Service) Issue(ctx context.Context, userID string) (_ Session, er
 	}()
 
 	var user users.User
+	var epoch string
 	queryErr := transaction.QueryRowContext(ctx, `
-SELECT id, nickname
+SELECT id, nickname, auth_epoch
 FROM users
-WHERE id = ? AND enabled = 1`, userID).Scan(&user.ID, &user.Nickname)
+WHERE id = ? AND enabled = 1`, userID).Scan(&user.ID, &user.Nickname, &epoch)
 	if errors.Is(queryErr, sql.ErrNoRows) {
 		return Session{}, ErrUnauthorized
 	}
@@ -83,7 +85,7 @@ WHERE id = ? AND enabled = 1`, userID).Scan(&user.ID, &user.Nickname)
 		return Session{}, databaseError(ctx, queryErr)
 	}
 
-	session, materialErr := service.newSession(user)
+	session, materialErr := service.newSessionAt(user, service.clock.Now().UTC().Unix(), epoch)
 	if materialErr != nil {
 		return Session{}, materialErr
 	}
@@ -126,17 +128,23 @@ func (service *Service) Refresh(ctx context.Context, rawRefreshToken string) (_ 
 	}()
 
 	var user users.User
+	var epoch string
+	var revokedReason sql.NullString
 	queryErr := transaction.QueryRowContext(ctx, `
-SELECT refresh_tokens.user_id, users.nickname
+SELECT refresh_tokens.user_id, users.nickname, users.auth_epoch,refresh_tokens.revoked_reason
 FROM refresh_tokens
 JOIN users ON users.id = refresh_tokens.user_id
-WHERE refresh_tokens.token_hash = ?`, refreshHash).Scan(&user.ID, &user.Nickname)
+WHERE refresh_tokens.token_hash = ?`, refreshHash).Scan(&user.ID, &user.Nickname, &epoch, &revokedReason)
 	if errors.Is(queryErr, sql.ErrNoRows) {
 		return Session{}, ErrUnauthorized
 	}
 	if queryErr != nil {
 		return Session{}, databaseError(ctx, queryErr)
 	}
+	if revokedReason.String == "transfer" {
+		return Session{}, ErrSessionTransferred
+	}
+
 	nowUnix := service.clock.Now().UTC().Unix()
 	result, updateErr := transaction.ExecContext(ctx, `
 UPDATE refresh_tokens
@@ -161,7 +169,7 @@ WHERE token_hash = ?
 		return Session{}, ErrUnauthorized
 	}
 
-	session, materialErr := service.newSessionAt(user, nowUnix)
+	session, materialErr := service.newSessionAt(user, nowUnix, epoch)
 	if materialErr != nil {
 		return Session{}, materialErr
 	}
@@ -193,7 +201,7 @@ func (service *Service) newSession(user users.User) (Session, error) {
 	return service.newSessionAt(user, service.clock.Now().UTC().Unix())
 }
 
-func (service *Service) newSessionAt(user users.User, nowUnix int64) (Session, error) {
+func (service *Service) newSessionAt(user users.User, nowUnix int64, epochs ...string) (Session, error) {
 	refreshToken, tokenErr := randomToken(refreshTokenEntropyBytes, service.entropy)
 	if tokenErr != nil {
 		return Session{}, ErrInternal
@@ -205,6 +213,9 @@ func (service *Service) newSessionAt(user users.User, nowUnix int64) (Session, e
 		Subject:   user.ID,
 		IssuedAt:  jwt.NewNumericDate(issuedAt),
 		ExpiresAt: jwt.NewNumericDate(accessExpiresAt),
+	}
+	if len(epochs) != 0 {
+		claims.ID = epochs[0]
 	}
 	accessToken, signErr := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(service.jwtSecret)
 	if signErr != nil {
@@ -255,7 +266,7 @@ func (service *Service) ParseAccess(rawAccessToken string) (AccessIdentity, erro
 	if claims.ExpiresAt.Unix()-claims.IssuedAt.Unix() != int64(accessTokenLifetime/time.Second) {
 		return AccessIdentity{}, ErrUnauthorized
 	}
-	return AccessIdentity{UserID: claims.Subject}, nil
+	return AccessIdentity{UserID: claims.Subject, Epoch: claims.ID}, nil
 }
 
 const maximumJWTJSONDepth = 32

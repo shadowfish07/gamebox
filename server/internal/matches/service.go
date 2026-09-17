@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"me.zqydev/gamebox/server/internal/auth"
 	"reflect"
 	"slices"
 	"sort"
@@ -34,6 +35,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 	"me.zqydev/gamebox/server/internal/users"
@@ -131,6 +133,7 @@ func (request CredentialRequest) GoString() string { return request.String() }
 // ConnectionCredential is returned only after ticket consumption/token
 // issuance or resume sliding-expiry has committed.
 type ConnectionCredential struct {
+	AuthEpoch       string
 	UserID          string
 	MatchID         string
 	GameID          string
@@ -700,11 +703,16 @@ WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?`, nowMillis, expiresM
 			return ConnectionCredential{}, ErrResumeExpired
 		}
 	}
+	var authEpoch string
+	if err := transaction.QueryRowContext(ctx, `SELECT auth_epoch FROM users WHERE id=?`, userID).Scan(&authEpoch); err != nil {
+		return ConnectionCredential{}, ErrInternal
+	}
+
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return ConnectionCredential{}, matchDatabaseError(ctx, commitErr)
 	}
 	return ConnectionCredential{
-		UserID: userID, MatchID: matchID, GameID: match.GameID,
+		AuthEpoch: authEpoch, UserID: userID, MatchID: matchID, GameID: match.GameID,
 		ResumeToken: resumePlaintext, ResumeExpiresAt: time.UnixMilli(expiresMillis).UTC(),
 	}, nil
 }
@@ -906,8 +914,8 @@ WHERE id=?`, matchID).Scan(&gameID, &status, &revision)
 	if queryErr := transaction.QueryRowContext(ctx, `
 SELECT EXISTS(
   SELECT 1 FROM match_events
-  WHERE match_id=? AND event_type IN (?,?,?,?,?,?)
-)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed, flightchess.RollAccepted, flightchess.MoveAccepted).Scan(&gameplayEvents); queryErr != nil {
+  WHERE match_id=? AND event_type IN (?,?,?,?,?,?,?)
+)`, matchID, chinesecheckers.MoveAccepted, gomoku.MoveAccepted, rps.ChoiceLocked, rps.RoundRevealed, flightchess.RollAccepted, flightchess.MoveAccepted, reversi.MoveAccepted).Scan(&gameplayEvents); queryErr != nil {
 		return Event{}, matchDatabaseError(ctx, queryErr)
 	}
 	if gameplayEvents != 0 {
@@ -1035,9 +1043,17 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		_ = transaction.release()
 	}()
 
+	if credential, ok := ctx.Value(connectionCredentialKey{}).(connectionCredential); ok && !validConnectionCredential(ctx, transaction.Tx, credential) {
+		return Event{}, Snapshot{}, ErrResumeExpired
+	}
+
 	match, players, loadErr := loadMatchAndPlayers(ctx, transaction.Tx, request.MatchID)
 	if loadErr != nil {
 		return Event{}, Snapshot{}, loadErr
+	}
+	// Direct service callers must respect the same game binding as WebSocket clients.
+	if !strings.HasPrefix(request.Type, match.GameID+".") {
+		return Event{}, Snapshot{}, ErrInvalidRequest
 	}
 	template, ok := service.games.Lookup(match.GameID)
 	if !ok || template.PlayerLimit() != 2 {
@@ -1204,12 +1220,12 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			nextGame = cloneGameSnapshot(current.Game)
 			terminal, terminalStatus = true, StatusAbandoned
 		}
-	case gomoku.MoveRequested:
-		acceptedMoves := current.Game.Revision
-		expectedColor := ColorBlack
-		if acceptedMoves%2 == 1 {
-			expectedColor = ColorWhite
+	case gomoku.MoveRequested, reversi.MoveRequested:
+		summary, summaryErr := readGameStateSummary(current.Game)
+		if summaryErr != nil {
+			return Event{}, Snapshot{}, ErrInternal
 		}
+		expectedColor := Color(summary.NextColor)
 		if actor.Color != expectedColor {
 			return Event{}, Snapshot{}, gomoku.ErrNotYourTurn
 		}
@@ -1228,7 +1244,7 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			return Event{}, Snapshot{}, ErrInternal
 		}
 		if outcome.Status == StatusFinished {
-			if outcome.Result == nil || (*outcome.Result != ResultFive && *outcome.Result != ResultDraw) {
+			if outcome.Result == nil || (*outcome.Result != ResultFive && *outcome.Result != ResultDraw && !(match.GameID == reversi.GameID && *outcome.Result == ResultMajority)) {
 				return Event{}, Snapshot{}, ErrInternal
 			}
 			terminal = true
@@ -1264,7 +1280,7 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 			result = cloneStringPointer(outcome.Result)
 			winner = cloneStringPointer(outcome.WinnerUserID)
 		}
-	case protocol.TypeGomokuResignRequested:
+	case protocol.TypeGomokuResignRequested, protocol.TypeReversiResignRequested:
 		if current.Game.Revision == 0 {
 			return Event{}, Snapshot{}, ErrInvalidRequest
 		}
@@ -1275,7 +1291,7 @@ func (service *Service) ApplyAction(ctx context.Context, request ActionRequest) 
 		}
 		gameEvent = games.Event{
 			Revision: nextRevision,
-			Type:     protocol.TypeGomokuResigned,
+			Type:     resignedEventType(match.GameID),
 			ActorID:  actor.UserID,
 			Payload:  append(json.RawMessage(nil), payload...),
 		}
@@ -1793,13 +1809,13 @@ func validateActionRequest(ctx context.Context, request ActionRequest) (actionSe
 			return actionSemantics{}, ErrInvalidRequest
 		}
 		return actionSemantics{pieceIndex: pieceIndex}, nil
-	case gomoku.MoveRequested:
+	case gomoku.MoveRequested, reversi.MoveRequested:
 		x, y, err := decodeMoveRequest(request.Payload)
 		if err != nil {
 			return actionSemantics{}, ErrInvalidRequest
 		}
 		return actionSemantics{x: x, y: y}, nil
-	case protocol.TypeGomokuResignRequested:
+	case protocol.TypeGomokuResignRequested, protocol.TypeReversiResignRequested:
 		fields, err := strictJSONObject(request.Payload, map[string]struct{}{})
 		if err != nil || len(fields) != 0 {
 			return actionSemantics{}, ErrInvalidRequest
@@ -2043,7 +2059,7 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 	if match.GameID == flightchess.GameID {
 		return service.rebuildFlightChessSnapshot(ctx, transaction, match, players, rules, events)
 	}
-	if match.GameID != gomoku.GameID {
+	if match.GameID != gomoku.GameID && match.GameID != reversi.GameID {
 		return Snapshot{}, ErrInternal
 	}
 	black, white, ok := coloredPlayers(players)
@@ -2057,7 +2073,7 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 			return Snapshot{}, ErrInternal
 		}
 		switch event.Type {
-		case gomoku.MoveAccepted:
+		case gomoku.MoveAccepted, reversi.MoveAccepted:
 			if terminalType != "" || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
 				return Snapshot{}, ErrInternal
 			}
@@ -2066,8 +2082,18 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 				return Snapshot{}, ErrInternal
 			}
 			expected := black
-			if len(accepted)%2 == 1 {
+			if match.GameID == reversi.GameID {
+				if move.color == "white" {
+					expected = white
+				}
+				if event.Type != reversi.MoveAccepted {
+					return Snapshot{}, ErrInternal
+				}
+			} else if len(accepted)%2 == 1 {
 				expected = white
+			}
+			if match.GameID == gomoku.GameID && event.Type != gomoku.MoveAccepted {
+				return Snapshot{}, ErrInternal
 			}
 			if expected.UserID != *event.ActorUserID || string(expected.Color) != move.color {
 				return Snapshot{}, ErrInternal
@@ -2076,7 +2102,7 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 				Revision: event.Revision, Type: event.Type, ActorID: *event.ActorUserID,
 				Payload: append(json.RawMessage(nil), event.Payload...),
 			})
-		case protocol.TypeGomokuResigned:
+		case protocol.TypeGomokuResigned, protocol.TypeReversiResigned:
 			if index != len(events)-1 || event.ActionID == nil || !canonicalUUID(*event.ActionID) || event.ActorUserID == nil {
 				return Snapshot{}, ErrInternal
 			}
@@ -2127,7 +2153,7 @@ func (service *Service) rebuildSnapshot(ctx context.Context, transaction *sql.Tx
 		if len(accepted)%2 == 1 {
 			wantNext = string(ColorWhite)
 		}
-		if summary.NextColor != wantNext {
+		if match.GameID == gomoku.GameID && summary.NextColor != wantNext {
 			return Snapshot{}, ErrInternal
 		}
 	}
@@ -2430,8 +2456,8 @@ func validateLifecycle(match Match, game gameStateSummary, terminalType string, 
 			return ErrInternal
 		}
 		switch *match.Result {
-		case ResultFive:
-			if terminalType != "" || game.Status != StatusFinished || game.Result == nil || *game.Result != ResultFive ||
+		case ResultFive, ResultMajority:
+			if terminalType != "" || game.Status != StatusFinished || game.Result == nil || *game.Result != *match.Result || (*match.Result == ResultMajority && match.GameID != reversi.GameID) ||
 				match.WinnerUserID == nil || game.WinnerUserID == nil || *match.WinnerUserID != *game.WinnerUserID || !playerMember(players, *match.WinnerUserID) {
 				return ErrInternal
 			}
@@ -2445,7 +2471,7 @@ func validateLifecycle(match Match, game gameStateSummary, terminalType string, 
 				return ErrInternal
 			}
 		case ResultResignation:
-			expectedTerminal := protocol.TypeGomokuResigned
+			expectedTerminal := resignedEventType(match.GameID)
 			if match.GameID == chinesecheckers.GameID {
 				expectedTerminal = protocol.TypeChineseCheckersResigned
 			} else if match.GameID == flightchess.GameID {
@@ -2640,8 +2666,8 @@ func committedActionMatches(event Event, request ActionRequest, semantics action
 			return false, ErrInternal
 		}
 		return true, nil
-	case gomoku.MoveRequested:
-		if event.Type != gomoku.MoveAccepted {
+	case gomoku.MoveRequested, reversi.MoveRequested:
+		if event.Type != acceptedMoveType(request.Type) {
 			return false, nil
 		}
 		move, err := decodeAcceptedMove(event.Payload)
@@ -2653,8 +2679,8 @@ func committedActionMatches(event Event, request ActionRequest, semantics action
 			return false, ErrInternal
 		}
 		return move.x == semantics.x && move.y == semantics.y, nil
-	case protocol.TypeGomokuResignRequested:
-		if event.Type != protocol.TypeGomokuResigned {
+	case protocol.TypeGomokuResignRequested, protocol.TypeReversiResignRequested:
+		if event.Type != resignedEventType(strings.Split(request.Type, ".")[0]) {
 			return false, nil
 		}
 		payload, err := decodeResignedPayload(event.Payload)
@@ -2823,7 +2849,7 @@ func decodeResignedPayload(payload json.RawMessage) (resignedPayload, error) {
 }
 
 func validateProducedMove(event games.Event, snapshot games.Snapshot, request ActionRequest, semantics actionSemantics, color Color, revision int64) error {
-	if event.Revision != revision || snapshot.Revision != revision || event.Type != gomoku.MoveAccepted || event.ActorID != request.ActorUserID {
+	if event.Revision != revision || snapshot.Revision != revision || event.Type != acceptedMoveType(request.Type) || event.ActorID != request.ActorUserID {
 		return ErrInternal
 	}
 	move, err := decodeAcceptedMove(event.Payload)
@@ -2956,7 +2982,7 @@ func safeActionRuleError(err error) error {
 		return flightchess.ErrInvalidPhase
 	case errors.Is(err, flightchess.ErrRandomUnavailable):
 		return ErrInternal
-	case errors.Is(err, gomoku.ErrNotYourTurn):
+	case errors.Is(err, gomoku.ErrNotYourTurn), errors.Is(err, reversi.ErrNotYourTurn):
 		return gomoku.ErrNotYourTurn
 	case errors.Is(err, gomoku.ErrCellOccupied):
 		return gomoku.ErrCellOccupied
@@ -3281,6 +3307,13 @@ func (service *Service) beginWriteTransaction(ctx context.Context) (*writeTransa
 		}
 		transaction, err := connection.BeginTx(operationContext, nil)
 		if err == nil {
+			if guardErr := auth.GuardTransaction(ctx, transaction); guardErr != nil {
+				_ = transaction.Rollback()
+				failed := &writeTransaction{connection: connection, originalBusyTimeout: originalBusyTimeout}
+				_ = failed.release()
+				cancel()
+				return nil, guardErr
+			}
 			return &writeTransaction{
 				Tx:                  transaction,
 				connection:          connection,
@@ -3374,4 +3407,17 @@ func matchDatabaseError(ctx context.Context, err error) error {
 		return context.DeadlineExceeded
 	}
 	return diagnostics.Wrap(ErrInternal, err)
+}
+
+func acceptedMoveType(requestType string) string {
+	if requestType == reversi.MoveRequested {
+		return reversi.MoveAccepted
+	}
+	return gomoku.MoveAccepted
+}
+func resignedEventType(gameID string) string {
+	if gameID == reversi.GameID {
+		return protocol.TypeReversiResigned
+	}
+	return protocol.TypeGomokuResigned
 }

@@ -20,8 +20,8 @@ void main() {
   final now = DateTime.utc(2026, 8, 20, 12);
 
   test('catalog exposes immutable built-in game descriptors', () {
-    expect(gameCatalog, hasLength(5));
-    expect(gameCatalog.last.id, 'battleship');
+    expect(gameCatalog, hasLength(6));
+    expect(gameCatalog.map((game) => game.id), contains('battleship'));
     expect(
       gameCatalog.first,
       const GameDescriptor(id: 'gomoku', title: '五子棋', playerCount: 2),
@@ -35,7 +35,7 @@ void main() {
       const GameDescriptor(id: 'flight_chess', title: '飞行棋', playerCount: 2),
     );
     expect(
-      gameCatalog[3],
+      gameCatalog[4],
       const GameDescriptor(id: 'rps', title: '石头剪刀布', playerCount: 2),
     );
     expect(
@@ -43,6 +43,13 @@ void main() {
         const GameDescriptor(id: 'other', title: '其他', playerCount: 2),
       ),
       throwsUnsupportedError,
+    );
+  });
+
+  test('catalog includes Reversi', () {
+    expect(
+      gameCatalog[3],
+      const GameDescriptor(id: 'reversi', title: '黑白棋', playerCount: 2),
     );
   });
 
@@ -92,6 +99,40 @@ void main() {
       ]);
     },
   );
+
+  test('Reversi API binds every route and response to its game id', () async {
+    final requests = <String>[];
+    final fixture = await _ApiFixture.create(now, (request) async {
+      requests.add('${request.method} ${request.url.path}');
+      return switch (request.url.path) {
+        '/v1/games/reversi/status' => _json({'state': 'idle'}),
+        '/v1/games/reversi/opponents' => _json({'opponents': []}),
+        '/v1/games/reversi/matches' => _json({
+          'match': {'id': matchId, 'gameId': 'reversi', 'state': 'active'},
+        }, status: 201),
+        '/v1/matches/$matchId/launch-ticket' => _json({
+          'matchId': matchId,
+          'gameId': 'reversi',
+          'launchTicket': 'launch-ticket',
+          'expiresAt': now
+              .add(const Duration(minutes: 1))
+              .millisecondsSinceEpoch,
+        }, status: 201),
+        _ => throw StateError('unexpected route ${request.url.path}'),
+      };
+    }, gameId: 'reversi');
+
+    expect(await fixture.api.fetchStatus(), isA<GomokuIdleStatus>());
+    expect(await fixture.api.fetchOpponents(), isEmpty);
+    expect((await fixture.api.createMatch(bobId)).gameId, 'reversi');
+    expect((await fixture.api.createLaunchTicket(matchId)).gameId, 'reversi');
+    expect(requests, [
+      'GET /v1/games/reversi/status',
+      'GET /v1/games/reversi/opponents',
+      'POST /v1/games/reversi/matches',
+      'POST /v1/matches/$matchId/launch-ticket',
+    ]);
+  });
 
   test('status decodes the exact idle and active unions', () async {
     var calls = 0;

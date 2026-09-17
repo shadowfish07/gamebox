@@ -1,3 +1,7 @@
+import '../reversi/reversi_models.dart';
+import '../auth/device_transfer.dart';
+import '../auth/device_transfer_page.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_release_updater/flutter_release_updater.dart';
 
@@ -33,11 +37,14 @@ final class HomePage extends StatefulWidget {
     this.rpsController,
     this.chineseCheckersController,
     this.flightChessController,
+    this.reversiController,
     this.updateController,
     this.scratchApi,
     this.battleshipApi,
+    this.transfer,
   });
 
+  final DeviceTransfer? transfer;
   final ScratchSocialApi? scratchApi;
   final BattleshipApi? battleshipApi;
   final HomeController controller;
@@ -47,6 +54,7 @@ final class HomePage extends StatefulWidget {
   final RpsController? rpsController;
   final HomeController? chineseCheckersController;
   final HomeController? flightChessController;
+  final HomeController? reversiController;
   final UpdateController? updateController;
 
   @override
@@ -64,7 +72,9 @@ final class _HomePageState extends State<HomePage> {
     widget.chineseCheckersController?.addListener(_changed);
     widget.chineseCheckersController?.start();
     widget.flightChessController?.addListener(_changed);
+    widget.reversiController?.addListener(_changed);
     widget.flightChessController?.start();
+    widget.reversiController?.start();
   }
 
   @override
@@ -91,6 +101,11 @@ final class _HomePageState extends State<HomePage> {
       widget.flightChessController?.addListener(_changed);
       widget.flightChessController?.start();
     }
+    if (oldWidget.reversiController != widget.reversiController) {
+      oldWidget.reversiController?.removeListener(_changed);
+      widget.reversiController?.addListener(_changed);
+      widget.reversiController?.start();
+    }
   }
 
   void _changed() {
@@ -103,6 +118,7 @@ final class _HomePageState extends State<HomePage> {
     widget.rpsController?.removeListener(_changed);
     widget.chineseCheckersController?.removeListener(_changed);
     widget.flightChessController?.removeListener(_changed);
+    widget.reversiController?.removeListener(_changed);
     super.dispose();
   }
 
@@ -195,6 +211,28 @@ final class _HomePageState extends State<HomePage> {
 
   Future<void> _continueFlightChessMatch() async {
     final error = await widget.flightChessController?.openActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _chooseReversiOpponent() async {
+    final controller = widget.reversiController;
+    if (controller == null) return;
+    final error = await Navigator.of(context).push<ApiError?>(
+      MaterialPageRoute<ApiError?>(
+        builder: (_) => OpponentPage(
+          controller: controller,
+          currentUserId: widget.currentUserId,
+          pageTitle: '选择黑白棋对手',
+          semanticPrefix: 'reversi-',
+          gameTitle: '黑白棋',
+        ),
+      ),
+    );
+    if (mounted && error != null) _showError(error);
+  }
+
+  Future<void> _continueReversiMatch() async {
+    final error = await widget.reversiController?.openActiveMatch();
     if (mounted && error != null) _showError(error);
   }
 
@@ -296,6 +334,29 @@ final class _HomePageState extends State<HomePage> {
     if (mounted && error != null) _showError(error);
   }
 
+  Future<void> _cancelReversiMatch() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('取消这局尚未开始的黑白棋对局？'),
+        content: const Text('取消后，双方将返回空闲状态。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('保留对局'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('取消对局'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final error = await widget.reversiController?.cancelActiveMatch();
+    if (mounted && error != null) _showError(error);
+  }
+
   void _showError(ApiError error) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -310,6 +371,20 @@ final class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Gamebox'),
         actions: [
+          if (widget.transfer case final transfer?)
+            PopupMenuButton<String>(
+              key: const Key('account-menu'),
+              tooltip: '账号',
+              onSelected: (_) => Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      DeviceTransferPage(transfer: transfer, sending: true),
+                ),
+              ),
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'transfer', child: Text('换设备')),
+              ],
+            ),
           if (widget.updateController case final controller?)
             UpdateActionButton(controller: controller),
         ],
@@ -353,6 +428,9 @@ final class _HomePageState extends State<HomePage> {
           if (widget.flightChessController
               case final HomeController flightChessController)
             _buildFlightChess(flightChessController),
+          if (widget.reversiController
+              case final HomeController reversiController)
+            _buildReversi(reversiController),
           if (widget.rpsController case final RpsController rpsController)
             _buildRps(rpsController),
         ],
@@ -481,6 +559,37 @@ final class _HomePageState extends State<HomePage> {
       onContinue: _continueFlightChessMatch,
       onCancel: _cancelFlightChessMatch,
       onOpenHistory: () => _openHistory(MatchHistoryGame.flightChess),
+    );
+  }
+
+  Widget _buildReversi(HomeController controller) {
+    if (controller.status == null && controller.isLoading) {
+      return const GameboxAsyncPanel(
+        icon: Icons.contrast,
+        title: '正在加载黑白棋',
+        message: '请稍候，正在获取最新对局状态。',
+        isLoading: true,
+      );
+    }
+    if (controller.status == null && controller.lastError != null) {
+      return _HomeError(
+        message: controller.lastError!.message,
+        onRetry: controller.refresh,
+        retryIdentifier: 'reversi-retry-home',
+        historyGame: MatchHistoryGame.reversi,
+        onOpenHistory: () => _openHistory(MatchHistoryGame.reversi),
+      );
+    }
+    final status = controller.status;
+    if (status == null) return const SizedBox.shrink();
+    return _ReversiCard(
+      status: status,
+      isLaunching: controller.isLaunching,
+      isMutating: controller.isMutating,
+      onChoose: _chooseReversiOpponent,
+      onContinue: _continueReversiMatch,
+      onCancel: _cancelReversiMatch,
+      onOpenHistory: () => _openHistory(MatchHistoryGame.reversi),
     );
   }
 }
@@ -851,6 +960,94 @@ final class _FlightChessCard extends StatelessWidget {
                 onContinue: onContinue,
                 onCancel: onCancel,
                 historyGame: MatchHistoryGame.flightChess,
+                onOpenHistory: onOpenHistory,
+              ),
+            },
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _ReversiCard extends StatelessWidget {
+  const _ReversiCard({
+    required this.status,
+    required this.isLaunching,
+    required this.isMutating,
+    required this.onChoose,
+    required this.onContinue,
+    required this.onCancel,
+    required this.onOpenHistory,
+  });
+
+  final GomokuStatus status;
+  final bool isLaunching;
+  final bool isMutating;
+  final VoidCallback onChoose;
+  final VoidCallback onContinue;
+  final VoidCallback onCancel;
+  final VoidCallback onOpenHistory;
+
+  @override
+  Widget build(BuildContext context) {
+    final descriptor = gameCatalog.firstWhere(
+      (game) => game.id == reversiGameId,
+    );
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MergeSemantics(
+              key: const Key('game-reversi'),
+              child: Semantics(
+                identifier: 'game-reversi',
+                header: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      descriptor.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    Text('${descriptor.playerCount} 人 · 翻转争夺'),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              status is GomokuIdleStatus ? '可开始新对局' : '对局进行中',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
+            switch (status) {
+              GomokuIdleStatus _ => _PrimaryAndHistoryActions(
+                game: MatchHistoryGame.reversi,
+                onOpenHistory: onOpenHistory,
+                primary: _ActionButton(
+                  semanticKey: const Key('reversi-choose-opponent'),
+                  semanticLabel: 'reversi-choose-opponent',
+                  onPressed: isMutating ? null : onChoose,
+                  label: '选择对手',
+                  pendingLabel: '正在创建对局',
+                  isPending: isMutating,
+                ),
+              ),
+              GomokuActiveStatus active => _ActiveMatchActions(
+                active: active,
+                sideLabel:
+                    '你的阵营：${active.match.color == GomokuColor.black ? '黑方 · 先手' : '白方 · 后手'}',
+                semanticPrefix: 'reversi-',
+                showMoveCount: false,
+                isLaunching: isLaunching,
+                isMutating: isMutating,
+                onContinue: onContinue,
+                onCancel: onCancel,
+                historyGame: MatchHistoryGame.reversi,
                 onOpenHistory: onOpenHistory,
               ),
             },

@@ -14,6 +14,9 @@ import (
 var ErrInvalidConfiguration = errors.New("invalid http api configuration")
 
 var errorMessages = map[string]string{
+	"session_transferred":   "账号已迁移至其他设备",
+	"transfer_invalid":      "迁移码无效、已过期或已使用",
+	"transfer_limited":      "尝试次数过多，请稍后再试",
 	"invalid_request":       "请求无效",
 	"unauthorized":          "身份验证失败",
 	"invite_invalid":        "邀请码无效或已使用",
@@ -54,6 +57,12 @@ func writeAPIError(writer http.ResponseWriter, status int, code string) {
 func writeServiceError(writer http.ResponseWriter, err error) {
 	status, code := http.StatusInternalServerError, "internal_error"
 	switch {
+	case errors.Is(err, auth.ErrSessionTransferred):
+		status, code = http.StatusUnauthorized, "session_transferred"
+	case errors.Is(err, auth.ErrTransferInvalid):
+		status, code = http.StatusUnprocessableEntity, "transfer_invalid"
+	case errors.Is(err, auth.ErrTransferLimited):
+		status, code = http.StatusTooManyRequests, "transfer_limited"
 	case errors.Is(err, auth.ErrUnauthorized):
 		status, code = http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, auth.ErrInviteInvalid):

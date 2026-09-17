@@ -32,9 +32,13 @@ const (
 	TypeFlightChessMoveAccepted        = "flight_chess.move.accepted"
 	TypeFlightChessResignRequested     = "flight_chess.resign.requested"
 	TypeFlightChessResigned            = "flight_chess.resigned"
+	TypeReversiMoveRequested           = "reversi.move.requested"
 	TypeGomokuMoveRequested            = "gomoku.move.requested"
+	TypeReversiMoveAccepted            = "reversi.move.accepted"
 	TypeGomokuMoveAccepted             = "gomoku.move.accepted"
+	TypeReversiResignRequested         = "reversi.resign.requested"
 	TypeGomokuResignRequested          = "gomoku.resign.requested"
+	TypeReversiResigned                = "reversi.resigned"
 	TypeGomokuResigned                 = "gomoku.resigned"
 	TypeRpsChoiceRequested             = "rps.choice.requested"
 	TypeRpsChoiceLocked                = "rps.choice.locked"
@@ -66,9 +70,13 @@ var knownTypes = map[string]struct{}{
 	TypeFlightChessMoveAccepted:        {},
 	TypeFlightChessResignRequested:     {},
 	TypeFlightChessResigned:            {},
+	TypeReversiMoveRequested:           {},
 	TypeGomokuMoveRequested:            {},
+	TypeReversiMoveAccepted:            {},
 	TypeGomokuMoveAccepted:             {},
+	TypeReversiResignRequested:         {},
 	TypeGomokuResignRequested:          {},
+	TypeReversiResigned:                {},
 	TypeGomokuResigned:                 {},
 	TypeRpsChoiceRequested:             {},
 	TypeRpsChoiceLocked:                {},
@@ -81,7 +89,7 @@ func isClientAction(messageType string) bool {
 	switch messageType {
 	case TypeChineseCheckersMoveRequested, TypeChineseCheckersResignRequested,
 		TypeFlightChessRollRequested, TypeFlightChessMoveRequested, TypeFlightChessResignRequested,
-		TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
+		TypeReversiMoveRequested, TypeReversiResignRequested, TypeGomokuMoveRequested, TypeGomokuResignRequested, TypeRpsChoiceRequested, TypeRpsResignRequested:
 		return true
 	default:
 		return false
@@ -164,7 +172,7 @@ func validateClientMessage(envelope Envelope) error {
 			return protocolFailure(codeInvalidEnvelope)
 		}
 		return validateClientBinding(envelope, false)
-	case TypeGomokuMoveRequested:
+	case TypeGomokuMoveRequested, TypeReversiMoveRequested:
 		if err := validateClientBinding(envelope, true); err != nil {
 			return err
 		}
@@ -219,7 +227,7 @@ func validateClientMessage(envelope Envelope) error {
 			return protocolFailure(codeInvalidEnvelope)
 		}
 		return nil
-	case TypeGomokuResignRequested:
+	case TypeGomokuResignRequested, TypeReversiResignRequested:
 		if err := validateClientBinding(envelope, true); err != nil {
 			return err
 		}
@@ -262,12 +270,14 @@ func validateClientBinding(envelope Envelope, action bool) error {
 		expectedGame = "chinese_checkers"
 	case TypeFlightChessRollRequested, TypeFlightChessMoveRequested, TypeFlightChessResignRequested:
 		expectedGame = "flight_chess"
+	case TypeReversiMoveRequested, TypeReversiResignRequested:
+		expectedGame = "reversi"
 	case TypeGomokuMoveRequested, TypeGomokuResignRequested:
 		expectedGame = "gomoku"
 	case TypeRpsChoiceRequested, TypeRpsResignRequested:
 		expectedGame = "rps"
 	}
-	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "chinese_checkers" && envelope.GameID != "flight_chess" && envelope.GameID != "gomoku" && envelope.GameID != "rps" || !canonicalUUID(envelope.MatchID) {
+	if expectedGame != "" && envelope.GameID != expectedGame || expectedGame == "" && envelope.GameID != "chinese_checkers" && envelope.GameID != "flight_chess" && envelope.GameID != "gomoku" && envelope.GameID != "rps" && envelope.GameID != "reversi" || !canonicalUUID(envelope.MatchID) {
 		return protocolFailure(codeInvalidEnvelope)
 	}
 	if action && !canonicalUUID(envelope.ActionID) {

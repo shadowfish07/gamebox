@@ -18,6 +18,7 @@ import (
 	"me.zqydev/gamebox/server/internal/games/chinesecheckers"
 	"me.zqydev/gamebox/server/internal/games/flightchess"
 	"me.zqydev/gamebox/server/internal/games/gomoku"
+	"me.zqydev/gamebox/server/internal/games/reversi"
 	"me.zqydev/gamebox/server/internal/games/rps"
 	"me.zqydev/gamebox/server/internal/protocol"
 )
@@ -76,6 +77,7 @@ const (
 )
 
 type hubConnection struct {
+	authEpoch            string
 	hub                  *Hub
 	transport            *websocket.Conn
 	ctx                  context.Context
@@ -301,9 +303,10 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		_ = transport.Close(websocket.StatusInternalError, "internal error")
 		return
 	}
+	authEpoch := credential.AuthEpoch
 	connectionContext, cancelConnection := context.WithCancel(context.Background())
 	connection := &hubConnection{
-		hub: hub, transport: transport, ctx: connectionContext, cancel: cancelConnection,
+		authEpoch: authEpoch, hub: hub, transport: transport, ctx: connectionContext, cancel: cancelConnection,
 		done: make(chan struct{}), send: make(chan []byte, webSocketSendQueueSize),
 		matchID: credential.MatchID, gameID: credential.GameID, userID: credential.UserID, id: connectionID.String(),
 		pending: make([]queuedMessage, 0, 4), presence: make(map[string]bool),
@@ -319,6 +322,14 @@ func (hub *Hub) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if !hub.register(connection) {
+		connection.close()
+		return
+	}
+	// A transfer may commit after credential authentication but before hub
+	// registration, when its revocation sweep cannot see this transport yet.
+	// Once registered, later sweeps can close it; recheck earlier revocations
+	// before starting the writer or sending any initial state.
+	if !connection.credentialValid() {
 		connection.close()
 		return
 	}
@@ -871,6 +882,10 @@ func (connection *hubConnection) writeLoop() {
 				return
 			}
 		case <-ticker.C:
+			if !connection.credentialValid() {
+				connection.close()
+				return
+			}
 			nonce, err := uuid.NewRandom()
 			if err != nil {
 				connection.close()
@@ -910,6 +925,9 @@ func (connection *hubConnection) readLoop() {
 			connection.enqueueError("invalid_request", "")
 			continue
 		}
+		if !connection.credentialValid() {
+			return
+		}
 		envelope, decodeErr := protocol.DecodeClient(data)
 		if decodeErr != nil || envelope.Type == protocol.TypePlatformConnect || envelope.MatchID != connection.matchID || envelope.GameID != connection.gameID {
 			connection.enqueueError("invalid_request", "")
@@ -941,7 +959,7 @@ func (connection *hubConnection) readLoop() {
 			connection.sendLatestSnapshot()
 		case protocol.TypeChineseCheckersMoveRequested, protocol.TypeChineseCheckersResignRequested,
 			protocol.TypeFlightChessRollRequested, protocol.TypeFlightChessMoveRequested, protocol.TypeFlightChessResignRequested,
-			protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
+			protocol.TypeReversiMoveRequested, protocol.TypeReversiResignRequested, protocol.TypeGomokuMoveRequested, protocol.TypeGomokuResignRequested, protocol.TypeRpsChoiceRequested, protocol.TypeRpsResignRequested:
 			connection.applyAction(envelope)
 		default:
 			connection.enqueueError("invalid_request", envelope.ActionID)
@@ -1010,6 +1028,7 @@ func outstandingPingLimit(activityTimeout, heartbeatInterval time.Duration) int 
 
 func (connection *hubConnection) applyAction(envelope protocol.Envelope) {
 	operationContext, cancel := context.WithTimeout(connection.ctx, webSocketOperationTimeout)
+	operationContext = context.WithValue(operationContext, connectionCredentialKey{}, connectionCredential{connection.authEpoch, connection.userID})
 	event, _, err := connection.hub.service.ApplyAction(operationContext, ActionRequest{
 		MatchID: connection.matchID, ActorUserID: connection.userID, ActionID: envelope.ActionID,
 		ExpectedRevision: *envelope.ExpectedRevision, Type: envelope.Type, Payload: append(json.RawMessage(nil), envelope.Payload...),
@@ -1144,6 +1163,26 @@ func snapshotEnvelope(snapshot Snapshot, viewerIDs ...string) ([]byte, error) {
 		payload.Status = snapshot.Match.Status
 		payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
 		payload.Result = cloneStringPointer(snapshot.Match.Result)
+		return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
+	}
+	if snapshot.Match.GameID == reversi.GameID {
+		var payload reversi.State
+		if json.Unmarshal(snapshot.Game.State, &payload) != nil {
+			return nil, ErrInternal
+		}
+		black, white, err := snapshotPlayerIDs(snapshot.Players)
+		if err != nil {
+			return nil, err
+		}
+		payload.BlackUserID, payload.WhiteUserID = &black, &white
+		payload.Status = snapshot.Match.Status
+		payload.Result = cloneStringPointer(snapshot.Match.Result)
+		payload.WinnerUserID = cloneStringPointer(snapshot.Match.WinnerUserID)
+		if payload.Status != StatusActive {
+			payload.LegalMoves = []reversi.Point{}
+			payload.NextColor = ""
+			payload.PassedColor = nil
+		}
 		return boundEnvelope(snapshot.Match.GameID, snapshot.Match.ID, snapshot.Match.Revision, protocol.TypePlatformSnapshot, "", payload)
 	}
 	if snapshot.Match.GameID != gomoku.GameID {
