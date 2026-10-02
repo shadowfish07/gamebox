@@ -30,6 +30,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   List<SeaMatch> matches = [];
   String cursor = '';
   bool loading = false, foreground = true, opened = false;
+  bool hasLoaded = false;
   String? error;
   Timer? timer;
   @override
@@ -68,9 +69,9 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     if (loading || !foreground || opened) return;
     setState(() => loading = true);
     timer?.cancel();
+    final refreshed = <SeaMatch>[];
     try {
       final retainedCount = matches.length;
-      final refreshed = <SeaMatch>[];
       var nextCursor = more ? cursor : '';
       do {
         final page = await widget.api.matches(nextCursor);
@@ -92,9 +93,18 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
         matches = more ? [...matches, ...refreshed] : refreshed;
         cursor = nextCursor;
         error = null;
+        hasLoaded = true;
       });
     } catch (_) {
-      if (mounted) setState(() => error = '无法加载对局，请重试');
+      if (mounted) {
+        setState(() {
+          if (widget.homeCard && refreshed.isNotEmpty) {
+            matches = refreshed;
+            hasLoaded = true;
+          }
+          error = '无法加载对局，请重试';
+        });
+      }
     } finally {
       if (mounted) {
         setState(() => loading = false);
@@ -154,7 +164,8 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
 
   Widget _homeCard(List<SeaMatch> sorted) {
     final active = sorted.where((match) => !match.ended).firstOrNull;
-    final initialLoading = loading && matches.isEmpty;
+    final initialLoading = loading && !hasLoaded;
+    final retryOnly = error != null && active == null;
     return Card(
       child: Padding(
         padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
@@ -196,25 +207,25 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
               builder: (context, constraints) {
                 final primary = GameboxPendingButton(
                   key: Key(
-                    error != null
+                    retryOnly
                         ? 'sea-retry-home'
                         : active == null
                         ? 'sea-new'
                         : 'sea-continue',
                   ),
-                  identifier: error != null
+                  identifier: retryOnly
                       ? 'sea-retry-home'
                       : active == null
                       ? 'sea-new'
                       : 'sea-continue',
-                  label: error != null
+                  label: retryOnly
                       ? '重试'
                       : active == null
                       ? '选择对手'
                       : '继续对局',
                   pendingLabel: '正在加载对局',
-                  isPending: initialLoading || loading && error != null,
-                  onPressed: error != null
+                  isPending: initialLoading || loading && retryOnly,
+                  onPressed: retryOnly
                       ? () => _load()
                       : active == null
                       ? _choose

@@ -141,6 +141,55 @@ class HomeSea extends FakeSea {
 }
 
 void main() {
+  testWidgets('home card keeps a waiting match when later pages fail', (
+    tester,
+  ) async {
+    final api = HomeSea()
+      ..items = [SeaMatch(state(ready: true))]
+      ..laterItems = [SeaMatch(state(phase: 'finished'))]
+      ..laterFails = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BattleshipLobby(
+            api: api,
+            homeCard: true,
+            store: MemoryPending(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('对手：舰长乙'), findsOneWidget);
+    await tester.tap(find.text('继续对局'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BattleshipPage), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('idle home polling keeps choose opponent enabled', (
+    tester,
+  ) async {
+    final api = HomeSea()..items = [SeaMatch(state(phase: 'finished'))];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    api.pendingList = Completer<SeaPage<SeaMatch>>();
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pump();
+    expect(find.text('选择对手'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNotNull,
+    );
+    api.pendingList!.complete(const SeaPage([], ''));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('home card stops paging after an actionable match', (
     tester,
   ) async {
