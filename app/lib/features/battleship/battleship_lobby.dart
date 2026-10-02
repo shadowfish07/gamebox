@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../design_system/components/gamebox_page_body.dart';
+import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'battleship_api.dart';
 import 'battleship_controller.dart';
@@ -14,9 +15,11 @@ final class BattleshipLobby extends StatefulWidget {
   const BattleshipLobby({
     super.key,
     required this.api,
+    this.homeCard = false,
     this.store = const SecureSeaPendingStore(),
   });
   final BattleshipApi api;
+  final bool homeCard;
   final SeaPendingStore store;
   @override
   State<BattleshipLobby> createState() => _BattleshipLobbyState();
@@ -33,9 +36,11 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
-    );
+    if (!widget.homeCard) {
+      unawaited(
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+      );
+    }
     unawaited(_load());
   }
 
@@ -43,7 +48,9 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   void dispose() {
     timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(SystemChrome.setPreferredOrientations([]));
+    if (!widget.homeCard) {
+      unawaited(SystemChrome.setPreferredOrientations([]));
+    }
     super.dispose();
   }
 
@@ -72,7 +79,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
         nextCursor = page.nextCursor;
       } while (!more &&
           nextCursor.isNotEmpty &&
-          refreshed.length < retainedCount);
+          (widget.homeCard || refreshed.length < retainedCount));
       // Commit the full refresh together so a later-page failure retains the
       // previous list and cursor, including the user's loaded range.
       setState(() {
@@ -122,6 +129,103 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     }
   }
 
+  Future<void> _allMatches() async {
+    if (opened) return;
+    opened = true;
+    timer?.cancel();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => BattleshipLobby(api: widget.api, store: widget.store),
+      ),
+    );
+    opened = false;
+    if (mounted) await _load();
+  }
+
+  Widget _homeCard(List<SeaMatch> sorted) {
+    final active = sorted.where((match) => !match.ended).firstOrNull;
+    final initialLoading = loading && matches.isEmpty;
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MergeSemantics(
+              key: const Key('game-battleship'),
+              child: Semantics(
+                identifier: 'game-battleship',
+                header: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('海战棋', style: Theme.of(context).textTheme.titleMedium),
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    const Text('2 人 · 回合制'),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              error ??
+                  (initialLoading
+                      ? '正在加载对局'
+                      : active == null
+                      ? '可开始新对局'
+                      : '对局进行中'),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
+            if (active != null) ...[
+              Text('对手：${active.opponentName}'),
+              Text(active.status(widget.api.userId)),
+              SizedBox(height: GameboxTokens.spacing.page),
+            ],
+            Row(
+              children: [
+                Expanded(
+                  child: GameboxPendingButton(
+                    key: Key(
+                      error != null
+                          ? 'sea-retry-home'
+                          : active == null
+                          ? 'sea-new'
+                          : 'sea-continue',
+                    ),
+                    identifier: error != null
+                        ? 'sea-retry-home'
+                        : active == null
+                        ? 'sea-new'
+                        : 'sea-continue',
+                    label: error != null
+                        ? '重试'
+                        : active == null
+                        ? '选择对手'
+                        : '继续对局',
+                    pendingLabel: '正在加载对局',
+                    isPending: initialLoading || loading && error != null,
+                    onPressed: error != null
+                        ? () => _load()
+                        : active == null
+                        ? _choose
+                        : () => _open(active),
+                  ),
+                ),
+                SizedBox(width: GameboxTokens.spacing.layout),
+                OutlinedButton(
+                  key: const Key('open-battleship'),
+                  onPressed: _allMatches,
+                  child: const Text('全部对局'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sorted = [...matches]
@@ -138,6 +242,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
             : 1;
         return aRank.compareTo(bRank);
       });
+    if (widget.homeCard) return _homeCard(sorted);
     return Scaffold(
       appBar: AppBar(
         title: const Text('海战棋'),

@@ -406,21 +406,6 @@ final class _HomePageState extends State<HomePage> {
             ),
           ),
           ScratchEntry(socialApi: widget.scratchApi),
-          if (widget.battleshipApi case final api?)
-            Card(
-              child: ListTile(
-                key: const Key('open-battleship'),
-                leading: const Icon(Icons.sailing_outlined),
-                title: const Text('海战棋'),
-                subtitle: const Text('2 人 · 随时续玩'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => BattleshipLobby(api: api),
-                  ),
-                ),
-              ),
-            ),
           _buildGomoku(controller),
           if (widget.chineseCheckersController
               case final HomeController chineseCheckersController)
@@ -433,6 +418,8 @@ final class _HomePageState extends State<HomePage> {
             _buildReversi(reversiController),
           if (widget.rpsController case final RpsController rpsController)
             _buildRps(rpsController),
+          if (widget.battleshipApi case final api?)
+            BattleshipLobby(api: api, homeCard: true),
         ],
       ),
     );

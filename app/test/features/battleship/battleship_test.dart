@@ -118,7 +118,128 @@ class PagedSea extends FakeSea {
   }
 }
 
+class HomeSea extends FakeSea {
+  HomeSea() : super(state());
+  List<SeaMatch> items = [];
+  bool listFails = false;
+  List<SeaMatch> laterItems = [];
+  Completer<SeaPage<SeaMatch>>? pendingList;
+  @override
+  Future<SeaPage<SeaMatch>> matches([String after = '']) async {
+    if (pendingList != null) return pendingList!.future;
+    if (listFails) throw const ApiError(code: 'network_error', message: '失败');
+    return after.isNotEmpty
+        ? SeaPage(laterItems, '')
+        : SeaPage(items, laterItems.isEmpty ? '' : 'next');
+  }
+}
+
 void main() {
+  for (final dark in [false, true]) {
+    testWidgets('home card chooses opponent directly, dark=$dark', (
+      tester,
+    ) async {
+      final api = HomeSea();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: dark ? GameboxTheme.dark() : GameboxTheme.light(),
+          home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('可开始新对局'), findsOneWidget);
+      expect(find.text('2 人 · 回合制'), findsOneWidget);
+      expect(find.byType(ListTile), findsNothing);
+      await tester.tap(find.text('选择对手'));
+      await tester.pumpAndSettle();
+      expect(find.text('舰长乙'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('game-battleship')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('open-battleship')));
+      await tester.pumpAndSettle();
+      expect(find.text('开始新对局'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  testWidgets('home card continues active match and refreshes on return', (
+    tester,
+  ) async {
+    final api = HomeSea()..items = [SeaMatch(state())];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: Scaffold(
+          body: BattleshipLobby(
+            api: api,
+            homeCard: true,
+            store: MemoryPending(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('对手：舰长乙'), findsOneWidget);
+    await tester.tap(find.text('继续对局'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BattleshipPage), findsOneWidget);
+    api.items = [SeaMatch(state(phase: 'finished'))];
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('选择对手'), findsOneWidget);
+    expect(find.text('继续对局'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('home card finds active matches beyond finished first page', (
+    tester,
+  ) async {
+    final api = HomeSea()
+      ..items = [SeaMatch(state(phase: 'finished'))]
+      ..laterItems = [
+        SeaMatch({...state(), 'id': '44444444-4444-4444-8444-444444444444'}),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('继续对局'), findsOneWidget);
+    expect(find.text('选择对手'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('home card blocks loading actions and retries errors', (
+    tester,
+  ) async {
+    final api = HomeSea()..pendingList = Completer<SeaPage<SeaMatch>>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    api.pendingList!.completeError(
+      const ApiError(code: 'network_error', message: '失败'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('无法加载对局，请重试'), findsOneWidget);
+    api.pendingList = null;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择对手'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'refresh preserves loaded pages and retains them on partial failure',
     (tester) async {
