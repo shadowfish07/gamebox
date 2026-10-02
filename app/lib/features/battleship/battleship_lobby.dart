@@ -125,35 +125,41 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     }
   }
 
-  Future<void> _open(SeaMatch match) async {
+  Future<void> _runDirectFlow(Future<void> Function() flow) async {
     if (opened) return;
     opened = true;
     timer?.cancel();
-    final controller = BattleshipController(widget.api, match.id, widget.store);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => BattleshipPage(controller: controller),
-      ),
-    );
-    opened = false;
-    if (mounted) await _load();
+    try {
+      if (widget.homeCard) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+        ]);
+      }
+      if (mounted) await flow();
+    } finally {
+      if (widget.homeCard) {
+        await SystemChrome.setPreferredOrientations([]);
+      }
+      opened = false;
+      if (mounted) await _load();
+    }
   }
 
-  Future<void> _choose() async {
-    if (opened) return;
-    opened = true;
-    timer?.cancel();
+  Future<void> _pushMatch(SeaMatch match) async {
+    final controller = BattleshipController(widget.api, match.id, widget.store);
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => BattleshipPage(controller: controller)),
+    );
+  }
+
+  Future<void> _open(SeaMatch match) => _runDirectFlow(() => _pushMatch(match));
+
+  Future<void> _choose() => _runDirectFlow(() async {
     final match = await Navigator.of(context).push<SeaMatch>(
       MaterialPageRoute(builder: (_) => _SeaOpponents(api: widget.api)),
     );
-    opened = false;
-    if (!mounted) return;
-    if (match != null) {
-      await _open(match);
-    } else {
-      await _load();
-    }
-  }
+    if (mounted && match != null) await _pushMatch(match);
+  });
 
   Future<void> _allMatches() async {
     if (opened) return;

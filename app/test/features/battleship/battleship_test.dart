@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamebox/core/api/api_error.dart';
 import 'package:gamebox/design_system/gamebox_theme.dart';
@@ -141,6 +142,72 @@ class HomeSea extends FakeSea {
 }
 
 void main() {
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (_) async => null);
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null);
+  });
+  for (final route in ['continue', 'choose', 'choose-cancel']) {
+    testWidgets('direct $route keeps portrait until returning home', (
+      tester,
+    ) async {
+      final orientations = <List<Object?>>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'SystemChrome.setPreferredOrientations') {
+            orientations.add(List<Object?>.from(call.arguments as List));
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      final api = HomeSea()
+        ..items = route == 'continue' ? [SeaMatch(state())] : [];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BattleshipLobby(
+              api: api,
+              homeCard: true,
+              store: MemoryPending(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(orientations, isEmpty);
+      await tester.tap(find.text(route == 'continue' ? '继续对局' : '选择对手'));
+      await tester.pumpAndSettle();
+      expect(orientations, [
+        ['DeviceOrientation.portraitUp'],
+      ]);
+      if (route == 'choose') {
+        await tester.tap(find.text('舰长乙'));
+        await tester.pumpAndSettle();
+        expect(find.byType(BattleshipPage), findsOneWidget);
+        expect(orientations, [
+          ['DeviceOrientation.portraitUp'],
+        ]);
+      }
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(orientations, [
+        ['DeviceOrientation.portraitUp'],
+        <Object?>[],
+      ]);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('return during polling discards stale data and refreshes again', (
     tester,
   ) async {
