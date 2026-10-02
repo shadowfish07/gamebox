@@ -76,12 +76,20 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     setState(() => loading = true);
     timer?.cancel();
     final refreshed = <SeaMatch>[];
+    final unrefreshedIds = widget.homeCard
+        ? matches.map((match) => match.id).toSet()
+        : <String>{};
+    var hasFetchedPage = false;
     try {
       final retainedCount = matches.length;
       var nextCursor = more ? cursor : '';
       do {
         final page = await widget.api.matches(nextCursor);
         if (!mounted || opened || refreshQueued) return;
+        hasFetchedPage = true;
+        if (widget.homeCard) {
+          unrefreshedIds.removeAll(page.items.map((match) => match.id));
+        }
         refreshed.addAll(
           widget.homeCard
               ? page.items.where((match) => !match.ended)
@@ -104,8 +112,11 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     } catch (_) {
       if (mounted && !opened && !refreshQueued) {
         setState(() {
-          if (widget.homeCard && refreshed.isNotEmpty) {
-            matches = refreshed;
+          if (widget.homeCard && hasFetchedPage) {
+            matches = [
+              ...refreshed,
+              ...matches.where((match) => unrefreshedIds.contains(match.id)),
+            ];
             hasLoaded = true;
           }
           error = '无法加载对局，请重试';

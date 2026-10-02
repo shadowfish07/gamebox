@@ -150,6 +150,37 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null);
   });
+  for (final retainUnseen in [false, true]) {
+    testWidgets(
+      'partial refresh removes ended matches, retain unseen=$retainUnseen',
+      (tester) async {
+        final waiting = SeaMatch({
+          ...state(ready: true),
+          'id': '44444444-4444-4444-8444-444444444444',
+          'opponentName': '未刷新对手',
+        });
+        final api = HomeSea()
+          ..items = [SeaMatch(state()), if (retainUnseen) waiting];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('对手：舰长乙'), findsOneWidget);
+        api.items = [SeaMatch(state(phase: 'finished'))];
+        api.laterItems = [waiting];
+        api.laterFails = true;
+        await tester.pump(const Duration(seconds: 15));
+        await tester.pumpAndSettle();
+        expect(find.text('对手：舰长乙'), findsNothing);
+        expect(find.text('继续对局'), retainUnseen ? findsOneWidget : findsNothing);
+        if (retainUnseen) expect(find.text('对手：未刷新对手'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   for (final route in ['continue', 'choose', 'choose-cancel']) {
     testWidgets('direct $route keeps portrait until returning home', (
       tester,
