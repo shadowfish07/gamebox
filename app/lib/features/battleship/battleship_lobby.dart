@@ -75,11 +75,17 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
       do {
         final page = await widget.api.matches(nextCursor);
         if (!mounted) return;
-        refreshed.addAll(page.items);
+        refreshed.addAll(
+          widget.homeCard
+              ? page.items.where((match) => !match.ended)
+              : page.items,
+        );
         nextCursor = page.nextCursor;
       } while (!more &&
           nextCursor.isNotEmpty &&
-          (widget.homeCard || refreshed.length < retainedCount));
+          (widget.homeCard
+              ? !refreshed.any(_needsAction)
+              : refreshed.length < retainedCount));
       // Commit the full refresh together so a later-page failure retains the
       // previous list and cursor, including the user's loaded range.
       setState(() {
@@ -142,6 +148,10 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
     if (mounted) await _load();
   }
 
+  bool _needsAction(SeaMatch match) =>
+      !match.ended &&
+      (match.yourTurn || match.phase == 'placement' && !match.ready);
+
   Widget _homeCard(List<SeaMatch> sorted) {
     final active = sorted.where((match) => !match.ended).firstOrNull;
     final initialLoading = loading && matches.isEmpty;
@@ -182,43 +192,57 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
               Text(active.status(widget.api.userId)),
               SizedBox(height: GameboxTokens.spacing.page),
             ],
-            Row(
-              children: [
-                Expanded(
-                  child: GameboxPendingButton(
-                    key: Key(
-                      error != null
-                          ? 'sea-retry-home'
-                          : active == null
-                          ? 'sea-new'
-                          : 'sea-continue',
-                    ),
-                    identifier: error != null
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final primary = GameboxPendingButton(
+                  key: Key(
+                    error != null
                         ? 'sea-retry-home'
                         : active == null
                         ? 'sea-new'
                         : 'sea-continue',
-                    label: error != null
-                        ? '重试'
-                        : active == null
-                        ? '选择对手'
-                        : '继续对局',
-                    pendingLabel: '正在加载对局',
-                    isPending: initialLoading || loading && error != null,
-                    onPressed: error != null
-                        ? () => _load()
-                        : active == null
-                        ? _choose
-                        : () => _open(active),
                   ),
-                ),
-                SizedBox(width: GameboxTokens.spacing.layout),
-                OutlinedButton(
+                  identifier: error != null
+                      ? 'sea-retry-home'
+                      : active == null
+                      ? 'sea-new'
+                      : 'sea-continue',
+                  label: error != null
+                      ? '重试'
+                      : active == null
+                      ? '选择对手'
+                      : '继续对局',
+                  pendingLabel: '正在加载对局',
+                  isPending: initialLoading || loading && error != null,
+                  onPressed: error != null
+                      ? () => _load()
+                      : active == null
+                      ? _choose
+                      : () => _open(active),
+                );
+                final allMatches = OutlinedButton(
                   key: const Key('open-battleship'),
                   onPressed: _allMatches,
                   child: const Text('全部对局'),
-                ),
-              ],
+                );
+                if (constraints.maxWidth < 320) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      primary,
+                      SizedBox(height: GameboxTokens.spacing.layout),
+                      allMatches,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: primary),
+                    SizedBox(width: GameboxTokens.spacing.layout),
+                    allMatches,
+                  ],
+                );
+              },
             ),
           ],
         ),

@@ -122,10 +122,16 @@ class HomeSea extends FakeSea {
   HomeSea() : super(state());
   List<SeaMatch> items = [];
   bool listFails = false;
+  final requestedPages = <String>[];
+  bool laterFails = false;
   List<SeaMatch> laterItems = [];
   Completer<SeaPage<SeaMatch>>? pendingList;
   @override
   Future<SeaPage<SeaMatch>> matches([String after = '']) async {
+    requestedPages.add(after);
+    if (after.isNotEmpty && laterFails) {
+      throw const ApiError(code: 'network_error', message: '失败');
+    }
     if (pendingList != null) return pendingList!.future;
     if (listFails) throw const ApiError(code: 'network_error', message: '失败');
     return after.isNotEmpty
@@ -135,6 +141,71 @@ class HomeSea extends FakeSea {
 }
 
 void main() {
+  testWidgets('home card stops paging after an actionable match', (
+    tester,
+  ) async {
+    final api = HomeSea()
+      ..items = [SeaMatch(state())]
+      ..laterItems = [SeaMatch(state(phase: 'finished'))]
+      ..laterFails = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(api.requestedPages, ['']);
+    expect(find.text('继续对局'), findsOneWidget);
+    expect(find.text('无法加载对局，请重试'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('home card keeps actionable priority across pages', (
+    tester,
+  ) async {
+    final api = HomeSea()
+      ..items = [
+        SeaMatch({...state(ready: true), 'opponentName': '等待中的对手'}),
+      ]
+      ..laterItems = [
+        SeaMatch({...state(), 'opponentName': '待操作的对手'}),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: BattleshipLobby(api: api, homeCard: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(api.requestedPages, ['', 'next']);
+    expect(find.text('对手：待操作的对手'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('home card pending action fits a 320dp phone', (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = HomeSea()..pendingList = Completer<SeaPage<SeaMatch>>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GameboxTheme.light(),
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: BattleshipLobby(api: api, homeCard: true),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    api.pendingList!.complete(const SeaPage([], ''));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final dark in [false, true]) {
     testWidgets('home card chooses opponent directly, dark=$dark', (
       tester,
