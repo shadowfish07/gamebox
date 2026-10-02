@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../design_system/components/gamebox_page_body.dart';
+import '../../design_system/components/gamebox_pending_button.dart';
 import '../../design_system/generated/gamebox_tokens.g.dart';
 import 'battleship_api.dart';
 import 'battleship_controller.dart';
@@ -14,9 +15,11 @@ final class BattleshipLobby extends StatefulWidget {
   const BattleshipLobby({
     super.key,
     required this.api,
+    this.homeCard = false,
     this.store = const SecureSeaPendingStore(),
   });
   final BattleshipApi api;
+  final bool homeCard;
   final SeaPendingStore store;
   @override
   State<BattleshipLobby> createState() => _BattleshipLobbyState();
@@ -27,15 +30,19 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   List<SeaMatch> matches = [];
   String cursor = '';
   bool loading = false, foreground = true, opened = false;
+  bool hasLoaded = false;
+  bool refreshQueued = false;
   String? error;
   Timer? timer;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
-    );
+    if (!widget.homeCard) {
+      unawaited(
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+      );
+    }
     unawaited(_load());
   }
 
@@ -43,7 +50,9 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   void dispose() {
     timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(SystemChrome.setPreferredOrientations([]));
+    if (!widget.homeCard) {
+      unawaited(SystemChrome.setPreferredOrientations([]));
+    }
     super.dispose();
   }
 
@@ -58,68 +67,225 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   }
 
   Future<void> _load({bool more = false}) async {
-    if (loading || !foreground || opened) return;
+    if (!foreground || opened) return;
+    if (loading) {
+      refreshQueued = true;
+      return;
+    }
+    refreshQueued = false;
     setState(() => loading = true);
     timer?.cancel();
+    final refreshed = <SeaMatch>[];
+    final unrefreshedIds = widget.homeCard
+        ? matches.map((match) => match.id).toSet()
+        : <String>{};
+    var hasFetchedPage = false;
     try {
       final retainedCount = matches.length;
-      final refreshed = <SeaMatch>[];
       var nextCursor = more ? cursor : '';
       do {
         final page = await widget.api.matches(nextCursor);
-        if (!mounted) return;
-        refreshed.addAll(page.items);
+        if (!mounted || opened || refreshQueued) return;
+        hasFetchedPage = true;
+        if (widget.homeCard) {
+          unrefreshedIds.removeAll(page.items.map((match) => match.id));
+        }
+        refreshed.addAll(
+          widget.homeCard
+              ? page.items.where((match) => !match.ended)
+              : page.items,
+        );
         nextCursor = page.nextCursor;
       } while (!more &&
           nextCursor.isNotEmpty &&
-          refreshed.length < retainedCount);
+          (widget.homeCard
+              ? !refreshed.any(_needsAction)
+              : refreshed.length < retainedCount));
       // Commit the full refresh together so a later-page failure retains the
       // previous list and cursor, including the user's loaded range.
       setState(() {
         matches = more ? [...matches, ...refreshed] : refreshed;
         cursor = nextCursor;
         error = null;
+        hasLoaded = true;
       });
     } catch (_) {
-      if (mounted) setState(() => error = '无法加载对局，请重试');
+      if (mounted && !opened && !refreshQueued) {
+        setState(() {
+          if (widget.homeCard && hasFetchedPage) {
+            matches = [
+              ...refreshed,
+              ...matches.where((match) => unrefreshedIds.contains(match.id)),
+            ];
+            hasLoaded = true;
+          }
+          error = '无法加载对局，请重试';
+        });
+      }
     } finally {
       if (mounted) {
         setState(() => loading = false);
         if (foreground && !opened) {
-          timer = Timer(const Duration(seconds: 15), () => _load());
+          if (refreshQueued) {
+            unawaited(_load());
+          } else {
+            timer = Timer(const Duration(seconds: 15), () => _load());
+          }
         }
       }
     }
   }
 
-  Future<void> _open(SeaMatch match) async {
+  Future<void> _runDirectFlow(Future<void> Function() flow) async {
     if (opened) return;
     opened = true;
     timer?.cancel();
+    try {
+      if (widget.homeCard) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+        ]);
+      }
+      if (mounted) await flow();
+    } finally {
+      if (widget.homeCard) {
+        await SystemChrome.setPreferredOrientations([]);
+      }
+      opened = false;
+      if (mounted) await _load();
+    }
+  }
+
+  Future<void> _pushMatch(SeaMatch match) async {
     final controller = BattleshipController(widget.api, match.id, widget.store);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => BattleshipPage(controller: controller),
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => BattleshipPage(controller: controller)),
+    );
+  }
+
+  Future<void> _open(SeaMatch match) => _runDirectFlow(() => _pushMatch(match));
+
+  Future<void> _choose() => _runDirectFlow(() async {
+    final match = await Navigator.of(context).push<SeaMatch>(
+      MaterialPageRoute(builder: (_) => _SeaOpponents(api: widget.api)),
+    );
+    if (mounted && match != null) await _pushMatch(match);
+  });
+
+  Future<void> _allMatches() async {
+    if (opened) return;
+    opened = true;
+    timer?.cancel();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => BattleshipLobby(api: widget.api, store: widget.store),
       ),
     );
     opened = false;
     if (mounted) await _load();
   }
 
-  Future<void> _choose() async {
-    if (opened) return;
-    opened = true;
-    timer?.cancel();
-    final match = await Navigator.of(context).push<SeaMatch>(
-      MaterialPageRoute(builder: (_) => _SeaOpponents(api: widget.api)),
+  bool _needsAction(SeaMatch match) =>
+      !match.ended &&
+      (match.yourTurn || match.phase == 'placement' && !match.ready);
+
+  Widget _homeCard(List<SeaMatch> sorted) {
+    final active = sorted.where((match) => !match.ended).firstOrNull;
+    final initialLoading = loading && !hasLoaded;
+    final retryOnly = error != null && active == null;
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(GameboxTokens.components.pagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MergeSemantics(
+              key: const Key('game-battleship'),
+              child: Semantics(
+                identifier: 'game-battleship',
+                header: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('海战棋', style: Theme.of(context).textTheme.titleMedium),
+                    SizedBox(height: GameboxTokens.spacing.layout),
+                    const Text('2 人 · 回合制'),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: GameboxTokens.spacing.layout),
+            Text(
+              error ??
+                  (initialLoading
+                      ? '正在加载对局'
+                      : active == null
+                      ? '可开始新对局'
+                      : '对局进行中'),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: GameboxTokens.spacing.page),
+            if (active != null) ...[
+              Text('对手：${active.opponentName}'),
+              Text(active.status(widget.api.userId)),
+              SizedBox(height: GameboxTokens.spacing.page),
+            ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final primary = GameboxPendingButton(
+                  key: Key(
+                    retryOnly
+                        ? 'sea-retry-home'
+                        : active == null
+                        ? 'sea-new'
+                        : 'sea-continue',
+                  ),
+                  identifier: retryOnly
+                      ? 'sea-retry-home'
+                      : active == null
+                      ? 'sea-new'
+                      : 'sea-continue',
+                  label: retryOnly
+                      ? '重试'
+                      : active == null
+                      ? '选择对手'
+                      : '继续对局',
+                  pendingLabel: '正在加载对局',
+                  isPending: initialLoading || loading && retryOnly,
+                  onPressed: retryOnly
+                      ? () => _load()
+                      : active == null
+                      ? _choose
+                      : () => _open(active),
+                );
+                final allMatches = OutlinedButton(
+                  key: const Key('open-battleship'),
+                  onPressed: _allMatches,
+                  child: const Text('全部对局'),
+                );
+                if (constraints.maxWidth < 320) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      primary,
+                      SizedBox(height: GameboxTokens.spacing.layout),
+                      allMatches,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: primary),
+                    SizedBox(width: GameboxTokens.spacing.layout),
+                    allMatches,
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
-    opened = false;
-    if (!mounted) return;
-    if (match != null) {
-      await _open(match);
-    } else {
-      await _load();
-    }
   }
 
   @override
@@ -138,6 +304,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
             : 1;
         return aRank.compareTo(bRank);
       });
+    if (widget.homeCard) return _homeCard(sorted);
     return Scaffold(
       appBar: AppBar(
         title: const Text('海战棋'),
