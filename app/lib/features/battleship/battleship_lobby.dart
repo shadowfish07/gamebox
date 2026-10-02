@@ -31,6 +31,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   String cursor = '';
   bool loading = false, foreground = true, opened = false;
   bool hasLoaded = false;
+  bool refreshQueued = false;
   String? error;
   Timer? timer;
   @override
@@ -66,7 +67,12 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
   }
 
   Future<void> _load({bool more = false}) async {
-    if (loading || !foreground || opened) return;
+    if (!foreground || opened) return;
+    if (loading) {
+      refreshQueued = true;
+      return;
+    }
+    refreshQueued = false;
     setState(() => loading = true);
     timer?.cancel();
     final refreshed = <SeaMatch>[];
@@ -75,7 +81,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
       var nextCursor = more ? cursor : '';
       do {
         final page = await widget.api.matches(nextCursor);
-        if (!mounted) return;
+        if (!mounted || opened || refreshQueued) return;
         refreshed.addAll(
           widget.homeCard
               ? page.items.where((match) => !match.ended)
@@ -96,7 +102,7 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
         hasLoaded = true;
       });
     } catch (_) {
-      if (mounted) {
+      if (mounted && !opened && !refreshQueued) {
         setState(() {
           if (widget.homeCard && refreshed.isNotEmpty) {
             matches = refreshed;
@@ -109,7 +115,11 @@ final class _BattleshipLobbyState extends State<BattleshipLobby>
       if (mounted) {
         setState(() => loading = false);
         if (foreground && !opened) {
-          timer = Timer(const Duration(seconds: 15), () => _load());
+          if (refreshQueued) {
+            unawaited(_load());
+          } else {
+            timer = Timer(const Duration(seconds: 15), () => _load());
+          }
         }
       }
     }

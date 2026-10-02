@@ -141,6 +141,41 @@ class HomeSea extends FakeSea {
 }
 
 void main() {
+  testWidgets('return during polling discards stale data and refreshes again', (
+    tester,
+  ) async {
+    final api = HomeSea()..items = [SeaMatch(state())];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BattleshipLobby(
+            api: api,
+            homeCard: true,
+            store: MemoryPending(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final stale = Completer<SeaPage<SeaMatch>>();
+    api.pendingList = stale;
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pump();
+    await tester.tap(find.text('继续对局'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BattleshipPage), findsOneWidget);
+    api.items = [SeaMatch(state(phase: 'finished'))];
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    api.pendingList = null;
+    stale.complete(SeaPage([SeaMatch(state())], ''));
+    await tester.pumpAndSettle();
+    expect(api.requestedPages.length, 3);
+    expect(find.text('选择对手'), findsOneWidget);
+    expect(find.text('继续对局'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('home card keeps a waiting match when later pages fail', (
     tester,
   ) async {
