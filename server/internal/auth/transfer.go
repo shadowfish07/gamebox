@@ -166,7 +166,6 @@ func (s *Service) RedeemTransferForUser(ctx context.Context, code, receiver, pee
 			return TransferResult{}, err
 		}
 		fresh.RefreshToken = result.Session.RefreshToken
-		fresh.RefreshExpiresAt = result.Session.RefreshExpiresAt
 		result.Session = fresh
 		return result, nil
 	}

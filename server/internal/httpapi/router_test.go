@@ -281,7 +281,7 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	bob := fixture.register(t, "invite-bob-secret", "Bob")
 	issuedAt := fixture.now.UTC().Truncate(time.Second)
 	if alice.Session.AccessExpiresAt != issuedAt.Add(15*time.Minute).UnixMilli() ||
-		alice.Session.RefreshExpiresAt != issuedAt.Add(30*24*time.Hour).UnixMilli() {
+		alice.Session.RefreshExpiresAt != auth.PersistentRefreshExpiresAt.UnixMilli() {
 		t.Fatalf("session expiry=(%d,%d)", alice.Session.AccessExpiresAt, alice.Session.RefreshExpiresAt)
 	}
 
@@ -414,7 +414,7 @@ func TestRouterHappyPathAuthLobbyMatchTicketAndCancel(t *testing.T) {
 	}
 	var refreshedBody sessionResponse
 	decodeResponse(t, refreshed, &refreshedBody)
-	if refreshedBody.Session.User.ID != alice.Session.User.ID || refreshedBody.Session.RefreshToken == alice.Session.RefreshToken {
+	if refreshedBody.Session.User.ID != alice.Session.User.ID || refreshedBody.Session.RefreshToken != alice.Session.RefreshToken || refreshedBody.Session.AccessToken == "" {
 		t.Fatalf("refreshed=%+v", refreshedBody)
 	}
 

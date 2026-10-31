@@ -3,7 +3,6 @@ package auth
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -61,8 +60,8 @@ func TestIssueSessionCreatesHS256AccessAndHashedRefreshToken(t *testing.T) {
 	if !session.AccessExpiresAt.Equal(issuedAt.Add(15 * time.Minute)) {
 		t.Fatalf("access expiry = %v, want %v", session.AccessExpiresAt, issuedAt.Add(15*time.Minute))
 	}
-	if !session.RefreshExpiresAt.Equal(issuedAt.Add(30 * 24 * time.Hour)) {
-		t.Fatalf("refresh expiry = %v, want %v", session.RefreshExpiresAt, issuedAt.Add(30*24*time.Hour))
+	if !session.RefreshExpiresAt.Equal(PersistentRefreshExpiresAt) {
+		t.Fatalf("refresh expiry = %v, want %v", session.RefreshExpiresAt, PersistentRefreshExpiresAt)
 	}
 	decodedRefresh, err := base64.RawURLEncoding.DecodeString(session.RefreshToken)
 	if err != nil || len(decodedRefresh) != 32 {
@@ -225,7 +224,7 @@ func TestServiceDefensivelyCopiesJWTSecret(t *testing.T) {
 	}
 }
 
-func TestRefreshRotatesAtomicallyAndReturnsEnabledUser(t *testing.T) {
+func TestRefreshKeepsTheSameCredentialAndReissuesAccess(t *testing.T) {
 	fixture := newAuthFixture(t)
 	insertSessionUser(t, fixture, "rotate-user", "Alice", true)
 	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
@@ -233,39 +232,33 @@ func TestRefreshRotatesAtomicallyAndReturnsEnabledUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
+	service.clock.(*clock.Fake).Advance(time.Second)
 
-	rotated, err := service.Refresh(context.Background(), original.RefreshToken)
+	refreshed, err := service.Refresh(context.Background(), original.RefreshToken)
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	if rotated.RefreshToken == original.RefreshToken || rotated.User != original.User {
-		t.Fatalf("rotated session contract: tokenRotated=%t sameUser=%t", rotated.RefreshToken != original.RefreshToken, rotated.User == original.User)
+	if refreshed.RefreshToken != original.RefreshToken || refreshed.User != original.User || refreshed.AccessToken == original.AccessToken {
+		t.Fatalf("refresh contract: sameRefresh=%t sameUser=%t newAccess=%t", refreshed.RefreshToken == original.RefreshToken, refreshed.User == original.User, refreshed.AccessToken != original.AccessToken)
 	}
-	oldHash, _ := HashRefreshToken(testPepper, original.RefreshToken)
-	newHash, _ := HashRefreshToken(testPepper, rotated.RefreshToken)
-	var oldRevoked sql.NullInt64
-	if err := fixture.db.QueryRow(`SELECT revoked_at FROM refresh_tokens WHERE token_hash = ?`, oldHash).Scan(&oldRevoked); err != nil {
-		t.Fatalf("read old refresh: %v", err)
+	hash, _ := HashRefreshToken(testPepper, original.RefreshToken)
+	var revokedAt sql.NullInt64
+	var expiresAt int64
+	if err := fixture.db.QueryRow(`SELECT revoked_at, expires_at FROM refresh_tokens WHERE token_hash = ?`, hash).Scan(&revokedAt, &expiresAt); err != nil {
+		t.Fatalf("read refresh: %v", err)
 	}
-	if !oldRevoked.Valid || oldRevoked.Int64 != fixture.now.Unix() {
-		t.Fatalf("old revoked_at = %v, want %d", oldRevoked, fixture.now.Unix())
+	if revokedAt.Valid || expiresAt != PersistentRefreshExpiresAt.Unix() {
+		t.Fatalf("stored refresh revoked=%v expires=%d", revokedAt, expiresAt)
 	}
-	var newRevoked sql.NullInt64
-	if err := fixture.db.QueryRow(`SELECT revoked_at FROM refresh_tokens WHERE token_hash = ?`, newHash).Scan(&newRevoked); err != nil {
-		t.Fatalf("read new refresh: %v", err)
+	if rows := refreshRowCount(t, fixture.db); rows != 1 {
+		t.Fatalf("refresh rows = %d, want 1", rows)
 	}
-	if newRevoked.Valid {
-		t.Fatalf("new refresh already revoked at %d", newRevoked.Int64)
-	}
-	if _, err := service.Refresh(context.Background(), original.RefreshToken); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("reusing old refresh error = %v, want unauthorized", err)
-	}
-	if _, err := service.Refresh(context.Background(), rotated.RefreshToken); err != nil {
-		t.Fatalf("new refresh token is not valid: %v", err)
+	if _, err := service.Refresh(context.Background(), original.RefreshToken); err != nil {
+		t.Fatalf("repeating the same refresh token: %v", err)
 	}
 }
 
-func TestRefreshConcurrentUseAllowsExactlyOneRotation(t *testing.T) {
+func TestRefreshConcurrentUseKeepsOneCredential(t *testing.T) {
 	fixture := newAuthFixture(t)
 	insertSessionUser(t, fixture, "concurrent-user", "Alice", true)
 	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
@@ -296,36 +289,26 @@ func TestRefreshConcurrentUseAllowsExactlyOneRotation(t *testing.T) {
 	calls.Wait()
 	close(results)
 
-	successes, unauthorized := 0, 0
+	successes := 0
 	for result := range results {
-		switch {
-		case result.err == nil:
-			successes++
-			if result.session.RefreshToken == "" {
-				t.Fatal("successful concurrent refresh returned no token")
-			}
-		case errors.Is(result.err, ErrUnauthorized):
-			unauthorized++
-			if result.err.Error() != ErrUnauthorized.Error() || result.session != (Session{}) {
-				t.Fatalf("losing refresh: zeroSession=%t fixedError=%t", result.session == (Session{}), result.err.Error() == ErrUnauthorized.Error())
-			}
-		default:
-			t.Fatalf("concurrent Refresh error = %v", result.err)
+		if result.err != nil || result.session.RefreshToken != original.RefreshToken || result.session.AccessToken == "" {
+			t.Fatalf("concurrent Refresh=(refreshMatched=%t, access=%t, err=%v)", result.session.RefreshToken == original.RefreshToken, result.session.AccessToken != "", result.err)
 		}
+		successes++
 	}
-	if successes != 1 || unauthorized != 1 {
-		t.Fatalf("concurrent results = %d success, %d unauthorized; want one each", successes, unauthorized)
+	if successes != 2 {
+		t.Fatalf("concurrent results = %d success, want 2", successes)
 	}
 	var rows int
 	if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM refresh_tokens`).Scan(&rows); err != nil {
 		t.Fatalf("count refresh rows: %v", err)
 	}
-	if rows != 2 {
-		t.Fatalf("refresh rows = %d, want original plus exactly one successor", rows)
+	if rows != 1 {
+		t.Fatalf("refresh rows = %d, want the original credential only", rows)
 	}
 }
 
-func TestRefreshRejectsDisabledExpiredRevokedUnknownRollbackAndOversizedTokens(t *testing.T) {
+func TestRefreshRejectsDisabledRevokedUnknownRollbackAndOversizedTokens(t *testing.T) {
 	fixture := newAuthFixture(t)
 	insertSessionUser(t, fixture, "reject-user", "Alice", true)
 	service := newSessionService(t, fixture, clock.NewFake(fixture.now))
@@ -369,11 +352,6 @@ func TestRefreshRejectsDisabledExpiredRevokedUnknownRollbackAndOversizedTokens(t
 	if _, err := fixture.db.Exec(`UPDATE users SET enabled = 1 WHERE id = 'reject-user'`); err != nil {
 		t.Fatalf("enable user: %v", err)
 	}
-	expired := makeToken(t)
-	expiredHash, _ := HashRefreshToken(testPepper, expired.RefreshToken)
-	if _, err := fixture.db.Exec(`UPDATE refresh_tokens SET expires_at = ? WHERE token_hash = ?`, fixture.now.Unix(), expiredHash); err != nil {
-		t.Fatalf("expire token: %v", err)
-	}
 	revoked := makeToken(t)
 	revokedHash, _ := HashRefreshToken(testPepper, revoked.RefreshToken)
 	if _, err := fixture.db.Exec(`UPDATE refresh_tokens SET revoked_at = ? WHERE token_hash = ?`, fixture.now.Unix(), revokedHash); err != nil {
@@ -381,7 +359,7 @@ func TestRefreshRejectsDisabledExpiredRevokedUnknownRollbackAndOversizedTokens(t
 	}
 	rollback := makeToken(t)
 	earlierService := newSessionService(t, fixture, clock.NewFake(fixture.now.Add(-time.Second)))
-	for name, candidate := range map[string]string{"expired": expired.RefreshToken, "revoked": revoked.RefreshToken, "clock rollback": rollback.RefreshToken} {
+	for name, candidate := range map[string]string{"revoked": revoked.RefreshToken, "clock rollback": rollback.RefreshToken} {
 		t.Run(name, func(t *testing.T) {
 			candidateService := service
 			if name == "clock rollback" {
@@ -448,61 +426,54 @@ func TestIssueRefreshCollisionFailsWithoutReturningPlaintext(t *testing.T) {
 	}
 }
 
-func TestRefreshGenerationAndCollisionFailuresRollbackOldRevocation(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		entropy func(t *testing.T, original Session) *bytes.Reader
-	}{
-		{
-			name: "successor collides with original hash",
-			entropy: func(t *testing.T, original Session) *bytes.Reader {
-				t.Helper()
-				decoded, err := base64.RawURLEncoding.DecodeString(original.RefreshToken)
-				if err != nil {
-					t.Fatalf("decode original refresh: %v", err)
-				}
-				return bytes.NewReader(decoded)
-			},
-		},
-		{
-			name: "entropy source fails",
-			entropy: func(_ *testing.T, _ Session) *bytes.Reader {
-				return bytes.NewReader(nil)
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newAuthFixture(t)
-			insertSessionUser(t, fixture, "rollback-user", "Alice", true)
-			service := newSessionService(t, fixture, clock.NewFake(fixture.now))
-			original, err := service.Issue(context.Background(), "rollback-user")
-			if err != nil {
-				t.Fatalf("Issue: %v", err)
-			}
-			service.entropy = test.entropy(t, original)
+func TestRefreshStaysValidLongAfterTheOldLifetimeAndDoesNotRotate(t *testing.T) {
+	fixture := newAuthFixture(t)
+	const durableUserID = "11111111-1111-4111-8111-111111111111"
+	insertSessionUser(t, fixture, durableUserID, "Alice", true)
+	fake := clock.NewFake(fixture.now)
+	service := newSessionService(t, fixture, fake)
+	original, err := service.Issue(context.Background(), durableUserID)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	originalHash, hashErr := HashRefreshToken(testPepper, original.RefreshToken)
+	if hashErr != nil {
+		t.Fatalf("hash refresh: %v", hashErr)
+	}
+	legacyExpiry := fixture.now.Add(30 * 24 * time.Hour).Unix()
+	if _, err := fixture.db.Exec(`UPDATE refresh_tokens SET expires_at = ? WHERE token_hash = ?`, legacyExpiry, originalHash); err != nil {
+		t.Fatalf("set legacy expiry: %v", err)
+	}
+	service.entropy = bytes.NewReader(nil)
+	fake.Advance(400 * 24 * time.Hour)
 
-			failed, err := service.Refresh(context.Background(), original.RefreshToken)
-			if failed != (Session{}) || !errors.Is(err, ErrInternal) || err.Error() != ErrInternal.Error() || strings.Contains(err.Error(), original.RefreshToken) {
-				t.Fatalf("failed Refresh: zeroSession=%t internal=%t fixedError=%t redacted=%t",
-					failed == (Session{}), errors.Is(err, ErrInternal), err != nil && err.Error() == ErrInternal.Error(), err != nil && !strings.Contains(err.Error(), original.RefreshToken))
-			}
-			if rows := refreshRowCount(t, fixture.db); rows != 1 {
-				t.Fatalf("failed Refresh stored %d rows, want original only", rows)
-			}
-			originalHash, _ := HashRefreshToken(testPepper, original.RefreshToken)
-			var revokedAt sql.NullInt64
-			if err := fixture.db.QueryRow(`SELECT revoked_at FROM refresh_tokens WHERE token_hash = ?`, originalHash).Scan(&revokedAt); err != nil {
-				t.Fatalf("read original after rollback: %v", err)
-			}
-			if revokedAt.Valid {
-				t.Fatalf("failed Refresh left original revoked at %d", revokedAt.Int64)
-			}
-
-			service.entropy = rand.Reader
-			if _, err := service.Refresh(context.Background(), original.RefreshToken); err != nil {
-				t.Fatalf("original token was not valid after rollback: %v", err)
-			}
-		})
+	refreshed, err := service.Refresh(context.Background(), original.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh after 400 days: %v", err)
+	}
+	if refreshed.RefreshToken != original.RefreshToken || refreshed.AccessToken == original.AccessToken || !refreshed.RefreshExpiresAt.Equal(PersistentRefreshExpiresAt) {
+		t.Fatalf("durable refresh: sameRefresh=%t newAccess=%t persistentExpiry=%t", refreshed.RefreshToken == original.RefreshToken, refreshed.AccessToken != original.AccessToken, refreshed.RefreshExpiresAt.Equal(PersistentRefreshExpiresAt))
+	}
+	var expiresAt int64
+	var revokedAt sql.NullInt64
+	if err := fixture.db.QueryRow(`SELECT expires_at, revoked_at FROM refresh_tokens WHERE token_hash = ?`, originalHash).Scan(&expiresAt, &revokedAt); err != nil {
+		t.Fatalf("read durable refresh: %v", err)
+	}
+	if expiresAt != PersistentRefreshExpiresAt.Unix() || revokedAt.Valid {
+		t.Fatalf("stored durable refresh expires=%d revoked=%v", expiresAt, revokedAt)
+	}
+	if _, err := service.Authenticate(context.Background(), refreshed.AccessToken); err != nil {
+		t.Fatalf("refreshed access: %v", err)
+	}
+	if _, err := service.Authenticate(context.Background(), original.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expired access token was accepted: %v", err)
+	}
+	again, err := service.Refresh(context.Background(), original.RefreshToken)
+	if err != nil || again.RefreshToken != original.RefreshToken {
+		t.Fatalf("second durable refresh sameToken=%t err=%v", again.RefreshToken == original.RefreshToken, err)
+	}
+	if rows := refreshRowCount(t, fixture.db); rows != 1 {
+		t.Fatalf("durable refresh stored %d rows, want 1", rows)
 	}
 }
 
