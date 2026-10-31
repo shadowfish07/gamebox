@@ -114,7 +114,12 @@ VALUES (?, ?, ?, ?)`, refreshHash, user.ID, session.RefreshExpiresAt.Unix(), ses
 // The refresh credential itself stays until transfer revokes it or the
 // account is disabled. Repeating the same refresh token is successful.
 // expires_at is rewritten to PersistentRefreshExpiresAt and is not a
-// deadline; SQLite reports zero rows when that value is already stored.
+// deadline. The UPDATE re-checks revocation, creation time, the enabled
+// flag, and auth_epoch. This driver counts rows matched by that UPDATE,
+// including a rewrite that stores the same expires_at again, so a count
+// other than one means those guards no longer match.
+// confirmReusableRefreshToken then distinguishes a transfer from any other
+// rejection.
 func (service *Service) Refresh(ctx context.Context, rawRefreshToken string) (_ Session, err error) {
 	if ctx == nil || !validRefreshTokenText(rawRefreshToken) {
 		return Session{}, ErrUnauthorized
@@ -184,6 +189,8 @@ WHERE token_hash = ?
 	if rowsErr != nil {
 		return Session{}, databaseError(ctx, rowsErr)
 	}
+	// The count is not one only when the guard stopped matching. Re-read the
+	// row so a transfer still reports session_transferred.
 	if affected != 1 {
 		if confirmErr := confirmReusableRefreshToken(ctx, transaction, refreshHash, user.ID, epoch, nowUnix); confirmErr != nil {
 			return Session{}, confirmErr
