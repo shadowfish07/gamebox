@@ -20,13 +20,18 @@ import (
 
 const (
 	accessTokenLifetime          = 15 * time.Minute
-	refreshTokenLifetime         = 30 * 24 * time.Hour
 	refreshTokenEntropyBytes     = 32
 	maximumAccessTokenTextBytes  = 4096
 	maximumRefreshTokenTextBytes = 512
 	maximumUserIDTextBytes       = 128
 	accessTokenIssuer            = "gamebox"
 )
+
+// PersistentRefreshExpiresAt is the refreshExpiresAt value on every session.
+// Refresh credentials do not expire. The timestamp exists so clients that
+// require refreshExpiresAt to be after accessExpiresAt keep working, and so
+// older builds do not treat a normal session as timed out.
+var PersistentRefreshExpiresAt = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
 // Session contains the only plaintext refresh credential returned by the
 // service. Callers must persist it securely; the database stores its hash.
@@ -105,9 +110,16 @@ VALUES (?, ?, ?, ?)`, refreshHash, user.ID, session.RefreshExpiresAt.Unix(), ses
 	return session, nil
 }
 
-// Refresh atomically revokes one refresh token and inserts its successor. The
-// conditional update is the single-use gate; a concurrent loser gets the same
-// fixed unauthorized error as every other invalid credential.
+// Refresh reissues an access token for a still-valid refresh credential.
+// The refresh credential itself stays until transfer revokes it or the
+// account is disabled. Repeating the same refresh token is successful.
+// expires_at is rewritten to PersistentRefreshExpiresAt and is not a
+// deadline. The UPDATE re-checks revocation, creation time, the enabled
+// flag, and auth_epoch. This driver counts rows matched by that UPDATE,
+// including a rewrite that stores the same expires_at again, so a count
+// other than one means those guards no longer match.
+// confirmReusableRefreshToken then distinguishes a transfer from any other
+// rejection.
 func (service *Service) Refresh(ctx context.Context, rawRefreshToken string) (_ Session, err error) {
 	if ctx == nil || !validRefreshTokenText(rawRefreshToken) {
 		return Session{}, ErrUnauthorized
@@ -129,12 +141,16 @@ func (service *Service) Refresh(ctx context.Context, rawRefreshToken string) (_ 
 
 	var user users.User
 	var epoch string
+	var enabled int
+	var revokedAt sql.NullInt64
 	var revokedReason sql.NullString
+	var createdAt int64
 	queryErr := transaction.QueryRowContext(ctx, `
-SELECT refresh_tokens.user_id, users.nickname, users.auth_epoch,refresh_tokens.revoked_reason
+SELECT refresh_tokens.user_id, users.nickname, users.auth_epoch, users.enabled,
+       refresh_tokens.revoked_at, refresh_tokens.revoked_reason, refresh_tokens.created_at
 FROM refresh_tokens
 JOIN users ON users.id = refresh_tokens.user_id
-WHERE refresh_tokens.token_hash = ?`, refreshHash).Scan(&user.ID, &user.Nickname, &epoch, &revokedReason)
+WHERE refresh_tokens.token_hash = ?`, refreshHash).Scan(&user.ID, &user.Nickname, &epoch, &enabled, &revokedAt, &revokedReason, &createdAt)
 	if errors.Is(queryErr, sql.ErrNoRows) {
 		return Session{}, ErrUnauthorized
 	}
@@ -144,20 +160,28 @@ WHERE refresh_tokens.token_hash = ?`, refreshHash).Scan(&user.ID, &user.Nickname
 	if revokedReason.String == "transfer" {
 		return Session{}, ErrSessionTransferred
 	}
-
 	nowUnix := service.clock.Now().UTC().Unix()
+	if revokedAt.Valid || enabled != 1 || createdAt > nowUnix {
+		return Session{}, ErrUnauthorized
+	}
+
+	session, materialErr := service.sessionForRefreshToken(user, nowUnix, rawRefreshToken, epoch)
+	if materialErr != nil {
+		return Session{}, materialErr
+	}
 	result, updateErr := transaction.ExecContext(ctx, `
 UPDATE refresh_tokens
-SET revoked_at = ?
+SET expires_at = ?
 WHERE token_hash = ?
   AND user_id = ?
   AND revoked_at IS NULL
-  AND expires_at > ?
   AND created_at <= ?
   AND EXISTS (
     SELECT 1 FROM users
-    WHERE users.id = refresh_tokens.user_id AND users.enabled = 1
-  )`, nowUnix, refreshHash, user.ID, nowUnix, nowUnix)
+    WHERE users.id = refresh_tokens.user_id
+      AND users.enabled = 1
+      AND users.auth_epoch = ?
+  )`, PersistentRefreshExpiresAt.Unix(), refreshHash, user.ID, nowUnix, epoch)
 	if updateErr != nil {
 		return Session{}, databaseError(ctx, updateErr)
 	}
@@ -165,28 +189,43 @@ WHERE token_hash = ?
 	if rowsErr != nil {
 		return Session{}, databaseError(ctx, rowsErr)
 	}
+	// The count is not one only when the guard stopped matching. Re-read the
+	// row so a transfer still reports session_transferred.
 	if affected != 1 {
-		return Session{}, ErrUnauthorized
-	}
-
-	session, materialErr := service.newSessionAt(user, nowUnix, epoch)
-	if materialErr != nil {
-		return Session{}, materialErr
-	}
-	newHash, newHashErr := HashRefreshToken(service.pepper, session.RefreshToken)
-	if newHashErr != nil {
-		return Session{}, ErrInternal
-	}
-	_, insertErr := transaction.ExecContext(ctx, `
-INSERT INTO refresh_tokens(token_hash, user_id, expires_at, created_at)
-VALUES (?, ?, ?, ?)`, newHash, user.ID, session.RefreshExpiresAt.Unix(), nowUnix)
-	if insertErr != nil {
-		return Session{}, databaseError(ctx, insertErr)
+		if confirmErr := confirmReusableRefreshToken(ctx, transaction, refreshHash, user.ID, epoch, nowUnix); confirmErr != nil {
+			return Session{}, confirmErr
+		}
 	}
 	if commitErr := service.commit(transaction); commitErr != nil {
 		return Session{}, databaseError(ctx, commitErr)
 	}
 	return session, nil
+}
+
+func confirmReusableRefreshToken(ctx context.Context, transaction *writeTransaction, refreshHash, userID, epoch string, nowUnix int64) error {
+	var enabled int
+	var revokedAt sql.NullInt64
+	var revokedReason sql.NullString
+	var createdAt int64
+	var storedEpoch string
+	queryErr := transaction.QueryRowContext(ctx, `
+SELECT users.enabled, users.auth_epoch, refresh_tokens.revoked_at, refresh_tokens.revoked_reason, refresh_tokens.created_at
+FROM refresh_tokens
+JOIN users ON users.id = refresh_tokens.user_id
+WHERE refresh_tokens.token_hash = ? AND refresh_tokens.user_id = ?`, refreshHash, userID).Scan(&enabled, &storedEpoch, &revokedAt, &revokedReason, &createdAt)
+	if errors.Is(queryErr, sql.ErrNoRows) {
+		return ErrUnauthorized
+	}
+	if queryErr != nil {
+		return databaseError(ctx, queryErr)
+	}
+	if revokedReason.String == "transfer" {
+		return ErrSessionTransferred
+	}
+	if revokedAt.Valid || enabled != 1 || storedEpoch != epoch || createdAt > nowUnix {
+		return ErrUnauthorized
+	}
+	return nil
 }
 
 func validRefreshTokenText(raw string) bool {
@@ -206,6 +245,10 @@ func (service *Service) newSessionAt(user users.User, nowUnix int64, epochs ...s
 	if tokenErr != nil {
 		return Session{}, ErrInternal
 	}
+	return service.sessionForRefreshToken(user, nowUnix, refreshToken, epochs...)
+}
+
+func (service *Service) sessionForRefreshToken(user users.User, nowUnix int64, refreshToken string, epochs ...string) (Session, error) {
 	issuedAt := time.Unix(nowUnix, 0).UTC()
 	accessExpiresAt := issuedAt.Add(accessTokenLifetime)
 	claims := jwt.RegisteredClaims{
@@ -226,7 +269,7 @@ func (service *Service) newSessionAt(user users.User, nowUnix int64, epochs ...s
 		AccessToken:      accessToken,
 		AccessExpiresAt:  accessExpiresAt,
 		RefreshToken:     refreshToken,
-		RefreshExpiresAt: issuedAt.Add(refreshTokenLifetime),
+		RefreshExpiresAt: PersistentRefreshExpiresAt,
 	}, nil
 }
 

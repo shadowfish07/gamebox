@@ -11,7 +11,10 @@ final class SessionUser {
   String toString() => 'SessionUser(id: $id, nickname: $nickname)';
 }
 
-/// One server-issued, rotating authentication session.
+/// One server-issued authentication session.
+///
+/// [refreshExpiresAt] is kept for response compatibility. It is not a login
+/// deadline; the refresh credential stays until the server rejects it.
 final class Session {
   Session({
     required this.user,

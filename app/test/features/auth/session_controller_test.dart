@@ -507,7 +507,7 @@ void main() {
   });
 
   test(
-    'expired refresh credential is cleared without a network call',
+    'a refresh timestamp in the past still refreshes and stays signed in',
     () async {
       var clock = now.subtract(const Duration(minutes: 1));
       final api = _FakeAuthApi()
@@ -527,11 +527,48 @@ void main() {
       await controller.restore();
       expect(controller.status, SessionStatus.authenticated);
       final callsAfterRestore = api.refreshCalls;
-      clock = now;
+      clock = now.add(const Duration(days: 400));
+      api.onRefresh = (refreshToken) async {
+        expect(refreshToken, 'refresh-one');
+        return _session(
+          accessToken: 'access-later',
+          refreshToken: 'refresh-one',
+          now: clock,
+          refreshExpiresAt: DateTime.utc(9999, 12, 31, 23, 59, 59),
+        );
+      };
 
-      expect(await controller.refresh(), isFalse);
-      expect(api.refreshCalls, callsAfterRestore);
-      expect(controller.status, SessionStatus.unauthenticated);
+      expect(await controller.handleAppResumed(), isTrue);
+      expect(api.refreshCalls, callsAfterRestore + 1);
+      expect(controller.status, SessionStatus.authenticated);
+      expect(controller.accessToken, 'access-later');
+      expect(store.value, 'refresh-one');
+    },
+  );
+
+  test(
+    'restore accepts a session whose refresh timestamp is already past',
+    () async {
+      final api = _FakeAuthApi()
+        ..onRefresh = (_) async => _session(
+          accessToken: 'access-old',
+          refreshToken: 'refresh-old',
+          now: now,
+          accessExpiresAt: now.subtract(const Duration(days: 30)),
+          refreshExpiresAt: now.subtract(const Duration(days: 1)),
+        );
+      final store = _MemoryTokenStore(value: 'refresh-stored');
+      final controller = SessionController(
+        authApi: api,
+        tokenStore: store,
+        now: () => now,
+      );
+
+      await controller.restore();
+
+      expect(controller.status, SessionStatus.authenticated);
+      expect(controller.accessToken, 'access-old');
+      expect(store.value, 'refresh-old');
     },
   );
 

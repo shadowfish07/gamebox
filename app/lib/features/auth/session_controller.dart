@@ -9,7 +9,7 @@ import 'auth_api.dart';
 
 enum SessionStatus { restoring, unauthenticated, submitting, authenticated }
 
-/// Owns the in-memory access credential and the rotating refresh lifecycle.
+/// Owns the in-memory access credential and the long-lived refresh credential.
 final class SessionController extends ChangeNotifier {
   SessionController({
     required this._authApi,
@@ -161,13 +161,6 @@ final class SessionController extends ChangeNotifier {
       if (!_isCurrent(generation)) {
         return false;
       }
-      if (!rotated.refreshExpiresAt.isAfter(_now())) {
-        _preserveForRetry(
-          generation,
-          const ApiError(code: 'invalid_response', message: '服务器响应无效'),
-        );
-        return false;
-      }
       return await _persistAndPublish(rotated, generation);
     } on ApiError catch (error) {
       if (!_isCurrent(generation)) {
@@ -224,11 +217,6 @@ final class SessionController extends ChangeNotifier {
       if (!_isCurrent(generation)) {
         return null;
       }
-      if (!created.refreshExpiresAt.isAfter(_now())) {
-        _session = null;
-        _transition(SessionStatus.unauthenticated);
-        return const ApiError(code: 'invalid_response', message: '服务器响应无效');
-      }
       final persisted = await _persistAndPublish(created, generation);
       if (!persisted && _isCurrent(generation)) {
         return const ApiError(code: 'storage_error', message: '无法安全保存登录信息');
@@ -258,9 +246,7 @@ final class SessionController extends ChangeNotifier {
     Session next, {
     required Future<void> Function() beforePublish,
   }) async {
-    if (_disposed ||
-        _status == SessionStatus.authenticated ||
-        !next.refreshExpiresAt.isAfter(_now())) {
+    if (_disposed || _status == SessionStatus.authenticated) {
       return false;
     }
     migratedIn = true;
@@ -298,17 +284,12 @@ final class SessionController extends ChangeNotifier {
   }
 
   Future<bool> _performRefresh(Session previous, int generation) async {
-    if (!previous.refreshExpiresAt.isAfter(_now())) {
-      await _clearStoredCredential(generation);
-      return false;
-    }
     try {
       final rotated = await _authApi.refresh(previous.refreshToken);
       if (!_isCurrent(generation) || _status != SessionStatus.authenticated) {
         return false;
       }
-      if (rotated.user.id != previous.user.id ||
-          !rotated.refreshExpiresAt.isAfter(_now())) {
+      if (rotated.user.id != previous.user.id) {
         await _clearStoredCredential(generation);
         return false;
       }
